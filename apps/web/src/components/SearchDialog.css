@@ -1,0 +1,104 @@
+/* 移动搜索是一套完整的输入组件，不沿用浏览器默认input或占位label。 */
+.modal.global-search-dialog {
+  width: min(520px, calc(100vw - 32px));
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--page);
+  color: var(--text-primary);
+}
+.global-search-dialog .modal-heading {
+  margin-bottom: 16px;
+}
+.global-search-dialog .modal-heading .icon-button {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+}
+.global-search-dialog .mobile-search-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  margin: 0;
+}
+.mobile-search-form .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.mobile-search-input-shell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 52px;
+  padding: 0 4px 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+}
+.mobile-search-input-shell:focus-within {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px var(--blue-soft);
+}
+.mobile-search-input-shell > svg {
+  flex: 0 0 auto;
+}
+.global-search-dialog .mobile-search-form input {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 1 1 0;
+  min-width: 0;
+  width: 0;
+  height: 48px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 16px;
+  line-height: 24px;
+}
+.mobile-search-clear {
+  display: grid;
+  place-items: center;
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 8px;
+  color: var(--text-secondary);
+}
+.mobile-search-clear[data-visible='false'] {
+  visibility: hidden;
+}
+.mobile-search-clear:hover {
+  background: var(--blue-soft);
+}
+.global-search-dialog .mobile-search-form > .button {
+  width: 100%;
+  height: 44px;
+  min-height: 44px;
+  border-radius: 10px;
+}
+@media (max-width: 700px) {
+  .modal.global-search-dialog {
+    /* 固定顶部间距：软键盘改变可见高度时，不跟着百分比留白上下跳动。 */
+    margin: 20px auto auto;
+    max-height: calc(100dvh - 40px);
+    padding: 16px;
+  }
+  .global-search-dialog .modal-heading h2 {
+    font-size: 18px;
+  }
+}

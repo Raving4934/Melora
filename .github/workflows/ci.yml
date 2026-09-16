@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.12.0
+          cache: npm
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.14'
+          cache-dependency-path: apps/server/go.sum
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Verify public repository boundary
+        run: python3 scripts/release/verify_public_repository.py
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run typecheck
+      - run: npm run test --workspace @melora/web
+      - run: go test -race ./...
+        working-directory: apps/server
+      - run: go vet ./...
+        working-directory: apps/server
+      - name: 执行 Go 漏洞扫描（govulncheck v1.6.0）
+        run: npm run vuln:server
+      - name: 在隔离 PID namespace 中执行打包生命周期测试
+        run: |
+          sudo /usr/bin/unshare --pid --fork --mount-proc \
+            /usr/bin/setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-groups \
+            /usr/bin/env "PATH=$PATH" "HOME=$HOME" GOTOOLCHAIN=local MELORA_UNINSTALL_TEST_NAMESPACE=1 \
+            python3 -m unittest discover -s packaging/tests -p 'test_*.py' -v
+      - run: npm run build
+      - name: 验证 Docker 镜像可构建
+        run: docker build --tag melora:ci .
+
+  e2e:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.12.0
+          cache: npm
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.14'
+          cache-dependency-path: apps/server/go.sum
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - name: 上传 Playwright 失败产物
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: |
+            apps/web/playwright-report/
+            apps/web/test-results/
+          if-no-files-found: ignore
+          retention-days: 14

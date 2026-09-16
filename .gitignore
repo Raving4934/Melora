@@ -1,0 +1,61 @@
+# 依赖
+node_modules/
+
+# 构建与测试产物
+dist/
+coverage/
+playwright-report/
+test-results/
+*.tsbuildinfo
+
+# 数据库与运行时数据
+data/
+*.db
+*.db-shm
+*.db-wal
+*.part
+
+# 环境变量
+.env
+.env.*
+!.env.example
+
+# 服务端二进制构建产物
+/apps/server/melora
+/apps/server/melora.exe
+*.exe
+*.test
+*.prof
+
+# fnOS FPK 打包与构建缓存
+*.fpk
+*.fpk.sha256
+*.sha256
+packaging/.build/
+packaging/out/
+packaging/.tools/
+packaging/.test-*/
+
+# Python 缓存 (用于 packaging/tools)
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+# 本地规格与文档
+docs/
+.lx 音源
+# 日志
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# 临时与 IDE 文件
+.superpowers/
+.workbuddy/
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

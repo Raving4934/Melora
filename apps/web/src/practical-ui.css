@@ -1,0 +1,1571 @@
+/* 产品级布局：真实窗口尺寸、图外信息层级与可操作的播放/筛选控件。 */
+.login-page .eyebrow {
+  display: none;
+}
+
+.practical-shell .page-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: auto;
+  margin-bottom: 20px;
+  gap: 12px;
+}
+.practical-shell .page-heading > div:first-child {
+  min-width: 0;
+}
+.practical-shell .page-heading h1 {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.015em;
+  line-height: 1.3;
+  margin: 0;
+  padding: 0;
+}
+.practical-shell .page-heading:not(.page-heading-inline) p {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+.practical-shell .page-heading-inline .page-heading-copy {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  min-width: 0;
+}
+.practical-shell .page-heading-inline p {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 0;
+}
+.practical-shell .heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0;
+  margin-left: auto;
+}
+
+.practical-shell .section-heading > div {
+  min-width: 0;
+}
+.practical-shell .section-heading h2 {
+  font-size: 18px;
+}
+.practical-shell .section-heading h2,
+.practical-shell .section-heading p,
+.practical-shell .playlist-detail-heading h1,
+.practical-shell .playlist-detail-heading p {
+  overflow-wrap: anywhere;
+}
+.practical-shell .section-heading > .button,
+.practical-shell .section-heading > .text-button,
+.practical-shell .section-heading > .inline {
+  flex-shrink: 0;
+}
+.practical-shell .detail-actions {
+  flex-wrap: wrap;
+}
+.source-filter-mobile {
+  display: none !important;
+}
+.source-filter-desktop {
+  display: inline-flex !important;
+}
+.practical-shell .source-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  min-height: auto;
+  margin-bottom: 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.practical-shell .source-filter > button {
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+  white-space: nowrap;
+  border: none;
+  cursor: pointer;
+}
+.practical-shell .source-filter > button:hover:not(.selected) {
+  color: var(--text-primary);
+  background: #f1f5f9;
+}
+.practical-shell .source-filter > button.selected {
+  background: #1e293b;
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+}
+[data-theme='dark'] .practical-shell .source-filter > button.selected,
+body.dark .practical-shell .source-filter > button.selected {
+  background: #f8fafc;
+  color: #0f172a;
+}
+.practical-shell .source-filter .source-dot {
+  display: none !important;
+}
+.practical-shell .source-manage {
+  font-size: var(--font-body);
+  color: var(--text-secondary);
+}
+
+/* 榜单图片通常自带文字；完整保留方形封面，标题只出现在图片外。 */
+.practical-shell .chart-grid .collection-item {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 16px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.practical-shell .chart-grid .collection-item:hover,
+.practical-shell .chart-grid .collection-item:focus-visible {
+  border-color: #b8c9ed;
+  background: #f2f5fb;
+}
+.practical-shell .chart-art {
+  flex-shrink: 0;
+}
+.practical-shell .chart-copy {
+  flex: 1;
+  gap: 6px;
+  padding: 0;
+}
+.practical-shell .chart-copy strong {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: 20px;
+  line-height: 1.4;
+  font-weight: 650;
+}
+.practical-shell .chart-description {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: var(--font-meta);
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+.practical-shell .chart-open {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  color: var(--blue);
+  font-weight: 550;
+}
+.practical-shell .chart-art .cover-play {
+  display: none;
+}
+.practical-shell .collection-item .cover-play {
+  pointer-events: none;
+}
+.collection-actions {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  z-index: 3;
+  opacity: 0;
+  transform: translateY(4px);
+  transition:
+    opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
+}
+.collection-item:hover .collection-actions,
+.collection-item:focus-within .collection-actions {
+  opacity: 1;
+  transform: translateY(0);
+}
+.collection-actions > * {
+  pointer-events: auto;
+}
+
+.collection-play-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  color: var(--blue, #3567e8);
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.18);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.collection-play-btn:hover {
+  transform: scale(1.12);
+  background: var(--blue, #3567e8);
+  color: #ffffff;
+  border-color: transparent;
+  box-shadow: 0 5px 16px rgba(53, 103, 232, 0.45);
+}
+.collection-play-btn.is-playing {
+  background: var(--blue, #3567e8);
+  color: #ffffff;
+  border-color: transparent;
+}
+.collection-play-btn.is-loading {
+  cursor: wait;
+}
+
+[data-theme='dark'] .collection-play-btn,
+body.dark .collection-play-btn {
+  background: rgba(30, 36, 48, 0.95);
+  color: #60a5fa;
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.4);
+}
+[data-theme='dark'] .collection-play-btn:hover,
+body.dark .collection-play-btn:hover,
+[data-theme='dark'] .collection-play-btn.is-playing,
+body.dark .collection-play-btn.is-playing {
+  background: var(--blue, #3567e8);
+  color: #ffffff;
+  border-color: transparent;
+  box-shadow: 0 5px 16px rgba(53, 103, 232, 0.45);
+}
+
+@media (hover: none) {
+  .collection-actions {
+    opacity: 1 !important;
+    transform: none !important;
+    pointer-events: auto !important;
+  }
+}
+
+.collection-art-link {
+  display: block;
+  width: 100%;
+  height: 100%;
+  text-decoration: none;
+  color: inherit;
+}
+.practical-shell .collection-item .collection-art {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  transition:
+    transform 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.28s ease;
+}
+.practical-shell .collection-item:hover .collection-art {
+  transform: translateY(-4px) scale(1.02);
+  box-shadow:
+    0 14px 28px -6px rgba(15, 23, 42, 0.16),
+    0 4px 10px -2px rgba(15, 23, 42, 0.06);
+}
+.practical-shell .collection-copy {
+  display: flex;
+  flex-direction: column;
+  text-decoration: none;
+  color: inherit;
+}
+.practical-shell .collection-item:hover .collection-copy > strong {
+  color: var(--blue, #3567e8);
+}
+.practical-shell .collection-copy > strong {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.45;
+  min-height: 2.9em;
+  font-size: 14px;
+  font-weight: 600;
+  margin-top: 8px;
+  margin-bottom: 3px;
+  color: var(--text-primary);
+  transition: color 0.15s ease;
+}
+.practical-shell .chart-copy > strong {
+  font-size: 20px;
+}
+.practical-shell .collection-copy > .collection-meta {
+  color: var(--text-secondary);
+  font-size: var(--font-meta);
+}
+
+.practical-shell .track-labels,
+.practical-shell .track-row {
+  grid-template-columns: 36px minmax(0, 1.6fr) minmax(0, 1fr) 60px 148px;
+  gap: 16px;
+}
+.practical-shell .track-main strong,
+.practical-shell .mini-track strong {
+  font-size: var(--font-body);
+}
+.practical-shell .track-artist,
+.practical-shell .track-duration,
+.practical-shell .track-artist small,
+.practical-shell .track-main small {
+  font-size: var(--font-meta);
+  color: var(--text-secondary);
+}
+.practical-shell .track-actions .icon-button {
+  width: 34px;
+  height: 36px;
+}
+.practical-shell .track-actions .queue-add {
+  opacity: 1;
+}
+.practical-shell .track-row.is-current {
+  background: #f0f4ff;
+}
+
+.track-secondary-actions {
+  display: inline-flex;
+  gap: 1px;
+}
+.practical-shell .track-more-button {
+  display: none;
+}
+.track-menu-heading {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 0 20px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.track-menu-heading .cover {
+  width: 52px;
+  height: 52px;
+}
+.track-menu-heading > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.track-menu-heading p {
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+.track-menu-action {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 12px;
+  border-radius: 6px;
+  text-align: left;
+}
+.track-menu-action:hover {
+  background: var(--surface-subtle);
+  color: var(--blue);
+}
+
+/* 筛选只占一行；完整目录放到可键盘操作的对话框，不挤动列表或套滚动条。 */
+.practical-shell .playlist-category-groups {
+  margin-bottom: 16px;
+}
+.practical-shell .playlist-category-groups:empty {
+  display: none !important;
+}
+.practical-shell .category-filter,
+.category-dialog .category-filter {
+  gap: 6px 8px;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font-size: var(--font-body);
+}
+.practical-shell .category-filter > span,
+.category-dialog .category-filter > span {
+  min-width: 40px;
+  color: var(--text-secondary);
+}
+.practical-shell .category-filter button,
+.category-dialog .category-filter button {
+  min-height: 36px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.practical-shell .category-filter button:hover,
+.category-dialog .category-filter button:hover {
+  color: var(--blue);
+  background: var(--surface-subtle);
+}
+.practical-shell .category-filter button.selected,
+.category-dialog .category-filter button.selected {
+  color: #ffffff;
+  background: #1e293b;
+  font-weight: 600;
+}
+[data-theme='dark'] .practical-shell .category-filter button.selected,
+body.dark .practical-shell .category-filter button.selected,
+[data-theme='dark'] .category-dialog .category-filter button.selected,
+body.dark .category-dialog .category-filter button.selected {
+  color: #0f172a;
+  background: #f8fafc;
+}
+.practical-shell .category-filter .category-expand {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  color: var(--text-primary);
+}
+.modal.category-dialog {
+  width: min(800px, calc(100vw - 32px));
+}
+.category-dialog .category-filter {
+  align-items: flex-start;
+  padding-block: 16px;
+  border-top: 1px solid var(--line);
+  flex-wrap: nowrap;
+}
+.category-dialog .category-filter > span {
+  padding-top: 8px;
+}
+.category-dialog .category-filter > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+.practical-shell .new-track-areas {
+  min-height: 48px;
+  margin-bottom: 20px;
+}
+.practical-shell .discovery-results,
+.practical-shell .library-results {
+  min-height: 300px;
+}
+.practical-shell .discovery-feedback:empty {
+  display: none;
+}
+.practical-shell .discovery-feedback:not(:empty) {
+  padding-bottom: 16px;
+}
+.practical-shell .browse-results {
+  min-width: 0;
+}
+.practical-shell .browse-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  margin-bottom: 16px;
+  color: var(--text-secondary);
+  font-size: var(--font-body);
+}
+.practical-shell .playlist-category-trigger {
+  height: 44px;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.practical-shell .playlist-section {
+  margin-top: 24px;
+  scroll-margin-top: 20px;
+}
+.practical-shell .playlist-list-actions,
+.practical-shell .browse-pagination {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.practical-shell .browse-pagination {
+  justify-content: center;
+  min-height: 40px;
+  margin-block: 20px;
+}
+.practical-shell .playlist-list-actions .browse-pagination {
+  margin: 0;
+}
+.practical-shell .browse-pagination > span {
+  min-width: 5em;
+  text-align: center;
+  font-size: var(--font-meta);
+  font-variant-numeric: tabular-nums;
+}
+.practical-shell .browse-pagination > button {
+  min-width: 84px;
+}
+.practical-shell .source-filter-error {
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  color: var(--danger);
+  font-size: var(--font-body);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.practical-shell .category-status,
+.practical-shell .playlist-source {
+  color: var(--text-secondary);
+  font-size: var(--font-meta);
+  margin-bottom: 8px;
+}
+
+/* 我的音乐：纯粹平整的胶囊药丸标签与顶栏，彻底消除多重下划线与多余横线 */
+.practical-shell .library-top-bar,
+.library-top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 24px;
+  padding-bottom: 0;
+  border-bottom: none !important;
+}
+.practical-shell .library-top-bar .tab-bar.library-tabs,
+.library-top-bar .tab-bar.library-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  min-height: auto;
+  border-bottom: none !important;
+}
+.practical-shell .library-top-bar .library-tabs > button,
+.library-top-bar .library-tabs > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  height: 36px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+.practical-shell .library-top-bar .library-tabs > button:hover,
+.library-top-bar .library-tabs > button:hover {
+  color: var(--text-primary);
+  background: #f1f5f9;
+}
+.practical-shell .library-top-bar .library-tabs > button.active,
+.library-top-bar .library-tabs > button.active {
+  color: var(--blue);
+  font-weight: 600;
+  background: rgba(53, 103, 232, 0.08);
+}
+/* 彻底清除多余下划线（避免 button:after 出现蓝线） */
+.practical-shell .library-top-bar .library-tabs > button.active:after,
+.library-top-bar .library-tabs > button.active:after {
+  display: none !important;
+  content: none !important;
+}
+.library-top-bar .tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  border-radius: 10px;
+  background: rgba(148, 163, 184, 0.16);
+  color: #64748b;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.library-top-bar .tab-badge[data-empty='true'] {
+  visibility: hidden;
+}
+.library-top-bar .library-tabs button.active .tab-badge {
+  background: var(--blue);
+  color: #ffffff;
+}
+/* 播放记录来源筛选：与库内 tab 同一视觉语言。 */
+.history-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -6px 0 18px;
+}
+.history-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  border-radius: 16px;
+  background: #ffffff;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease,
+    background-color 0.15s ease;
+}
+.history-filter:hover {
+  color: var(--text-primary);
+  border-color: rgba(203, 213, 225, 0.95);
+}
+.history-filter.selected {
+  color: #ffffff;
+  font-weight: 600;
+  background: #1e293b;
+  border-color: #1e293b;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.14);
+}
+.history-filter-count {
+  font-size: 11px;
+  opacity: 0.72;
+  font-variant-numeric: tabular-nums;
+}
+[data-theme='dark'] .history-filter,
+body.dark .history-filter {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #94a3b8;
+}
+[data-theme='dark'] .history-filter:hover,
+body.dark .history-filter:hover {
+  color: #f1f5f9;
+  background: rgba(255, 255, 255, 0.08);
+}
+[data-theme='dark'] .history-filter.selected,
+body.dark .history-filter.selected {
+  background: #f8fafc;
+  border-color: #f8fafc;
+  color: #0f172a;
+}
+.library-top-bar .library-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+@media (max-width: 700px) {
+  .practical-shell .library-top-bar,
+  .library-top-bar {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .practical-shell .library-top-bar .tab-bar.library-tabs,
+  .library-top-bar .tab-bar.library-tabs {
+    display: flex;
+    flex-wrap: nowrap;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    gap: 8px;
+    padding: 2px 2px;
+    margin: 0;
+  }
+  .practical-shell .library-top-bar .tab-bar.library-tabs::-webkit-scrollbar,
+  .library-top-bar .tab-bar.library-tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .practical-shell .library-top-bar .library-tabs > button,
+  .library-top-bar .library-tabs > button {
+    flex-shrink: 0;
+    white-space: nowrap;
+    height: 32px;
+    min-height: 32px;
+    padding: 0 12px;
+    font-size: 13px;
+    border-radius: 16px;
+    background: #f1f5f9;
+    color: var(--text-secondary);
+    border: 1px solid transparent;
+  }
+  .practical-shell .library-top-bar .library-tabs > button:hover:not(.active),
+  .library-top-bar .library-tabs > button:hover:not(.active) {
+    background: #e2e8f0;
+    color: var(--text-primary);
+  }
+  .practical-shell .library-top-bar .library-tabs > button.active,
+  .library-top-bar .library-tabs > button.active {
+    background: #1e293b;
+    color: #ffffff;
+    font-weight: 600;
+    border: 1px solid #1e293b;
+  }
+  [data-theme='dark'] .practical-shell .library-top-bar .library-tabs > button.active,
+  body.dark .practical-shell .library-top-bar .library-tabs > button.active,
+  [data-theme='dark'] .library-top-bar .library-tabs > button.active,
+  body.dark .library-top-bar .library-tabs > button.active {
+    background: #f8fafc;
+    color: #0f172a;
+    border: 1px solid #f8fafc;
+  }
+  .library-top-bar .library-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    width: 100%;
+    margin-left: 0;
+  }
+  .library-top-bar .library-actions .button.primary.small,
+  .library-top-bar .library-actions .button.secondary.small {
+    height: 32px;
+    min-height: 32px;
+    padding: 0 13px;
+    font-size: 12.5px;
+    border-radius: 16px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+}
+
+/* 纯粹开阔的空状态：无外框线、无卡片白底、无框阴影，与底色自然融为一体 */
+.practical-shell .library-results .empty-state {
+  min-height: 340px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 56px 20px;
+  margin: 0 auto;
+  max-width: 460px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  text-align: center;
+}
+.practical-shell .library-results .empty-state .empty-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: #f1f5f9;
+  color: #64748b;
+  box-shadow: none;
+  margin: 0 auto 16px;
+  display: grid;
+  place-items: center;
+}
+.practical-shell .library-results .empty-state h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+.practical-shell .library-results .empty-state p {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  max-width: 380px;
+  margin: 0 auto;
+}
+.practical-shell .library-results .empty-state .button,
+.practical-shell .library-results .empty-state .library-empty-cta {
+  margin-top: 20px;
+  min-height: 38px;
+  padding: 0 20px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 8px;
+  background: var(--blue);
+  color: #ffffff;
+  border: none;
+  box-shadow: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.15s ease;
+}
+.practical-shell .library-results .empty-state .button:hover,
+.practical-shell .library-results .empty-state .library-empty-cta:hover {
+  background: #2354cf;
+  transform: translateY(-1px);
+  box-shadow: none;
+}
+.practical-shell .settings-content {
+  max-width: 1280px;
+}
+/* 设置页：紧凑、清晰、消除顶部白隙 */
+.practical-shell .settings-v5 > .page-heading {
+  margin-bottom: 20px;
+  min-height: auto;
+  padding: 0;
+}
+.practical-shell .settings-v5 > .page-heading h1 {
+  font-size: 24px;
+  letter-spacing: -0.025em;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+/* 下载页顶栏与药丸胶囊标签：与全站设计语言完全统一，消除空旷感与老式下划线 */
+.practical-shell .downloads-page > .page-heading {
+  margin-bottom: 18px;
+}
+.practical-shell .downloads-page .tab-bar,
+.downloads-page .tab-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-bottom: none !important;
+  margin-bottom: 16px;
+  min-height: auto;
+}
+.practical-shell .downloads-page .tab-bar > button,
+.downloads-page .tab-bar > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  height: 36px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+.practical-shell .downloads-page .tab-bar > button:hover {
+  color: var(--text-primary);
+  background: #f1f5f9;
+}
+.practical-shell .downloads-page .tab-bar > button.active {
+  color: var(--blue);
+  font-weight: 600;
+  background: rgba(53, 103, 232, 0.08);
+}
+.practical-shell .downloads-page .tab-bar > button.active:after,
+.downloads-page .tab-bar > button.active:after {
+  display: none !important;
+  content: none !important;
+}
+.practical-shell .downloads-page .tab-bar .tab-count,
+.downloads-page .tab-bar .tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  border-radius: 10px;
+  background: rgba(148, 163, 184, 0.16);
+  color: #64748b;
+  line-height: 1;
+}
+.practical-shell .downloads-page .tab-bar > button.active .tab-count,
+.downloads-page .tab-bar > button.active .tab-count {
+  background: var(--blue);
+  color: #ffffff;
+}
+.practical-shell .live-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: #f8fafc;
+  border: 1px solid rgba(226, 232, 240, 0.85);
+  padding: 4px 10px;
+  border-radius: 20px;
+  line-height: 1.4;
+}
+.practical-shell .live-status.connected {
+  color: #059669;
+  background: #f0fdf4;
+  border-color: rgba(187, 247, 208, 0.8);
+}
+.practical-shell .live-status i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.practical-shell .download-list-heading.download-records-toolbar {
+  min-height: 44px;
+  margin-bottom: 16px;
+}
+.practical-shell .download-records-toolbar .download-clear-trigger.button {
+  min-height: 44px;
+  height: 44px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.practical-shell .source-manager .empty-state {
+  min-height: 180px;
+  padding-block: 24px;
+  background: var(--surface-subtle);
+  border-radius: 10px;
+}
+.practical-shell .lx-source-title strong,
+.practical-shell .provider-copy strong {
+  font-size: 15px;
+}
+.practical-shell .lx-source-row {
+  align-items: center;
+}
+.practical-shell .source-active-badge {
+  font-weight: 600;
+}
+.practical-shell .source-select:disabled:has(svg) {
+  opacity: 1;
+  background: var(--blue-soft);
+  border-color: transparent;
+  color: var(--blue);
+}
+
+/* 中央控制区始终预留同样尺寸，时间、滑轨和封面不随播放状态跳动。 */
+.practical-shell .mini-center {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.practical-shell .mini-transport {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+}
+.practical-shell .mini-transport .icon-button {
+  width: 36px;
+  height: 36px;
+}
+.practical-shell .mini-transport .main-play {
+  width: 40px;
+  height: 40px;
+}
+.practical-shell .mini-seek > span {
+  min-width: 36px;
+  flex-shrink: 0;
+  text-align: center;
+  color: var(--text-secondary);
+}
+.practical-shell .mini-cover-placeholder {
+  display: grid;
+  place-items: center;
+  color: var(--text-secondary);
+}
+.practical-shell .mini-track small {
+  font-size: var(--font-meta);
+}
+.practical-shell .volume-control input {
+  width: 80px;
+}
+.now-playing-page .immersive-info > p,
+.now-playing-page .immersive-source {
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 1600px) {
+  .practical-shell .chart-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+@media (min-width: 2240px) {
+  .practical-shell .chart-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+@media (min-width: 1800px) {
+  .practical-shell .chart-art {
+    width: 152px;
+  }
+  .practical-shell .chart-grid {
+    gap: 24px;
+  }
+  .practical-shell .collection-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 24px 18px;
+  }
+}
+.practical-shell .collection-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  column-gap: 16px;
+  row-gap: 24px;
+}
+@media (max-width: 1400px) {
+  .practical-shell .collection-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 20px 14px;
+  }
+}
+@media (max-width: 1100px) {
+  .practical-shell .collection-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 18px 14px;
+  }
+}
+@media (max-width: 800px) {
+  .practical-shell .collection-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px 12px;
+  }
+}
+@media (max-width: 550px) {
+  .practical-shell .collection-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px 10px;
+  }
+}
+@media (max-width: 1200px) {
+  .practical-shell .chart-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .practical-shell .mini-player {
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 1.2fr) minmax(0, 1fr);
+    gap: 20px;
+    padding-inline: 24px;
+  }
+  .practical-shell .mini-tools .direct-status {
+    display: none;
+  }
+  .practical-shell .header-search {
+    width: 190px;
+  }
+}
+@media (max-width: 950px) {
+  .practical-shell .main-content {
+    padding-right: max(28px, var(--safe-area-right));
+    padding-left: max(28px, var(--safe-area-left));
+  }
+  .practical-shell .chart-art {
+    width: 112px;
+  }
+  .practical-shell .chart-grid .collection-item {
+    gap: 14px;
+    padding: 12px;
+  }
+  .practical-shell .chart-description {
+    display: none;
+  }
+  .practical-shell .chart-copy > strong {
+    font-size: 18px;
+  }
+  .practical-shell .track-labels,
+  .practical-shell .track-row {
+    grid-template-columns: 30px minmax(0, 1.6fr) minmax(0, 1fr) 48px 108px;
+    gap: 8px;
+  }
+  .practical-shell .header-search {
+    width: 160px;
+  }
+  .practical-shell .mini-transport {
+    gap: 12px;
+  }
+  .practical-shell .mini-tools .volume-control input {
+    width: 50px;
+  }
+}
+@media (max-width: 700px) {
+  .practical-shell .main-content {
+    padding: 24px max(18px, var(--safe-area-right)) 0 max(18px, var(--safe-area-left));
+  }
+  .practical-shell .main-nav {
+    gap: 12px;
+    justify-content: space-between;
+  }
+  .practical-shell .main-nav a {
+    min-width: 44px;
+    font-size: var(--font-body);
+  }
+  .practical-shell .section-heading {
+    flex-wrap: wrap;
+  }
+  .practical-shell .heading-actions .icon-button,
+  .practical-shell
+    .icon-button:not(.browse-top-toolbar *):not(.discovery-header-actions *):not(.chart-filter-tools *),
+  .practical-shell .button,
+  .practical-shell .source-manage,
+  .practical-shell .category-filter button,
+  .category-dialog .category-filter button {
+    min-height: 44px;
+  }
+  .practical-shell
+    .icon-button:not(.browse-top-toolbar *):not(.discovery-header-actions *):not(.chart-filter-tools *) {
+    min-width: 44px;
+  }
+  .practical-shell .source-filter {
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .practical-shell .source-filter > button,
+  .practical-shell .source-manage {
+    font-size: var(--font-meta);
+  }
+  .practical-shell .chart-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .practical-shell .chart-art {
+    width: 108px;
+  }
+  .practical-shell .chart-copy > strong {
+    font-size: 18px;
+  }
+  .practical-shell .collection-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 22px 16px;
+  }
+  .practical-shell .category-shortcuts {
+    gap: 4px;
+  }
+  .practical-shell .category-shortcuts > span {
+    display: none;
+  }
+  .practical-shell .category-shortcuts > button:nth-of-type(n + 4):not(.selected):not(.category-expand) {
+    display: none;
+  }
+  .practical-shell .category-shortcuts > button {
+    padding-inline: 10px;
+  }
+  .practical-shell
+    .category-shortcuts:has(> .selected:nth-of-type(n + 4))
+    > button:nth-of-type(3):not(.selected),
+  .practical-shell
+    .category-shortcuts:has(> .selected:nth-of-type(n + 4))
+    > button:nth-of-type(2):not(.selected) {
+    display: none;
+  }
+  .practical-shell .category-shortcuts > .selected {
+    max-width: 40%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .practical-shell .new-track-areas {
+    gap: 4px;
+  }
+  .practical-shell .new-track-areas > span {
+    display: none;
+  }
+  .practical-shell .new-track-areas > button {
+    padding-inline: 12px;
+  }
+  .practical-shell .playlist-list-actions {
+    justify-content: space-between;
+    width: 100%;
+    gap: 8px;
+  }
+  .practical-shell .browse-pagination {
+    gap: 8px;
+  }
+  .practical-shell .playlist-list-actions .browse-pagination {
+    min-width: 0;
+    gap: 4px;
+  }
+  .practical-shell .playlist-list-actions .browse-pagination > span {
+    min-width: 4em;
+  }
+  .practical-shell .track-labels,
+  .practical-shell .track-row {
+    grid-template-columns: 44px minmax(0, 1fr) 88px;
+    gap: 6px;
+  }
+  .practical-shell .track-labels > span:nth-child(3),
+  .practical-shell .track-labels > span:nth-child(4),
+  .practical-shell .track-artist,
+  .practical-shell .track-duration {
+    display: none;
+  }
+  .practical-shell .track-row {
+    height: 72px;
+    min-height: 72px;
+  }
+  .practical-shell .track-main {
+    gap: 10px;
+    min-height: 44px;
+  }
+  .practical-shell .track-number {
+    min-height: 44px;
+  }
+  .practical-shell .avatar-button {
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+  }
+  .practical-shell .track-main .cover {
+    width: 40px;
+    height: 40px;
+  }
+  .practical-shell .track-main small {
+    display: block;
+  }
+  .practical-shell .track-actions {
+    gap: 0;
+  }
+  .practical-shell .track-secondary-actions {
+    display: none;
+  }
+  .practical-shell .track-more-button {
+    display: inline-flex;
+  }
+  .practical-shell .track-row:has(.custom-actions) {
+    grid-template-columns: 28px minmax(0, 1fr) 132px;
+  }
+  .practical-shell .track-row:has(.custom-actions) .track-main .cover {
+    display: none;
+  }
+  .practical-shell .library-overview {
+    gap: 12px;
+    padding: 18px 14px;
+  }
+  .practical-shell .library-overview > div {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .practical-shell .library-overview strong {
+    font-size: 24px;
+  }
+  .practical-shell .library-overview div > span:not(.library-stat-icon) {
+    font-size: var(--font-meta);
+  }
+  .practical-shell .library-stat-icon {
+    width: 36px;
+    height: 36px;
+  }
+  .practical-shell .library-tabs {
+    gap: 0;
+    justify-content: space-between;
+  }
+  .practical-shell .library-tabs button {
+    min-height: 44px;
+    font-size: var(--font-meta);
+  }
+  .practical-shell .mini-player {
+    grid-template-columns: minmax(0, 1fr) 88px 44px;
+    grid-template-rows: 58px 32px;
+    align-content: center;
+    gap: 2px 4px;
+    padding: 8px 14px;
+  }
+  .practical-shell .mini-track {
+    grid-column: 1;
+    grid-row: 1;
+    gap: 10px;
+  }
+  .practical-shell .mini-track .cover {
+    width: 44px;
+    height: 44px;
+  }
+  .practical-shell .mini-center {
+    display: contents;
+  }
+  .practical-shell .mini-transport {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .practical-shell .mini-transport > .icon-button,
+  .practical-shell .mini-transport .playback-controls > .icon-button:first-child {
+    display: none;
+  }
+  .practical-shell .mini-transport .playback-controls {
+    gap: 0;
+  }
+  .practical-shell .mini-transport .main-play {
+    min-width: 44px;
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+  }
+  .practical-shell .mini-tools {
+    grid-column: 3;
+    grid-row: 1;
+  }
+  .practical-shell .mini-tools .volume-control,
+  .practical-shell .mini-tools .direct-status {
+    display: none;
+  }
+  .practical-shell .mini-seek {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    height: 28px;
+    gap: 8px;
+  }
+  .practical-shell .search-page-form input {
+    min-height: 44px;
+  }
+  .practical-shell input:not([type='range']):not([type='checkbox']),
+  .practical-shell select,
+  .practical-shell textarea {
+    font-size: 16px;
+  }
+  .practical-shell .lx-source-actions {
+    margin-left: 0;
+    width: 100%;
+  }
+}
+
+/* 聚合失败是持久、可重试的局部反馈，不把其它平台结果卸载，也不推移歌曲行。 */
+.practical-shell .catalog-warning {
+  position: fixed;
+  z-index: 8;
+  bottom: calc(var(--mini-player-height) + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: max-content;
+  max-width: min(760px, calc(100vw - 36px));
+  padding: 12px 16px;
+  background: #fffaf0;
+  border: 1px solid #e8d9b9;
+  border-radius: 8px;
+  color: #725721;
+  font-size: var(--font-meta);
+  line-height: 1.6;
+}
+.practical-shell .catalog-warning > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.practical-shell .catalog-warning .text-button {
+  flex-shrink: 0;
+  min-height: 36px;
+}
+@media (max-width: 700px) {
+  .practical-shell .catalog-warning .text-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 700px) {
+  .source-filter-desktop {
+    display: none !important;
+  }
+  .source-filter-mobile {
+    display: block !important;
+    width: 100%;
+  }
+  .source-select-trigger {
+    position: relative;
+    height: 34px;
+    min-height: 34px;
+    padding: 0 12px;
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: 17px;
+    background: #f1f5f9;
+    border: 1px solid rgba(226, 232, 240, 0.85);
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    box-sizing: border-box;
+    cursor: pointer;
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease,
+      color 0.15s ease;
+    width: 100%;
+  }
+  .source-select-trigger:active {
+    background: #e2e8f0;
+  }
+  .source-select-trigger > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .source-select-trigger > svg {
+    flex-shrink: 0;
+    color: var(--text-secondary);
+  }
+  .source-select-trigger > select {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+    -webkit-appearance: none;
+    font-size: 16px;
+  }
+  /* 五个平台在窄屏横向胶囊药丸浏览，紧凑平整，无遮挡滚动 */
+  .practical-shell .source-filter {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    height: 36px;
+    min-height: 36px;
+    gap: 8px;
+    padding: 2px 2px;
+    margin-bottom: 0;
+    align-items: center;
+  }
+  .practical-shell .source-filter::-webkit-scrollbar {
+    display: none;
+  }
+  .practical-shell .source-filter > button {
+    flex-shrink: 0;
+    white-space: nowrap;
+    height: 32px;
+    min-height: 32px;
+    padding: 0 13px;
+    font-size: 13px;
+    border-radius: 16px;
+    background: #f1f5f9;
+    color: var(--text-secondary);
+    border: 1px solid transparent;
+    transition:
+      background-color 0.15s ease,
+      color 0.15s ease,
+      border-color 0.15s ease;
+  }
+  .practical-shell .source-filter > button:hover:not(.selected) {
+    background: #e2e8f0;
+    color: var(--text-primary);
+  }
+  .practical-shell .source-filter > button.selected {
+    background: #1e293b;
+    color: #ffffff;
+    font-weight: 600;
+    border: 1px solid #1e293b;
+    box-shadow: none;
+  }
+  [data-theme='dark'] .practical-shell .source-filter > button.selected,
+  body.dark .practical-shell .source-filter > button.selected {
+    background: #f8fafc;
+    color: #0f172a;
+    border: 1px solid #f8fafc;
+  }
+  .practical-shell .source-manage {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+}
+
+.collection-play-count {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 20px;
+  color: rgba(255, 255, 255, 0.95);
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+  pointer-events: none;
+}
+
+.download-attachments {
+  margin: 12px 0;
+  padding: 0;
+  border: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+}
+.download-attachments legend {
+  padding: 0;
+  margin-bottom: 3px;
+  font-size: 12px;
+  color: var(--text-secondary, #64748b);
+}
+.download-attachments label {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  min-height: 44px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.download-attachments input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent, #3478f6);
+}
+
+/* 只有顶栏负责搜索；窄屏由同一入口打开搜索对话框，不再在结果页重复放表单。 */
+.practical-shell .more-menu-button {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  background: transparent;
+}
+.practical-shell .header-search {
+  min-width: 0;
+  height: 44px;
+}
+.practical-shell .header-search input {
+  min-width: 0;
+}
+.practical-shell .header-search > button {
+  flex: 0 0 32px;
+  height: 40px;
+}

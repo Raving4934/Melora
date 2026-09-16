@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN" data-melora-surface="page">
+  <head>
+    <meta charset="UTF-8" />
+    <base href="/" data-melora-base />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#ffffff" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="乐屿" />
+    <!-- 首个样式/JS请求前已有不透明画布。Go仅为沉浸路由注入immersive，React负责进出/鉴权恢复。 -->
+    <style data-melora-surface-style>
+      :root {
+        background: #f7f8fa;
+      }
+      /* 画布切换必须同帧完成；也覆盖全局 reduced-motion 的极短 transition-duration。 */
+      :root,
+      body,
+      #root {
+        transition-property: none !important;
+      }
+      :root[data-melora-surface='immersive'] {
+        background: #171a1e;
+        color: #f5f6f7;
+        color-scheme: dark;
+        overflow: hidden;
+        overscroll-behavior: none;
+        height: 100%;
+      }
+      :root[data-melora-surface='immersive'] body,
+      :root[data-melora-surface='immersive'] #root {
+        background: #171a1e;
+        min-width: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        overscroll-behavior: none;
+      }
+      :root[data-melora-surface='immersive'] .query-pending,
+      :root[data-melora-surface='immersive'] .route-pending {
+        color: #c0c5cd;
+      }
+    </style>
+    <meta name="description" content="乐屿 Melora，你的轻量音乐空间。浏览器直连播放，授权音乐保存到飞牛。" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+    <title>乐屿 · Melora</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

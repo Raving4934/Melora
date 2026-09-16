@@ -1,0 +1,517 @@
+.audiobooks-page {
+  min-height: 100%;
+}
+
+/* Back bar */
+.audiobooks-page .collection-detail-back-bar {
+  margin-bottom: 16px;
+}
+
+/* Home: Rank Cards */
+.book-ranks {
+  margin-bottom: 28px;
+}
+.book-rank-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 14px;
+}
+.book-rank-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  background: var(--surface-float, #ffffff);
+  border: 1px solid var(--line, #e7ebf1);
+  border-radius: 14px;
+  color: inherit;
+  text-decoration: none;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.02);
+  transition:
+    border-color 0.18s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.18s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.book-rank-card:hover {
+  border-color: rgba(53, 103, 232, 0.35);
+  box-shadow: 0 6px 20px rgba(53, 103, 232, 0.08);
+  transform: translateY(-2px);
+}
+.book-rank-emblem {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  color: #ffffff;
+  background: linear-gradient(135deg, #4f8cff 0%, #3567e8 58%, #5b5cf0 100%);
+  box-shadow:
+    0 4px 12px rgba(53, 103, 232, 0.26),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+.book-rank-card-content {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  text-align: left;
+}
+.book-rank-card strong {
+  max-width: 100%;
+  font-size: 14.5px;
+  font-weight: 650;
+  line-height: 1.35;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.book-rank-card small {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.book-rank-card-arrow {
+  flex: none;
+  color: rgba(53, 103, 232, 0.55);
+  transition:
+    transform 0.2s ease,
+    color 0.2s ease;
+}
+.book-rank-card:hover .book-rank-card-arrow {
+  color: var(--blue, #3567e8);
+  transform: translateX(3px);
+}
+
+/* Home: Book Shelf (横向书轨：隐藏系统滚动条，改用标题旁翻页/换一批) */
+.book-shelf {
+  margin-top: 32px;
+}
+.book-shelf-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.book-shelf-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  border-radius: 8px;
+  background: var(--surface-float, #ffffff);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    transform 0.15s ease;
+}
+.book-shelf-action:hover:not(:disabled) {
+  color: var(--blue, #3567e8);
+  border-color: rgba(53, 103, 232, 0.35);
+  background: #f5f8ff;
+}
+.book-shelf-action:active:not(:disabled) {
+  transform: scale(0.94);
+}
+.book-shelf-action:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.book-row {
+  display: grid;
+  grid-auto-flow: column;
+  /* 桌面端恰好 8 列呼吸感网格；窄屏回落到固定最小列宽并保持可滚动。 */
+  grid-auto-columns: clamp(132px, calc((100% - 7 * 16px) / 8), 172px);
+  gap: 16px;
+  padding: 4px 2px 16px;
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+}
+.book-row::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+.book-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+  color: inherit;
+  text-decoration: none;
+  scroll-snap-align: start;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.book-card:hover {
+  transform: translateY(-3px);
+}
+.book-card:hover strong {
+  color: var(--blue, #3567e8);
+}
+.book-art {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  aspect-ratio: 1;
+  background: var(--surface-subtle);
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
+  transition: box-shadow 0.2s ease;
+}
+.book-card:hover .book-art {
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
+}
+.book-art .cover,
+.book-art .cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.book-art-link {
+  display: block;
+  width: 100%;
+  height: 100%;
+  text-decoration: none;
+}
+.book-card-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: inherit;
+  text-decoration: none;
+}
+.book-card-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  max-width: calc(100% - 92px);
+  padding: 3px 8px;
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.96);
+  background: rgba(15, 23, 42, 0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  font-size: 11px;
+  font-weight: 550;
+  line-height: 1.35;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+/* 悬浮只浮现与排行榜一致的圆形播放按钮，不再显示生硬的“完整专辑”贴纸。 */
+.book-card .collection-actions {
+  justify-content: flex-end;
+}
+.book-card:hover .collection-actions,
+.book-card:focus-within .collection-actions {
+  opacity: 1;
+  transform: translateY(0);
+}
+[data-theme='dark'] .book-card-badge,
+body.dark .book-card-badge {
+  background: rgba(15, 23, 42, 0.62);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+.book-card strong {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  min-height: 2.8em;
+  color: var(--text-primary);
+  transition: color 0.15s ease;
+}
+.book-card small {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+
+/* Rank Page: Header Bar */
+.book-rank-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+  padding-bottom: 4px;
+}
+.book-rank-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.book-rank-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.3px;
+}
+.book-rank-count-badge {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  background: var(--surface-subtle, #f1f5f9);
+  padding: 3px 10px;
+  border-radius: 12px;
+}
+.book-rank-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.book-rank-top-pagination {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 !important;
+}
+.book-rank-top-pagination span {
+  font-size: 13px;
+  font-family: var(--font-mono, monospace);
+  color: var(--text-secondary);
+  min-width: 44px;
+  text-align: center;
+}
+.book-rank-top-pagination .button {
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border-radius: 6px;
+}
+
+/* Rank Page: Sub-tags Filter */
+.practical-shell .book-rank-tags,
+.book-rank-tags {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+  margin: 0 0 28px 0 !important;
+  padding: 4px 0 18px !important;
+  border: none !important;
+  border-bottom: 1px solid var(--line, #e7ebf1) !important;
+  overflow-x: auto !important;
+  scrollbar-width: none !important;
+}
+.book-rank-tags::-webkit-scrollbar {
+  display: none;
+}
+.book-rank-tags-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.book-rank-tags-list {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+.practical-shell .book-rank-tag-btn,
+.book-rank-tag-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  height: 32px !important;
+  min-height: 32px !important;
+  padding: 0 16px !important;
+  border: 1px solid rgba(226, 232, 240, 0.85) !important;
+  border-radius: 16px !important;
+  color: var(--text-secondary) !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  white-space: nowrap !important;
+  background: var(--surface-float, #ffffff) !important;
+  cursor: pointer !important;
+  flex-shrink: 0 !important;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+.practical-shell .book-rank-tag-btn:hover:not(.selected),
+.book-rank-tag-btn:hover:not(.selected) {
+  color: var(--text-primary) !important;
+  background: var(--surface-float, #ffffff) !important;
+  border-color: rgba(203, 213, 225, 0.95) !important;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.04) !important;
+}
+.practical-shell .book-rank-tag-btn.selected,
+.book-rank-tag-btn.selected {
+  color: #ffffff !important;
+  font-weight: 600 !important;
+  background: #1e293b !important;
+  border-color: #1e293b !important;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.14) !important;
+}
+
+/* Rank Page: Collection Grid in Audiobooks */
+.practical-shell .audiobooks-page .collection-grid,
+.audiobooks-page .collection-grid {
+  margin-top: 16px !important;
+  margin-bottom: 28px !important;
+}
+.audiobooks-page .collection-item {
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.audiobooks-page .collection-item:hover {
+  transform: translateY(-3px);
+}
+.audiobooks-page .collection-art {
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.05);
+  transition: box-shadow 0.2s ease;
+}
+.audiobooks-page .collection-item:hover .collection-art {
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+}
+.audiobooks-page .collection-copy {
+  padding-top: 10px;
+  gap: 4px;
+}
+.audiobooks-page .collection-copy > strong {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  line-height: 1.4;
+  min-height: 2.8em;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  transition: color 0.15s ease;
+}
+.audiobooks-page .collection-item:hover .collection-copy > strong {
+  color: var(--blue, #3567e8);
+}
+.audiobooks-page .collection-meta {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+/* Rank Page: Bottom Pagination */
+.audiobooks-page .browse-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin: 36px 0 24px;
+}
+
+/* Detail Page */
+.audiobook-album-content.is-switching {
+  min-height: max(520px, calc(100dvh - 180px));
+}
+.audiobook-album-content.is-switching > .query-pending {
+  min-height: inherit;
+}
+
+.book-detail-heading .book-artist {
+  margin: 2px 0 6px;
+  color: var(--text-secondary);
+}
+.book-detail-heading .book-description {
+  max-height: 7.2em;
+  margin-bottom: 8px;
+  overflow-y: auto;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-line;
+}
+
+/* Dark Theme Adaptation */
+[data-theme='dark'] .book-rank-card,
+body.dark .book-rank-card {
+  background: var(--surface-float, #1e2430);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+[data-theme='dark'] .book-rank-card:hover,
+body.dark .book-rank-card:hover {
+  border-color: rgba(53, 103, 232, 0.5);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+}
+[data-theme='dark'] .book-rank-count-badge,
+body.dark .book-rank-count-badge {
+  background: rgba(255, 255, 255, 0.08);
+  color: #94a3b8;
+}
+[data-theme='dark'] .book-shelf-action,
+body.dark .book-shelf-action {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #94a3b8;
+}
+[data-theme='dark'] .book-shelf-action:hover:not(:disabled),
+body.dark .book-shelf-action:hover:not(:disabled) {
+  color: #93c5fd;
+  border-color: rgba(147, 197, 253, 0.35);
+  background: rgba(147, 197, 253, 0.12);
+}
+[data-theme='dark'] .book-rank-tag-btn,
+body.dark .book-rank-tag-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #94a3b8;
+}
+[data-theme='dark'] .book-rank-tag-btn:hover:not(.selected),
+body.dark .book-rank-tag-btn:hover:not(.selected) {
+  color: #f1f5f9;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+[data-theme='dark'] .book-rank-tag-btn.selected,
+body.dark .book-rank-tag-btn.selected {
+  background: #f8fafc !important;
+  border-color: #f8fafc !important;
+  color: #0f172a !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35) !important;
+}
+
+/* Mobile Responsiveness */
+@media (max-width: 768px) {
+  .book-rank-header {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .book-rank-title {
+    font-size: 20px;
+  }
+  .book-row {
+    grid-auto-columns: 136px;
+  }
+}

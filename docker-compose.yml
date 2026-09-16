@@ -1,0 +1,21 @@
+services:
+  melora:
+    image: ghcr.io/raving4934/melora:${MELORA_IMAGE_TAG:-0.1.0}
+    pull_policy: always
+    container_name: melora
+    restart: unless-stopped
+    # 面向 Linux 云服务器：与宿主机 nginx 共用网络命名空间，应用只绑定回环地址。
+    network_mode: host
+    environment:
+      MELORA_ADDR: 127.0.0.1:3780
+      MELORA_ADMIN_USER: ${MELORA_ADMIN_USER:-admin}
+      MELORA_ADMIN_PASSWORD: ${MELORA_ADMIN_PASSWORD:?请在 .env 中设置 MELORA_ADMIN_PASSWORD（至少 8 位）}
+      MELORA_DEPLOY_MODE: cloud
+      MELORA_ALLOW_INSECURE_HTTP: "0"
+      # nginx 通过宿主机回环地址连接，只有该精确地址可以提供转发头。
+      MELORA_TRUSTED_PROXIES: 127.0.0.1/32
+    volumes:
+      - melora-data:/data
+
+volumes:
+  melora-data:

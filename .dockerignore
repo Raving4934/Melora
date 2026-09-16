@@ -1,0 +1,12 @@
+.git
+.gitignore
+.github
+node_modules
+**/node_modules
+apps/web/dist
+dist
+data
+.superpowers
+packaging/out
+deploy
+*.log

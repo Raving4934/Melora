@@ -1,0 +1,35 @@
+{
+  "name": "乐屿 · Melora",
+  "short_name": "乐屿",
+  "description": "轻量、优雅的自托管音乐空间，浏览器直连播放，支持聚合目录、歌词与 NAS 下载。",
+  "lang": "zh-CN",
+  "dir": "ltr",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "categories": ["music", "entertainment"],
+  "icons": [
+    {
+      "src": "./icons/melora-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/melora-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/melora-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

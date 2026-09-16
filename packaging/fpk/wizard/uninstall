@@ -1,0 +1,34 @@
+[
+  {
+    "stepTitle": "卸载数据处理",
+    "items": [
+      {
+        "type": "radio",
+        "field": "wizard_uninstall_data",
+        "label": "应用私有数据",
+        "initValue": "keep",
+        "options": [
+          { "label": "保留应用数据（默认）", "value": "keep" },
+          { "label": "清理已知应用私有数据", "value": "purge" }
+        ]
+      },
+      {
+        "type": "tips",
+        "helpText": "清理仅针对乐屿的数据库及辅助文件、配置、可信登记中的音源脚本与登记文件、已定义的日志文件。音乐、下载目录及未完成的 .part、独立的 melora/exports 共享目录内容、未登记脚本和其它未知文件不会由乐屿主动删除；这不是恢复出厂。"
+      },
+      {
+        "type": "checkbox",
+        "field": "wizard_uninstall_confirm",
+        "label": "清理确认（选择保留时无需勾选）",
+        "initValue": "",
+        "options": [
+          { "label": "我确认删除上述私有数据；操作不可撤销，即使后续卸载失败也不会自动恢复。", "value": "purge_confirmed" }
+        ]
+      },
+      {
+        "type": "tips",
+        "helpText": "默认保留。选择清理但未勾选确认、服务或音源 worker 尚未停止、登记文件不可信时，乐屿会拒绝清理。清理期间请勿手工改动私有目录文件。最终选择会在卸载回调阶段再次核验并执行；清理后仅尝试移除已变空的应用私有目录，含未知文件或 exports 内容的目录会保留。执行期间发生磁盘或权限错误会明确提示部分清理，请修复后重试。"
+      }
+    ]
+  }
+]

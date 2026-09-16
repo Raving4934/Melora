@@ -1,0 +1,32 @@
+{
+  "name": "melora",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/web"
+  ],
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:web": "npm run dev --workspace @melora/web",
+    "dev:server": "cd apps/server && go run ./cmd/melora",
+    "build": "npm run build --workspace @melora/web && bash scripts/build-server.sh",
+    "build:web": "npm run build --workspace @melora/web",
+    "test": "npm run test --workspace @melora/web && npm run test:server",
+    "test:server": "cd apps/server && go test -race ./...",
+    "test:packaging": "python3 -m unittest discover -s packaging/tests -p 'test_*.py' -v",
+    "test:e2e": "npm run test:e2e --workspace @melora/web",
+    "typecheck": "npm run typecheck --workspace @melora/web",
+    "vet:server": "cd apps/server && go vet ./...",
+    "vuln:server": "cd apps/server && GOTOOLCHAIN=go1.25.14 go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...",
+    "check": "npm run format:check && npm run typecheck && npm run test && npm run vet:server && npm run test:packaging && npm run test:release",
+    "format": "prettier --write \"apps/web/src/**/*.{ts,tsx,css}\" \"apps/web/tests/**/*.ts\" \"apps/web/*.ts\" \"scripts/*.mjs\"",
+    "format:check": "prettier --check \"apps/web/src/**/*.{ts,tsx,css}\" \"apps/web/tests/**/*.ts\" \"apps/web/*.ts\" \"scripts/*.mjs\"",
+    "test:release": "python3 -m unittest discover -s scripts/release -p \"test_*.py\" -v"
+  },
+  "devDependencies": {
+    "prettier": "^3.9.6"
+  }
+}

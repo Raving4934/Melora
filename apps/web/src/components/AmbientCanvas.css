@@ -1,0 +1,173 @@
+.player-atmosphere.ambient-canvas {
+  /* 只跨过本浏览上下文的分数像素裁边，不调整 html/body/iframe 的盒子。 */
+  position: fixed;
+  inset: -2px;
+  z-index: -2;
+  overflow: hidden;
+  contain: paint;
+  isolation: isolate;
+  pointer-events: none;
+  background: #171a1e;
+}
+
+.ambient-palette-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  opacity: 0;
+  z-index: 0;
+  background: var(--ambient-base);
+}
+.ambient-palette-layer[data-role='current'] {
+  opacity: 1;
+  z-index: 1;
+}
+.ambient-palette-layer[data-role='outgoing'] {
+  /* 旧底始终不透明：不能两层一起淡出，在中点露出底色产生一次暗闪。 */
+  opacity: 1;
+}
+.ambient-palette-layer[data-role='incoming'] {
+  opacity: 1;
+  z-index: 1;
+}
+
+.ambient-canvas__wash {
+  position: absolute;
+  width: clamp(280px, 68vw, 960px);
+  height: clamp(300px, 76vh, 840px);
+  border-radius: 50%;
+  /* 渐变本身已柔化：不再创建高DPR下三张80px模糊的巨大中间纹理。 */
+  opacity: 0.76;
+  animation-duration: 34s;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+  animation-direction: alternate;
+  animation-play-state: paused;
+}
+
+.ambient-canvas__wash--primary {
+  top: -12%;
+  left: -8%;
+  background: radial-gradient(ellipse, var(--ambient-primary) 8%, transparent 72%);
+  animation-name: ambient-drift-primary;
+  animation-delay: -11s;
+}
+
+.ambient-canvas__wash--secondary {
+  top: 10%;
+  right: -10%;
+  background: radial-gradient(ellipse, var(--ambient-secondary) 8%, transparent 72%);
+  animation-name: ambient-drift-secondary;
+  animation-duration: 42s;
+  animation-delay: -19s;
+}
+
+.ambient-canvas__wash--accent {
+  bottom: -24%;
+  left: 12%;
+  background: radial-gradient(ellipse, var(--ambient-accent) 8%, transparent 72%);
+  animation-name: ambient-drift-accent;
+  animation-duration: 48s;
+  animation-delay: -7s;
+}
+
+.ambient-canvas[data-motion='running'] .ambient-canvas__wash {
+  animation-play-state: running;
+}
+/* 两槽共享漂移时钟，不能单独暂停透明槽，否则换色快照的几何会错位。 */
+
+.ambient-canvas::before,
+.ambient-canvas::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.ambient-canvas::before {
+  z-index: 2;
+  /* Android PWA 的顶部状态栏是独立、不透明的系统区域；先用同一主题色承接，
+     再渐隐到封面氛围色，避免深色播放页出现一条明显的状态栏分界。 */
+  background:
+    linear-gradient(
+      180deg,
+      #171a1e 0,
+      rgb(23 26 30 / 96%) 24px,
+      rgb(23 26 30 / 68%) 52px,
+      rgb(23 26 30 / 0%) 104px
+    ),
+    linear-gradient(115deg, rgb(18 18 25 / 3%), rgb(18 20 27 / 15%) 62%, rgb(18 20 27 / 24%)),
+    linear-gradient(0deg, rgb(18 18 25 / 22%), transparent 54%);
+}
+
+.ambient-canvas::after {
+  z-index: 3;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160' viewBox='0 0 160 160'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.84' numOctaves='3' stitchTiles='stitch' seed='7'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Cpath fill='%23fff' d='M0 0h160v160H0z' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 160px 160px;
+  background-repeat: repeat;
+}
+
+@keyframes ambient-drift-primary {
+  from {
+    transform: translate(-3%, 1%) rotate(-8deg);
+    opacity: 0.72;
+  }
+  to {
+    transform: translate(7%, 8%) rotate(6deg);
+    opacity: 0.88;
+  }
+}
+
+@keyframes ambient-drift-secondary {
+  from {
+    transform: translate(5%, 5%) rotate(9deg);
+    opacity: 0.66;
+  }
+  to {
+    transform: translate(-6%, -4%) rotate(-7deg);
+    opacity: 0.82;
+  }
+}
+
+@keyframes ambient-drift-accent {
+  from {
+    transform: translate(-4%, 3%) rotate(-5deg);
+    opacity: 0.62;
+  }
+  to {
+    transform: translate(6%, -7%) rotate(8deg);
+    opacity: 0.78;
+  }
+}
+
+@media (max-width: 640px) {
+  .ambient-canvas__wash {
+    width: min(96vw, 560px);
+    height: min(64vh, 640px);
+  }
+
+  .ambient-canvas__wash--primary {
+    top: -4%;
+    left: -10%;
+  }
+
+  .ambient-canvas__wash--secondary {
+    top: 25%;
+    right: -18%;
+  }
+
+  .ambient-canvas__wash--accent {
+    bottom: -8%;
+    left: -8%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ambient-canvas .ambient-palette-layer,
+  .ambient-canvas .ambient-canvas__wash {
+    transition: none;
+    animation: none;
+    transform: none;
+  }
+}

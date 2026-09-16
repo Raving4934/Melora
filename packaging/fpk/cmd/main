@@ -1,0 +1,5 @@
+#!/bin/bash
+set +x
+set -euo pipefail
+. "$(dirname -- "$0")/lib.sh"
+main "${1:-}"

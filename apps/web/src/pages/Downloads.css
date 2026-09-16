@@ -1,0 +1,217 @@
+/* 仅覆盖下载任务行，不改共享字号、间距或其它页面的品质展示。 */
+.download-row .download-title strong {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.download-row .download-quality {
+  display: inline-flex;
+  gap: 0.5em;
+  max-width: 100%;
+  flex-shrink: 0;
+  white-space: nowrap;
+  line-height: 1.5;
+}
+.download-row .download-requested-quality {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.download-row .download-file-format {
+  width: 5.5em;
+  flex-shrink: 0;
+}
+
+/* 解析→传输→附加信息阶段只换文本；数字和操作槽不因内容变长而重新换行。 */
+.download-row .download-state {
+  width: 9em;
+  flex-shrink: 0;
+}
+.download-row .download-bytes,
+.download-row .download-speed {
+  display: block;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.download-row .download-bytes {
+  width: 18ch;
+}
+.download-row .download-speed {
+  width: 10ch;
+}
+.download-row .download-speed[aria-hidden='true'] {
+  visibility: hidden;
+}
+.download-row > .download-actions {
+  min-width: 71px;
+  justify-content: flex-end;
+}
+.download-row .download-action-placeholder {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+}
+@media (max-width: 700px) {
+  .download-row .download-meta {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 8ch;
+    gap: 8px;
+  }
+  .download-row .download-state {
+    grid-column: 1 / -1;
+    width: auto;
+  }
+  .download-row .download-bytes {
+    min-width: 0;
+    width: auto;
+  }
+  .download-row .download-speed {
+    width: 100%;
+    text-align: right;
+  }
+  .download-row > .download-actions {
+    min-width: 44px;
+  }
+  .download-row .download-action-placeholder {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+/* 记录管理始终占同一个工具栏槽；后台刷新不卸载按钮或挪动任务列表。 */
+.download-list-heading.download-records-toolbar {
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+}
+.download-records-toolbar > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.download-records-toolbar .download-clear-trigger.button {
+  flex: 0 0 152px;
+  width: 152px;
+  max-width: 100%;
+  height: 44px;
+  gap: 6px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+.download-clear-count {
+  flex: 0 0 4ch;
+  width: 4ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+}
+.download-clear-modal.modal {
+  width: min(440px, calc(100vw - 32px));
+}
+.download-clear-total {
+  display: inline-block;
+  min-width: 3ch;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.download-clear-boundaries {
+  margin: 16px 0;
+  padding-left: 20px;
+  color: var(--text-secondary);
+  font-size: var(--font-body);
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+.download-clear-boundaries > li + li {
+  margin-top: 8px;
+}
+.download-clear-feedback {
+  height: 72px;
+  padding: 10px 12px;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  font-size: var(--font-meta);
+  line-height: 1.7;
+}
+.download-clear-feedback.has-error {
+  color: var(--danger);
+}
+.download-clear-modal .download-clear-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.download-clear-modal .download-clear-actions > .button {
+  width: 100%;
+  height: 44px;
+  padding-inline: 8px;
+}
+.download-clear-confirm > span {
+  width: 4em;
+  text-align: center;
+}
+.download-clear-modal .modal-heading .icon-button {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+}
+
+/* 附加诊断不抢占完成卡片主区；仅用户展开时增加内容，不为后台刷新重挂任务行。 */
+.download-notes {
+  min-width: 0;
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: var(--font-meta);
+  line-height: 1.7;
+}
+.download-notes > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 44px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  list-style: none;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.download-notes > summary::-webkit-details-marker {
+  display: none;
+}
+.download-notes > summary:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+.download-notes > summary > svg {
+  flex-shrink: 0;
+}
+.download-notes[open] > summary > svg {
+  transform: rotate(180deg);
+}
+.download-notes > .download-notes-content {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-subtle);
+  overflow-wrap: anywhere;
+}
+@media (hover: hover) and (pointer: fine) {
+  .download-notes > summary:hover {
+    color: var(--text-primary);
+    background: var(--surface-subtle);
+  }
+}
