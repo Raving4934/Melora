@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- debug 渠道独立包名：桌面图标名称加 Debug 以便与正式包区分 -->
+    <string name="app_name">乐屿 Debug</string>
+</resources>

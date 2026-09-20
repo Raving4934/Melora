@@ -1,0 +1,17 @@
+{
+  ".url": {
+    "melora.main": {
+      "title": "乐屿 · Melora",
+      "icon": "images/icon_{0}.png",
+      "type": "iframe",
+      "protocol": "",
+      "url": "/app/melora",
+      "allUsers": false,
+      "control": {
+        "accessPerm": "readonly"
+      },
+      "gatewayPrefix": "/app/melora",
+      "gatewaySocket": "app.sock"
+    }
+  }
+}

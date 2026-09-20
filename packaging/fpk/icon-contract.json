@@ -1,0 +1,10 @@
+{
+  "icons": {
+    "ICON.PNG": "99b1a5de5122488aee7a56c4ac9a5a612ac2423525a1c38442914da1f3c13160",
+    "ICON_256.PNG": "62881f146d6f3f22addf659527b1d15eecd5657b0e03e6f8898fb8f4006cfa01",
+    "app/ui/images/icon_256.png": "62881f146d6f3f22addf659527b1d15eecd5657b0e03e6f8898fb8f4006cfa01",
+    "app/ui/images/icon_64.png": "99b1a5de5122488aee7a56c4ac9a5a612ac2423525a1c38442914da1f3c13160"
+  },
+  "source": "apps/web/src/assets/brand/app-icon.svg",
+  "sourceSha256": "f93e5b60774be9c2a30bc4294f5519888659c52a9a48a10aaf17892e40850283"
+}

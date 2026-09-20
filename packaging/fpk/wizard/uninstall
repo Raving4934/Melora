@@ -1,0 +1,23 @@
+[
+  {
+    "stepTitle": "卸载数据处理",
+    "items": [
+      {
+        "type": "checkbox",
+        "field": "wizard_uninstall_data",
+        "label": "应用私有数据",
+        "initValue": "",
+        "options": [
+          {
+            "label": "删除乐屿数据库、配置、已导入音源和日志",
+            "value": "purge"
+          }
+        ]
+      },
+      {
+        "type": "tips",
+        "helpText": "默认保留。勾选后会删除乐屿数据库、配置、已导入音源、日志及内部恢复文件；用户音乐和已完成下载不会删除。操作不可撤销。"
+      }
+    ]
+  }
+]

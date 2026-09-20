@@ -1,0 +1,12 @@
+appname=melora
+version=@VERSION@
+display_name=乐屿 · Melora
+desc=音乐发现、个人收藏与授权音乐下载。通过飞牛统一网关在桌面内嵌窗口打开，仅允许 fnOS 管理员访问。
+platform=@PLATFORM@
+source=thirdparty
+maintainer=Melora contributors
+distributor=Melora contributors
+desktop_uidir=ui
+desktop_applaunchname=melora.main
+ctl_stop=true
+disable_authorization_path=false

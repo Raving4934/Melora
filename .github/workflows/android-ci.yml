@@ -1,0 +1,100 @@
+name: Android CI
+
+on:
+  push:
+    branches: ['**']
+    paths:
+      - 'android/**'
+      - 'scripts/release/**'
+      - '.github/workflows/android-ci.yml'
+      - '.github/workflows/android-release.yml'
+  pull_request:
+    paths:
+      - 'android/**'
+      - 'scripts/release/**'
+      - '.github/workflows/android-ci.yml'
+      - '.github/workflows/android-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CI_GRADLE_JVM_ARGS: -Xmx4G -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256m -XX:+HeapDumpOnOutOfMemoryError -XX:ActiveProcessorCount=2 -Dfile.encoding=UTF-8
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: android/tools/sdk/package-lock.json
+      - name: 校验公开仓边界
+        run: python3 -B scripts/release/verify_public_repository.py
+      - name: 校验目录 SDK 测试与打包产物一致性
+        working-directory: android/tools/sdk
+        run: |
+          npm ci --ignore-scripts
+          npm run check
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: zulu
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: |
+            android/*.gradle*
+            android/gradle.properties
+            android/gradle/*.toml
+            android/gradle/wrapper/gradle-wrapper.properties
+            android/**/build.gradle*
+      - uses: android-actions/setup-android@v3.2.2
+        with:
+          cmdline-tools-version: '16111833'
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - name: 安装项目声明的 Android SDK 与 NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-37.0' 'ndk;28.2.13676358' 'cmake;3.22.1'
+      - name: 校验 Android 发布脚本
+        run: |
+          set -euo pipefail
+          python3 -B scripts/release/test_verify_public_repository.py
+          python3 -B scripts/release/test_verify_android_apk.py
+          python3 -B scripts/release/test_licenses.py
+          python3 -B scripts/release/test_export_changelog_section.py
+          python3 -B scripts/release/test_github_api.py
+          python3 -B scripts/release/test_publish_android_release.py
+          python3 -B scripts/release/test_release_workflows.py
+      - name: 执行 Android 单元测试与 lint
+        working-directory: android
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon --build-cache --max-workers=1 \
+            -Dorg.gradle.jvmargs="$CI_GRADLE_JVM_ARGS" :app:testDebugUnitTest
+          ./gradlew --no-daemon --build-cache --max-workers=1 \
+            -Dorg.gradle.jvmargs="$CI_GRADLE_JVM_ARGS" :app:lintDebug
+      - name: 构建 Debug APK（仅 CI 验证，不用于发布）
+        working-directory: android
+        run: >-
+          ./gradlew --no-daemon --build-cache --max-workers=2
+          -Dorg.gradle.jvmargs="$CI_GRADLE_JVM_ARGS" :app:assembleDebug
+      - name: 上传短期 Debug 诊断产物
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: android-debug-${{ github.sha }}
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 3

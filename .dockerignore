@@ -1,0 +1,23 @@
+.git
+.gitignore
+.github
+node_modules
+**/node_modules
+apps/web/dist
+dist
+data
+.superpowers
+packaging/out
+deploy
+*.log
+
+# Android is built by its own workflow, never part of the Web/NAS build context.
+android
+.env
+.env.*
+**/*.jks
+**/*.keystore
+**/*.p12
+**/*.apk
+**/*.aab
+酷我直连音源.js

@@ -1,0 +1,71 @@
+Melora Source-Available & Non-Commercial License
+Version 1.0 (2026)
+
+Copyright (c) 2026 Raving4934. All rights reserved.
+
+================================================================================
+ENGLISH TERMS
+================================================================================
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to inspect,
+study, compile, run, and modify the Software for personal, non-commercial,
+and educational purposes, subject to the following conditions:
+
+1. NON-COMMERCIAL USE ONLY (禁止商用)
+   The Software, any derivative works, or compiled binaries thereof, may NOT be
+   used for any commercial purposes. This includes, but is not limited to:
+   - Selling, leasing, licensing, or charging any fees for the Software or derivative works;
+   - Embedding advertisements, paid unlock mechanisms, or premium subscriptions;
+   - Packaging the Software into commercial hardware, paid software suites, or for-profit platforms.
+
+2. INTEGRITY AND TECHNICAL NEUTRALITY COVENANT (技术中立与禁止内置源限制)
+   Melora is architected strictly as a neutral, local-first media player and
+   extensible sandbox. Any redistribution or public modification of the Software
+   is subject to the following strict covenants:
+   - Derivative works or redistributions MUST NOT embed, bundle, hardcode, or
+     pre-configure unauthorized audio stream extraction algorithms, anti-hotlinking
+     circumvention logic, or proprietary scraping scripts targeting commercial platforms;
+   - Derivative works MUST NOT be marketed, advertised, or presented as tools designed
+     specifically for copyright infringement or bypassing digital rights protections;
+   - All online media streaming must remain exclusively driven by user-imported extensions
+     under the user's independent legal responsibility.
+
+3. TRADEMARK AND ATTRIBUTION (商标与署名)
+   The names "乐屿", "Melora", associated logos, and brand assets belong exclusively
+   to the original copyright holders. This license does NOT grant any right to use
+   these names, logos, or trademarks to endorse, promote, or distribute any modified
+   derivative works without prior written consent. The above copyright notice and
+   this permission notice shall be included in all copies or substantial portions of the Software.
+
+4. NO WARRANTY AND LIMITATION OF LIABILITY (免责条款)
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+   SOFTWARE.
+
+================================================================================
+中文条款说明（以英文条款为法律准据）
+================================================================================
+
+版权所有 (c) 2026 Raving4934。保留所有权利。
+
+特此免费授予任何获得本软件及相关文档文件（统称“本软件”）副本的个人，在遵守以下条件的前提下，出于个人、非商业及技术研究学习之目的，使用、研究、编译、运行和修改本软件：
+
+1. 严格非商业用途：
+   本软件及其任何衍生作品、修改版本或预编译二进制包，严禁用于任何商业目的。包括但不限于：以任何形式进行付费销售、捆绑收费、嵌入商业广告、设立付费会员/VIP特权、或整合进任何营利性商业产品与服务中。
+
+2. 技术中立与禁止恶意内置源条款：
+   乐屿（Melora）被设计为技术中立的本地高保真播放器与开放扩展沙箱。任何针对本软件的二次修改、衍生开发或再分发，必须严格遵循以下约束：
+   - 严禁在修改版或衍生版本中内置、捆绑、硬编码任何针对第三方商业音乐平台的私有音频直链嗅探逻辑、防盗链破解算法或未授权盗版源；
+   - 严禁以“破解付费歌曲”、“盗版音乐下载”等侵权导向为噱头进行宣传、推广或分发衍生版本；
+   - 在线音频解析必须严格维持“用户本地独立导入自定义脚本”的沙箱机制，不得建立中心化盗版接口分发服务。
+
+3. 商标与署名保护：
+   “乐屿”、“Melora”及相关徽标、图形资源归原作者独家所有。未经原作者书面许可，任何人不得使用上述名称或商标为衍生修改版本背书、命名或公开宣发。所有代码副本或主要部分中必须完整保留上述版权声明及本许可协议。
+
+4. 免责声明：
+   本软件按“现状”（AS IS）提供，不包含任何明示或默示的担保（包括但不限于适销性、特定用途适用性及不侵权担保）。在任何情况下，原作者或版权持有人均不对因使用本软件或修改版本引发的任何直接、间接索赔、损害或法律责任承担任何法律义务。

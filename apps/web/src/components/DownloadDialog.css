@@ -1,0 +1,28 @@
+/* 保存方式独立分层；“内嵌”与额外文件不共用含糊的歌词/封面标签。 */
+.download-attachments.download-save-mode {
+  display: grid;
+  gap: 3px;
+}
+.download-save-mode .download-embed-option {
+  font-weight: 600;
+}
+.download-mode-note,
+.download-extra-files > span {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.download-extra-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 18px;
+  padding-top: 10px;
+}
+.download-extra-files > span {
+  flex-basis: 100%;
+}
+.download-embed-preset {
+  justify-self: start;
+  min-height: 44px;
+}

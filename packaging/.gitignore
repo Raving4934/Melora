@@ -1,0 +1,5 @@
+/.build/
+/.tools/
+/.test-*/
+/out/
+__pycache__/

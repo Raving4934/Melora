@@ -1,0 +1,19 @@
+{
+  "name": "melora-music-sdk-bundle",
+  "private": true,
+  "type": "module",
+  "description": "Builds the Apache-2.0 licensed musicSdk into a QuickJS-compatible IIFE for the Melora Android app.",
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  },
+  "dependencies": {
+    "buffer": "^6.0.3",
+    "he": "^1.2.0",
+    "pako": "^2.1.0"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test test/*.test.mjs",
+    "check": "npm test && node build.mjs --check"
+  }
+}

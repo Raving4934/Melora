@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!-- 当前发布契约仅 arm64-v8a，发布校验会拒绝其他ABI；不是ChromeOS/x86版。
+         若新增x86发行目标，须同步移除此单文件例外和调整发行校验。 -->
+    <issue id="ChromeOsAbiSupport">
+        <ignore path="build.gradle.kts" />
+    </issue>
+</lint>

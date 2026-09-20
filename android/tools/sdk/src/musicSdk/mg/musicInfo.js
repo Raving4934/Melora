@@ -1,0 +1,176 @@
+import { sizeFormate, formatPlayTime } from '../../index'
+import { createHttpFetch } from './utils'
+import { formatSingerName } from '../utils'
+
+export const normalizeImageUrl = (image) => {
+  const value = String(image ?? '').trim()
+  if (!value) return null
+  if (/^https?:\/\//i.test(value)) return value.replace(/^http:/i, 'https:')
+  if (value.startsWith('//')) return `https:${value}`
+  return `https://d.musicapp.migu.cn/${value.replace(/^\/+/, '')}`
+}
+
+const formatAudioSize = (format) => sizeFormate(format.asize ?? format.isize ?? format.size ?? format.androidSize)
+
+const createGetMusicInfosTask = (ids) => {
+  let list = ids
+  let tasks = []
+  while (list.length) {
+    tasks.push(list.slice(0, 100))
+    if (list.length < 100) break
+    list = list.slice(100)
+  }
+  let url = 'https://c.musicapp.migu.cn/MIGUM2.0/v1.0/content/resourceinfo.do?resourceType=2'
+  return Promise.all(tasks.map(task => createHttpFetch(url, {
+    method: 'POST',
+    form: {
+      resourceId: task.join('|'),
+    },
+  }).then(data => data.resource)))
+}
+
+export const filterMusicInfoList = (rawList) => {
+  // console.log(rawList)
+  let ids = new Set()
+  const list = []
+  rawList.forEach(item => {
+    if (!item.songId || ids.has(item.songId)) return
+    ids.add(item.songId)
+    const types = []
+    const _types = {}
+    item.newRateFormats?.forEach(type => {
+      let size
+      switch (type.formatType) {
+        case 'PQ':
+          size = formatAudioSize(type)
+          types.push({ type: '128k', size })
+          _types['128k'] = {
+            size,
+          }
+          break
+        case 'HQ':
+          size = formatAudioSize(type)
+          types.push({ type: '320k', size })
+          _types['320k'] = {
+            size,
+          }
+          break
+        case 'SQ':
+          size = formatAudioSize(type)
+          types.push({ type: 'flac', size })
+          _types.flac = {
+            size,
+          }
+          break
+        case 'ZQ':
+        case 'ZQ24':
+          size = formatAudioSize(type)
+          types.push({ type: 'flac24bit', size })
+          _types.flac24bit = {
+            size,
+          }
+          break
+      }
+    })
+
+    const intervalMatch = /(\d\d:\d\d)$/.exec(item.length)
+
+    list.push({
+      singer: formatSingerName(item.artists, 'name'),
+      name: item.songName,
+      albumName: item.album,
+      albumId: item.albumId,
+      songmid: item.songId,
+      copyrightId: item.copyrightId,
+      source: 'mg',
+      interval: intervalMatch ? intervalMatch[1] : null,
+      img: normalizeImageUrl(item.albumImgs?.[0]?.img),
+      lrc: null,
+      lrcUrl: item.lrcUrl,
+      mrcUrl: item.mrcUrl,
+      trcUrl: item.trcUrl,
+      otherSource: null,
+      types,
+      _types,
+      typeUrl: {},
+    })
+  })
+  return list
+}
+
+export const filterMusicInfoListV5 = (rawList) => {
+  // console.log(rawList)
+  let ids = new Set()
+  const list = []
+  rawList.forEach(item => {
+    if (!item.songId || ids.has(item.songId)) return
+    ids.add(item.songId)
+    const types = []
+    const _types = {}
+    item.audioFormats?.forEach(type => {
+      let size
+      switch (type.formatType) {
+        case 'PQ':
+          size = formatAudioSize(type)
+          types.push({ type: '128k', size })
+          _types['128k'] = {
+            size,
+          }
+          break
+        case 'HQ':
+          size = formatAudioSize(type)
+          types.push({ type: '320k', size })
+          _types['320k'] = {
+            size,
+          }
+          break
+        case 'SQ':
+          size = formatAudioSize(type)
+          types.push({ type: 'flac', size })
+          _types.flac = {
+            size,
+          }
+          break
+        case 'ZQ':
+        case 'ZQ24':
+          size = formatAudioSize(type)
+          types.push({ type: 'flac24bit', size })
+          _types.flac24bit = {
+            size,
+          }
+          break
+      }
+    })
+
+    list.push({
+      singer: formatSingerName(item.singerList, 'name'),
+      name: item.songName,
+      albumName: item.album,
+      albumId: item.albumId,
+      songmid: item.songId,
+      copyrightId: item.copyrightId,
+      source: 'mg',
+      interval: formatPlayTime(item.duration),
+      img: normalizeImageUrl(item.img3 || item.img2 || item.img1),
+      lrc: null,
+      lrcUrl: item.lrcUrl,
+      mrcUrl: item.mrcUrl,
+      trcUrl: item.trcUrl,
+      otherSource: null,
+      types,
+      _types,
+      typeUrl: {},
+    })
+  })
+  return list
+}
+
+
+export const getMusicInfo = async(copyrightId) => {
+  return getMusicInfos([copyrightId]).then(data => data[0])
+}
+
+export const getMusicInfos = async(copyrightIds) => {
+  const chunks = await createGetMusicInfosTask(copyrightIds)
+  return filterMusicInfoList(chunks.flat())
+}

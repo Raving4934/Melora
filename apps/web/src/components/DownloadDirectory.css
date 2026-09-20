@@ -1,0 +1,317 @@
+.download-directory {
+  position: relative;
+  min-width: 0;
+  padding: 13px 0 21px;
+}
+.download-directory > label {
+  display: block;
+  color: #182033;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.5;
+}
+.download-directory-description {
+  margin: 2px 0 0;
+  color: #8a9ab2;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.download-directory-inputs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.download-directory-field {
+  position: relative;
+  min-width: 0;
+}
+.download-directory-inputs input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 9px 44px 9px 13px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: #f1f4f8;
+  color: var(--text-primary);
+  font-size: var(--font-body);
+}
+.download-directory-inputs input:hover {
+  border-color: #d9e0ea;
+}
+.download-directory-inputs input:focus-visible {
+  border-color: #2563eb;
+  outline: 3px solid rgb(37 99 235 / 12%);
+  outline-offset: 0;
+}
+.download-directory-confirm {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  min-height: 36px;
+  padding: 0;
+  border-radius: 9px;
+  color: #2563eb;
+  background: transparent;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 140ms ease,
+    background 140ms ease;
+}
+.download-directory-confirm[data-visible='true'] {
+  opacity: 1;
+  pointer-events: auto;
+}
+.download-directory-confirm:hover:not(:disabled) {
+  background: #e5edff;
+}
+.download-directory-inputs > .button {
+  min-height: 44px;
+  padding-inline: 15px;
+  border-color: transparent;
+  border-radius: 9px;
+  background: #f1f4f8;
+  color: #273247;
+  font-size: 14px;
+}
+.download-directory-inputs > .button:hover:not(:disabled) {
+  background: #e8edf4;
+}
+.download-directory-feedback {
+  position: absolute;
+  right: 0;
+  bottom: 4px;
+  width: min(210px, 45%);
+  height: 18px;
+}
+.download-directory-feedback .settings-inline-feedback {
+  position: static;
+  width: 100%;
+}
+.modal.download-directory-modal {
+  width: min(540px, calc(100vw - 32px));
+}
+.download-directory-modal .icon-button {
+  width: 32px;
+  height: 32px;
+}
+.authorized-directory-browser {
+  min-width: 0;
+}
+.directory-browser-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.directory-browser-toolbar .text-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 8px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  font-size: 12.5px;
+  font-weight: 550;
+  color: #475569;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    opacity 0.15s ease;
+}
+.directory-browser-toolbar .text-button:hover:not(:disabled) {
+  background: #e2e8f0;
+  color: #0f172a;
+  border-color: #cbd5e1;
+}
+.directory-browser-toolbar .text-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.directory-browser-path {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: #334155;
+  margin: 0 0 10px;
+  min-height: 36px;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.directory-browser-status {
+  min-height: 24px;
+  margin-bottom: 12px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  overflow: auto;
+  overflow-wrap: anywhere;
+  border-radius: 8px;
+}
+.directory-browser-status.has-error {
+  padding: 8px 12px;
+  background: #fff8f5;
+  border: 1px solid #fed7aa;
+  color: #c2410c;
+  font-weight: 500;
+}
+.directory-browser-list {
+  height: 250px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fafbfc;
+}
+.directory-browser-list ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.directory-browser-list li + li {
+  border-top: 1px solid #f1f5f9;
+}
+.directory-browser-list li button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 8px 12px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  transition: background 0.15s ease;
+}
+.directory-browser-list li button:hover:not(:disabled) {
+  background: #ffffff;
+}
+.directory-item-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: var(--blue);
+  flex-shrink: 0;
+}
+.directory-browser-list li span {
+  min-width: 0;
+  flex: 1;
+}
+.directory-browser-list strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.4;
+  color: var(--text-primary);
+  font-size: 13.5px;
+  font-weight: 550;
+}
+.directory-browser-list small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.4;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+}
+.directory-item-chevron {
+  color: #cbd5e1;
+  flex-shrink: 0;
+  transition:
+    transform 0.15s ease,
+    color 0.15s ease;
+}
+.directory-browser-list li button:hover:not(:disabled) .directory-item-chevron {
+  color: var(--blue);
+  transform: translateX(2px);
+}
+.directory-browser-list > p {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 24px;
+  text-align: center;
+  font-size: 13px;
+  color: #64748b;
+  margin: 0;
+}
+.directory-browser-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #f1f5f9;
+}
+.directory-browser-footer > span {
+  color: #64748b;
+  font-size: 12.5px;
+}
+.directory-browser-footer .button {
+  height: 36px;
+  border-radius: 8px;
+  padding: 0 16px;
+  font-weight: 550;
+}
+@media (max-width: 640px) {
+  .directory-browser-footer {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+}
+
+@media (max-width: 640px) {
+  .download-directory {
+    min-height: 148px;
+    padding-bottom: 24px;
+  }
+  .download-directory-inputs {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .download-directory-inputs input {
+    font-size: 16px;
+  }
+  .download-directory-inputs > .button {
+    width: 44px;
+    padding: 0;
+    overflow: hidden;
+    color: transparent;
+    gap: 0;
+  }
+  .download-directory-inputs > .button svg {
+    color: #273247;
+  }
+  .download-directory-feedback {
+    width: 100%;
+  }
+}

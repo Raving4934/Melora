@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
+    <!-- 音乐 CDN 大量使用 HTTP 明文直链，允许全局明文流量以保障音源可用。 -->
+    <!-- 用户导入源可返回动态域名/IP 的 HTTP URL；静态域名白名单会破坏现有音源契约。
+         仍只信任系统 CA，不加入用户/任意证书信任。详见根 README 的 lint 策略。 -->
+    <base-config cleartextTrafficPermitted="true" tools:ignore="InsecureBaseConfiguration">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

@@ -1,0 +1,283 @@
+name: Android Release
+
+on:
+  push:
+    tags:
+      - 'android-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing Android tag to rebuild (for example android-v0.1.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event.deleted != true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      CI_GRADLE_JVM_ARGS: -Xmx4G -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256m -XX:+HeapDumpOnOutOfMemoryError -XX:ActiveProcessorCount=2 -Dfile.encoding=UTF-8
+      MELORA_KEYSTORE_BASE64: ${{ secrets.MELORA_KEYSTORE_BASE64 }}
+      MELORA_KEYSTORE_PASSWORD: ${{ secrets.MELORA_KEYSTORE_PASSWORD }}
+      MELORA_KEY_ALIAS: ${{ secrets.MELORA_KEY_ALIAS }}
+      MELORA_KEY_PASSWORD: ${{ secrets.MELORA_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: 校验公开全源码 baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s android/app/build.gradle.kts
+          test -s apps/server/go.mod
+          test -s apps/web/package.json
+          python3 -B scripts/release/verify_public_repository.py
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: android/tools/sdk/package-lock.json
+      - name: 校验目录 SDK 测试与打包产物一致性
+        working-directory: android/tools/sdk
+        run: |
+          npm ci --ignore-scripts
+          npm run check
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: zulu
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: |
+            android/*.gradle*
+            android/gradle.properties
+            android/gradle/*.toml
+            android/gradle/wrapper/gradle-wrapper.properties
+            android/**/build.gradle*
+      - uses: android-actions/setup-android@v3.2.2
+        with:
+          cmdline-tools-version: '16111833'
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - name: 校验 Android 标签格式
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "${RELEASE_TAG}" =~ ^android-v([0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?)$ ]]; then
+            echo "::error::Android release tag must match android-v<semver>, for example android-v0.1.0."
+            exit 1
+          fi
+          version="${BASH_REMATCH[1]}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          version_code="$(sed -nE 's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*([0-9]+).*$/\1/p' android/app/build.gradle.kts)"
+          [[ "$version_code" =~ ^[1-9][0-9]*$ ]] || { echo '::error::Missing unique Android versionCode.'; exit 1; }
+          echo "version_code=${version_code}" >> "$GITHUB_OUTPUT"
+      - name: 先行校验发布脚本（不依赖 Android CI）
+        run: |
+          set -euo pipefail
+          python3 -B scripts/release/test_verify_public_repository.py
+          python3 -B scripts/release/test_export_changelog_section.py
+          python3 -B scripts/release/test_verify_android_apk.py
+          python3 -B scripts/release/test_licenses.py
+          python3 -B scripts/release/test_github_api.py
+          python3 -B scripts/release/test_publish_android_release.py
+          python3 -B scripts/release/test_release_workflows.py
+
+      - name: 检查 Android 发布 secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ -n "${MELORA_KEYSTORE_BASE64:-}" ]] || missing+=(MELORA_KEYSTORE_BASE64)
+          [[ -n "${MELORA_KEYSTORE_PASSWORD:-}" ]] || missing+=(MELORA_KEYSTORE_PASSWORD)
+          [[ -n "${MELORA_KEY_ALIAS:-}" ]] || missing+=(MELORA_KEY_ALIAS)
+          [[ -n "${MELORA_KEY_PASSWORD:-}" ]] || missing+=(MELORA_KEY_PASSWORD)
+          if (( ${#missing[@]} > 0 )); then
+            printf '::error::Android release blocked: missing required Actions secrets: %s. Secret values are never printed.\n' "${missing[*]}"
+            exit 1
+          fi
+          if [[ "${MELORA_KEY_ALIAS,,}" == androiddebugkey || "${MELORA_KEY_ALIAS,,}" == androiddebug* ]]; then
+            echo '::error::MELORA_KEY_ALIAS points to the Android debug key; a persistent production signing alias is required.'
+            exit 1
+          fi
+      - name: 安装项目声明的 Android SDK 与 NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-37.0' 'ndk;28.2.13676358' 'cmake;3.22.1'
+      - name: 解码临时正式 keystore
+        shell: bash
+        run: |
+          set -euo pipefail
+          key_path="$RUNNER_TEMP/melora-release.keystore"
+          if ! printf '%s' "$MELORA_KEYSTORE_BASE64" | base64 --decode > "$key_path"; then
+            echo '::error::MELORA_KEYSTORE_BASE64 is not valid base64.'
+            exit 1
+          fi
+          if [[ ! -s "$key_path" ]]; then
+            echo '::error::decoded Android keystore is empty.'
+            exit 1
+          fi
+          chmod 600 "$key_path"
+          echo "MELORA_KEYSTORE_PATH=${key_path}" >> "$GITHUB_ENV"
+      - name: 执行 Android 单元测试与 Release lint
+        working-directory: android
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Debug 测试与 Release lint 会各自触发一套完整变体分析。拆分为两个
+          # 单 worker 进程，避免 GitHub Runner 在并行编译双变体时出现内存峰值。
+          ./gradlew --no-daemon --build-cache --max-workers=1 \
+            -Dorg.gradle.jvmargs="$CI_GRADLE_JVM_ARGS" :app:testDebugUnitTest
+          ./gradlew --no-daemon --build-cache --max-workers=1 \
+            -Dorg.gradle.jvmargs="$CI_GRADLE_JVM_ARGS" :app:lintRelease
+      - name: 汇总 Android 单元测试结果
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PYTEST'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          reports = list(Path("android/app/build/test-results/testDebugUnitTest").glob("TEST-*.xml"))
+          if not reports:
+              raise SystemExit("No Android unit-test XML results were produced.")
+          totals = dict(tests=0, failures=0, errors=0, skipped=0)
+          for path in reports:
+              suite = ET.parse(path).getroot()
+              for key in totals:
+                  totals[key] += int(suite.get(key, "0"))
+          print(f"Android tests: suites={len(reports)}, {totals}")
+          if not totals["tests"] or totals["failures"] or totals["errors"]:
+              raise SystemExit("Android unit-test verification failed.")
+          PYTEST
+      - name: 保留失败的测试与 lint 诊断
+        if: failure()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: android-check-failure-${{ github.run_id }}
+          path: |
+            android/app/build/test-results/testDebugUnitTest/
+            android/app/build/reports/lint-results-release.*
+          if-no-files-found: ignore
+          retention-days: 3
+      - name: 构建 R8 Release APK
+        working-directory: android
+        run: |
+          set -euo pipefail
+          rm -rf app/build/outputs/apk/release app/build/outputs/mapping/release
+          # 本地继续使用低内存默认值；GitHub Runner 的全量 R8/native 构建采用
+          # 与成熟发布链路一致的 4 GiB 有界堆和 2 个 worker。
+          ./gradlew --no-daemon --build-cache --max-workers=2 \
+            -Dorg.gradle.jvmargs="$CI_GRADLE_JVM_ARGS" :app:assembleRelease
+          test -s app/build/outputs/mapping/release/mapping.txt || {
+            echo '::error::Release R8 mapping is missing; refusing an unminified build.'
+            exit 1
+          }
+      - name: 选择 Gradle 已签署的 Release APK
+        id: apk
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t apk_files < <(find android/app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' -print | sort)
+          if (( ${#apk_files[@]} != 1 )); then
+            echo '::error::Expected exactly one signed Release APK after assembleRelease.'
+            printf 'Found %s APK files.\n' "${#apk_files[@]}"
+            printf '%s\n' "${apk_files[@]}"
+            exit 1
+          fi
+          input_apk="${apk_files[0]}"
+          if [[ "$input_apk" == *-unsigned.apk || "$input_apk" == *debug*.apk ]]; then
+            echo '::error::assembleRelease produced an unsigned or debug-named APK; CI never signs or promotes it.'
+            exit 1
+          fi
+          output_apk="$RUNNER_TEMP/melora-android-v${{ steps.version.outputs.version }}-arm64-v8a.apk"
+          cp -- "$input_apk" "$output_apk"
+          [[ -s "$output_apk" ]] || { echo '::error::Gradle release APK is empty.'; exit 1; }
+          echo "path=${output_apk}" >> "$GITHUB_OUTPUT"
+      - name: 验证签名、包名、版本与非 Debug 属性
+        id: verification
+        env:
+          MELORA_EXPECTED_VERSION: ${{ steps.version.outputs.version }}
+          MELORA_EXPECTED_VERSION_CODE: ${{ steps.version.outputs.version_code }}
+          MELORA_PACKAGE_ID: com.leyu.melora
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          export APKSIGNER="$(find "$sdk_root/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          export AAPT2="$(find "$sdk_root/build-tools" -type f -name aapt2 | sort -V | tail -n 1)"
+          verification_log="$RUNNER_TEMP/melora-android-verification.txt"
+          scripts/release/verify-android-apk.sh "${{ steps.apk.outputs.path }}" > "$verification_log"
+          cat "$verification_log"
+          certificate_digest="$(sed -nE 's/.*certificateSha256=([0-9A-Fa-f]+).*/\1/p' "$verification_log" | head -n 1)"
+          [[ "$certificate_digest" =~ ^[0-9A-Fa-f]{64}$ ]] || {
+            echo '::error::The Android verifier did not produce a certificate fingerprint.'
+            exit 1
+          }
+          echo "certificate_sha256=${certificate_digest^^}" >> "$GITHUB_OUTPUT"
+      - name: 准备公库 Release 资产
+        id: artifacts
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          artifact_dir="$RUNNER_TEMP/melora-android-artifacts"
+          mkdir -p "$artifact_dir"
+          apk_name="melora-android-v${RELEASE_VERSION}-arm64-v8a.apk"
+          checksum_name="${apk_name}.sha256"
+          cp -- "${{ steps.apk.outputs.path }}" "$artifact_dir/$apk_name"
+          (cd "$artifact_dir" && sha256sum "$apk_name" > "$checksum_name")
+          printf 'dir=%s\napk=%s\nchecksum=%s\nnotes=%s\n' \
+            "$artifact_dir" "$artifact_dir/$apk_name" "$artifact_dir/$checksum_name" \
+            "$artifact_dir/RELEASE_NOTES.md" >> "$GITHUB_OUTPUT"
+      - name: 导出已批准的 Android Release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/release/export-changelog-section.sh \
+            --version "${{ steps.version.outputs.version }}" \
+            --section '安卓客户端' \
+            --output "${{ steps.artifacts.outputs.notes }}"
+      - name: 上传短期 Android 构建诊断资产
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: android-release-build-${{ env.RELEASE_TAG }}
+          path: |
+            ${{ steps.artifacts.outputs.dir }}/*
+            android/app/build/outputs/mapping/release/mapping.txt
+          if-no-files-found: error
+          retention-days: 3
+      - name: 创建、校验并发布同仓 Android Release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 -B scripts/release/publish_android_release.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --tag "$RELEASE_TAG" \
+            --version "${{ steps.version.outputs.version }}" \
+            --apk "${{ steps.artifacts.outputs.apk }}" \
+            --checksum "${{ steps.artifacts.outputs.checksum }}" \
+            --notes "${{ steps.artifacts.outputs.notes }}" \
+            --expected-commit "$(git rev-parse HEAD)" \
+            --token-env GITHUB_TOKEN
+      - name: 清理临时 keystore
+        if: always()
+        shell: bash
+        run: rm -f -- "$RUNNER_TEMP/melora-release.keystore"

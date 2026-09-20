@@ -1,0 +1,195 @@
+name: Web / FPK / Docker Release
+
+on:
+  push:
+    tags:
+      - 'v*' # Android uses the separate android-v* channel in android-release.yml.
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FNPACK_URL: https://static2.fnnas.com/fnpack/fnpack-1.2.3-linux-amd64
+  FNPACK_SHA256: 54b97fa7b70968c4d05c79840f5daeff508957d0bb2062fdb0376d00d9615c93
+  IMAGE_NAME: ghcr.io/raving4934/melora
+
+jobs:
+  verify:
+    if: github.event.deleted != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.12.0
+          cache: npm
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.14'
+          cache-dependency-path: apps/server/go.sum
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Verify public repository boundary
+        run: python3 scripts/release/verify_public_repository.py
+      - name: Test public repository boundary rules
+        run: python3 -B scripts/release/test_verify_public_repository.py
+      - name: Test release workflow contracts
+        run: python3 -B scripts/release/test_release_workflows.py
+      - run: npm ci
+      - name: 校验标签与 package.json 版本一致
+        id: version
+        run: |
+          set -euo pipefail
+          version="$(node scripts/project-version.mjs)"
+          if [[ "${GITHUB_REF_NAME}" != "v${version}" ]]; then
+            echo "::error::标签 ${GITHUB_REF_NAME} 与 package.json 版本 v${version} 不一致，拒绝发布"
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+      - name: 执行 Go 漏洞扫描（govulncheck v1.6.0）
+        run: npm run vuln:server
+      - name: 在隔离 PID namespace 中执行发布前质量门禁
+        run: |
+          sudo /usr/bin/unshare --pid --fork --mount-proc \
+            /usr/bin/setpriv --reuid="$(id -u)" --regid="$(id -g)" --clear-groups \
+            /usr/bin/env "PATH=$PATH" "HOME=$HOME" GOTOOLCHAIN=local MELORA_UNINSTALL_TEST_NAMESPACE=1 \
+            npm run check
+      - name: 安装 Chromium
+        run: npx playwright install --with-deps chromium
+      - name: 执行端到端测试
+        run: npm run test:e2e
+      - name: 上传 Playwright 失败产物
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-playwright-report
+          path: |
+            apps/web/playwright-report/
+            apps/web/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  fpk:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.12.0
+          cache: npm
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.25.14'
+          cache-dependency-path: apps/server/go.sum
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - run: npm ci
+      - name: 构建二进制与前端资源
+        run: npm run build
+      - name: 安装官方 fnpack 并校验 SHA-256
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 -o fnpack "$FNPACK_URL"
+          echo "$FNPACK_SHA256  fnpack" | sha256sum -c -
+          sudo install -m 0755 fnpack /usr/local/bin/fnpack
+          /usr/local/bin/fnpack --help > /dev/null
+      - name: 串行打包双架构 FPK
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            FNPACK=/usr/local/bin/fnpack bash scripts/package-fpk.sh --arch "$arch"
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: fpk
+          path: |
+            packaging/out/*.fpk
+            packaging/out/*.sha256
+          if-no-files-found: error
+          retention-days: 1
+
+  image:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - name: 登录 GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: 生成镜像标签与 OCI 元数据
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.verify.outputs.version }}
+      - name: 构建并推送 amd64/arm64 镜像
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
+
+  publish:
+    needs: [verify, fpk, image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: fpk
+          path: artifacts
+      - name: 收集 Docker 部署文件
+        run: |
+          cp docker-compose.yml artifacts/docker-compose.yml
+          cp deploy/.env.example artifacts/melora.env.example
+          cp deploy/nginx.conf artifacts/nginx.conf
+      - name: 导出 Web/FPK/Docker 专属 CHANGELOG release notes
+        run: |
+          scripts/release/export-changelog-section.sh \
+            --version "${{ needs.verify.outputs.version }}" \
+            --section 'Web / NAS、FPK 与 Docker' \
+            --output artifacts/RELEASE_NOTES.md
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: |-
+            artifacts/*.fpk
+            artifacts/*.sha256
+            artifacts/docker-compose.yml
+            artifacts/melora.env.example
+            artifacts/nginx.conf
+          body_path: artifacts/RELEASE_NOTES.md
