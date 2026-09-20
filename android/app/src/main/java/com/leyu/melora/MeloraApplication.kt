@@ -17,6 +17,7 @@ import com.leyu.melora.playback.UserLibrary
 import com.leyu.melora.playback.local.LocalMediaStore
 import com.leyu.melora.playback.lx.LxScriptStore
 import com.leyu.melora.playback.sdk.LxScriptPool
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -41,17 +42,21 @@ class MeloraApplication : Application(), SingletonImageLoader.Factory {
         // 用户库、下载记录和一次性音源迁移互不依赖，并行放到 IO 线程；
         // Activity 等待统一屏障后再首次组合，避免先渲染空列表再整体闪变。
         startupScope.launch {
-            coroutineScope {
-                listOf(
-                    async { runStartupStep("用户库") { UserLibrary.init(this@MeloraApplication) } },
-                    async { runStartupStep("下载记录") { DownloadCenter.init(this@MeloraApplication) } },
-                    async { runStartupStep("本地媒体") { LocalMediaStore.init(this@MeloraApplication) } },
-                    async { runStartupStep("历史音源迁移") { removeLegacyPresetSources() } },
-                ).forEach { it.await() }
-            }
-            withContext(Dispatchers.Main.immediate) {
-                PlaybackController.init(this@MeloraApplication)
-                LxScriptPool.warmEnabled(this@MeloraApplication)
+            try {
+                coroutineScope {
+                    listOf(
+                        async { runStartupStep("用户库") { UserLibrary.init(this@MeloraApplication) } },
+                        async { runStartupStep("下载记录") { DownloadCenter.init(this@MeloraApplication) } },
+                        async { runStartupStep("本地媒体") { LocalMediaStore.init(this@MeloraApplication) } },
+                        async { runStartupStep("历史音源迁移") { removeLegacyPresetSources() } },
+                    ).forEach { it.await() }
+                }
+                withContext(Dispatchers.Main.immediate) {
+                    runStartupStep("播放控制器") { PlaybackController.init(this@MeloraApplication) }
+                    runStartupStep("音源预热") { LxScriptPool.warmEnabled(this@MeloraApplication) }
+                }
+            } finally {
+                // 任一可选模块失败都不能让 Activity 永久等待空白首屏。
                 startupReady.complete(Unit)
             }
         }
@@ -60,7 +65,13 @@ class MeloraApplication : Application(), SingletonImageLoader.Factory {
     suspend fun awaitStartup() = startupReady.await()
 
     private inline fun runStartupStep(name: String, block: () -> Unit) {
-        runCatching(block).onFailure { Log.e(TAG, "$name 初始化失败", it) }
+        try {
+            block()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            Log.e(TAG, "$name 初始化失败", error)
+        }
     }
 
     // 应用完全使用用户自行导入的音源脚本；一次性清理历史版本随包自动安装的副本。
