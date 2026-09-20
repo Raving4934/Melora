@@ -12,6 +12,7 @@ import (
 func (s *Server) registerSourceRoutes() {
 	s.mux.HandleFunc("/api/v1/sources", method(s.sourceList, "GET"))
 	s.mux.HandleFunc("/api/v1/sources/import", method(s.sourceImport, "POST"))
+	s.mux.HandleFunc("/api/v1/sources/import-url", method(s.sourceImportURL, "POST"))
 	s.mux.HandleFunc("/api/v1/sources/active", method(s.sourceActive, "PUT"))
 	s.mux.HandleFunc("/api/v1/sources/{id}", method(s.sourceByID, "PATCH", "DELETE"))
 	s.mux.HandleFunc("/api/v1/sources/{id}/check", method(s.sourceCheck, "POST"))

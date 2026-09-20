@@ -18,6 +18,7 @@ import (
 	"melora/internal/config"
 	"melora/internal/lxsource"
 	"melora/internal/model"
+	"melora/internal/netguard"
 	"melora/internal/provider"
 	"melora/internal/store"
 	"melora/internal/version"
@@ -62,6 +63,7 @@ type Server struct {
 	csrfSecret             [32]byte
 	live                   *provider.Live
 	sources                *lxsource.Manager
+	fetchSourceURL         func(context.Context, string) (netguard.PublicFetchResult, error)
 	cfg                    config.Config
 	store                  *store.Store
 	demo                   provider.Provider
@@ -97,7 +99,7 @@ func New(cfg config.Config, db *store.Store, demo provider.Provider, downloads D
 	if err := cfg.ValidateRuntimePaths(); err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, store: db, demo: demo, downloads: downloads, mux: http.NewServeMux(), auth: newSessions(cfg.AuthToken, cfg.AdminUser, cfg.AdminPassword, cfg.TrustedProxyNets), done: make(chan struct{}), logger: slog.Default()}
+	s := &Server{cfg: cfg, store: db, demo: demo, downloads: downloads, mux: http.NewServeMux(), auth: newSessions(cfg.AuthToken, cfg.AdminUser, cfg.AdminPassword, cfg.TrustedProxyNets), done: make(chan struct{}), logger: slog.Default(), fetchSourceURL: netguard.FetchPublic}
 	if _, err := rand.Read(s.csrfSecret[:]); err != nil {
 		return nil, err
 	}
