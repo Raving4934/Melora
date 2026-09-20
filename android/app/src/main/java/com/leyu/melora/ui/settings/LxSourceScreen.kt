@@ -2,6 +2,7 @@ package com.leyu.melora.ui.settings
 
 import com.leyu.melora.ui.theme.SystemBarsVisibility
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -16,13 +17,28 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Add
@@ -30,23 +46,27 @@ import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.MoreVert
-import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Upload
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,24 +74,23 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.leyu.melora.playback.MeloraSettings
-import com.leyu.melora.playback.NetworkState
-import com.leyu.melora.playback.PlaybackController
-import com.leyu.melora.playback.UiTrack
 import com.leyu.melora.playback.lx.LxScript
 import com.leyu.melora.playback.lx.LxScriptEngine
+import com.leyu.melora.playback.lx.LxSourceImporter
 import com.leyu.melora.playback.lx.LxScriptStore
 import com.leyu.melora.playback.sdk.LxScriptPool
-import com.leyu.melora.playback.sdk.OnlineRepository
 import com.leyu.melora.playback.sdk.SourceResolver
 import com.leyu.melora.ui.theme.MeloraAppearance
 import com.leyu.melora.ui.common.runCatchingCancellable
@@ -87,6 +106,12 @@ private val CardBg: Color get() = MeloraAppearance.card
 private val BrandBlue: Color get() = MeloraAppearance.brand
 private val DividerSoft: Color get() = MeloraAppearance.divider
 
+private data class SourceActionStatus(
+    val message: String,
+    val busy: Boolean = false,
+    val failed: Boolean = false,
+)
+
 // 自定义源管理：自动换源开关 + 已装音源（启停/检查/导出/删除）+ 导入导出。
 @Composable
 fun LxSourceScreen(modifier: Modifier = Modifier) {
@@ -94,12 +119,24 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
     val store = remember { LxScriptStore(context) }
     val scope = rememberCoroutineScope()
     var scripts by remember { mutableStateOf(store.list()) }
-    var status by remember { mutableStateOf("音源脚本完全由用户导入，在本地沙箱中运行。") }
+    var sourceStatuses by remember { mutableStateOf<Map<String, SourceActionStatus>>(emptyMap()) }
     var busy by remember { mutableStateOf(false) }
     var sourceOperationId by remember { mutableIntStateOf(0) }
     var pendingExport by remember { mutableStateOf<LxScript?>(null) }
+    var importChooserOpen by remember { mutableStateOf(false) }
+    var onlineImportOpen by remember { mutableStateOf(false) }
+    var onlineImportError by remember { mutableStateOf<String?>(null) }
+    val sourceImporter = remember(store) { LxSourceImporter(store) }
     val sourceAlias by MeloraSettings.sourceAliasEnabled.collectAsStateWithLifecycle()
     val autoSwitch by MeloraSettings.autoSwitchSource.collectAsStateWithLifecycle()
+
+    fun notify(message: String) {
+        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+    }
+
+    fun updateSourceStatus(scriptId: String, status: SourceActionStatus) {
+        sourceStatuses = sourceStatuses + (scriptId to status)
+    }
 
     fun reloadAllSources(message: String) {
         val operationId = ++sourceOperationId
@@ -111,11 +148,11 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
             withContext(Dispatchers.Main) {
                 if (operationId != sourceOperationId) return@withContext
                 scripts = refreshed
-                status = result.fold(
+                busy = false
+                notify(result.fold(
                     onSuccess = { "$message，已加载 $it 个音源脚本" },
                     onFailure = { "$message，但重新加载失败：${it.message ?: "未知错误"}" },
-                )
-                busy = false
+                ))
             }
         }
     }
@@ -129,53 +166,58 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
             withContext(Dispatchers.Main) {
                 if (operationId != sourceOperationId) return@withContext
                 scripts = refreshed
-                status = result.fold(
-                    onSuccess = { "$message，后台初始化完成，当前可用 $it 个音源脚本" },
+                notify(result.fold(
+                    onSuccess = { "$message，后台初始化完成" },
                     onFailure = { "$message，但后台初始化失败：${it.message ?: "未知错误"}" },
+                ))
+            }
+        }
+    }
+
+    fun completeSourceImport(imported: List<LxScript>, onSuccess: () -> Unit = {}) {
+        busy = false
+        if (imported.isEmpty()) {
+            notify("未识别到可导入的音源脚本")
+            return
+        }
+        scripts = store.list()
+        onSuccess()
+        val message = "已导入 ${imported.joinToString("、") { it.name }}"
+        refreshChangedSources(imported.mapTo(linkedSetOf()) { it.id }, message)
+    }
+
+    fun launchSourceImport(
+        import: suspend () -> List<LxScript>,
+        onSuccess: () -> Unit = {},
+        onFailure: (String) -> Unit = ::notify,
+    ) {
+        val operationId = ++sourceOperationId
+        busy = true
+        scope.launch(Dispatchers.IO) {
+            val result = runCatchingCancellable { import() }
+            withContext(Dispatchers.Main) {
+                if (operationId != sourceOperationId) return@withContext
+                result.fold(
+                    onSuccess = { imported -> completeSourceImport(imported, onSuccess) },
+                    onFailure = { error ->
+                        busy = false
+                        onFailure(error.message ?: "未知错误")
+                    },
                 )
             }
         }
     }
 
-    // 导入文件落盘后立即恢复交互，仅在后台初始化新增或覆盖的脚本。
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
-        val operationId = ++sourceOperationId
-        busy = true
-        status = "正在导入音源脚本…"
-        scope.launch(Dispatchers.IO) {
-            val result = runCatchingCancellable {
-                val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-                    ?.takeIf { it.isNotBlank() }
-                    ?: error("读取所选文件失败")
-                val displayName = context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                    val index = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                    if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
-                } ?: uri.lastPathSegment
-                val imported = importPayload(store, text, displayName)
-                imported to store.list()
-            }
-            withContext(Dispatchers.Main) {
-                if (operationId != sourceOperationId) return@withContext
-                result.fold(
-                    onSuccess = { (imported, refreshed) ->
-                        busy = false
-                        if (imported.isEmpty()) {
-                            status = "未识别到可导入的音源脚本"
-                        } else {
-                            scripts = refreshed
-                            val message = "已导入 ${imported.joinToString("、") { it.name }}"
-                            status = "$message，正在后台初始化…"
-                            refreshChangedSources(imported.mapTo(linkedSetOf()) { it.id }, message)
-                        }
-                    },
-                    onFailure = {
-                        status = it.message ?: "导入音源脚本失败"
-                        busy = false
-                    },
-                )
-            }
-        }
+        launchSourceImport(import = {
+            val displayName = context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val index = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
+            } ?: uri.lastPathSegment
+            val input = context.contentResolver.openInputStream(uri) ?: error("读取所选文件失败")
+            sourceImporter.importLocal(input, displayName)
+        })
     }
 
     val singleExporter = rememberLauncherForActivityResult(
@@ -193,7 +235,7 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
                 }.isSuccess
                 withContext(Dispatchers.Main) {
                     if (operationId != sourceOperationId) return@withContext
-                    status = if (ok) "已导出「${target.name}」" else "导出「${target.name}」失败"
+                    notify(if (ok) "已导出「${target.name}」" else "导出「${target.name}」失败")
                     pendingExport = null
                     busy = false
                 }
@@ -226,90 +268,76 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
             }.isSuccess
             withContext(Dispatchers.Main) {
                 if (operationId != sourceOperationId) return@withContext
-                status = if (ok) "已导出 ${exportedScripts.size} 个音源脚本" else "导出失败"
+                notify(if (ok) "已导出 ${exportedScripts.size} 个音源脚本" else "导出失败")
                 busy = false
             }
         }
     }
 
-    fun inspectScript(target: LxScript, resolveSample: Boolean) {
-        val operationId = ++sourceOperationId
-        busy = true
+    fun inspectScript(target: LxScript) {
+        if (sourceStatuses[target.id]?.busy == true) return
+        updateSourceStatus(target.id, SourceActionStatus("正在检查脚本…", busy = true))
         scope.launch(Dispatchers.IO) {
             val outcome = runCatchingCancellable {
                 LxScriptEngine(context).use { engine ->
-                    val inited = engine.initialize(store.code(target.id) ?: error("脚本文件不存在"), target.id, 8_000)
-                    val sources = inited?.optJSONObject("sources")
+                    val initialized = engine.initialize(
+                        code = store.code(target.id) ?: error("脚本文件不存在"),
+                        fileName = target.id,
+                        timeoutMs = 8_000,
+                    )
+                    val sources = initialized?.optJSONObject("sources")
                     val names = sources?.keys()?.asSequence()?.toList().orEmpty()
                     if (names.isEmpty()) error("脚本未声明音源")
-                    if (!resolveSample) return@use Triple(names, "", "")
-                    val sourceId = names.first()
-                    val qualitys = sources!!.optJSONObject(sourceId)?.optJSONArray("qualitys")
-                        ?.let { array -> (0 until array.length()).map { array.optString(it) } }
-                        .orEmpty()
-                    val testSong = OnlineRepository.search(context, sourceId, "晴天 周杰伦", 1, 5).list
-                        .firstOrNull { it.qualitys.isNotEmpty() } ?: error("无法获取测试歌曲")
-                    val targetQuality = qualitys.firstOrNull { it in testSong.qualitys } ?: "128k"
-                    val data = engine.request(
-                        sourceId,
-                        "musicUrl",
-                        JSONObject()
-                            .put("type", targetQuality)
-                            .put("musicInfo", testSong.raw),
-                        25_000,
-                    )
-                    val url = when (data) {
-                        is String -> data
-                        is JSONObject -> data.optString("url")
-                        else -> ""
-                    }
-                    if (url.isBlank()) error("未返回有效地址")
-                    Triple(names, sourceId, "「${testSong.name}」$targetQuality -> ${url.take(120)}")
+                    names
                 }
             }
             withContext(Dispatchers.Main) {
-                if (operationId != sourceOperationId) return@withContext
-                busy = false
-                outcome
-                    .onSuccess { (names, sourceId, detail) ->
-                        status = if (detail.isEmpty()) {
-                            "「${target.name}」声明音源：${names.joinToString("、")}"
-                        } else {
-                            "「${target.name}」$sourceId 解析成功：$detail"
-                        }
-                    }
-                    .onFailure { status = "「${target.name}」检查失败：${it.message ?: it.javaClass.simpleName}" }
+                updateSourceStatus(
+                    target.id,
+                    outcome.fold(
+                        onSuccess = { names -> SourceActionStatus("检查通过 · 支持 ${names.joinToString("、")}") },
+                        onFailure = { error ->
+                            SourceActionStatus("检查失败 · ${error.message ?: error.javaClass.simpleName}", failed = true)
+                        },
+                    ),
+                )
             }
         }
     }
 
-    fun testPipeline() {
-        if (scripts.none { it.enabled }) {
-            status = "请先开启至少一个音源脚本"
-            return
-        }
-        val operationId = ++sourceOperationId
-        busy = true
-        scope.launch {
+    fun updateLinkedSource(target: LxScript) {
+        if (sourceStatuses[target.id]?.busy == true) return
+        updateSourceStatus(target.id, SourceActionStatus("正在检查远端更新…", busy = true))
+        scope.launch(Dispatchers.IO) {
             val outcome = runCatchingCancellable {
-                val song = OnlineRepository.search(context, "kw", "晴天 周杰伦", 1, 5).list.firstOrNull()
-                    ?: error("无法获取测试歌曲")
-                SourceResolver.resolve(
-                    context = context,
-                    song = song,
-                    preferredQuality = NetworkState.playQuality(context),
-                    allowSwitch = MeloraSettings.autoSwitchSource.value,
-                    isRefresh = true,
+                val update = sourceImporter.updateFromOrigin(target)
+                val refreshError = if (update.updated) {
+                    SourceResolver.clearCache()
+                    runCatchingCancellable { LxScriptPool.refresh(context, setOf(target.id)) }.exceptionOrNull()
+                } else {
+                    null
+                }
+                Triple(update, refreshError, store.list())
+            }
+            withContext(Dispatchers.Main) {
+                outcome.fold(
+                    onSuccess = { (update, refreshError, refreshed) ->
+                        scripts = refreshed
+                        val message = when {
+                            !update.updated -> "已是最新版本"
+                            refreshError == null -> "发现更新，已下载并重新加载"
+                            else -> "已下载更新，但重新加载失败：${refreshError.message ?: "未知错误"}"
+                        }
+                        updateSourceStatus(target.id, SourceActionStatus(message, failed = refreshError != null))
+                    },
+                    onFailure = { error ->
+                        updateSourceStatus(
+                            target.id,
+                            SourceActionStatus("检查更新失败 · ${error.message ?: error.javaClass.simpleName}", failed = true),
+                        )
+                    },
                 )
             }
-            if (operationId != sourceOperationId) return@launch
-            busy = false
-            outcome
-                .onSuccess { resolved ->
-                    status = "整链路解析成功：${resolved.song.name} · ${resolved.quality}\n${resolved.url.take(120)}"
-                    PlaybackController.playTrack(context, UiTrack.fromOnline(resolved.song))
-                }
-                .onFailure { status = "整链路解析失败：${it.message ?: it.javaClass.simpleName}" }
         }
     }
 
@@ -386,56 +414,61 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
             item {
                 SettingsCard {
                     scripts.forEachIndexed { index, script ->
-                        if (index > 0) SettingsDivider()
-                        SourceRow(
-                            script = script,
-                            enabled = !busy,
-                            onToggle = { enabled ->
-                                ++sourceOperationId
-                                val enabledIds = store.setEnabled(script.id, enabled)
-                                scripts = scripts.map { item ->
-                                    item.copy(enabled = item.id in enabledIds)
-                                }
-                                SourceResolver.clearCache()
-                                status = if (enabled) "已开启「${script.name}」" else "已关闭「${script.name}」"
-                            },
-                            onInspect = { inspectScript(script, resolveSample = script.enabled) },
-                            onExport = {
-                                pendingExport = script
-                                singleExporter.launch(script.id)
-                            },
-                            onDelete = {
-                                val operationId = ++sourceOperationId
-                                val message = "已删除「${script.name}」"
-                                busy = true
-                                status = "正在删除「${script.name}」并释放对应引擎…"
-                                scope.launch(Dispatchers.IO) {
-                                    val deleteResult = runCatchingCancellable {
-                                        store.remove(script.id)
-                                        check(store.code(script.id) == null) { "脚本文件未能删除" }
-                                        SourceResolver.clearCache()
+                        key(script.id) {
+                            if (index > 0) SettingsDivider()
+                            SourceRow(
+                                script = script,
+                                enabled = !busy,
+                                actionStatus = sourceStatuses[script.id],
+                                onToggle = { enabled ->
+                                    ++sourceOperationId
+                                    val enabledIds = store.setEnabled(script.id, enabled)
+                                    scripts = scripts.map { item ->
+                                        item.copy(enabled = item.id in enabledIds)
                                     }
-                                    val refreshResult = deleteResult
-                                        .takeIf { it.isSuccess }
-                                        ?.let { runCatchingCancellable { LxScriptPool.refresh(context) } }
-                                    val refreshed = runCatchingCancellable { store.list() }.getOrNull()
-                                    withContext(Dispatchers.Main) {
-                                        if (operationId != sourceOperationId) return@withContext
-                                        refreshed?.let { scripts = it }
-                                        status = deleteResult.fold(
-                                            onSuccess = {
-                                                refreshResult?.fold(
-                                                    onSuccess = { count -> "$message，当前可用 $count 个音源脚本" },
-                                                    onFailure = { error -> "$message，但引擎刷新失败：${error.message ?: "未知错误"}" },
-                                                ) ?: "$message，当前可用脚本列表已更新"
-                                            },
-                                            onFailure = { error -> "删除「${script.name}」失败：${error.message ?: "未知错误"}" },
-                                        )
-                                        busy = false
+                                    SourceResolver.clearCache()
+                                },
+                                onInspect = { inspectScript(script) },
+                                onUpdate = if (script.originUrl != null) ({ updateLinkedSource(script) }) else null,
+                                onExport = {
+                                    pendingExport = script
+                                    singleExporter.launch(script.id)
+                                },
+                                onDelete = {
+                                    val operationId = ++sourceOperationId
+                                    val message = "已删除「${script.name}」"
+                                    busy = true
+                                    scope.launch(Dispatchers.IO) {
+                                        val deleteResult = runCatchingCancellable {
+                                            store.remove(script.id)
+                                            check(store.code(script.id) == null) { "脚本文件未能删除" }
+                                            SourceResolver.clearCache()
+                                        }
+                                        val refreshResult = deleteResult
+                                            .takeIf { it.isSuccess }
+                                            ?.let { runCatchingCancellable { LxScriptPool.refresh(context) } }
+                                        val refreshed = runCatchingCancellable { store.list() }.getOrNull()
+                                        withContext(Dispatchers.Main) {
+                                            if (operationId != sourceOperationId) return@withContext
+                                            refreshed?.let { scripts = it }
+                                            if (deleteResult.isSuccess) {
+                                                sourceStatuses = sourceStatuses - script.id
+                                            }
+                                            notify(deleteResult.fold(
+                                                onSuccess = {
+                                                    refreshResult?.fold(
+                                                        onSuccess = { "$message，音源引擎已释放" },
+                                                        onFailure = { error -> "$message，但引擎刷新失败：${error.message ?: "未知错误"}" },
+                                                    ) ?: message
+                                                },
+                                                onFailure = { error -> "删除「${script.name}」失败：${error.message ?: "未知错误"}" },
+                                            ))
+                                            busy = false
+                                        }
                                     }
-                                }
-                            },
-                        )
+                                },
+                            )
+                        }
                     }
                 }
             }
@@ -447,11 +480,11 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
                 ActionRow(
                     icon = Icons.Rounded.Add,
                     label = "导入音源脚本",
-                    subtitle = "选择本地 .js 脚本或 .json 音源合集导入",
+                    subtitle = "支持本地文件与 HTTP/HTTPS 直链导入",
                     tint = Color(0xFF1E88E5),
                     enabled = !busy,
                 ) {
-                    importer.launch(arrayOf("application/javascript", "application/json", "text/*", "*/*"))
+                    importChooserOpen = true
                 }
                 SettingsDivider()
                 ActionRow(
@@ -469,42 +502,42 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
                     tint = Color(0xFF0284C7),
                     enabled = !busy,
                 ) {
-                    status = "正在重新加载音源脚本…"
                     reloadAllSources("已重新加载音源脚本并清空解析缓存")
                 }
-                SettingsDivider()
-                ActionRow(
-                    icon = Icons.Rounded.PlayArrow,
-                    label = "测试解析并试听",
-                    subtitle = "请求首个音源进行全链路解析与播放验证",
-                    tint = Color(0xFF43A047),
-                    enabled = !busy,
-                ) { testPipeline() }
             }
         }
-
-        item { SectionCaption("状态") }
-        item { SettingsCard { StatusCard(status = status, isBusy = busy) } }
     }
-}
 
-/** 导入载荷：JSON 合集按条导入，否则视为单个音源脚本。 */
-private fun importPayload(store: LxScriptStore, text: String, fallbackName: String?): List<LxScript> {
-    val bundle = runCatchingCancellable { JSONObject(text) }.getOrNull()
-    val array = bundle?.optJSONArray("scripts")
-    if (array != null) {
-        val imported = mutableListOf<LxScript>()
-        for (index in 0 until array.length()) {
-            val node = array.optJSONObject(index) ?: continue
-            val code = node.optString("code")
-            if (code.isBlank()) continue
-            val name = node.optString("name").ifBlank { "source-$index.js" }
-            imported += store.import(name, code)
-        }
-        return imported
+    if (importChooserOpen) {
+        ImportSourceSheet(
+            onDismiss = { importChooserOpen = false },
+            onLocalFile = {
+                importChooserOpen = false
+                importer.launch(arrayOf("application/javascript", "application/json", "text/*", "*/*"))
+            },
+            onOnlineUrl = {
+                importChooserOpen = false
+                onlineImportError = null
+                onlineImportOpen = true
+            },
+        )
     }
-    val name = fallbackName?.substringAfterLast('/')?.takeIf { it.isNotBlank() } ?: "imported.js"
-    return listOf(store.import(name, text))
+    if (onlineImportOpen) {
+        OnlineSourceImportSheet(
+            busy = busy,
+            errorMessage = onlineImportError,
+            onErrorClear = { onlineImportError = null },
+            onDismiss = { if (!busy) onlineImportOpen = false },
+            onImport = { url ->
+                onlineImportError = null
+                launchSourceImport(
+                    import = { sourceImporter.importUrl(url) },
+                    onSuccess = { onlineImportOpen = false },
+                    onFailure = { onlineImportError = it },
+                )
+            },
+        )
+    }
 }
 
 @Composable
@@ -559,17 +592,333 @@ private fun SwitchRow(
     }
 }
 
+@Composable
+private fun SourceSheetDragHandle() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp, bottom = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(width = 36.dp, height = 4.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(MeloraAppearance.divider),
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SourceModalSheet(
+    onDismiss: () -> Unit,
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MeloraAppearance.canvas,
+        dragHandle = { SourceSheetDragHandle() },
+    ) {
+        SystemBarsVisibility()
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 28.dp),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(46.dp)
+                        .clip(RoundedCornerShape(13.dp))
+                        .background(BrandBlue.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        icon,
+                        contentDescription = null,
+                        tint = BrandBlue,
+                        modifier = Modifier.size(24.dp),
+                    )
+                }
+                Spacer(Modifier.width(14.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = title,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = TextMain,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = subtitle,
+                        fontSize = 12.sp,
+                        color = TextSub,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            HorizontalDivider(
+                color = DividerSoft,
+                thickness = 0.6.dp,
+                modifier = Modifier.padding(horizontal = 20.dp),
+            )
+            Spacer(Modifier.height(10.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                content = content,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ImportSourceSheet(
+    onDismiss: () -> Unit,
+    onLocalFile: () -> Unit,
+    onOnlineUrl: () -> Unit,
+) {
+    SourceModalSheet(
+        onDismiss = onDismiss,
+        icon = Icons.Outlined.FolderOpen,
+        title = "导入音源脚本",
+        subtitle = "选择从本地文件选取或从网络链接导入兼容 JS 音源",
+    ) {
+        SourceSheetAction(
+            icon = Icons.Outlined.FolderOpen,
+            iconTint = BrandBlue,
+            iconBg = BrandBlue.copy(alpha = 0.12f),
+            title = "选择本地文件",
+            subtitle = "导入设备存储中的 .js 脚本或 .json 音源合集",
+            titleColor = TextMain,
+            onClick = onLocalFile,
+        )
+        SourceSheetAction(
+            icon = Icons.Outlined.Link,
+            iconTint = Color(0xFF059669),
+            iconBg = Color(0xFF059669).copy(alpha = 0.12f),
+            title = "从链接导入",
+            subtitle = "粘贴 HTTP/HTTPS 音源脚本直链",
+            titleColor = TextMain,
+            onClick = onOnlineUrl,
+        )
+    }
+}
+
+@Composable
+private fun OnlineSourceImportSheet(
+    busy: Boolean,
+    errorMessage: String?,
+    onErrorClear: () -> Unit,
+    onDismiss: () -> Unit,
+    onImport: (String) -> Unit,
+) {
+    var url by remember { mutableStateOf("") }
+    val isCleartextHttp = url.trim().startsWith("http://", ignoreCase = true)
+    val helperMessage = errorMessage ?: if (isCleartextHttp) {
+        "HTTP 是明文连接，脚本内容可能在传输中被篡改。"
+    } else {
+        ""
+    }
+
+    SourceModalSheet(
+        onDismiss = onDismiss,
+        icon = Icons.Outlined.Link,
+        title = "从链接导入",
+        subtitle = "支持 HTTP/HTTPS 直链；HTTP 会显示明文传输警告",
+    ) {
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            color = CardBg,
+            border = if (errorMessage != null || isCleartextHttp) {
+                BorderStroke(1.dp, MeloraAppearance.accent)
+            } else {
+                MeloraAppearance.cardBorder
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(46.dp),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Outlined.Link,
+                    contentDescription = null,
+                    tint = if (errorMessage != null || isCleartextHttp) MeloraAppearance.accent else BrandBlue,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(10.dp))
+                BasicTextField(
+                    value = url,
+                    onValueChange = {
+                        url = it
+                        if (errorMessage != null) onErrorClear()
+                    },
+                    singleLine = true,
+                    enabled = !busy,
+                    textStyle = TextStyle(
+                        fontSize = 13.sp,
+                        color = TextMain,
+                        lineHeight = 18.sp,
+                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                    ),
+                    cursorBrush = SolidColor(BrandBlue),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                    modifier = Modifier.weight(1f),
+                    decorationBox = { innerTextField ->
+                        Box(contentAlignment = Alignment.CenterStart) {
+                            if (url.isEmpty()) {
+                                Text(
+                                    text = "输入或长按粘贴脚本链接 (http(s)://...)",
+                                    fontSize = 13.sp,
+                                    color = MeloraAppearance.textMuted,
+                                    lineHeight = 18.sp,
+                                    style = TextStyle(
+                                        platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                    ),
+                                )
+                            }
+                            innerTextField()
+                        }
+                    },
+                )
+                if (url.isNotEmpty()) {
+                    Spacer(Modifier.width(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(20.dp)
+                            .clip(CircleShape)
+                            .background(MeloraAppearance.softFill)
+                            .clickable {
+                                url = ""
+                                onErrorClear()
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Rounded.Close,
+                            contentDescription = "清空",
+                            tint = MeloraAppearance.textMuted,
+                            modifier = Modifier.size(13.dp),
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(4.dp))
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(20.dp)
+                .padding(horizontal = 4.dp),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            if (helperMessage.isNotBlank()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Outlined.ErrorOutline,
+                        contentDescription = null,
+                        tint = MeloraAppearance.accent,
+                        modifier = Modifier.size(13.dp),
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = helperMessage,
+                        fontSize = 11.sp,
+                        color = MeloraAppearance.accent,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(4.dp))
+
+        val canSubmit = !busy && url.trim().isNotBlank()
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(42.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Surface(
+                onClick = onDismiss,
+                enabled = !busy,
+                shape = RoundedCornerShape(12.dp),
+                color = MeloraAppearance.softFill,
+                border = MeloraAppearance.chipBorder,
+                modifier = Modifier.weight(1f).height(42.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text("取消", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = TextSub)
+                }
+            }
+            Surface(
+                onClick = { onImport(url.trim()) },
+                enabled = canSubmit,
+                shape = RoundedCornerShape(12.dp),
+                color = if (canSubmit) BrandBlue else BrandBlue.copy(alpha = 0.22f),
+                modifier = Modifier.weight(1f).height(42.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    if (busy) {
+                        CircularProgressIndicator(
+                            color = Color.White,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    } else {
+                        Text(
+                            text = if (isCleartextHttp) "仍要导入" else "立即导入",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (canSubmit) Color.White else Color.White.copy(alpha = 0.65f),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SourceRow(
     script: LxScript,
     enabled: Boolean,
+    actionStatus: SourceActionStatus?,
     onToggle: (Boolean) -> Unit,
     onInspect: () -> Unit,
+    onUpdate: (() -> Unit)?,
     onExport: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    var sheetOpen by remember { mutableStateOf(false) }
+    var sheetOpen by remember(script.id) { mutableStateOf(false) }
 
     Row(
         modifier = Modifier
@@ -592,9 +941,7 @@ private fun SourceRow(
             )
         }
         Spacer(Modifier.width(12.dp))
-        Column(
-            modifier = Modifier.weight(1f),
-        ) {
+        Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = script.name,
                 fontSize = 15.sp,
@@ -644,33 +991,20 @@ private fun SourceRow(
 
     if (sheetOpen) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val actionBusy = actionStatus?.busy == true
+        val metrics = LxScriptPool.metrics(script.id)
         ModalBottomSheet(
             onDismissRequest = { sheetOpen = false },
             sheetState = sheetState,
             containerColor = MeloraAppearance.canvas,
-            dragHandle = {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 10.dp, bottom = 6.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(width = 36.dp, height = 4.dp)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(MeloraAppearance.divider),
-                    )
-                }
-            },
+            dragHandle = { SourceSheetDragHandle() },
         ) {
             SystemBarsVisibility()
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 32.dp)
+                    .padding(bottom = 32.dp),
             ) {
-                // 音源头部卡片信息
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -720,7 +1054,9 @@ private fun SourceRow(
                         Spacer(Modifier.height(4.dp))
                         Text(
                             text = listOfNotNull(
-                                script.version.takeIf { it.isNotBlank() }?.let { if (it.startsWith("v", true)) it else "v$it" },
+                                script.version.takeIf { it.isNotBlank() }?.let {
+                                    if (it.startsWith("v", true)) it else "v$it"
+                                },
                                 script.description.takeIf { it.isNotBlank() },
                             ).joinToString(" · ").ifBlank { "本地沙箱音源脚本" },
                             fontSize = 12.sp,
@@ -731,26 +1067,49 @@ private fun SourceRow(
                     }
                 }
 
-                Spacer(Modifier.height(10.dp))
-                HorizontalDivider(color = DividerSoft, thickness = 0.6.dp, modifier = Modifier.padding(horizontal = 20.dp))
-                Spacer(Modifier.height(10.dp))
+                SourceStatusSummary(actionStatus = actionStatus, metrics = metrics)
+                Spacer(Modifier.height(12.dp))
 
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                        .padding(horizontal = 20.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     SourceSheetAction(
                         icon = Icons.Rounded.Build,
                         iconTint = Color(0xFF1E88E5),
                         iconBg = Color(0xFF1E88E5).copy(alpha = 0.10f),
                         title = "检查脚本",
-                        subtitle = "测试脚本语法及各平台音源解析可用性",
+                        subtitle = "检查脚本语法与平台能力声明",
                         titleColor = TextMain,
-                    ) {
-                        sheetOpen = false
-                        onInspect()
+                        enabled = !actionBusy,
+                        onClick = onInspect,
+                    )
+
+                    if (onUpdate != null) {
+                        SourceSheetAction(
+                            icon = Icons.Rounded.Refresh,
+                            iconTint = if (script.originUrl?.startsWith("http://", true) == true) {
+                                MeloraAppearance.accent
+                            } else {
+                                Color(0xFF0284C7)
+                            },
+                            iconBg = if (script.originUrl?.startsWith("http://", true) == true) {
+                                MeloraAppearance.tintRed
+                            } else {
+                                Color(0xFF0284C7).copy(alpha = 0.10f)
+                            },
+                            title = "检查更新",
+                            subtitle = if (script.originUrl?.startsWith("http://", true) == true) {
+                                "HTTP 明文连接，更新内容可能被篡改"
+                            } else {
+                                "发现新版本时自动替换并重新加载"
+                            },
+                            titleColor = TextMain,
+                            enabled = !actionBusy,
+                            onClick = onUpdate,
+                        )
                     }
 
                     SourceSheetAction(
@@ -760,6 +1119,7 @@ private fun SourceRow(
                         title = "导出此源",
                         subtitle = "导出为独立 .js 脚本文件到本地存储",
                         titleColor = TextMain,
+                        enabled = !actionBusy,
                     ) {
                         sheetOpen = false
                         onExport()
@@ -772,12 +1132,72 @@ private fun SourceRow(
                         title = "删除此源",
                         subtitle = "从本地沙箱完全移除此音源脚本",
                         titleColor = Color(0xFFD1606A),
+                        enabled = !actionBusy,
                     ) {
                         sheetOpen = false
                         onDelete()
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun SourceStatusSummary(
+    actionStatus: SourceActionStatus?,
+    metrics: LxScriptPool.ScriptMetrics?,
+) {
+    val statusColor = when {
+        actionStatus?.failed == true -> Color(0xFFD1606A)
+        actionStatus != null -> BrandBlue
+        else -> Color(0xFF10B981) // 绿色正常
+    }
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = CardBg,
+        border = MeloraAppearance.cardBorder,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (actionStatus?.busy == true) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(12.dp),
+                        strokeWidth = 1.6.dp,
+                        color = BrandBlue,
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(statusColor),
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = actionStatus?.message ?: "检查通过 · 脚本状态正常",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = if (actionStatus?.failed == true) statusColor else TextMain,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Text(
+                text = metrics?.let {
+                    "本次运行命中 ${it.hitCount} 次 · 平均延迟 ${it.averageLatencyMs} ms"
+                } ?: "本次运行暂无播放命中",
+                fontSize = 11.sp,
+                color = TextSub,
+                modifier = Modifier.padding(start = 15.dp),
+            )
         }
     }
 }
@@ -791,18 +1211,23 @@ private fun SourceSheetAction(
     title: String,
     subtitle: String,
     titleColor: Color,
+    enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     Surface(
         onClick = onClick,
+        enabled = enabled,
         shape = RoundedCornerShape(14.dp),
-        color = Color.Transparent,
-        modifier = Modifier.fillMaxWidth(),
+        color = CardBg,
+        border = MeloraAppearance.cardBorder,
+        modifier = Modifier
+            .fillMaxWidth()
+            .alpha(if (enabled) 1f else 0.45f),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
+                .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
@@ -897,32 +1322,6 @@ private fun ActionRow(
                 modifier = Modifier.size(18.dp),
             )
         }
-    }
-}
-
-@Composable
-private fun StatusCard(status: String, isBusy: Boolean) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.Top,
-    ) {
-        Box(
-            modifier = Modifier
-                .padding(top = 4.dp)
-                .size(8.dp)
-                .clip(CircleShape)
-                .background(if (isBusy) BrandBlue else Color(0xFF43A047)),
-        )
-        Spacer(Modifier.width(12.dp))
-        Text(
-            text = status,
-            fontSize = 12.sp,
-            color = TextSub,
-            lineHeight = 18.sp,
-            modifier = Modifier.weight(1f),
-        )
     }
 }
 

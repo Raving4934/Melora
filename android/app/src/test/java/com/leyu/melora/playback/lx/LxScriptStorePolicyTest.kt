@@ -5,6 +5,26 @@ import org.junit.Test
 
 class LxScriptStorePolicyTest {
     @Test
+    fun metadataParserProvidesOneCanonicalViewForStoreAndEngine() {
+        val metadata = parseLxScriptMetadata(
+            """
+            // @name First source
+            // @version 1.2.3
+            // @description  Test description
+            // @author Melora
+            // @homepage https://example.test/source
+            // @name Ignored duplicate
+            """.trimIndent(),
+        )
+
+        assertEquals("First source", metadata["name"])
+        assertEquals("Test description", metadata["description"])
+        assertEquals("1.2.3", metadata["version"])
+        assertEquals("Melora", metadata["author"])
+        assertEquals("https://example.test/source", metadata["homepage"])
+    }
+
+    @Test
     fun enablingOneSourceDisablesEveryOtherSource() {
         assertEquals(
             setOf("source-a.js"),

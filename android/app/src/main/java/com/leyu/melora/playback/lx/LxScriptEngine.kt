@@ -44,20 +44,8 @@ class LxScriptEngine(private val context: Context) : Closeable {
 
     fun load(code: String, fileName: String) {
         // 部分脚本在顶层读取 lx.currentScriptInfo.version，先注入脚本真实元信息再执行
-        jsContext.executeVoidScript("globalThis.lx.currentScriptInfo = ${parseMeta(code)}", null)
+        jsContext.executeVoidScript("globalThis.lx.currentScriptInfo = ${JSONObject(parseLxScriptMetadata(code))}", null)
         jsContext.executeVoidScript(code, fileName)
-    }
-
-    private fun parseMeta(code: String): String {
-        fun value(key: String): String =
-            Regex("@$key\\s+(.+)").find(code)?.groupValues?.get(1)?.trim().orEmpty()
-        return JSONObject()
-            .put("name", value("name"))
-            .put("description", value("description"))
-            .put("version", value("version"))
-            .put("author", value("author"))
-            .put("homepage", value("homepage"))
-            .toString()
     }
 
     fun inited(): JSONObject? {

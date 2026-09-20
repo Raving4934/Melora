@@ -1,6 +1,7 @@
 package com.leyu.melora.playback
 
 import com.leyu.melora.playback.lx.backupScriptId
+import com.leyu.melora.playback.lx.LxSourceUrlPolicy
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.nio.ByteBuffer
@@ -12,7 +13,12 @@ import org.json.JSONTokener
 internal const val MAX_BACKUP_BYTES = 16 * 1024 * 1024
 internal const val MAX_SCRIPT_BYTES = 4 * 1024 * 1024
 private const val MAX_ITEMS = 50_000
-internal data class BackupScript(val fileName: String, val code: String, val enabled: Boolean)
+internal data class BackupScript(
+    val fileName: String,
+    val code: String,
+    val enabled: Boolean,
+    val originUrl: String? = null,
+)
 internal data class ParsedBackup(val settings: JSONObject?, val library: String?, val scripts: List<BackupScript>?)
 
 /** 不信任provider报告的长度：实际读取计数有上限，取消检查覆盖每个块。 */
@@ -91,7 +97,18 @@ internal fun parseBackupDocument(text: String): ParsedBackup {
             require(name is String && name.isNotBlank()) { "脚本文件名无效" }
             val id = backupScriptId(name)
             require(ids.add(id)) { "备份包含重名音源: $id" }
-            BackupScript(id, code, if (script.has("enabled")) backupBoolean(script.get("enabled")) else true)
+            val originUrl = when (val origin = script.opt("originUrl")) {
+                null -> null
+                JSONObject.NULL -> null
+                is String -> LxSourceUrlPolicy.validate(origin).toString()
+                else -> error("脚本 #${index + 1} 来源链接无效")
+            }
+            BackupScript(
+                fileName = id,
+                code = code,
+                enabled = if (script.has("enabled")) backupBoolean(script.get("enabled")) else true,
+                originUrl = originUrl,
+            )
         }
     }
     return ParsedBackup(settings, library, scripts)

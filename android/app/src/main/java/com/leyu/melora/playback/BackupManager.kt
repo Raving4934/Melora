@@ -52,7 +52,12 @@ object BackupManager {
                 val root = JSONObject().put("version", 1).put("exportedAt", System.currentTimeMillis())
                     .put("settings", BackupSettings.collect()).put("library", UserLibrary.backupSnapshot())
                     .put("scripts", JSONArray().apply { scripts.forEach { script ->
-                        put(JSONObject().put("fileName", script.fileName).put("code", script.code).put("enabled", script.enabled))
+                        val item = JSONObject()
+                            .put("fileName", script.fileName)
+                            .put("code", script.code)
+                            .put("enabled", script.enabled)
+                        script.originUrl?.let { item.put("originUrl", it) }
+                        put(item)
                     } })
                 boundedBackupJson(root).also(::parseBackupDocument) to scripts.size
             }

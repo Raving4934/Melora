@@ -28,7 +28,21 @@ class BackupDocumentTest {
             JSONArray().put(JSONObject().put("code", " ")),
             JSONArray().put(JSONObject().put("code", "// source").put("enabled", JSONObject())),
             JSONArray().put(script("dir/a.js")).put(script("a.js")),
+            JSONArray().put(script("bad-origin.js").put("originUrl", "ftp://example.test/source.js")),
+            JSONArray().put(script("bad-origin-type.js").put("originUrl", JSONObject())),
         )) rejected { parseBackupDocument(JSONObject().put("scripts", scripts).toString()) }
+    }
+
+    @Test
+    fun linkedSourceOriginsRoundTripWhileLegacyBackupsRemainReadable() {
+        val linked = script("linked.js").put("originUrl", "https://example.test/source.js")
+        val parsed = parseBackupDocument(JSONObject().put("scripts", JSONArray().put(linked)).toString())
+        assertEquals("https://example.test/source.js", parsed.scripts!!.single().originUrl)
+
+        val legacy = parseBackupDocument(
+            JSONObject().put("scripts", JSONArray().put(script("legacy.js"))).toString(),
+        )
+        assertNull(legacy.scripts!!.single().originUrl)
     }
 
     @Test

@@ -56,16 +56,20 @@ class BackupRoundTripTest {
         MeloraSettings.updateLocalAutoFillInfo(true)
         UserLibrary.replaceFromBackup(library("original").toString())
         val store = LxScriptStore(context)
-        store.import("saved.js", "// original test source")
+        val originUrl = "https://example.test/saved.js"
+        store.import("saved.js", "// original test source", originUrl)
         val target = document("round-trip.json")
         assertTrue(BackupManager.export(context, target).getOrThrow().contains("备份完成"))
         val parsed = parseBackupDocument(File(target.path!!).readText())
+        val exportedScripts = requireNotNull(parsed.scripts)
         assertEquals("测试分类", parsed.settings!!.getString("playlistTagName"))
-        assertEquals("saved.js", parsed.scripts!!.single().fileName)
+        assertEquals("saved.js", exportedScripts.single().fileName)
+        assertEquals(originUrl, exportedScripts.single().originUrl)
 
         MeloraSettings.updatePlaylistTag("different", "changed")
         MeloraSettings.updateLyricBackground(false)
         UserLibrary.replaceFromBackup(library("changed").toString())
+        store.import("saved.js", "// changed test source", "https://stale.example.test/saved.js")
         store.import("other.js", "// not part of backup")
         BackupManager.import(context, target).getOrThrow()
         assertEquals("original", UserLibrary.favorites.value.single().name)
@@ -75,6 +79,8 @@ class BackupRoundTripTest {
         assertTrue(MeloraSettings.notificationLyrics.value)
         assertTrue(MeloraSettings.localAutoFillInfo.value)
         assertEquals(setOf("saved.js", "other.js"), store.list().map { it.id }.toSet())
+        assertEquals("// original test source", store.code("saved.js"))
+        assertEquals(originUrl, store.list().single { it.id == "saved.js" }.originUrl)
         val first = UserLibrary.exportSnapshot()
         val sourceFile = File(context.filesDir, "lx-sources/saved.js")
         val previousStamp = sourceFile.lastModified()
@@ -83,6 +89,28 @@ class BackupRoundTripTest {
         assertEquals(first, UserLibrary.exportSnapshot())
         assertEquals(2, store.list().size)
         assertFalse(File(context.filesDir, "backup-restore").exists())
+    }
+
+    @Test
+    fun legacyBackupClearsAStaleLinkedSourceOriginWithoutRewritingCode() = runBlocking<Unit> {
+        val store = LxScriptStore(context)
+        val code = "// legacy source"
+        store.import("legacy.js", code, "https://example.test/legacy.js")
+        val sourceFile = File(context.filesDir, "lx-sources/legacy.js")
+        val previousStamp = sourceFile.lastModified()
+        val target = document("legacy-origin.json")
+        File(target.path!!).writeText(JSONObject()
+            .put("version", 1)
+            .put("scripts", JSONArray().put(JSONObject()
+                .put("fileName", "legacy.js")
+                .put("code", code)
+                .put("enabled", false)))
+            .toString())
+
+        BackupManager.import(context, target).getOrThrow()
+
+        assertNull(store.list().single().originUrl)
+        assertEquals(previousStamp, sourceFile.lastModified())
     }
 
     @Test

@@ -67,7 +67,19 @@ object LxScriptPool {
         val timeoutMs: Long,
     )
 
-    data class ScriptResult(val requestId: String, val scriptId: String, val data: Any)
+    data class ScriptResult(
+        val requestId: String,
+        val scriptId: String,
+        val data: Any,
+        val elapsedMs: Long = 0L,
+    )
+
+    data class ScriptMetrics(val hitCount: Long, val averageLatencyMs: Long)
+
+    private class MutableMetrics {
+        val hitCount = java.util.concurrent.atomic.AtomicLong(0L)
+        val totalLatencyMs = java.util.concurrent.atomic.AtomicLong(0L)
+    }
 
     private var entries: MutableMap<String, Entry> = linkedMapOf()
     @Volatile private var scriptDisplayNames: Map<String, String> = emptyMap()
@@ -82,6 +94,7 @@ object LxScriptPool {
     }
 
     private val scriptHealth = ConcurrentHashMap<String, Health>()
+    private val scriptMetrics = ConcurrentHashMap<String, MutableMetrics>()
     private const val FAILURE_THRESHOLD = 3
     private const val BLOCK_MS = 5 * 60 * 1000L
     private const val LOAD_RETRY_DELAY_MS = 30_000L
@@ -100,6 +113,18 @@ object LxScriptPool {
             health.blockedUntil = System.currentTimeMillis() + BLOCK_MS
             Log.w(TAG, "脚本「$scriptId」连续失败已熔断 ${BLOCK_MS / 60_000} 分钟")
         }
+    }
+
+    private fun recordHit(scriptId: String, elapsedMs: Long) {
+        val metrics = scriptMetrics.getOrPut(scriptId) { MutableMetrics() }
+        metrics.hitCount.incrementAndGet()
+        metrics.totalLatencyMs.addAndGet(elapsedMs.coerceAtLeast(0L))
+    }
+
+    /** 仅统计本进程内实际胜出的播放解析，不产生额外网络请求或持久化 IO。 */
+    fun metrics(scriptId: String): ScriptMetrics? = scriptMetrics[scriptId]?.let { metrics ->
+        val hits = metrics.hitCount.get()
+        if (hits <= 0L) null else ScriptMetrics(hits, metrics.totalLatencyMs.get() / hits)
     }
 
     // 初始化互斥：并行解析调用可能同时触发加载，必须串行化避免重复重建引擎。
@@ -269,6 +294,7 @@ object LxScriptPool {
         loadFailures.clear()
         closeEntries(snapshot)
         scriptHealth.clear()
+        scriptMetrics.clear()
     }
 
     /**
@@ -291,7 +317,10 @@ object LxScriptPool {
         }
         val retireIds = (entries.keys - installed.keys) +
             changedScriptIds.intersect(installed.keys) + versionChanged
-        retireIds.forEach(loadFailures::remove)
+        retireIds.forEach { id ->
+            loadFailures.remove(id)
+            scriptMetrics.remove(id)
+        }
         val retired = retireIds.mapNotNull { entries.remove(it) }
         closeEntries(retired)
 
@@ -453,6 +482,7 @@ object LxScriptPool {
                             if (!attempted.add(entry.script.id)) return
                             requestsScope.launch(Dispatchers.IO) {
                                 try {
+                                    val startedAt = System.nanoTime()
                                     val data = requestEntry(
                                         entry = entry,
                                         source = spec.source,
@@ -461,7 +491,8 @@ object LxScriptPool {
                                         timeoutMs = spec.timeoutMs,
                                     )
                                     currentCoroutineContext().ensureActive()
-                                    val result = ScriptResult(spec.requestId, entry.script.id, data)
+                                    val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L
+                                    val result = ScriptResult(spec.requestId, entry.script.id, data, elapsedMs)
                                     if (SourceResolver.extractUrl(data) != null) healthy.add(entry.script.id)
                                     if (accept(result)) results.trySend(result)
                                 } catch (cancelled: CancellationException) {
@@ -489,6 +520,7 @@ object LxScriptPool {
         try {
             withTimeoutOrNull(timeoutMs) { results.receiveCatching().getOrNull() }.also { winner ->
                 healthy.forEach(::markSuccess)
+                winner?.let { recordHit(it.scriptId, it.elapsedMs) }
                 if (winner == null) (attempted - healthy).forEach(::markFailure)
             }
         } finally {
