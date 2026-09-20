@@ -1,6 +1,6 @@
 services:
   melora:
-    image: ghcr.io/raving4934/melora:${MELORA_IMAGE_TAG:-0.1.0}
+    image: ghcr.io/raving4934/melora:${MELORA_IMAGE_TAG:-0.1.1}
     pull_policy: always
     container_name: melora
     restart: unless-stopped

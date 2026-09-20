@@ -6,7 +6,7 @@
 
 自托管音乐流媒体服务与独立 Android 本地音乐播放器
 
-[![Release](https://img.shields.io/badge/Release-v0.1.0-3567e8?style=flat-square)](https://github.com/Raving4934/Melora/releases)
+[![Release](https://img.shields.io/badge/Release-v0.1.1-3567e8?style=flat-square)](https://github.com/Raving4934/Melora/releases)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=flat-square&logo=android&logoColor=white)](https://github.com/Raving4934/Melora/releases)
 [![Platform](https://img.shields.io/badge/Platform-Android%20%7C%20Web%20%7C%20Docker%20%7C%20fnOS-blue?style=flat-square)](packaging/fpk)
 [![Architecture](https://img.shields.io/badge/Design-Neutral%20Architecture-059669?style=flat-square)](DISCLAIMER.md)
@@ -82,7 +82,7 @@
 4. **演示模式说明**：
    - 演示模式需显式配置环境变量 `MELORA_DEMO_MODE=1` 开启，未配置音源不会自动切换为演示模式。
 5. **发布通道与升级说明**：
-   - Android 与 Web/NAS 使用独立版本标签；当前 Android 基准为 `android-v0.1.1`，Web/NAS 基准仍为 `v0.1.0`；
+   - Android 与 Web/NAS 使用独立版本标签；当前 Android 基准为 `android-v0.1.1`，Web/NAS 基准为 `v0.1.1`；
    - Android 正式签名保持不变，`versionCode` 已升至 `7`。可直接覆盖安装新版 APK，无需卸载或清空数据。
 
 ---
@@ -102,8 +102,8 @@
 #### 方案 A：飞牛私有云 (fnOS) 一键安装（推荐）
 
 1. 前往 [GitHub Releases](https://github.com/Raving4934/Melora/releases) 下载对应架构的安装包：
-   - x86-64 设备：`melora-0.1.0-linux-amd64.fpk`
-   - ARM64 设备：`melora-0.1.0-linux-arm64.fpk`
+   - x86-64 设备：`melora-0.1.1-linux-amd64.fpk`
+   - ARM64 设备：`melora-0.1.1-linux-arm64.fpk`
 2. 打开飞牛桌面端，进入 **应用中心** → **手动安装**，上传 `.fpk` 文件完成安装。
 
 #### 方案 B：Docker Compose 部署

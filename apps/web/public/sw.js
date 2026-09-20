@@ -1,4 +1,4 @@
-const CACHE_NAME = 'melora-shell-v0.1.0'
+const CACHE_NAME = 'melora-shell-v0.1.1'
 const CACHE_PREFIX = 'melora-shell-v'
 const scopeURL = new URL(self.registration.scope)
 const shellURL = new URL('./', scopeURL).href
