@@ -30,6 +30,7 @@ import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -74,7 +75,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -1165,20 +1165,28 @@ private fun SourceStatusSummary(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (actionStatus?.busy == true) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(12.dp),
-                        strokeWidth = 1.6.dp,
-                        color = BrandBlue,
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .size(7.dp)
-                            .clip(CircleShape)
-                            .background(statusColor),
-                    )
+            Row(
+                modifier = Modifier.heightIn(min = 32.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier.size(12.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (actionStatus?.busy == true) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(12.dp),
+                            strokeWidth = 1.6.dp,
+                            color = BrandBlue,
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .clip(CircleShape)
+                                .background(statusColor),
+                        )
+                    }
                 }
                 Spacer(Modifier.width(8.dp))
                 Text(
@@ -1220,9 +1228,7 @@ private fun SourceSheetAction(
         shape = RoundedCornerShape(14.dp),
         color = CardBg,
         border = MeloraAppearance.cardBorder,
-        modifier = Modifier
-            .fillMaxWidth()
-            .alpha(if (enabled) 1f else 0.45f),
+        modifier = Modifier.fillMaxWidth(),
     ) {
         Row(
             modifier = Modifier
