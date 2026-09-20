@@ -1,5 +1,15 @@
 import { useState, type FormEvent } from 'react'
-import { Check, FileCode2, LoaderCircle, Plus, RefreshCw, Download, Trash2 } from 'lucide-react'
+import {
+  Check,
+  ClipboardPaste,
+  Download,
+  FileCode2,
+  Link2,
+  LoaderCircle,
+  Plus,
+  RefreshCw,
+  Trash2,
+} from 'lucide-react'
 import { api, idPath, invalidate, send, useAPI } from '../lib/api'
 import type { LXSource, SourcesState } from '../lib/source-types'
 export type { LXSource, SourcesState } from '../lib/source-types'
@@ -272,32 +282,54 @@ export function SourcesPanel() {
   )
 }
 
+type SourceImportMode = 'file' | 'url'
+
 function ImportSource({ onClose }: { onClose: () => void }) {
+  const [mode, setMode] = useState<SourceImportMode>('file')
   const [file, setFile] = useState<File | null>(null)
+  const [url, setURL] = useState('')
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
+
   const submit = async (event: FormEvent) => {
     event.preventDefault()
-    if (!file || pending) return
-    if (!file.name.toLowerCase().endsWith('.js') || file.size > 512 * 1024) {
+    if (pending) return
+    const sourceURL = url.trim()
+    if (mode === 'file' && (!file || !file.name.toLowerCase().endsWith('.js') || file.size > 512 * 1024)) {
       setError('请选择不超过 512 KiB 的 .js 文件')
       return
+    }
+    if (mode === 'url') {
+      try {
+        const parsed = new URL(sourceURL)
+        if (
+          !['http:', 'https:'].includes(parsed.protocol) ||
+          parsed.username ||
+          parsed.password ||
+          parsed.hash
+        )
+          throw new Error()
+      } catch {
+        setError('请输入不含凭据或片段的公网 HTTP/HTTPS 音源链接')
+        return
+      }
     }
     setPending(true)
     setError('')
     try {
-      const form = new FormData()
-      form.append('file', file)
-      const source = await api<LXSource>('/sources/import', {
-        method: 'POST',
-        body: form,
-        signal: AbortSignal.timeout(20_000),
-      })
+      const source =
+        mode === 'file'
+          ? await importLocalSource(file!)
+          : await api<LXSource>('/sources/import-url', {
+              method: 'POST',
+              body: JSON.stringify({ url: sourceURL }),
+              signal: AbortSignal.timeout(20_000),
+            })
       await refreshSources()
       notify(
         source.status === 'ready'
           ? `已导入 ${source.name}`
-          : `文件已导入，但初始化未通过：${source.error || '请重新检查'}`,
+          : `${mode === 'file' ? '文件' : '链接'}已导入，但初始化未通过：${source.error || '请重新检查'}`,
         source.status === 'ready' ? 'success' : 'info',
       )
       onClose()
@@ -307,6 +339,23 @@ function ImportSource({ onClose }: { onClose: () => void }) {
       setPending(false)
     }
   }
+
+  const httpWarning = mode === 'url' && isHTTPSourceURL(url)
+
+  const pasteURL = async () => {
+    if (pending) return
+    try {
+      const clipboard = navigator.clipboard
+      if (!clipboard) throw new Error()
+      const value = (await clipboard.readText()).trim()
+      if (!value) throw new Error()
+      setURL(value)
+      setError('')
+    } catch {
+      setError('无法读取剪贴板，请手动粘贴链接')
+    }
+  }
+
   return (
     <Modal className="settings-source-modal" title="导入 LX 音源" onClose={() => !pending && onClose()}>
       <form
@@ -314,25 +363,95 @@ function ImportSource({ onClose }: { onClose: () => void }) {
           void submit(event)
         }}
       >
-        <p className="modal-description">仅导入可信的 LX .js 文件。</p>
-        <label className="source-file-input">
-          <div className="source-file-icon-plate">
-            <FileCode2 size={24} />
-          </div>
-          <strong>{file?.name || '选择 .js 音源文件'}</strong>
-          <span>最大 512 KiB</span>
-          <input
-            aria-label="LX音源文件"
-            type="file"
-            title=""
-            accept=".js,application/javascript,text/javascript"
+        <p className="modal-description">仅导入可信的 LX .js 文件或 HTTP/HTTPS 直链。</p>
+        <div className="source-import-modes" role="tablist" aria-label="导入方式">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === 'file'}
+            className={mode === 'file' ? 'active' : ''}
             disabled={pending}
-            onChange={(event) => {
-              setFile(event.target.files?.[0] || null)
+            onClick={() => {
+              setMode('file')
               setError('')
             }}
-          />
-        </label>
+          >
+            本地文件
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === 'url'}
+            className={mode === 'url' ? 'active' : ''}
+            disabled={pending}
+            onClick={() => {
+              setMode('url')
+              setError('')
+            }}
+          >
+            在线链接
+          </button>
+        </div>
+        <div className="source-import-panel">
+          {mode === 'file' ? (
+            <label className="source-file-input">
+              <div className="source-file-icon-plate">
+                <FileCode2 size={24} />
+              </div>
+              <strong>{file?.name || '选择 .js 音源文件'}</strong>
+              <span>最大 512 KiB</span>
+              <input
+                aria-label="LX音源文件"
+                type="file"
+                title=""
+                accept=".js,application/javascript,text/javascript"
+                disabled={pending}
+                onChange={(event) => {
+                  setFile(event.target.files?.[0] || null)
+                  setError('')
+                }}
+              />
+            </label>
+          ) : (
+            <div className="source-url-panel">
+              <div className="source-url-row">
+                <Link2 size={20} aria-hidden="true" />
+                <input
+                  aria-label="LX音源链接"
+                  className="source-url-input"
+                  type="url"
+                  inputMode="url"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="粘贴 HTTP/HTTPS 音源链接"
+                  value={url}
+                  disabled={pending}
+                  onChange={(event) => {
+                    setURL(event.target.value)
+                    setError('')
+                  }}
+                />
+                <button
+                  type="button"
+                  className="source-url-paste"
+                  disabled={pending}
+                  onClick={() => void pasteURL()}
+                >
+                  <ClipboardPaste size={15} />
+                  粘贴
+                </button>
+              </div>
+              <span>支持公网 HTTP/HTTPS；GitHub 请使用 Raw 原始文件链接</span>
+              <span
+                className={`source-url-warning${httpWarning ? '' : ' is-hidden'}`}
+                role="note"
+                aria-hidden={!httpWarning}
+              >
+                HTTP 明文传输风险：内容可能被窃听或篡改，请确认来源可信。
+              </span>
+            </div>
+          )}
+        </div>
         <p className="form-feedback" role={error ? 'alert' : undefined}>
           {error || '\u00a0'}
         </p>
@@ -340,11 +459,33 @@ function ImportSource({ onClose }: { onClose: () => void }) {
           <button type="button" className="button secondary" disabled={pending} onClick={onClose}>
             取消
           </button>
-          <button className="button primary fixed-action" type="submit" disabled={!file || pending}>
+          <button
+            className="button primary fixed-action"
+            type="submit"
+            disabled={pending || (mode === 'file' ? !file : !url.trim())}
+          >
             {pending ? <LoaderCircle size={15} className="spin" /> : <Plus size={15} />}导入并检查
           </button>
         </div>
       </form>
     </Modal>
   )
+}
+
+async function importLocalSource(file: File): Promise<LXSource> {
+  const form = new FormData()
+  form.append('file', file)
+  return api<LXSource>('/sources/import', {
+    method: 'POST',
+    body: form,
+    signal: AbortSignal.timeout(20_000),
+  })
+}
+
+function isHTTPSourceURL(raw: string) {
+  try {
+    return new URL(raw.trim()).protocol === 'http:'
+  } catch {
+    return false
+  }
 }
