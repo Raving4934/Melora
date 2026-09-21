@@ -44,6 +44,8 @@ import com.leyu.melora.playback.sdk.OnlinePlaylist
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.ui.common.*
 import com.leyu.melora.ui.discover.WatermarkGradientCard
+import com.leyu.melora.ui.search.SearchCategory
+import com.leyu.melora.ui.search.SearchScreen
 import com.leyu.melora.ui.theme.MeloraAppearance
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -65,11 +67,16 @@ private val Shortcuts = listOf(
     Shortcut("15", "畅销榜", Icons.AutoMirrored.Outlined.TrendingUp, listOf(Color(0xFFFF6456), Color(0xFFFF5252))),
 )
 
+private sealed interface BookDetail {
+    data class Album(val playlist: OnlinePlaylist) : BookDetail
+    class Search : BookDetail
+}
+
 @Composable
 fun AudiobooksScreen(
     modifier: Modifier = Modifier,
     scrollToTopRequest: Int = 0,
-    primaryHeader: @Composable () -> Unit = {},
+    primaryHeader: @Composable (onSearch: () -> Unit) -> Unit = {},
 ) {
     val context = LocalContext.current
     val pullEnabled by MeloraSettings.pullToRefresh.collectAsStateWithLifecycle()
@@ -78,7 +85,7 @@ fun AudiobooksScreen(
         mutableStateOf(OnlineCache.peek<List<KwBookApi.BookRankTab>>("book.ranks")?.takeIf { it.isNotEmpty() } ?: DefaultRanks)
     }
     var rankPage by remember { mutableStateOf<KwBookApi.BookRankTab?>(null) }
-    var openedPlaylist by remember { mutableStateOf<OnlinePlaylist?>(null) }
+    var detail by remember { mutableStateOf<BookDetail?>(null) }
     val recentChapter = remember(recentSongs) { recentSongs.firstOrNull(OnlineSong::isBookChapter) }
     val recentPlaylist = remember(recentChapter) { recentChapter?.asPlaylist() }
 
@@ -89,15 +96,35 @@ fun AudiobooksScreen(
         }
     }
     DetailPageHost(
-        target = openedPlaylist,
+        target = detail,
         modifier = modifier,
-        contentKey = { playlist -> "book:${playlist.source}:${playlist.id}" },
-        detail = { playlist ->
-            PlaylistDetailContent(
-                playlist = playlist,
-                onBack = { openedPlaylist = null },
-                emptyHint = "该有声专辑暂无可播放音频",
-            )
+        contentKey = { page ->
+            when (page) {
+                is BookDetail.Album -> "book:${page.playlist.source}:${page.playlist.id}"
+                is BookDetail.Search -> page
+            }
+        },
+        detail = { page ->
+            when (page) {
+                is BookDetail.Album -> PlaylistDetailContent(
+                    playlist = page.playlist,
+                    onBack = { detail = null },
+                    emptyHint = "该有声专辑暂无可播放音频",
+                )
+                is BookDetail.Search -> {
+                    BackHandler { detail = null }
+                    var category by remember { mutableStateOf(SearchCategory.Audiobook) }
+                    SearchScreen(
+                        category = category,
+                        onCategoryChange = { category = it },
+                        navigationIcon = {
+                            IconButton(onClick = { detail = null }) {
+                                Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回听书", tint = TextMain)
+                            }
+                        },
+                    )
+                }
+            }
         },
     ) {
         DetailPageHost(
@@ -105,7 +132,7 @@ fun AudiobooksScreen(
             modifier = Modifier.fillMaxSize(),
             contentKey = { it.id },
             detail = { rank ->
-                RankPage(rank, onBack = { rankPage = null }, onOpen = { openedPlaylist = it })
+                RankPage(rank, onBack = { rankPage = null }, onOpen = { detail = BookDetail.Album(it) })
             },
         ) {
             // 首页始终展示热播榜；打开其他榜单不能换掉仍参与过渡的首页数据。
@@ -115,8 +142,8 @@ fun AudiobooksScreen(
                 tagId = homeTab.tags.first().id,
                 scrollToTopRequest = scrollToTopRequest,
                 pullEnabled = pullEnabled,
-                primaryHeader = { primaryHeader() },
-                onOpen = { openedPlaylist = it },
+                primaryHeader = { primaryHeader { detail = BookDetail.Search() } },
+                onOpen = { detail = BookDetail.Album(it) },
             ) { count ->
                 item("bento") {
                     BookBento(
@@ -125,7 +152,7 @@ fun AudiobooksScreen(
                         ranks = ranks,
                         onRecent = {
                             if (recentPlaylist == null) PlaybackController.postMessage(context, "暂无最近收听记录")
-                            else openedPlaylist = recentPlaylist
+                            else detail = BookDetail.Album(recentPlaylist)
                         },
                         onRecentPlay = { recentPlaylist?.let { playOnlinePlaylist(context, it) } },
                         onRank = { id -> rankPage = ranks.firstOrNull { it.id == id } ?: DefaultRanks.first { it.id == id } },

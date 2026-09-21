@@ -7,10 +7,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Menu
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -27,7 +23,7 @@ internal val SearchTopBarHeight = 64.dp
 // 精致顶栏：左侧 ☰ + 大标题"搜索"，右侧与标题同基准线的轻量文本 Tab（钴蓝高亮 + 底部微弧指示条）
 @Composable
 fun SearchTopBar(
-    onOpenDrawer: () -> Unit,
+    navigationIcon: @Composable () -> Unit,
     selectedCategory: SearchCategory,
     onCategoryChange: (SearchCategory) -> Unit,
     onTitleClick: () -> Unit,
@@ -39,9 +35,7 @@ fun SearchTopBar(
             .padding(start = 4.dp, end = 18.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = onOpenDrawer) {
-            Icon(Icons.Rounded.Menu, contentDescription = "打开侧栏", tint = TextMain)
-        }
+        navigationIcon()
         Box(
             modifier = Modifier
                 .weight(1f)

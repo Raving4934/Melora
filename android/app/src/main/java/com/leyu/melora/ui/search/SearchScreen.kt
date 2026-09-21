@@ -60,7 +60,7 @@ internal fun searchExpectedTopBarHeight(suggestionsVisible: Boolean) =
 fun SearchScreen(
     category: SearchCategory,
     onCategoryChange: (SearchCategory) -> Unit,
-    onOpenDrawer: () -> Unit,
+    navigationIcon: @Composable () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -378,7 +378,7 @@ fun SearchScreen(
                             .background(chromeHeaderColor()),
                     ) {
                         SearchTopBar(
-                            onOpenDrawer = onOpenDrawer,
+                            navigationIcon = navigationIcon,
                             selectedCategory = category,
                             onCategoryChange = onCategoryChange,
                             onTitleClick = scrollToTop,

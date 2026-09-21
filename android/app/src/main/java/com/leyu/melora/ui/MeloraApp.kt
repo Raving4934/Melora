@@ -182,7 +182,7 @@ private val tabs = listOf(
 )
 
 internal enum class DiscoverCatalog(val tab: Int) {
-    Playlists(3), Leaderboards(1);
+    Playlists(3), Leaderboards(1), Audiobooks(4);
 
     companion object {
         fun fromTab(tab: Int): DiscoverCatalog? = entries.firstOrNull { it.tab == tab }
@@ -315,7 +315,6 @@ fun MeloraApp(initialTab: Int = 5) {
     // 侧栏跳转设置主菜单；设置页的“关于乐屿”仍从设置内部进入。
     var settingsNavTarget by remember { mutableStateOf<SettingsSubPage?>(null) }
     var settingsNavSeq by remember { mutableIntStateOf(0) }
-    var searchReturnTab by remember { mutableStateOf<Int?>(null) }
     var primaryScrollToTopRequest by remember { mutableIntStateOf(0) }
     fun navigateToTab(target: Int) {
         val next = target.coerceIn(0, tabs.lastIndex)
@@ -383,15 +382,6 @@ fun MeloraApp(initialTab: Int = 5) {
     // 记住停留页面：下次启动回到上次的 Tab（搜索/发现/歌单…）
     androidx.compose.runtime.LaunchedEffect(currentTab) {
         MeloraSettings.updateLastTab(currentTab)
-    }
-
-    // 从听书页进入搜索时，系统返回回到听书页；搜索结果详情仍由详情页自己的返回处理。
-    BackHandler(
-        enabled = currentTab == 0 && searchReturnTab != null &&
-            !drawerOpen,
-    ) {
-        navigateToTab(searchReturnTab ?: 4)
-        searchReturnTab = null
     }
 
     // 侧栏打开时的系统返回拦截
@@ -476,7 +466,6 @@ fun MeloraApp(initialTab: Int = 5) {
                                 item = item,
                                 selected = currentTab == index,
                                 onClick = {
-                                    searchReturnTab = null
                                     if (index == 7) {
                                         settingsNavTarget = null
                                         settingsNavSeq++
@@ -557,33 +546,25 @@ fun MeloraApp(initialTab: Int = 5) {
                         Box(Modifier.fillMaxSize().onGloballyPositioned {
                             if (pendingDrawerTab == visibleTab && currentTab == visibleTab) closeDrawer()
                         }) {
+                        val menuIcon: @Composable () -> Unit = {
+                            IconButton(onClick = {
+                                scope.launch {
+                                    drawerOffset.animateTo(if (drawerOffset.value > 10f) 0f else drawerWidthPx, drawerSpring)
+                                }
+                            }) { Icon(Icons.Rounded.Menu, contentDescription = "打开侧栏", tint = TextDark) }
+                        }
                         val primaryHeader: @Composable () -> Unit = {
                             MainPageHeader(
                                 tab = visibleTab,
                                 onTitleClick = { primaryScrollToTopRequest++ },
-                                onSearch = {
-                                    searchCategory = SearchCategory.Audiobook
-                                    searchReturnTab = 4
-                                    navigateToTab(0)
-                                },
-                                navigationIcon = {
-                                    IconButton(onClick = {
-                                        scope.launch {
-                                            drawerOffset.animateTo(if (drawerOffset.value > 10f) 0f else drawerWidthPx, drawerSpring)
-                                        }
-                                    }) {
-                                        Icon(Icons.Rounded.Menu, contentDescription = "打开侧栏", tint = TextDark)
-                                    }
-                                },
+                                navigationIcon = menuIcon,
                             )
                         }
                         when (visibleTab) {
                             0 -> SearchScreen(
                                 category = searchCategory,
                                 onCategoryChange = { searchCategory = it },
-                                onOpenDrawer = {
-                                    scope.launch { drawerOffset.animateTo(drawerWidthPx, drawerSpring) }
-                                },
+                                navigationIcon = menuIcon,
                             )
                             1 -> LeaderboardScreen(primaryHeader = primaryHeader, scrollToTopRequest = primaryScrollToTopRequest)
                             2 -> {
@@ -594,20 +575,27 @@ fun MeloraApp(initialTab: Int = 5) {
                                         // 先登记目录层返回，内部歌单详情和平台选择仍优先消费Back。
                                         PageBackHandler { catalog = null }
                                         var scrollRequest by remember { mutableIntStateOf(0) }
+                                        val backIcon: @Composable () -> Unit = {
+                                            IconButton(onClick = { catalog = null }) {
+                                                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回发现", tint = TextDark)
+                                            }
+                                        }
                                         val header: @Composable () -> Unit = {
                                             MainPageHeader(
                                                 tab = destination.tab,
                                                 onTitleClick = { scrollRequest++ },
-                                                navigationIcon = {
-                                                    IconButton(onClick = { catalog = null }) {
-                                                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回发现", tint = TextDark)
-                                                    }
-                                                },
+                                                navigationIcon = backIcon,
                                             )
                                         }
                                         when (destination) {
                                             DiscoverCatalog.Playlists -> PlaylistsScreen(primaryHeader = header, scrollToTopRequest = scrollRequest)
                                             DiscoverCatalog.Leaderboards -> LeaderboardScreen(primaryHeader = header, scrollToTopRequest = scrollRequest)
+                                            DiscoverCatalog.Audiobooks -> AudiobooksScreen(
+                                                scrollToTopRequest = scrollRequest,
+                                                primaryHeader = { onSearch ->
+                                                    MainPageHeader(4, { scrollRequest++ }, backIcon, onSearch)
+                                                },
+                                            )
                                         }
                                     },
                                 ) {
@@ -622,7 +610,12 @@ fun MeloraApp(initialTab: Int = 5) {
                                 }
                             }
                             3 -> PlaylistsScreen(primaryHeader = primaryHeader, scrollToTopRequest = primaryScrollToTopRequest)
-                            4 -> AudiobooksScreen(primaryHeader = primaryHeader, scrollToTopRequest = primaryScrollToTopRequest)
+                            4 -> AudiobooksScreen(
+                                scrollToTopRequest = primaryScrollToTopRequest,
+                                primaryHeader = { onSearch ->
+                                    MainPageHeader(4, { primaryScrollToTopRequest++ }, menuIcon, onSearch)
+                                },
+                            )
                             5 -> LocalSongsPage(
                                 onOpenDrawer = {
                                     scope.launch { drawerOffset.animateTo(drawerWidthPx, drawerSpring) }
