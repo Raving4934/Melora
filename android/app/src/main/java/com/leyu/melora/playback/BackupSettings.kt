@@ -2,6 +2,7 @@ package com.leyu.melora.playback
 
 import android.annotation.SuppressLint
 import android.content.SharedPreferences
+import com.leyu.melora.playback.local.LocalSortField
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
@@ -61,6 +62,8 @@ internal object BackupSettings {
         field("localExcludeShort", MeloraSettings.KEY_LOCAL_EXCLUDE_SHORT, MeloraSettings.localExcludeShort, ::backupBoolean),
         field("localExcludeSmall", MeloraSettings.KEY_LOCAL_EXCLUDE_SMALL, MeloraSettings.localExcludeSmall, ::backupBoolean),
         field("localAutoFillInfo", MeloraSettings.KEY_LOCAL_AUTO_FILL, MeloraSettings.localAutoFillInfo, ::backupBoolean),
+        field("localSortField", MeloraSettings.KEY_LOCAL_SORT_FIELD, MeloraSettings.localSortField, { LocalSortField.restore(it as? String) }, LocalSortField::storageValue),
+        field("localSortAscending", MeloraSettings.KEY_LOCAL_SORT_ASCENDING, MeloraSettings.localSortAscending, ::backupBoolean),
         field("showDesktopLyrics", MeloraSettings.KEY_DESKTOP_LYRICS, MeloraSettings.showDesktopLyrics, ::backupBoolean),
         field("lockLyrics", MeloraSettings.KEY_LYRICS_LOCK, MeloraSettings.lockLyrics, ::backupBoolean),
         field("lyricAnim", MeloraSettings.KEY_LYRICS_ANIM, MeloraSettings.lyricAnimEnabled, ::backupBoolean),

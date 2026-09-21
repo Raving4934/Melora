@@ -1,5 +1,6 @@
 package com.leyu.melora.playback
 
+import com.leyu.melora.playback.local.LocalSortField
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -110,15 +111,21 @@ class PersistenceCompatibilityTest {
             MeloraSettings.updateLocalExcludeShort(false)
             MeloraSettings.updateLocalExcludeSmall(false)
             MeloraSettings.updateLocalAutoFillInfo(true)
+            MeloraSettings.updateLocalSortField(LocalSortField.ModifiedAt)
+            MeloraSettings.updateLocalSortAscending(false)
             MeloraSettings.updateLocalFolders(listOf(granted, revoked))
             val backup = BackupSettings.collect()
             MeloraSettings.updateLocalUseMediaStore(true)
             MeloraSettings.updateLocalAutoFillInfo(false)
+            MeloraSettings.updateLocalSortField(LocalSortField.FileName)
+            MeloraSettings.updateLocalSortAscending(true)
             val notice = applyBackupSettings(backup, setOf(granted), emptySet())
             assertEquals(false, MeloraSettings.localUseMediaStore.value)
             assertEquals(false, MeloraSettings.localExcludeShort.value)
             assertEquals(false, MeloraSettings.localExcludeSmall.value)
             assertEquals(true, MeloraSettings.localAutoFillInfo.value)
+            assertEquals(LocalSortField.ModifiedAt, MeloraSettings.localSortField.value)
+            assertEquals(false, MeloraSettings.localSortAscending.value)
             assertEquals(listOf(granted), MeloraSettings.localFolders.value)
             org.junit.Assert.assertTrue(notice.contains("本地音乐目录需要重新授权"))
             // 幂等恢复及旧备份缺字段不能清空当前本地目录/开关。

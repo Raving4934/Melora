@@ -88,6 +88,8 @@ import com.leyu.melora.playback.UserLibrary
 import com.leyu.melora.playback.local.LocalMediaScanner
 import com.leyu.melora.playback.local.LocalMediaStore
 import com.leyu.melora.playback.local.LocalSong
+import com.leyu.melora.playback.local.LocalSortField
+import com.leyu.melora.playback.local.sortLocalSongs
 import com.leyu.melora.playback.local.LocalTagReader
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.ui.common.toUiTracks
@@ -135,8 +137,8 @@ internal fun LocalSongsPage(
     val scope = rememberCoroutineScope()
     val songs by LocalMediaStore.songs.collectAsStateWithLifecycle()
 
-    var sortField by remember { mutableStateOf(LocalSortField.FileName) }
-    var ascending by remember { mutableStateOf(true) }
+    val sortField by MeloraSettings.localSortField.collectAsStateWithLifecycle()
+    val ascending by MeloraSettings.localSortAscending.collectAsStateWithLifecycle()
     var searching by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var showSortSheet by remember { mutableStateOf(false) }
@@ -308,8 +310,8 @@ internal fun LocalSongsPage(
         LocalSortSheet(
             field = sortField,
             ascending = ascending,
-            onFieldChange = { sortField = it },
-            onDirectionChange = { ascending = it },
+            onFieldChange = MeloraSettings::updateLocalSortField,
+            onDirectionChange = MeloraSettings::updateLocalSortAscending,
             onDismiss = { showSortSheet = false },
         )
     }

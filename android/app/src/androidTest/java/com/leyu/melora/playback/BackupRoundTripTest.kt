@@ -8,6 +8,7 @@ import android.content.SharedPreferences
 import android.net.Uri
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.leyu.melora.playback.local.LocalSortField
 import com.leyu.melora.playback.lx.LxScriptStore
 import java.io.File
 import kotlinx.coroutines.CancellationException
@@ -45,6 +46,23 @@ class BackupRoundTripTest {
         UserLibrary.init(context)
         UserLibrary.replaceFromBackup("{}")
         LxScriptStore(context)
+    }
+
+    @Test
+    fun localSortSelectionSurvivesSettingsReload() {
+        MeloraSettings.updateLocalSortField(LocalSortField.AddedAt)
+        MeloraSettings.updateLocalSortAscending(false)
+        assertEquals("added_at", context.getSharedPreferences(MeloraSettings.PREFS, 0)
+            .getString(MeloraSettings.KEY_LOCAL_SORT_FIELD, null))
+        assertFalse(context.getSharedPreferences(MeloraSettings.PREFS, 0)
+            .getBoolean(MeloraSettings.KEY_LOCAL_SORT_ASCENDING, true))
+
+        MeloraSettings.localSortField.value = LocalSortField.FileName
+        MeloraSettings.localSortAscending.value = true
+        MeloraSettings.reloadAfterRestore()
+
+        assertEquals(LocalSortField.AddedAt, MeloraSettings.localSortField.value)
+        assertFalse(MeloraSettings.localSortAscending.value)
     }
 
     @Test

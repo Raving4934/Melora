@@ -1,16 +1,20 @@
-package com.leyu.melora.ui.local
+package com.leyu.melora.playback.local
 
-import com.leyu.melora.playback.local.LocalSong
 import java.util.Locale
 
-/** 本地歌曲排序字段（升降序由调用方切换）。 */
-internal enum class LocalSortField(val label: String) {
-    FileName("文件名"),
-    Artist("歌手"),
-    Year("年份"),
-    Size("大小"),
-    ModifiedAt("修改时间"),
-    AddedAt("添加时间"),
+/** 本地歌曲排序字段；storageValue 作为持久化契约，不依赖枚举名称。 */
+internal enum class LocalSortField(val storageValue: String, val label: String) {
+    FileName("file_name", "文件名"),
+    Artist("artist", "歌手"),
+    Year("year", "年份"),
+    Size("size", "大小"),
+    ModifiedAt("modified_at", "修改时间"),
+    AddedAt("added_at", "添加时间");
+
+    companion object {
+        fun restore(value: String?): LocalSortField =
+            entries.firstOrNull { it.storageValue == value } ?: FileName
+    }
 }
 
 internal fun sortLocalSongs(

@@ -3,6 +3,7 @@ package com.leyu.melora.playback
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
+import com.leyu.melora.playback.local.LocalSortField
 import kotlinx.coroutines.flow.MutableStateFlow
 
 /**
@@ -111,6 +112,8 @@ object MeloraSettings {
     val localExcludeShort = MutableStateFlow(true)
     val localExcludeSmall = MutableStateFlow(true)
     val localAutoFillInfo = MutableStateFlow(false)
+    internal val localSortField = MutableStateFlow(LocalSortField.FileName)
+    internal val localSortAscending = MutableStateFlow(true)
 
     private fun load() {
         autoPlayOnStart.value = prefs.getBoolean(KEY_AUTO_PLAY, false)
@@ -179,6 +182,8 @@ object MeloraSettings {
         localExcludeShort.value = prefs.getBoolean(KEY_LOCAL_EXCLUDE_SHORT, true)
         localExcludeSmall.value = prefs.getBoolean(KEY_LOCAL_EXCLUDE_SMALL, true)
         localAutoFillInfo.value = prefs.getBoolean(KEY_LOCAL_AUTO_FILL, false)
+        localSortField.value = LocalSortField.restore(prefs.getString(KEY_LOCAL_SORT_FIELD, null))
+        localSortAscending.value = prefs.getBoolean(KEY_LOCAL_SORT_ASCENDING, true)
     }
 
     fun updateAutoPlay(value: Boolean) = synchronized(BackupStateLock.monitor) { autoPlayOnStart.value = value; persist { putBoolean(KEY_AUTO_PLAY, value) } }
@@ -237,6 +242,8 @@ object MeloraSettings {
     fun updateLocalExcludeShort(value: Boolean) = synchronized(BackupStateLock.monitor) { localExcludeShort.value = value; persist { putBoolean(KEY_LOCAL_EXCLUDE_SHORT, value) } }
     fun updateLocalExcludeSmall(value: Boolean) = synchronized(BackupStateLock.monitor) { localExcludeSmall.value = value; persist { putBoolean(KEY_LOCAL_EXCLUDE_SMALL, value) } }
     fun updateLocalAutoFillInfo(value: Boolean) = synchronized(BackupStateLock.monitor) { localAutoFillInfo.value = value; persist { putBoolean(KEY_LOCAL_AUTO_FILL, value) } }
+    internal fun updateLocalSortField(value: LocalSortField) = synchronized(BackupStateLock.monitor) { localSortField.value = value; persist { putString(KEY_LOCAL_SORT_FIELD, value.storageValue) } }
+    internal fun updateLocalSortAscending(value: Boolean) = synchronized(BackupStateLock.monitor) { localSortAscending.value = value; persist { putBoolean(KEY_LOCAL_SORT_ASCENDING, value) } }
 
     fun updateShowDesktopLyrics(value: Boolean) = synchronized(BackupStateLock.monitor) { showDesktopLyrics.value = value; persist { putBoolean(KEY_DESKTOP_LYRICS, value) } }
     fun updateLockLyrics(value: Boolean) = synchronized(BackupStateLock.monitor) { lockLyrics.value = value; persist { putBoolean(KEY_LYRICS_LOCK, value) } }
@@ -311,4 +318,6 @@ object MeloraSettings {
     internal const val KEY_LOCAL_EXCLUDE_SHORT = "local.excludeShort"
     internal const val KEY_LOCAL_EXCLUDE_SMALL = "local.excludeSmall"
     internal const val KEY_LOCAL_AUTO_FILL = "local.autoFillInfo"
+    internal const val KEY_LOCAL_SORT_FIELD = "local.sortField"
+    internal const val KEY_LOCAL_SORT_ASCENDING = "local.sortAscending"
 }
