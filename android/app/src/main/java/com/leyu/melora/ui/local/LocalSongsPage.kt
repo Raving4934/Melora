@@ -89,6 +89,7 @@ import com.leyu.melora.playback.local.LocalMediaScanner
 import com.leyu.melora.playback.local.LocalMediaStore
 import com.leyu.melora.playback.local.LocalSong
 import com.leyu.melora.playback.local.LocalSortField
+import com.leyu.melora.playback.local.localSongSectionStarts
 import com.leyu.melora.playback.local.sortLocalSongs
 import com.leyu.melora.playback.local.LocalTagReader
 import com.leyu.melora.playback.sdk.OnlineSong
@@ -378,6 +379,12 @@ internal fun LocalSongsListContent(
     val context = LocalContext.current
     val scrollToTop = rememberFastScrollToTop(listState)
     val playingLocalId = rememberPlayingLocalId()
+    val sections = remember(songs, sortField) { localSongSectionStarts(songs, sortField) }
+    val currentSection by remember(sections, listState) {
+        derivedStateOf {
+            sections.entries.lastOrNull { it.value <= listState.firstVisibleItemIndex }?.key
+        }
+    }
 
     ChromeScaffold(
         expectedTopBarHeight = 110.dp,
@@ -501,6 +508,22 @@ internal fun LocalSongsListContent(
                             }
                         },
                         onMore = { onMore(song) },
+                    )
+                }
+            }
+            if (sections.isNotEmpty()) {
+                Box(
+                    Modifier.fillMaxSize().padding(
+                        top = chromeContentPadding().calculateTopPadding(),
+                        bottom = 76.dp,
+                    ),
+                    contentAlignment = Alignment.CenterEnd,
+                ) {
+                    LocalSongIndex(
+                        sections = sections,
+                        currentSection = currentSection,
+                        // 直接定位而非排队播放滚动动画；快速滑过多个字母只采用最新目标。
+                        onSelect = { listState.requestScrollToItem(it) },
                     )
                 }
             }

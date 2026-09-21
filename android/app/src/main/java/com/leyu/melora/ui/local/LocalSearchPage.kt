@@ -357,7 +357,7 @@ internal fun LocalSortSheet(
                 LocalSortField.entries.forEach { option ->
                     val selected = option == field
                     val (icon, subtitle) = when (option) {
-                        LocalSortField.FileName -> Icons.Outlined.TextFields to "按文件名称字母与笔画顺序排布"
+                        LocalSortField.FileName -> Icons.Outlined.TextFields to "按名称字母与拼音顺序排布"
                         LocalSortField.Artist -> Icons.Outlined.Person to "按歌手/艺术家名称排布"
                         LocalSortField.Year -> Icons.Outlined.CalendarToday to "按音频标签记录的发行年份排布"
                         LocalSortField.Size -> Icons.Outlined.Storage to "按文件占用磁盘大小排布"
