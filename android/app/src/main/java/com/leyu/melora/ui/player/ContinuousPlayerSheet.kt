@@ -62,6 +62,7 @@ import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.PlayerUiState
 import com.leyu.melora.playback.UiTrack
 import com.leyu.melora.ui.theme.SystemBarsAppearance
+import com.leyu.melora.ui.theme.LocalForceHideStatusBar
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
@@ -78,11 +79,13 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
     val track = state.current ?: lastTrack ?: return
     // loading 保留上一幅环境背景；loader 统一发布新图+色调，失败/无封面才清空。
     var playerBackdropEntry by remember { mutableStateOf<PlayerBackdropCacheEntry?>(null) }
+    var immersive by rememberSaveable { mutableStateOf(false) }
+    val rootThemeMode by MeloraSettings.themeMode.collectAsStateWithLifecycle()
     val playerThemeMode by MeloraSettings.playerThemeMode.collectAsStateWithLifecycle()
     val keepScreenAwake by MeloraSettings.keepScreenAwake.collectAsStateWithLifecycle()
     val playerCoverStyle by MeloraSettings.playerCoverStyle.collectAsStateWithLifecycle()
     val vinylRotation = rememberVinylRotation(state.playing, playerCoverStyle)
-    val playerIsDark = playerThemeMode.isDark(isSystemInDarkTheme())
+    val playerIsDark = playerThemeMode.isDark(rootThemeMode.isDark(isSystemInDarkTheme()))
     // 迷你条属于普通页面，全屏页面主题不能改变其底色、前景和系统栏。
     val miniColors = MaterialTheme.colorScheme
     val context = LocalContext.current
@@ -146,7 +149,8 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
             derivedStateOf { playerSheetIsCollapsed(sheetState.settledValue, sheetState.targetValue, progress()) }
         }
         val showMini by remember(progress) { derivedStateOf { progress() < 0.22f } }
-        val canCollapse = remember(playbackPage) { { playbackPage() && !pageShowsLyrics } }
+        LaunchedEffect(collapsed) { if (collapsed) immersive = false }
+        val canCollapse = remember(playbackPage) { { playbackPage() && !pageShowsLyrics && !immersive } }
         val canDrag by remember(offset, canCollapse) { derivedStateOf { offset() > 0.5f || canCollapse() } }
         val morphing = remember(progress, playbackPage) {
             {
@@ -198,6 +202,7 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
             darkStatusIcons = darkStatusIcons,
             darkNavigationIcons = darkNavIcons,
             keepScreenAwake = keepScreenAwake && expanded,
+            forceHideStatusBar = immersive && expanded,
         )
 
         val maxSwipePx = with(density) { 88.dp.toPx() }
@@ -237,6 +242,7 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
                 .anchoredDraggable(sheetState, Orientation.Vertical, enabled = canDrag, flingBehavior = fling)
                 .background(miniColors.surface),
         ) {
+            CompositionLocalProvider(LocalForceHideStatusBar provides (immersive && expanded)) {
             PlayerAppearanceProvider(
                 dark = playerIsDark,
                 artworkColor = playerBackdropEntry?.representativeColor,
@@ -255,6 +261,8 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
                 Box(Modifier.fillMaxSize().graphicsLayer { alpha = playerMotionPhase(progress(), 0.18f, 0.88f) }) {
                     FullPlayerPageContent(
                         state = state,
+                        immersive = immersive,
+                        onImmersiveChange = { immersive = it },
                         lyricPosition = lyricPosition,
                         motionEnabled = playerMotionEnabled && expanded && (twoPanes || verticalPagerState.currentPage == 0),
                         lyricFrame = lyricFrameState,
@@ -278,6 +286,7 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
                         onPageVisualChanged = { cover, light, lyrics -> pageShowsCover = cover; pageIsLight = light; pageShowsLyrics = lyrics },
                     )
                 }
+            }
             }
             Surface(
                 Modifier.fillMaxWidth().align(Alignment.TopStart)

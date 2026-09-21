@@ -1,0 +1,227 @@
+package com.leyu.melora.ui.player
+
+import android.view.View
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.click
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.longClick
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeLeft
+import androidx.compose.ui.test.swipeRight
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.test.espresso.Espresso
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.leyu.melora.playback.LyricLine
+import com.leyu.melora.playback.MeloraSettings
+import com.leyu.melora.playback.PlayerCoverStyle
+import com.leyu.melora.playback.PlayerUiState
+import com.leyu.melora.playback.UiTrack
+import com.leyu.melora.ui.theme.SystemBarsAppearance
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+
+@RunWith(AndroidJUnit4::class)
+class ImmersivePlayerInstrumentedTest {
+    @get:Rule val compose = createComposeRule()
+    private val immersive = mutableStateOf(false)
+    private lateinit var view: View
+
+    private fun showPlayer(motionEnabled: Boolean = false, compact: Boolean = false, landscape: Boolean = false) {
+        val position = mutableLongStateOf(2_000)
+        val lines = listOf(LyricLine(0, "慢慢听见海风"), LyricLine(5_000, "灯火落在远方"))
+        compose.setContent {
+            view = LocalView.current
+            SystemBarsAppearance(darkStatusIcons = false, forceHideStatusBar = immersive.value)
+            PlayerAppearanceProvider(dark = true) {
+                FullPlayerPageContent(
+                    state = PlayerUiState(current = UiTrack("immersive-test", "晚风与海", "测试歌手", "测试专辑"), durationMs = 180_000),
+                    immersive = immersive.value, onImmersiveChange = { immersive.value = it },
+                    lyricPosition = position, motionEnabled = motionEnabled,
+                    lyricFrame = rememberLyricFrame(lines, position), lyricLines = lines,
+                    onOpenQueue = {}, queuePagerState = rememberPagerState { 2 },
+                    onArtworkPositioned = {}, artworkAlpha = { 1f },
+                    coverStyle = PlayerCoverStyle.Default, artworkRotation = { 0f },
+                    onPageVisualChanged = { _, _, _ -> },
+                    modifier = when {
+                        landscape -> Modifier.requiredSize(720.dp, 360.dp)
+                        compact -> Modifier.fillMaxWidth().height(340.dp)
+                        else -> Modifier.fillMaxSize()
+                    },
+                )
+            }
+        }
+    }
+
+    @Test
+    fun longPressExpandsContentAndBackRestoresNormalPlayer() {
+        showPlayer()
+        val normal = compose.onNodeWithTag("player-pages").fetchSemanticsNode().boundsInRoot
+        compose.onNodeWithTag("player-artwork").performTouchInput { longClick() }
+        compose.runOnIdle { assertTrue(immersive.value) }
+        val enlarged = compose.onNodeWithTag("player-pages").fetchSemanticsNode().boundsInRoot
+        assertTrue("隐藏栏位应释放给正文", enlarged.height > normal.height + 100f)
+        compose.onNodeWithTag("player-heading").assertDoesNotExist()
+        compose.onNodeWithTag("player-transport").assertDoesNotExist()
+        Espresso.pressBack()
+        compose.runOnIdle { assertFalse(immersive.value) }
+        assertEquals(normal.height, compose.onNodeWithTag("player-pages").fetchSemanticsNode().boundsInRoot.height, 1f)
+    }
+
+    @Test
+    fun coverControlsHideAfterThreeSecondsAndRepeatedTapRestartsTimeout() {
+        showPlayer()
+        compose.runOnIdle { immersive.value = true }
+        compose.onNodeWithTag("player-artwork").performClick()
+        compose.onNodeWithTag("immersive-playback-controls").assertIsDisplayed()
+        compose.mainClock.advanceTimeBy(2_000)
+        compose.onNodeWithTag("player-artwork").performClick()
+        compose.mainClock.advanceTimeBy(2_000)
+        compose.onNodeWithTag("immersive-playback-controls").assertIsDisplayed()
+        compose.mainClock.advanceTimeBy(1_300)
+        compose.onNodeWithTag("immersive-playback-controls").assertDoesNotExist()
+        compose.onNodeWithTag("player-artwork").performClick()
+        compose.onNodeWithContentDescription("退出沉浸播放").performClick()
+        compose.runOnIdle { assertFalse(immersive.value) }
+    }
+
+    @Test
+    fun allThreePagesStayReachableAndLeavingCoverClearsTemporaryControls() {
+        showPlayer()
+        compose.runOnIdle { immersive.value = true }
+        compose.onNodeWithTag("player-artwork").performClick()
+        compose.onNodeWithTag("player-pages").performTouchInput { swipeLeft() }
+        compose.onNodeWithTag("immersive-playback-controls").assertDoesNotExist()
+        compose.runOnIdle { assertTrue(immersive.value) }
+        compose.onNodeWithTag("player-pages").performTouchInput { swipeRight() }
+        compose.onNodeWithTag("player-artwork").assertIsDisplayed()
+        compose.onNodeWithTag("player-pages").performTouchInput { swipeRight() }
+        compose.runOnIdle { assertTrue(immersive.value) }
+        compose.onNodeWithTag("immersive-track-notes").assertIsDisplayed()
+        compose.onNodeWithTag("player-transport").assertDoesNotExist()
+    }
+
+    @Test
+    fun immersiveOverridesStatusBarSettingWithoutPersistingIt() {
+        val original = MeloraSettings.hideStatusBar.value
+        try {
+            MeloraSettings.hideStatusBar.value = false
+            showPlayer()
+            compose.runOnIdle { immersive.value = true }
+            compose.waitUntil(5_000) {
+                ViewCompat.getRootWindowInsets(view)?.isVisible(WindowInsetsCompat.Type.statusBars()) == false
+            }
+            assertFalse(MeloraSettings.hideStatusBar.value)
+            compose.runOnIdle { immersive.value = false }
+            compose.waitUntil(5_000) {
+                ViewCompat.getRootWindowInsets(view)?.isVisible(WindowInsetsCompat.Type.statusBars()) == true
+            }
+        } finally { MeloraSettings.hideStatusBar.value = original }
+    }
+
+    @Test
+    fun entryCanReverseMidFlightWithoutReplacingArtworkOrLeavingLayoutOffset() {
+        showPlayer(motionEnabled = true)
+        val original = compose.onNodeWithTag("player-artwork").fetchSemanticsNode()
+        val originalCenter = original.boundsInRoot.center
+        compose.mainClock.autoAdvance = false
+        compose.runOnIdle { immersive.value = true }
+        compose.mainClock.advanceTimeBy(160)
+        val during = compose.onNodeWithTag("player-artwork").fetchSemanticsNode()
+        assertEquals("封面必须沿用同一节点", original.id, during.id)
+        assertTrue("进入沉浸时封面应上移", during.boundsInRoot.center.y < originalCenter.y)
+        compose.runOnIdle { immersive.value = false }
+        compose.mainClock.advanceTimeBy(1_600)
+        compose.mainClock.autoAdvance = true
+        compose.waitUntil(5_000) {
+            kotlin.math.abs(compose.onNodeWithTag("player-artwork").fetchSemanticsNode().boundsInRoot.center.y - originalCenter.y) < 2f
+        }
+        val restored = compose.onNodeWithTag("player-artwork").fetchSemanticsNode()
+        assertEquals(original.id, restored.id)
+        assertEquals(originalCenter.x, restored.boundsInRoot.center.x, 1f)
+    }
+
+    @Test
+    fun shortViewportDoesNotSqueezeExitOrPlaybackButtonsInsideSmallArtwork() {
+        showPlayer(compact = true)
+        compose.runOnIdle { immersive.value = true }
+        compose.onNodeWithTag("player-artwork").performClick()
+        for (label in listOf("上一首", "播放", "下一首", "退出沉浸播放")) {
+            compose.onNodeWithContentDescription(label).assertIsDisplayed()
+            assertTrue(compose.onNodeWithContentDescription(label).fetchSemanticsNode().boundsInRoot.width > 0f)
+        }
+        compose.onNodeWithContentDescription("退出沉浸播放").performTouchInput { click(center) }
+        compose.runOnIdle { assertFalse(immersive.value) }
+    }
+
+    @Test
+    fun immersiveNotesKeepFullMetadataAndExistingAlbumArtistCallbacks() {
+        val track = UiTrack("notes", "这是一个需要完整展示而不能截断的长歌曲名字", "测试歌手", "完整专辑名字")
+        val clicked = mutableListOf<String>()
+        compose.setContent {
+            PlayerAppearanceProvider(dark = true) {
+                ImmersiveTrackNotes(track, "本地音频", "SQ", "播放源：本地媒体",
+                    { clicked += "album:$it" }, { clicked += "artist:$it" })
+            }
+        }
+        compose.onNodeWithText(track.title).assertIsDisplayed()
+        compose.onNodeWithTag("immersive-artist").performScrollTo().performClick()
+        compose.onNodeWithTag("immersive-album").performScrollTo().performClick()
+        compose.onNodeWithText("SQ").performScrollTo().assertIsDisplayed()
+        assertEquals(listOf("artist:${track.artist}", "album:${track.album}"), clicked)
+    }
+
+    @Test
+    fun portraitImmersionDoesNotComposeTheTitleWatermark() {
+        showPlayer()
+        compose.runOnIdle { immersive.value = true }
+        compose.onNodeWithTag("immersive-title-watermark").assertDoesNotExist()
+    }
+
+    @Test
+    fun landscapeKeepsWatermarkOnlyInImmersiveMode() {
+        showPlayer(landscape = true)
+        compose.onNodeWithTag("immersive-title-watermark").assertDoesNotExist()
+        compose.runOnIdle { immersive.value = true }
+        compose.onNodeWithTag("immersive-title-watermark").assertExists()
+        compose.runOnIdle { immersive.value = false }
+        compose.onNodeWithTag("immersive-title-watermark").assertDoesNotExist()
+    }
+
+    @Test
+    fun miniControlsDispatchExistingPlaybackActionsAndExit() {
+        val actions = mutableListOf<String>()
+        compose.setContent {
+            PlayerAppearanceProvider(dark = false) {
+                Box(Modifier.fillMaxSize()) {
+                    ImmersivePlaybackControls(false, { actions += "previous" }, { actions += "toggle" },
+                        { actions += "next" }, { actions += "exit" })
+                }
+            }
+        }
+        for (label in listOf("上一首", "播放", "下一首", "退出沉浸播放")) {
+            compose.onNodeWithContentDescription(label).performTouchInput { click(center) }
+        }
+        assertEquals(listOf("previous", "toggle", "next", "exit"), actions)
+    }
+}

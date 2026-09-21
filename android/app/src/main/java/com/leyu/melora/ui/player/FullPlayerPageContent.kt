@@ -1,5 +1,25 @@
 package com.leyu.melora.ui.player
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.snap
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
+import androidx.compose.ui.BiasAlignment
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.SkipNext
+import androidx.compose.material.icons.rounded.SkipPrevious
+import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 
@@ -45,7 +65,6 @@ import android.media.MediaRouter2
 import android.os.Build
 import android.provider.Settings
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.fadeIn
@@ -71,6 +90,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.indication
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -142,11 +162,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.graphics.BlendMode
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -215,6 +231,8 @@ data class LyricsUiConfig(
 @Composable
 internal fun FullPlayerPageContent(
     state: PlayerUiState,
+    immersive: Boolean,
+    onImmersiveChange: (Boolean) -> Unit,
     lyricPosition: androidx.compose.runtime.State<Long>,
     motionEnabled: Boolean,
     lyricFrame: androidx.compose.runtime.State<com.leyu.melora.playback.LyricFrame>,
@@ -234,6 +252,11 @@ internal fun FullPlayerPageContent(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val playerColors = LocalPlayerColors.current
+    val immersion = animateFloatAsState(
+        if (immersive) 1f else 0f,
+        if (motionEnabled) spring(dampingRatio = 1f, stiffness = 220f) else snap(),
+        label = "playerImmersion",
+    )
 
     // 中间三页联动 HorizontalPager (0=音频信息, 1=封面+多行微缩歌词, 2=全屏歌词流)
     val coverPagerState = rememberPagerState(initialPage = 1, pageCount = { 3 })
@@ -257,14 +280,16 @@ internal fun FullPlayerPageContent(
     }
 
     // 队列上滑手势：仅在播放页/黑胶页生效；歌词页与专辑/歌手聚合页内不触发
-    val queueSwipeAllowed = openedCollection == null && coverPagerState.currentPage != 2
+    val queueSwipeAllowed = !immersive && openedCollection == null && coverPagerState.currentPage != 2
+
+    LaunchedEffect(immersive) { if (immersive) queuePagerState.scrollToPage(0) }
 
     // 聚合页与“我的列表”复用，跟随App主题；返回后恢复播放器自己的主题。
     val collection = openedCollection
     val pageIsLight = playerPageIsLight(collection != null, playerColors.isDark, MeloraAppearance.isDark)
-    LaunchedEffect(collection != null, coverPagerState.currentPage, coverPagerState.isScrollInProgress, pageIsLight) {
+    LaunchedEffect(collection != null, coverPagerState.currentPage, coverPagerState.isScrollInProgress, pageIsLight, immersive) {
         onPageVisualChanged(
-            collection == null && coverPagerState.currentPage == 1 && !coverPagerState.isScrollInProgress,
+            !immersive && collection == null && coverPagerState.currentPage == 1 && !coverPagerState.isScrollInProgress,
             pageIsLight,
             collection == null && coverPagerState.currentPage == 2,
         )
@@ -280,9 +305,10 @@ internal fun FullPlayerPageContent(
         },
     ) {
     // 若不在主封面页，按返回键先回到中心封面页；在中心封面页按返回键收起全屏
-    if (isVisible && coverPagerState.currentPage != 1) {
+    if (isVisible && (immersive || coverPagerState.currentPage != 1)) {
         BackHandler {
-            scope.launch { coverPagerState.animateScrollToPage(1) }
+            if (immersive) onImmersiveChange(false)
+            else scope.launch { coverPagerState.animateScrollToPage(1) }
         }
     }
 
@@ -290,6 +316,18 @@ internal fun FullPlayerPageContent(
         modifier = Modifier.fillMaxSize(),
     ) {
         val twoPanes = playerUsesTwoPanes(maxWidth.value, maxHeight.value)
+        val t = immersion.value
+        val playerInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom)
+        val playerTopInset by animateDpAsState(
+            if (immersive) 0.dp else WindowInsets.safeDrawing.asPaddingValues().calculateTopPadding(),
+            if (motionEnabled) spring(dampingRatio = 1f, stiffness = 220f) else snap(), label = "playerTopInset",
+        )
+        // 竖屏保持纯净；横向可用空间更充裕时才让歌名成为背景纹理。
+        if (t > 0f && maxWidth > maxHeight) ImmersiveTitleWatermark(
+            title = track?.title.orEmpty(), immersion = immersion,
+            playing = state.positionAdvancing, motionEnabled = motionEnabled && isVisible,
+            modifier = Modifier.fillMaxSize().testTag("immersive-title-watermark"),
+        )
         val pagePadding = playerPaneContentPadding(twoPanes, controls = false)
         val controlsPadding = playerPaneContentPadding(twoPanes, controls = true)
         val heading: @Composable (Modifier) -> Unit = { headingModifier ->
@@ -349,7 +387,7 @@ internal fun FullPlayerPageContent(
         val pane: @Composable (Modifier) -> Unit = { paneModifier ->
             HorizontalPager(
                 state = coverPagerState,
-                modifier = paneModifier,
+                modifier = paneModifier.testTag("player-pages"),
                 // PageSize.Fill必须取得完整视口，非零contentPadding会让相邻页在静止时露出。
                 contentPadding = PaddingValues(0.dp),
             ) { pageIndex ->
@@ -357,11 +395,13 @@ internal fun FullPlayerPageContent(
                 Box(Modifier.fillMaxSize().clipToBounds().padding(pagePadding)) {
                     when (pageIndex) {
                         0 -> AudioInfoPage(
+                            immersive = immersive,
                             track = track,
                             resolvedPlatform = state.resolvedPlatform,
                             resolvedBy = state.resolvedBy,
                             audioSpec = state.audioSpec,
                             onOpenAlbum = { album ->
+                                onImmersiveChange(false)
                                 val raw = track?.raw
                                 val isBookChapter = raw?.optBoolean("isBookChapter") == true
                                 val bookAlbumId = raw?.optString("albumId")
@@ -384,6 +424,7 @@ internal fun FullPlayerPageContent(
                                 )
                             },
                             onOpenArtist = { artist ->
+                                onImmersiveChange(false)
                                 val onlineSource = track?.source
                                     ?.takeIf { it.isNotBlank() && it != "local" } ?: "kw"
                                 openedCollection = SongsCollection(
@@ -396,6 +437,9 @@ internal fun FullPlayerPageContent(
                             },
                         )
                         1 -> VinylCoverPage(
+                            state = state, immersive = immersive, immersion = immersion,
+                            onImmersiveChange = onImmersiveChange,
+                            isVisible = isVisible && coverPagerState.currentPage == 1,
                             track = track,
                             lyrics = lyricLines,
                             retryArtwork = isVisible && coverPagerState.currentPage == 1,
@@ -419,6 +463,7 @@ internal fun FullPlayerPageContent(
                             frame = lyricFrame,
                             motionEnabled = motionEnabled,
                             config = lyricsConfig,
+                            immersive = immersive, immersion = immersion,
                             onConfigChange = { lyricsConfig = it },
                         )
                     }
@@ -514,7 +559,7 @@ internal fun FullPlayerPageContent(
         val playerAndQueue: @Composable (Modifier, @Composable () -> Unit) -> Unit = { pagerModifier, playerContent ->
             VerticalPager(
                 state = queuePagerState,
-                userScrollEnabled = twoPanes || queuePagerState.currentPage == 1 || queueSwipeAllowed,
+                userScrollEnabled = !immersive && (twoPanes || queuePagerState.currentPage == 1 || queueSwipeAllowed),
                 modifier = pagerModifier,
             ) { page ->
                 if (page == 0) {
@@ -531,11 +576,13 @@ internal fun FullPlayerPageContent(
         }
         if (twoPanes) {
             Row(
-                Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
-                horizontalArrangement = Arrangement.spacedBy(28.dp),
+                Modifier.fillMaxSize().windowInsetsPadding(playerInsets).padding(top = playerTopInset),
+                horizontalArrangement = Arrangement.spacedBy((28f * (1f - t)).dp),
             ) {
-                pane(Modifier.weight(1f).fillMaxHeight())
-                playerAndQueue(Modifier.weight(1f).fillMaxHeight()) {
+                pane(Modifier.weight(1f + t).fillMaxHeight())
+                if (t < 0.999f) playerAndQueue(Modifier.weight((1f - t).coerceAtLeast(0.001f)).fillMaxHeight().clipToBounds()
+                    .graphicsLayer { alpha = 1f - immersion.value }
+                    .then(if (immersive) Modifier.clearAndSetSemantics {} else Modifier)) {
                     Column(
                         Modifier.fillMaxSize().padding(controlsPadding).verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.Center,
@@ -549,14 +596,18 @@ internal fun FullPlayerPageContent(
         } else {
             playerAndQueue(Modifier.fillMaxSize()) {
                 Column(
-                    Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
+                    Modifier.fillMaxSize().windowInsetsPadding(playerInsets).padding(top = playerTopInset),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    heading(Modifier.padding(controlsPadding))
-                    Spacer(Modifier.height(16.dp))
+                    Column(Modifier.immersionChrome(immersion).testTag("player-heading")) {
+                        heading(Modifier.padding(controlsPadding))
+                        Spacer(Modifier.height(16.dp))
+                    }
                     pane(Modifier.fillMaxWidth().weight(1f))
-                    Spacer(Modifier.height(2.dp))
-                    Column(Modifier.fillMaxWidth().padding(controlsPadding)) { transport() }
+                    Column(Modifier.fillMaxWidth().immersionChrome(immersion).testTag("player-transport")) {
+                        Spacer(Modifier.height(2.dp))
+                        Column(Modifier.padding(controlsPadding)) { transport() }
+                    }
                 }
             }
         }
@@ -608,6 +659,7 @@ private fun showSystemOutputSwitcher(context: Context) {
 // 播放页 Page 0: 封面右划显示音频详细信息、出自专辑、参与创作艺术家（专辑/歌手可点击进入聚合页）
 @Composable
 private fun AudioInfoPage(
+    immersive: Boolean,
     track: UiTrack?,
     resolvedPlatform: String?,
     resolvedBy: String?,
@@ -623,6 +675,11 @@ private fun AudioInfoPage(
     val isLocal = resolvedBy in TrackRegistry.LOCAL_RESOURCE_IDS
     // 只显示已选中音轨的实测徽标；未解析时不借目录最高档或请求档冒充实际音质。
     val qualityBadge = audioSpec?.qualityBadge
+    val sourceLabel = if (autoSwitch && !isLocal) "播放源：$playbackSource · 已启用自动换源" else "播放源：$playbackSource"
+    if (immersive) {
+        ImmersiveTrackNotes(track, platformName, qualityBadge, sourceLabel, onOpenAlbum, onOpenArtist)
+        return
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -633,10 +690,81 @@ private fun AudioInfoPage(
         AudioInfoCard(
             platformName = platformName,
             qualityBadge = qualityBadge,
-            sourceLabel = if (autoSwitch && !isLocal) "播放源：$playbackSource · 已启用自动换源" else "播放源：$playbackSource",
+            sourceLabel = sourceLabel,
         )
         AlbumInfoCard(track = track, onOpenAlbum = onOpenAlbum)
         ArtistInfoCard(track = track, onOpenArtist = onOpenArtist)
+    }
+}
+
+/** 沉浸 Page 0 是唱片内页，而不是普通播放器的三张工具卡。解析结果与跳转仍由同一入口提供。 */
+@Composable
+internal fun ImmersiveTrackNotes(
+    track: UiTrack?,
+    platformName: String,
+    qualityBadge: String?,
+    sourceLabel: String,
+    onOpenAlbum: (String) -> Unit,
+    onOpenArtist: (String) -> Unit,
+) {
+    BoxWithConstraints(Modifier.fillMaxSize().testTag("immersive-track-notes")) {
+        val viewportHeight = maxHeight
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+            Column(
+                Modifier.fillMaxWidth().heightIn(min = viewportHeight).padding(horizontal = 12.dp, vertical = 32.dp),
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Text("唱片内页", fontSize = 11.sp, letterSpacing = 3.sp,
+                    color = FullPlayerTextMuted.copy(alpha = 0.60f))
+                Spacer(Modifier.height(24.dp))
+                Text(track?.title?.takeIf { it.isNotBlank() } ?: "未选择歌曲",
+                    fontSize = 32.sp, lineHeight = 40.sp, fontWeight = FontWeight.Bold,
+                    color = FullPlayerTextPrimary)
+                val artist = track?.artist?.takeIf { it.isNotBlank() }
+                Row(Modifier.fillMaxWidth().testTag("immersive-artist")
+                    .clickable(enabled = artist != null, role = Role.Button, onClickLabel = "查看歌手歌曲") {
+                        artist?.let(onOpenArtist)
+                    }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(artist ?: "未知艺术家", fontSize = 18.sp, lineHeight = 26.sp,
+                        color = FullPlayerTextMuted, modifier = Modifier.weight(1f))
+                    if (artist != null) Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null,
+                        tint = FullPlayerTextMuted.copy(alpha = 0.5f), modifier = Modifier.size(18.dp))
+                }
+                Spacer(Modifier.height(24.dp))
+                Box(Modifier.width(32.dp).height(1.dp).background(FullPlayerTextPrimary.copy(alpha = 0.25f)))
+                Spacer(Modifier.height(24.dp))
+                val album = track?.album?.takeIf { it.isNotBlank() }
+                Column(Modifier.fillMaxWidth().testTag("immersive-album")
+                    .clickable(enabled = album != null, role = Role.Button, onClickLabel = "查看专辑歌曲") {
+                        album?.let(onOpenAlbum)
+                    }.padding(vertical = 8.dp)) {
+                    Text("收录专辑", fontSize = 11.sp, color = FullPlayerTextMuted.copy(alpha = 0.65f))
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(album ?: "未知专辑", fontSize = 20.sp, lineHeight = 28.sp,
+                            fontWeight = FontWeight.Medium, color = FullPlayerTextPrimary, modifier = Modifier.weight(1f))
+                        if (album != null) Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null,
+                            tint = FullPlayerTextMuted.copy(alpha = 0.5f), modifier = Modifier.size(18.dp))
+                    }
+                }
+                Spacer(Modifier.height(32.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text("实际音质", fontSize = 11.sp, color = FullPlayerTextMuted.copy(alpha = 0.65f))
+                        Text(qualityBadge ?: "未识别", fontSize = 16.sp, color = FullPlayerTextPrimary,
+                            modifier = Modifier.padding(top = 8.dp))
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text("音乐平台", fontSize = 11.sp, color = FullPlayerTextMuted.copy(alpha = 0.65f))
+                        Text(platformName, fontSize = 16.sp, color = FullPlayerTextPrimary,
+                            modifier = Modifier.padding(top = 8.dp))
+                    }
+                }
+                Spacer(Modifier.height(20.dp))
+                Text(sourceLabel, fontSize = 11.sp, lineHeight = 18.sp,
+                    color = FullPlayerTextMuted.copy(alpha = 0.65f))
+            }
+        }
     }
 }
 
@@ -1026,6 +1154,11 @@ internal fun playerCoverSideDp(width: Float, height: Float, lyricAreaHeight: Flo
 // 播放页 Page 1：默认封面歌词对齐左边沿，圆形/黑胶歌词居中。
 @Composable
 private fun VinylCoverPage(
+    state: PlayerUiState,
+    immersive: Boolean,
+    immersion: androidx.compose.runtime.State<Float>,
+    onImmersiveChange: (Boolean) -> Unit,
+    isVisible: Boolean,
     track: UiTrack?,
     lyrics: List<LyricLine>,
     retryArtwork: Boolean,
@@ -1042,55 +1175,90 @@ private fun VinylCoverPage(
 ) {
     val lines = fullPlayerLyricsOrFallback(track, lyrics)
     val centered = nowPlayingArtworkShape(coverStyle) == NowPlayingArtworkShape.Circle
+    val t = immersion.value
+    var controlsVisible by remember(immersive) { mutableStateOf(false) }
+    var controlInteraction by remember { mutableIntStateOf(0) }
+    LaunchedEffect(immersive, isVisible, controlsVisible, controlInteraction, track?.uid) {
+        if (!immersive || !isVisible) controlsVisible = false
+        else if (controlsVisible) { delay(3_000); controlsVisible = false }
+    }
+    val interact = { controlsVisible = true; controlInteraction++ }
     val previewHeight = if (compact) 28.dp else with(LocalDensity.current) { 24.sp.toDp() * 5 } + 12.dp
-    val lyricsHeight = if (miniLyricsEnabled) previewHeight + 16.dp else 0.dp
+    val normalLyricsHeight = if (miniLyricsEnabled) previewHeight + 16.dp else 0.dp
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val side = if (centered) {
-            playerCoverSideDp(maxWidth.value, maxHeight.value, lyricsHeight.value).dp
-        } else {
-            minOf(maxWidth.value, (maxHeight.value - lyricsHeight.value).coerceAtLeast(0f)).dp
-        }
-        Column(
-            Modifier.fillMaxSize(),
-            horizontalAlignment = if (centered) Alignment.CenterHorizontally else Alignment.Start,
-        ) {
-            if (!centered) {
-                // 多余空间全部推给封面到标题栏之间
-                Spacer(Modifier.weight(1f))
-            } else {
-                Spacer(Modifier.weight(0.5f))
-            }
-            NowPlayingArtwork(
-                url = track?.artwork,
-                seed = track?.uid ?: "empty",
-                style = coverStyle,
-                modifier = Modifier.size(side)
-                    .onGloballyPositioned(onArtworkPositioned)
-                    .graphicsLayer { alpha = artworkAlpha() },
-                cornerRadius = 18,
-                retryOnError = retryArtwork,
-                smoothChanges = true,
-                rotationDegrees = artworkRotation,
-            )
-            if (miniLyricsEnabled) {
-                Spacer(Modifier.height(12.dp))
-                key(track?.uid, lines, compact) {
-                    LyricsViewport(
-                        lines = lines,
-                        position = position,
-                        config = LyricsUiConfig(fontSizeSp = if (compact) 12f else 16f),
-                        mini = true, frameState = frame, motionEnabled = motionEnabled,
-                        centered = centered,
-                        modifier = (if (centered) Modifier.width(side) else Modifier.fillMaxWidth()).height(previewHeight),
-                        onLineClick = { onNavigateToLyrics() },
+        val normalSide = if (centered) playerCoverSideDp(maxWidth.value, maxHeight.value, normalLyricsHeight.value).dp
+            else minOf(maxWidth, (maxHeight - normalLyricsHeight).coerceAtLeast(0.dp))
+        val floatingSide = minOf(maxWidth * 0.75f, maxHeight * 0.40f)
+        val side = normalSide * (1f - t) + floatingSide * t
+        val normalBelowCover = if (miniLyricsEnabled) previewHeight + 24.dp else 12.dp
+        val remaining = (maxHeight - side - normalBelowCover).coerceAtLeast(0.dp)
+        val normalTop = if (centered) remaining / 2f else remaining
+        val topSpace = normalTop * (1f - t) + maxHeight * (0.04f * t)
+        val timeHeight = 26.dp * t
+        val lyricHeight = (if (miniLyricsEnabled) previewHeight else 0.dp) * (1f - t) +
+            (maxHeight - side - topSpace - timeHeight - 24.dp).coerceAtLeast(0.dp) * t
+        Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+            Spacer(Modifier.height(topSpace))
+            Box(Modifier.fillMaxWidth(), contentAlignment = BiasAlignment(if (centered) 0f else t - 1f, 0f)) {
+                // 进度轮廓与艺术封面共享同一透视平面，不再将方形封面放进独立大圆盘。
+                Box(Modifier.size(side).graphicsLayer {
+                    alpha = artworkAlpha()
+                    rotationX = -6f * immersion.value
+                    rotationY = 8f * immersion.value
+                    rotationZ = -2f * immersion.value
+                    cameraDistance = 16f * density
+                }, contentAlignment = Alignment.Center) {
+                    NowPlayingArtwork(
+                        url = track?.artwork, seed = track?.uid ?: "empty", style = coverStyle,
+                        modifier = Modifier.fillMaxSize().padding(6.dp * t)
+                            .testTag("player-artwork")
+                            .semantics { contentDescription = "${track?.title.orEmpty()}，${track?.artist.orEmpty()}" }
+                            .onGloballyPositioned(onArtworkPositioned)
+                            .graphicsLayer {
+                                shadowElevation = 14.dp.toPx() * immersion.value
+                                shape = if (centered) CircleShape else RoundedCornerShape(18.dp)
+                            }
+                            .combinedClickable(
+                                interactionSource = remember { MutableInteractionSource() }, indication = null,
+                                onLongClickLabel = if (immersive) "退出沉浸播放" else "进入沉浸播放",
+                                onLongClick = { onImmersiveChange(!immersive) },
+                                onClick = { if (immersive) interact() },
+                            ),
+                        cornerRadius = 18, retryOnError = retryArtwork, smoothChanges = true,
+                        rotationDegrees = artworkRotation,
+                    )
+                    ImmersiveCoverProgress(position, state.durationMs, immersion, circular = centered,
+                        modifier = Modifier.matchParentSize())
+                }
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = controlsVisible && immersive && isVisible,
+                    enter = fadeIn(tween(120)), exit = fadeOut(tween(160)),
+                    modifier = Modifier.align(Alignment.Center),
+                ) {
+                    ImmersivePlaybackControls(
+                        playing = state.playing,
+                        onPrevious = { interact(); PlaybackController.previous() },
+                        onToggle = { interact(); PlaybackController.toggle() },
+                        onNext = { interact(); PlaybackController.next() },
+                        onExit = { onImmersiveChange(false) },
                     )
                 }
-                Spacer(Modifier.height(12.dp))
-            } else {
-                Spacer(Modifier.height(12.dp))
             }
-            if (centered) {
-                Spacer(Modifier.weight(0.5f))
+            if (t > 0f) ImmersiveTrackTime(position, state.durationMs,
+                Modifier.height(timeHeight).graphicsLayer { alpha = immersion.value })
+            if (miniLyricsEnabled || t > 0f) {
+                Spacer(Modifier.height(12.dp))
+                LyricsViewport(
+                    lines = lines, position = position,
+                    config = LyricsUiConfig(fontSizeSp = if (compact) 12f else 16f),
+                    mini = !immersive, immersive = immersive,
+                    frameState = frame, motionEnabled = motionEnabled, centered = centered,
+                    modifier = (if (centered && !immersive) Modifier.width(side) else Modifier.fillMaxWidth())
+                        .height(lyricHeight)
+                        .then(if (immersive) Modifier.lyricViewportFade() else Modifier)
+                        .graphicsLayer { alpha = if (miniLyricsEnabled) 1f else immersion.value },
+                    onLineClick = { onNavigateToLyrics() },
+                )
             }
         }
     }
@@ -1105,23 +1273,23 @@ private fun LyricsPage(
     motionEnabled: Boolean,
     frame: androidx.compose.runtime.State<com.leyu.melora.playback.LyricFrame>,
     config: LyricsUiConfig,
+    immersive: Boolean,
+    immersion: androidx.compose.runtime.State<Float>,
     onConfigChange: (LyricsUiConfig) -> Unit,
 ) {
     val lines = remember(track?.uid, track?.title, track?.artist, lyrics) { fullPlayerLyricsOrFallback(track, lyrics) }
     Column(Modifier.fillMaxSize()) {
         key(track?.uid, lines) {
             LyricsViewport(lines, position, config, frameState = frame, motionEnabled = motionEnabled,
+                immersive = immersive,
                 modifier = Modifier.weight(1f).fillMaxWidth()
-                    .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
-                    .drawWithContent {
-                        drawContent()
-                        drawRect(Brush.verticalGradient(0f to Color.Transparent, 0.12f to Color.Black,
-                            0.88f to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
-                    },
+                    .lyricViewportFade(),
                 onLineClick = { if (lyrics.isNotEmpty()) PlaybackController.seekTo(it.startMs) },
             )
         }
-        LyricsSettingsTools(config = config, onConfigChange = onConfigChange)
+        Box(Modifier.immersionChrome(immersion)) {
+            LyricsSettingsTools(config = config, onConfigChange = onConfigChange)
+        }
     }
 }
 
@@ -1748,4 +1916,45 @@ private fun MoreActionsBottomSheet(
         return
     }
     com.leyu.melora.ui.common.SongMoreSheet(song = song, onDismiss = onDismiss)
+}
+
+
+/** 保留同一组控件与测量，缩短其占位同时向下淡出；退出从当前进度反向恢复。 */
+private fun Modifier.immersionChrome(progress: androidx.compose.runtime.State<Float>): Modifier =
+    this.clipToBounds().then(if (progress.value > 0.99f) Modifier.clearAndSetSemantics {} else Modifier)
+        .layout { measurable, constraints ->
+            val placeable = measurable.measure(constraints)
+            val visible = 1f - progress.value
+            layout(placeable.width, (placeable.height * visible).roundToInt()) {
+                placeable.placeRelativeWithLayer(0, (placeable.height * (1f - visible) * 0.3f).roundToInt()) {
+                    alpha = visible
+                }
+            }
+        }
+
+@Composable
+private fun ImmersiveTrackTime(position: androidx.compose.runtime.State<Long>, durationMs: Long, modifier: Modifier) {
+    val seconds by remember(position) { derivedStateOf { position.value / 1_000L } }
+    Text("${formatClock(seconds * 1_000L)} / ${formatClock(durationMs)}", modifier = modifier,
+        color = FullPlayerTextMuted, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+}
+
+@Composable
+internal fun ImmersivePlaybackControls(
+    playing: Boolean,
+    onPrevious: () -> Unit,
+    onToggle: () -> Unit,
+    onNext: () -> Unit,
+    onExit: () -> Unit,
+) {
+    Row(Modifier.clip(RoundedCornerShape(24.dp))
+        .background(LocalPlayerColors.current.cardSurface.copy(alpha = 0.92f))
+        .padding(horizontal = 4.dp).testTag("immersive-playback-controls"),
+        verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = onPrevious) { Icon(Icons.Rounded.SkipPrevious, "上一首", tint = FullPlayerTextPrimary) }
+        IconButton(onClick = onToggle) { Icon(if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+            if (playing) "暂停" else "播放", tint = FullPlayerTextPrimary) }
+        IconButton(onClick = onNext) { Icon(Icons.Rounded.SkipNext, "下一首", tint = FullPlayerTextPrimary) }
+        IconButton(onClick = onExit) { Icon(Icons.Rounded.Close, "退出沉浸播放", tint = FullPlayerTextPrimary) }
+    }
 }

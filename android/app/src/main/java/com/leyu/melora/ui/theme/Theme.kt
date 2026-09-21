@@ -13,6 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -60,16 +61,20 @@ fun MeloraTheme(
     MaterialTheme(colorScheme = colorScheme, content = content)
 }
 
+/** 临时窗口策略随播放子树传入 Dialog，不写入用户的全局设置。 */
+internal val LocalForceHideStatusBar = staticCompositionLocalOf { false }
+
 /** 普通页面与播放层互斥调用，系统栏明暗只保留这一处写入实现。 */
 @Composable
 internal fun SystemBarsAppearance(
     darkStatusIcons: Boolean,
     darkNavigationIcons: Boolean = darkStatusIcons,
     keepScreenAwake: Boolean = false,
+    forceHideStatusBar: Boolean = LocalForceHideStatusBar.current,
 ) {
     val context = LocalContext.current
     val view = LocalView.current
-    SystemBarsVisibility()
+    SystemBarsVisibility(forceHideStatusBar)
     val controller = remember(context) {
         (context as? Activity)?.window?.let { WindowCompat.getInsetsController(it, it.decorView) }
     }
@@ -95,10 +100,11 @@ internal fun SystemBarsAppearance(
 
 /** 每个窗口自行应用可见性：底部抽屉/Dialog不继承Activity的InsetsController状态。 */
 @Composable
-internal fun SystemBarsVisibility() {
+internal fun SystemBarsVisibility(forceHideStatusBar: Boolean = LocalForceHideStatusBar.current) {
     val view = LocalView.current
     val context = LocalContext.current
-    val hideStatusBar by MeloraSettings.hideStatusBar.collectAsStateWithLifecycle()
+    val configuredHideStatusBar by MeloraSettings.hideStatusBar.collectAsStateWithLifecycle()
+    val hideStatusBar = configuredHideStatusBar || forceHideStatusBar
     val window = remember(view, context) {
         generateSequence(view.parent) { it.parent }
             .filterIsInstance<DialogWindowProvider>()

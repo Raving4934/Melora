@@ -1,5 +1,6 @@
 package com.leyu.melora.ui.player
 
+import android.os.Build
 import android.os.SystemClock
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
@@ -20,7 +21,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -161,6 +165,47 @@ private fun wordRuns(line: LyricLine, layout: TextLayoutResult): List<Pair<Lyric
     }
 }
 
+private const val IMMERSIVE_LYRICS_FONT_SIZE_SP = 34f
+private const val IMMERSIVE_LYRICS_LINE_HEIGHT_MULTIPLIER = 1.22f
+private const val IMMERSIVE_LYRICS_SPACING_MULTIPLIER = 0.44f
+
+/**
+ * 统一歌词视口上下缓冲，主歌词页和沉浸页共用同一离屏 alpha mask。
+ * 调用方只需把它放在视口尺寸 modifier 之后；不要再叠加另一层 DstIn mask。
+ */
+internal fun Modifier.lyricViewportFade(): Modifier =
+    graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+        .drawWithContent {
+            drawContent()
+            drawRect(
+                brush = Brush.verticalGradient(
+                    0f to Color.Transparent,
+                    0.12f to Color.Black,
+                    0.88f to Color.Black,
+                    1f to Color.Transparent,
+                ),
+                blendMode = BlendMode.DstIn,
+            )
+        }
+
+private fun immersiveLyricsScale(distance: Int): Float = when (distance) {
+    0 -> 1f
+    1 -> 0.82f
+    else -> 0.72f
+}
+
+private fun immersiveLyricsAlpha(distance: Int): Float = when (distance) {
+    0 -> 1f
+    1 -> 0.78f
+    else -> 0.56f
+}
+
+private fun immersiveLyricsBlurDp(distance: Int): Float = when (distance) {
+    0 -> 0f
+    1 -> 2f
+    else -> 5f
+}
+
 /** 全屏与封面 mini 共用同一列表和行渲染。mini 固定视口、不接受拖动，只响应点击进入全屏。 */
 @Composable
 internal fun LyricsViewport(
@@ -173,6 +218,7 @@ internal fun LyricsViewport(
     onLineClick: (LyricLine) -> Unit,
     frameState: State<LyricFrame> = rememberLyricFrame(lines, position),
     motionEnabled: Boolean = true,
+    immersive: Boolean = false,
 ) {
     val frame by frameState
     val density = LocalDensity.current
@@ -182,18 +228,31 @@ internal fun LyricsViewport(
     val muted = if (dark) {
         if (config.isBlurEnabled) Color(0xFF5B5B5B) else Color(0xFF858585)
     } else if (config.isBlurEnabled) Color(0xFFB4B4B4) else Color(0xFF969696)
-    val alignment = if (centered || config.isCentered) Alignment.CenterHorizontally else Alignment.Start
-    val fontSize = if (mini) config.fontSizeSp.coerceIn(12f, 16f) else config.fontSizeSp
-    val style = baseStyle.copy(fontSize = fontSize.sp, lineHeight = (if (mini) 24f else fontSize * 1.3f).sp,
-        fontWeight = if (config.isBold) FontWeight.ExtraBold else FontWeight.SemiBold,
-        textAlign = if (centered || config.isCentered) TextAlign.Center else TextAlign.Start)
+    val immersiveMode = immersive && !mini
+    val forceCenter = immersive || centered || config.isCentered
+    val alignment = if (forceCenter) Alignment.CenterHorizontally else Alignment.Start
+    val fontSize = when {
+        mini -> config.fontSizeSp.coerceIn(12f, 16f)
+        immersive -> IMMERSIVE_LYRICS_FONT_SIZE_SP
+        else -> config.fontSizeSp
+    }
+    val lineHeightMultiplier = if (immersiveMode) IMMERSIVE_LYRICS_LINE_HEIGHT_MULTIPLIER else 1.3f
+    val style = baseStyle.copy(fontSize = fontSize.sp, lineHeight = (if (mini) 24f else fontSize * lineHeightMultiplier).sp,
+        fontWeight = when {
+            immersive && !mini -> FontWeight.Bold
+            config.isBold -> FontWeight.ExtraBold
+            else -> FontWeight.SemiBold
+        },
+        textAlign = if (forceCenter) TextAlign.Center else TextAlign.Start)
     val subStyle = baseStyle.copy(fontSize = (fontSize * 0.68f).sp, lineHeight = (fontSize * 0.95f).sp, textAlign = style.textAlign)
     val measurer = rememberTextMeasurer(cacheSize = 32)
     BoxWithConstraints(modifier.clipToBounds()) {
         val width = constraints.maxWidth
         val height = constraints.maxHeight
         // 只测量聚焦锚点，不在首次展示时排版整首歌词；可见行由 LazyColumn 自行测量。
-        val rowHeight: (Int) -> Int = remember(lines, width, style, subStyle, mini, density.density, density.fontScale) {
+        val rowHeight: (Int) -> Int = remember(
+            lines, width, style, subStyle, mini, immersiveMode, density.density, density.fontScale,
+        ) {
             val cache = mutableMapOf<Int, Int>();
             { index: Int -> cache.getOrPut(index) {
                 if (mini) with(density) { 24.sp.roundToPx() }
@@ -240,26 +299,44 @@ internal fun LyricsViewport(
             state = list,
             userScrollEnabled = !mini,
             contentPadding = PaddingValues(vertical = with(density) { (height / 2f).toDp() }),
-            verticalArrangement = Arrangement.spacedBy(if (mini) 3.dp else (fontSize * 0.66f).dp),
+            verticalArrangement = Arrangement.spacedBy(
+                if (mini) 3.dp
+                else (fontSize * if (immersiveMode) IMMERSIVE_LYRICS_SPACING_MULTIPLIER else 0.66f).dp,
+            ),
             modifier = Modifier.fillMaxSize(),
         ) {
             itemsIndexed(lines, key = { index, _ -> index }) { index, line ->
                 val active = index in frame.activeIndices
                 val distance = kotlin.math.abs(index - frame.focusIndex)
+                val immersiveRow = immersiveMode
+                // 对唱/背景声部可能同时在演唱，正在唱的行都应清晰，不能只照亮焦点索引。
+                val depthDistance = if (active) 0 else distance
                 val scale = animateFloatAsState(
-                    if (mini) when (distance) { 0 -> 1f; 1 -> 0.82f; else -> 0.75f }
+                    if (immersiveRow) immersiveLyricsScale(depthDistance)
+                    else if (mini) when (distance) { 0 -> 1f; 1 -> 0.82f; else -> 0.75f }
                     else if (active) 1f else 0.97f,
                     if (motionEnabled) spring(dampingRatio = 0.9f, stiffness = 300f) else snap(), label = "lyricFocusScale",
                 )
+                val blurRadiusDp = if (immersiveRow) immersiveLyricsBlurDp(depthDistance) else 0f
+                val blurEffect = remember(blurRadiusDp, density.density) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && blurRadiusDp > 0f) {
+                        with(density) {
+                            val radiusPx = blurRadiusDp.dp.toPx()
+                            BlurEffect(radiusX = radiusPx, radiusY = radiusPx)
+                        }
+                    } else null
+                }
                 Column(Modifier.fillMaxWidth().clickable {
                     onLineClick(line)
                     if (!mini) { browsing = false; scope.launch { follow(index) } }
                 }, horizontalAlignment = alignment) {
                     Column(Modifier.fillMaxWidth()
                         .graphicsLayer {
-                            alpha = if (line.isBackground) 0.78f else 1f
+                            val depthAlpha = if (immersiveRow) immersiveLyricsAlpha(depthDistance) else 1f
+                            alpha = (if (line.isBackground) 0.78f else 1f) * depthAlpha
                             scaleX = scale.value; scaleY = scale.value
                             transformOrigin = TransformOrigin(if (alignment == Alignment.CenterHorizontally) 0.5f else 0f, 0.5f)
+                            renderEffect = blurEffect
                         }) {
                         TimedLyricText(line, position, active, ink, style,
                             modifier = if (mini) Modifier.fillMaxWidth().height(with(density) { 24.sp.toDp() }) else Modifier.fillMaxWidth(),
