@@ -47,7 +47,6 @@ import org.json.JSONObject
  */
 object PlaybackController {
     private const val TAG = "PlaybackController"
-    private const val PREFS_PROGRESS = "melora-progress"
 
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var controller: MediaController? = null
@@ -105,8 +104,6 @@ object PlaybackController {
     private var artworkJob: Job? = null
     private var artworkUid: String? = null
     private val refreshAttempted = mutableSetOf<String>()
-    private var lastProgressSaved = 0L
-    private var lastSavedPosition = -1L
     private var lastTransitionIndex = -1
     // 最近一次已加载详情/歌词的曲目，publish 时据此检测曲目变化
     private var detailUid: String? = null
@@ -210,7 +207,6 @@ object PlaybackController {
                     updateRecentPlayback(player)
                     if (player.playbackState == Player.STATE_READY) consecutiveErrors = 0
                     if (events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED)) {
-                        saveProgress(force = true)
                         saveQueue()
                     }
                 }
@@ -336,7 +332,6 @@ object PlaybackController {
                 positionAdvancing = player.isPlaying,
             )
         }
-        saveProgress(force = false)
         updateRecentPlayback(player)
         if (recoveryJob != null && !MeloraSettings.autoSwitchSource.value) interruptRecovery()
         observeRebuffering(player)
@@ -560,9 +555,7 @@ object PlaybackController {
         val index = startIndex.coerceIn(0, items.lastIndex)
         prefetchTrack(tracks[index])
         player.setMediaItems(items, index, C.TIME_UNSET)
-        applyProgress(tracks[index])
-        player.prepare()
-        player.play()
+        player.prepareAndPlay()
         publish()
     }
 
@@ -718,12 +711,8 @@ object PlaybackController {
         }
         if (player.currentMediaItemIndex != target.index || player.playbackState == Player.STATE_ENDED) {
             player.seekToDefaultPosition(target.index)
-            applyProgress(track)
-        } else if (target.insert) {
-            applyProgress(track)
         }
-        if (player.playbackState == Player.STATE_IDLE) player.prepare()
-        player.play()
+        player.prepareAndPlay()
         saveQueue(force = true)
         publish()
     }
@@ -761,16 +750,20 @@ object PlaybackController {
         }
     }
 
+    /** 各播放入口都可接管冷启动恢复出的未准备队列，不依赖是否曾按过播放键。 */
+    private fun Player.prepareAndPlay() {
+        if (playbackState == Player.STATE_IDLE) prepare()
+        play()
+    }
+
     fun toggle() {
         interruptRecovery()
         val player = controller ?: return
         // 缓冲/解析/音频焦点暂时受限时isPlaying为false，但用户仍能暂停等待播放。
         if (player.playWhenReady) {
             player.pause()
-            saveProgress(force = true)
         } else {
-            if (player.playbackState == Player.STATE_IDLE) player.prepare()
-            player.play()
+            player.prepareAndPlay()
         }
     }
 
@@ -779,7 +772,7 @@ object PlaybackController {
         val player = controller ?: return
         if (player.mediaItemCount == 0) return
         player.seekToNextMediaItem()
-        player.play()
+        player.prepareAndPlay()
     }
 
     fun previous() {
@@ -791,7 +784,7 @@ object PlaybackController {
         } else {
             player.seekToPreviousMediaItem()
         }
-        player.play()
+        player.prepareAndPlay()
     }
 
     fun seekTo(positionMs: Long) {
@@ -805,7 +798,7 @@ object PlaybackController {
         if (index !in 0 until player.mediaItemCount) return
         player.seekToDefaultPosition(index)
         saveQueue(force = true)
-        player.play()
+        player.prepareAndPlay()
     }
 
     fun setSpeed(speed: Float) {
@@ -856,7 +849,6 @@ object PlaybackController {
         interruptRecovery()
         cancelPendingPlayback()
         AudioCacheStore.cancelPrefetch()
-        if (stopEngine) saveProgress(force = true)
         clearSavedQueue()
         controller?.let { player ->
             if (stopEngine) player.stop() else player.pause()
@@ -914,25 +906,6 @@ object PlaybackController {
     /** 供下载/歌单等外围操作向全局提示通道投递消息。 */
     fun postMessage(context: Context?, text: String) {
         _state.value = _state.value.copy(message = text)
-    }
-
-    private fun progressPrefs(): android.content.SharedPreferences? =
-        appContext?.getSharedPreferences(PREFS_PROGRESS, Context.MODE_PRIVATE)
-
-    private fun saveProgress(force: Boolean) {
-        if (!MeloraSettings.rememberProgress.value) return
-        val snapshot = _state.value
-        val track = snapshot.current ?: return
-        if (!track.isOnline || snapshot.positionMs <= 0) return
-        val now = System.currentTimeMillis()
-        if (!force && now - lastProgressSaved < 5_000) return
-        if (!force && kotlin.math.abs(snapshot.positionMs - lastSavedPosition) < 4_000) return
-        lastProgressSaved = now
-        lastSavedPosition = snapshot.positionMs
-        val persistAt = persistedProgressMs(snapshot.positionMs, snapshot.durationMs)
-        progressPrefs()?.edit {
-            if (persistAt <= 0L) remove(track.uid) else putLong(track.uid, persistAt)
-        }
     }
 
     private const val PREFS_QUEUE = "melora-queue"
@@ -1009,26 +982,11 @@ object PlaybackController {
         val items = tracks.map(::buildItem)
         val index = prefs.getInt(KEY_QUEUE_INDEX, 0).coerceIn(0, items.lastIndex)
         player.setMediaItems(items, index, C.TIME_UNSET)
-        applyProgress(tracks[index])
         if (autoPlay) {
-            player.prepare()
-            player.play()
+            player.prepareAndPlay()
         }
         lastQueueFingerprint = playbackQueueFingerprint(tracks, index)
         Log.d(TAG, "已恢复上次播放队列：${tracks.size} 首，当前第 ${index + 1} 首")
-    }
-
-    private fun applyProgress(track: UiTrack) {
-        if (!MeloraSettings.rememberProgress.value) return
-        val saved = progressPrefs()?.getLong(track.uid, 0L) ?: 0L
-        val song = OnlineSong.from(track.raw)
-        if (!shouldRestoreProgress(
-                isBookChapter = song?.isBookChapter == true,
-                durationMs = (song?.intervalSeconds ?: 0) * 1000L,
-                savedMs = saved,
-            )
-        ) return
-        controller?.seekTo(saved)
     }
 
     private fun Player.playMode(): PlayMode = when {
@@ -1075,21 +1033,6 @@ internal fun needsNetworkPrefetch(track: UiTrack): Boolean =
         track.source != com.leyu.melora.playback.local.LocalSong.SOURCE &&
         DownloadCenter.saved(track.uid) == null &&
         LocalMediaStore.matchTrack(track) == null
-
-internal fun shouldRestoreProgress(
-    isBookChapter: Boolean,
-    durationMs: Long,
-    savedMs: Long,
-    nearEndMs: Long = 10_000L,
-    longTrackMs: Long = 10 * 60 * 1000L,
-): Boolean {
-    if (savedMs <= 5_000L) return false
-    if (durationMs > 0 && savedMs >= durationMs - nearEndMs) return false
-    return isBookChapter || durationMs >= longTrackMs
-}
-
-internal fun persistedProgressMs(positionMs: Long, durationMs: Long, nearEndMs: Long = 2_000L): Long =
-    if (durationMs > 0 && positionMs >= durationMs - nearEndMs) 0L else positionMs
 
 internal fun playbackQueueFingerprint(tracks: List<UiTrack>, index: Int): String =
     buildString {

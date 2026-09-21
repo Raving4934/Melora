@@ -35,6 +35,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
@@ -43,6 +45,7 @@ import kotlinx.coroutines.launch
 @androidx.annotation.OptIn(UnstableApi::class)
 class PlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
+    private var playbackProgress: PlaybackProgress? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     private val artworkListener: (String, String) -> Unit = { _, _ ->
@@ -102,6 +105,15 @@ class PlaybackService : MediaSessionService() {
                     .setAudioOffloadMode(TrackSelectionParameters.AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_DISABLED)
                     .build(),
             ).build()
+
+        val progress = PlaybackProgress(player, getSharedPreferences("melora-progress", Context.MODE_PRIVATE))
+        playbackProgress = progress
+        serviceScope.launch {
+            while (isActive) {
+                delay(5_000)
+                progress.checkpoint()
+            }
+        }
 
         val sessionActivity = PendingIntent.getActivity(
             this,
@@ -241,6 +253,7 @@ class PlaybackService : MediaSessionService() {
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
 
     override fun onTaskRemoved(rootIntent: Intent?) {
+        playbackProgress?.checkpoint()
         val player = mediaSession?.player
         if (player == null || !player.playWhenReady || player.mediaItemCount == 0) {
             stopSelf()
@@ -251,6 +264,8 @@ class PlaybackService : MediaSessionService() {
         TrackRegistry.removeArtworkListener(artworkListener)
         AudioCacheStore.cancelPrefetch()
         serviceScope.cancel()
+        playbackProgress?.close()
+        playbackProgress = null
         mediaSession?.run {
             player.release()
             release()

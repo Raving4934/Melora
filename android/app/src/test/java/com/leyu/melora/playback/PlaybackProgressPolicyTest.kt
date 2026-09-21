@@ -39,6 +39,20 @@ class PlaybackProgressPolicyTest {
     }
 
     @Test
+    fun resumeThresholdsAreExactAndUnknownDurationOnlyAllowsBooks() {
+        assertFalse(shouldRestoreProgress(true, 60_000, 5_000))
+        assertTrue(shouldRestoreProgress(true, 60_000, 5_001))
+        assertTrue(shouldRestoreProgress(true, 60_000, 49_999))
+        assertFalse(shouldRestoreProgress(true, 60_000, 50_000))
+        assertFalse(shouldRestoreProgress(false, 599_999, 30_000))
+        assertTrue(shouldRestoreProgress(false, 600_000, 30_000))
+        assertFalse(shouldRestoreProgress(false, 0, 30_000))
+        assertTrue(shouldRestoreProgress(true, 0, 30_000))
+        assertEquals(0L, persistedProgressMs(58_000, 60_000))
+        assertEquals(57_999L, persistedProgressMs(57_999, 60_000))
+    }
+
+    @Test
     fun finishedTrackClearsPersistedProgress() {
         assertEquals(0L, persistedProgressMs(179_000, 180_000))
         assertEquals(90_000L, persistedProgressMs(90_000, 180_000))
