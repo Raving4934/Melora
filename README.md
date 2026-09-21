@@ -6,7 +6,8 @@
 
 Self-hosted music streaming service & standalone Android local music player
 
-[![Release](https://img.shields.io/badge/Release-v0.1.1-3567e8?style=flat-square)](https://github.com/Raving4934/Melora/releases)
+[![Android](https://img.shields.io/badge/Android-v0.1.2-3567e8?style=flat-square)](https://github.com/Raving4934/Melora/releases/tag/android-v0.1.2)
+[![Web / NAS](https://img.shields.io/badge/Web%20%2F%20NAS-v0.1.1-3567e8?style=flat-square)](https://github.com/Raving4934/Melora/releases/tag/v0.1.1)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=flat-square&logo=android&logoColor=white)](https://github.com/Raving4934/Melora/releases)
 [![Platform](https://img.shields.io/badge/Platform-Android%20%7C%20Web%20%7C%20Docker%20%7C%20fnOS-blue?style=flat-square)](packaging/fpk)
 [![Architecture](https://img.shields.io/badge/Design-Neutral%20Architecture-059669?style=flat-square)](DISCLAIMER.md)
@@ -83,7 +84,7 @@ Self-hosted music streaming service & standalone Android local music player
 4. **Demo Mode**:
    - Demo mode must be explicitly enabled via `MELORA_DEMO_MODE=1`. An empty source list does not silently activate demo mode.
 5. **Release Channels & Upgrade Notes**:
-   - Android and Web/NAS maintain separate release tags. The current Android baseline is `android-v0.1.1`; the Web/NAS baseline is `v0.1.1`.
+   - Android and Web/NAS maintain separate release tags. The current Android baseline is `android-v0.1.2`; the Web/NAS baseline is `v0.1.1`.
    - The Android production signing key is preserved, and `versionCode` is set to `7`. Install the new APK over an existing installation without clearing data or uninstalling.
 
 ---
@@ -92,7 +93,7 @@ Self-hosted music streaming service & standalone Android local music player
 
 ### 📱 Android Client
 
-1. **Download & Install**: Grab `melora-android-v0.1.1-arm64-v8a.apk` from [GitHub Releases](https://github.com/Raving4934/Melora/releases) and install it on your device.
+1. **Download & Install**: Grab `melora-android-v0.1.2-arm64-v8a.apk` from [GitHub Releases](https://github.com/Raving4934/Melora/releases) and install it on your device.
 2. **Play Local Music**: Open the app, navigate to "Local Music", grant storage permissions or tap "Scan Media Library" to start playing offline.
 3. **Import Source Extensions**: If online capabilities are needed, import a compatible `.js` script in **Settings → Custom sources**.
 
