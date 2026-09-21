@@ -21,6 +21,7 @@
 - 双击标题快速回顶，覆盖主要列表与详情页面；单击标题不会触发回顶或误点下方歌曲。
 
 【体验修复】
+- 统一听书与长音频的断点续播：列表点播、队列点选、上下首、自动连播和重启恢复使用同一套记忆；暂停和切歌保存实际位置，补齐时长信息缺失时的恢复，并优先保留用户主动拖动的位置。
 - 本地歌曲排序方式和方向可持久保存，并随备份恢复；修复空态音符遮挡、搜索光标错位及搜索退场时内容提前清空。
 - 百万热播页面返回重入时保留已加载数据与分页进度，歌单加载失败后重试不再反复闪出骨架屏，也不会重复发起请求。
 - 调整发现页顶部卡片与热搜文字布局，改善内容截断和加载时的位置变化。
@@ -37,6 +38,8 @@
 - 沉浸播放与点击歌词分页动画：[`20c2f64`](https://github.com/Raving4934/Melora/commit/20c2f64e3a4979367a02bb95795b0248a9e97893)、[`c17cc97`](https://github.com/Raving4934/Melora/commit/c17cc97abdd0cd740baf2c49bb74b93a1d74b724)。
 - 发布签名校验与公开仓检查修复：[`b8caebd`](https://github.com/Raving4934/Melora/commit/b8caebdcc6f71bbb281dbc2da9a3111db311b198)、[`b977dae`](https://github.com/Raving4934/Melora/commit/b977dae10323a1b0128bc7b9fac184e52b2ed791)。
 - 双语社区致谢：[`71acbc4`](https://github.com/Raving4934/Melora/commit/71acbc45f61578f8bb815c9e4f311b411d608850)。
+
+- 全入口进度记忆、暂停保存与实际时长恢复：[`e29f220`](https://github.com/Raving4934/Melora/commit/e29f220aa4de6019f571e30e27281d30ee84db2d)。
 
 ### 安卓安装包
 
