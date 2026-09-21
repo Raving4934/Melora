@@ -410,7 +410,12 @@ fun EmptyState(text: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun ErrorState(message: String, modifier: Modifier = Modifier, onRetry: (() -> Unit)? = null) {
+fun ErrorState(
+    message: String,
+    modifier: Modifier = Modifier,
+    onRetry: (() -> Unit)? = null,
+    retrying: Boolean = false,
+) {
     Column(
         modifier = modifier.fillMaxWidth().padding(vertical = 40.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -418,13 +423,14 @@ fun ErrorState(message: String, modifier: Modifier = Modifier, onRetry: (() -> U
         Text(message, fontSize = 13.sp, color = TextSub)
         if (onRetry != null) {
             Text(
-                "点击重试",
+                text = if (retrying) "正在重试…" else "点击重试",
                 fontSize = 13.sp,
-                color = BrandBlue,
+                color = if (retrying) TextMuted else BrandBlue,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier
                     .padding(top = 10.dp)
                     .clickable(
+                        enabled = !retrying,
                         indication = null,
                         interactionSource = remember { MutableInteractionSource() },
                         onClick = onRetry,

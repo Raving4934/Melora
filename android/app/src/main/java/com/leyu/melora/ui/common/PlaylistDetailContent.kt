@@ -32,7 +32,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -114,23 +113,45 @@ fun PlaylistDetailContent(
             ?.let { formatPlayCountLabel(it.toString()) } ?: playlist.playCountLabel
         val favoriteUids by UserLibrary.favoriteUids.collectAsStateWithLifecycle()
         var moreSong by remember { mutableStateOf<OnlineSong?>(null) }
-        var refreshTick by remember { mutableIntStateOf(0) }
 
-        LaunchedEffect(refreshTick) {
-            if (songs.isEmpty()) loading = true
-            error = null
-            runCatchingCancellable {
-                if (isBook) {
-                    bookSnapshot = OnlineCache.refresh(detailCacheKey, OnlineCache.CATALOG_TTL_MS) {
-                        KwBookApi.album(playlist.id, 1)
+        suspend fun loadFirstPage() {
+            try {
+                runCatchingCancellable {
+                    if (isBook) {
+                        val previous = bookSnapshot
+                        val fresh = OnlineCache.refresh(detailCacheKey, OnlineCache.CATALOG_TTL_MS) {
+                            KwBookApi.album(playlist.id, 1)
+                        }
+                        if (previous?.items?.isNotEmpty() == true && fresh.items.isEmpty()) {
+                            // 空响应不是有效的重载结果：保留正在展示的章节，避免内容闪空。
+                            OnlineCache.put(detailCacheKey, previous)
+                        } else {
+                            bookSnapshot = fresh
+                        }
+                    } else {
+                        val previous = songSnapshot
+                        val fresh = OnlineCache.refresh(detailCacheKey, OnlineCache.CATALOG_TTL_MS) {
+                            OnlineRepository.playlistSongs(context, playlist.source, playlist.id, 1).forRequestedPage(1)
+                        }
+                        if (previous?.list?.isNotEmpty() == true && fresh.list.isEmpty()) {
+                            // 空响应不是有效的重载结果：保留正在展示的歌曲，避免内容闪空。
+                            OnlineCache.put(detailCacheKey, previous)
+                        } else {
+                            songSnapshot = fresh
+                        }
                     }
-                } else {
-                    songSnapshot = OnlineCache.refresh(detailCacheKey, OnlineCache.CATALOG_TTL_MS) {
-                        OnlineRepository.playlistSongs(context, playlist.source, playlist.id, 1).forRequestedPage(1)
-                    }
+                }.onSuccess {
+                    error = null
+                }.onFailure {
+                    if (songs.isEmpty()) error = it.message ?: "歌单加载失败"
                 }
-            }.onFailure { if (songs.isEmpty()) error = it.message ?: "歌单加载失败" }
-            loading = false
+            } finally {
+                loading = false
+            }
+        }
+
+        LaunchedEffect(Unit) {
+            loadFirstPage()
         }
 
         fun loadMore() {
@@ -285,7 +306,18 @@ fun PlaylistDetailContent(
                 }
             }
             when {
-                loading -> Column(
+                error != null -> ErrorState(
+                    error!!,
+                    onRetry = {
+                        if (!loading) {
+                            loading = true
+                            scope.launch { loadFirstPage() }
+                        }
+                    },
+                    retrying = loading,
+                    modifier = Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current),
+                )
+                loading && songs.isEmpty() -> Column(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(top = LocalChromeTopInset.current),
@@ -330,11 +362,6 @@ fun PlaylistDetailContent(
                         rowSpacing = 2.dp,
                     )
                 }
-                error != null -> ErrorState(
-                    error!!,
-                    onRetry = { refreshTick++ },
-                    modifier = Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current),
-                )
                 songs.isEmpty() -> EmptyState(
                     emptyHint,
                     Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current),
