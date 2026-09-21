@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import re
 import stat
 import subprocess
 import tempfile
@@ -135,8 +136,15 @@ BADGING
     )
     def test_gradle_release_never_falls_back_to_debug_signing(self) -> None:
         build = (ROOT / "android" / "app" / "build.gradle.kts").read_text(encoding="utf-8")
-        self.assertNotIn('signingConfigs.getByName("debug")', build)
-        self.assertIn('signingConfig = signingConfigs.findByName("release")', build)
+        # benchmarkRelease/nonMinifiedRelease are isolated test APKs and legitimately
+        # use debug signing. The distributable release block must never inherit it.
+        release = re.search(r"(?ms)^        release \{(.*?)^        \}", build)
+        self.assertIsNotNone(release, "missing explicit release build type")
+        release_body = release.group(1)
+        self.assertNotIn("debug", release_body.lower())
+        self.assertIn('signingConfig = signingConfigs.findByName("release")', release_body)
+        self.assertIn('it.name in setOf("benchmarkRelease", "nonMinifiedRelease")', build)
+        self.assertIn('it.applicationIdSuffix = ".benchmark"', build)
 
     def test_accepts_signed_release_fixture(self) -> None:
         result = self.run_verifier()
