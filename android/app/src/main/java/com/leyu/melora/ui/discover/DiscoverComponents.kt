@@ -1,6 +1,8 @@
 package com.leyu.melora.ui.discover
 
 import com.leyu.melora.ui.common.PageBackHandler as BackHandler
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -30,7 +32,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -40,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -47,6 +49,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.leyu.melora.playback.sdk.OnlineCache
 import com.leyu.melora.playback.sdk.OnlinePlaylist
 import com.leyu.melora.playback.sdk.OnlineRepository
 import com.leyu.melora.ui.common.CardPlayButton
@@ -60,10 +63,11 @@ import com.leyu.melora.ui.common.rememberFastScrollToTop
 import com.leyu.melora.ui.common.titleScrollToTop
 import com.leyu.melora.ui.common.LoadMoreOnScroll
 import com.leyu.melora.ui.common.ShimmerBox
-import com.leyu.melora.ui.common.SkeletonGrid
+import com.leyu.melora.ui.common.LoadingState
 import com.leyu.melora.ui.common.SongArtwork
 import com.leyu.melora.ui.common.runCatchingCancellable
 import com.leyu.melora.ui.theme.MeloraAppearance
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 internal val TextMain: Color get() = MeloraAppearance.textMain
@@ -110,7 +114,29 @@ internal data class DiscoverSongs(
     val cacheKey: String,
 )
 
-// 百万热播：从平台推荐位里筛真实播放量 ≥ 100 万的歌单；滚动到底自动补页（最多 6 页，避免请求风暴）
+internal const val MILLION_PLAYLISTS_CACHE_KEY = "discover.million.playlists"
+
+/** 一份快照同时保存内容与游标，重入后不能拿第N页的列表配第1页游标。 */
+internal data class MillionPlaylistsSnapshot(
+    val items: List<OnlinePlaylist>,
+    val page: Int,
+    val hasMore: Boolean,
+)
+
+internal fun millionPlaylistsSnapshot(
+    previous: MillionPlaylistsSnapshot?,
+    received: List<OnlinePlaylist>,
+    page: Int,
+): MillionPlaylistsSnapshot {
+    val eligible = received.filter { it.playNum >= 1_000_000L }
+    return MillionPlaylistsSnapshot(
+        items = if (previous == null) eligible else (previous.items + eligible).distinctBy { "${it.source}_${it.id}" },
+        page = page,
+        hasMore = eligible.isNotEmpty() && page < 6,
+    )
+}
+
+// 百万热播：保留原百万门槛及6页上限；热重入不清空，过期时保留内容刷新。
 @Composable
 internal fun MillionPlaylistsPage(
     onBack: () -> Unit,
@@ -121,34 +147,52 @@ internal fun MillionPlaylistsPage(
     val listState = rememberLazyListState()
     val scrollToTop = rememberFastScrollToTop(listState)
     BackHandler(onBack = onBack)
-    var items by remember { mutableStateOf<List<OnlinePlaylist>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
-    var loadingMore by remember { mutableStateOf(false) }
+    var snapshot by remember {
+        mutableStateOf(OnlineCache.peek<MillionPlaylistsSnapshot>(MILLION_PLAYLISTS_CACHE_KEY))
+    }
+    var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var page by remember { mutableIntStateOf(1) }
-    var hasMore by remember { mutableStateOf(true) }
+    val items = snapshot?.items.orEmpty()
+    val hasMore = snapshot?.hasMore == true
 
     fun load(targetPage: Int, append: Boolean) {
-        if (append && (loadingMore || !hasMore || targetPage > 6)) return
-        if (append) loadingMore = true else loading = true
+        if (loading || (append && (!hasMore || targetPage > 6))) return
+        loading = true
+        error = null
         scope.launch {
-            runCatchingCancellable {
-                OnlineRepository.playlists(context, "kw", "hot", "", targetPage).list
-                    .filter { it.playNum >= 1_000_000L }
-            }
-                .onSuccess { list ->
-                    items = if (append) (items + list).distinctBy { "${it.source}_${it.id}" } else list
-                    page = targetPage
-                    hasMore = list.isNotEmpty() && targetPage < 6
+            try {
+                runCatchingCancellable {
+                    OnlineRepository.playlists(context, "kw", "hot", "", targetPage).list
+                }.onSuccess { list ->
+                    snapshot = millionPlaylistsSnapshot(if (append) snapshot else null, list, targetPage)
+                    OnlineCache.put(MILLION_PLAYLISTS_CACHE_KEY, checkNotNull(snapshot))
                     error = null
-                }
-                .onFailure { if (!append && items.isEmpty()) error = it.message ?: "加载失败" }
-            loading = false
-            loadingMore = false
+                }.onFailure { if (items.isEmpty()) error = it.message ?: "加载失败" }
+            } finally {
+                loading = false
+            }
         }
     }
 
-    LaunchedEffect(Unit) { load(1, append = false) }
+    LaunchedEffect(Unit) {
+        val fresh = OnlineCache.get<MillionPlaylistsSnapshot>(MILLION_PLAYLISTS_CACHE_KEY, OnlineCache.CATALOG_TTL_MS)
+        if (fresh != null) snapshot = fresh else load(1, append = false)
+    }
+    // 不让短请求在推页途中闪出整屏骨架；慢请求才出现反馈，不延迟网络与内容交付。
+    var showLoading by remember { mutableStateOf(false) }
+    val waitingForFirstPage = snapshot == null && error == null
+    LaunchedEffect(waitingForFirstPage) {
+        showLoading = false
+        if (waitingForFirstPage) {
+            delay(300)
+            showLoading = true
+        }
+    }
+    val contentAlpha = animateFloatAsState(
+        targetValue = if (snapshot == null) 0f else 1f,
+        animationSpec = tween(180),
+        label = "millionFirstContent",
+    )
 
     ChromeScaffold(
         modifier = Modifier.fillMaxSize(),
@@ -160,7 +204,7 @@ internal fun MillionPlaylistsPage(
                     .fillMaxWidth()
                     .height(64.dp)
                     .background(chromeHeaderColor())
-                    .padding(horizontal = 16.dp),
+                    .padding(horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onBack) {
@@ -177,8 +221,8 @@ internal fun MillionPlaylistsPage(
                         .titleScrollToTop(scrollToTop),
                     verticalArrangement = Arrangement.Center,
                 ) {
-                    Text("百万热播", fontSize = 17.sp, fontWeight = FontWeight.Medium, color = TextMain)
-                    Text("真实播放量 ≥ 100 万的平台歌单", fontSize = 11.sp, color = TextSub)
+                    Text("百万热播", fontSize = 17.sp, fontWeight = FontWeight.Medium, color = TextMain, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("真实播放量 ≥ 100 万的平台歌单", fontSize = 11.sp, color = TextSub, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         },
@@ -190,14 +234,11 @@ internal fun MillionPlaylistsPage(
         ) {
             val columns = com.leyu.melora.ui.common.responsiveGridColumns()
             when {
-                loading -> SkeletonGrid(
-                    columns = columns,
-                    cards = columns * 2,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(top = LocalChromeTopInset.current),
+                waitingForFirstPage -> if (showLoading) LoadingState(
+                    text = "正在加载歌单…",
+                    modifier = Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current),
                 )
-                error != null -> ErrorState(
+                error != null && items.isEmpty() -> ErrorState(
                     error!!,
                     onRetry = { load(1, append = false) },
                     modifier = Modifier
@@ -213,18 +254,18 @@ internal fun MillionPlaylistsPage(
                 else -> {
                     LoadMoreOnScroll(
                         listState = listState,
-                        enabled = hasMore && page < 6,
-                        loading = loadingMore,
-                        onLoadMore = { load(page + 1, append = true) },
+                        enabled = hasMore,
+                        loading = loading,
+                        onLoadMore = { load(checkNotNull(snapshot).page + 1, append = true) },
                     )
                     LazyColumn(
                         state = listState,
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxSize().graphicsLayer { alpha = contentAlpha.value },
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                         contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
                     ) {
                         val rows = items.chunked(columns)
-                        items(rows.size) { rowIndex ->
+                        items(rows.size, contentType = { "playlists" }) { rowIndex ->
                             val rowItems = rows[rowIndex]
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -240,7 +281,7 @@ internal fun MillionPlaylistsPage(
                                 repeat(columns - rowItems.size) { Spacer(Modifier.weight(1f)) }
                             }
                         }
-                        if (hasMore && page < 6) {
+                        if (hasMore) {
                             item {
                                 Box(
                                     modifier = Modifier
@@ -249,11 +290,11 @@ internal fun MillionPlaylistsPage(
                                     contentAlignment = Alignment.Center,
                                 ) {
                                     Text(
-                                        if (loadingMore) "正在加载…" else "上滑加载更多",
+                                        if (loading) "正在加载…" else "上滑加载更多",
                                         fontSize = 13.sp,
                                         color = BrandBlue,
-                                        modifier = Modifier.clickable(enabled = !loadingMore) {
-                                            load(page + 1, append = true)
+                                        modifier = Modifier.clickable(enabled = !loading) {
+                                            load(checkNotNull(snapshot).page + 1, append = true)
                                         },
                                     )
                                 }
