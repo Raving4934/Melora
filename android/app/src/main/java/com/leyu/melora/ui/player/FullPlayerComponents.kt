@@ -1,13 +1,13 @@
 package com.leyu.melora.ui.player
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+
 import com.leyu.melora.ui.common.BadgePill
-import com.leyu.melora.ui.common.LocalBadgePill
 
 import android.os.SystemClock
 import androidx.compose.foundation.background
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,24 +41,18 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import com.leyu.melora.R
 import com.leyu.melora.ui.common.AudioEffectsIcon
 import com.leyu.melora.playback.sdk.CatalogMetadata
 import coil3.compose.AsyncImage
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leyu.melora.playback.sdk.LxScriptPool
@@ -71,9 +65,6 @@ import com.leyu.melora.ui.common.SongArtwork
 /** 歌曲状态和歌词流分开发射时，绝不能短暂显示上一首歌词。 */
 internal fun playerLyricLines(uid: String?, lyric: PlayerLyric?): List<LyricLine> =
     lyric?.takeIf { it.uid == uid }?.lines.orEmpty()
-
-/** 首尾留白为半个视口，初始/后续行统一前移半行高，首帧即精确居中。 */
-internal fun lyricCenterScrollOffset(rowHeight: Int): Int = rowHeight / 2
 
 internal fun fullPlayerLyricsOrFallback(track: UiTrack?, lyrics: List<LyricLine>): List<LyricLine> =
     lyrics.ifEmpty {
@@ -324,66 +315,6 @@ internal fun ArtistInfoCard(
                         contentDescription = "查看歌手歌曲",
                         tint = FullPlayerTextMuted,
                         modifier = Modifier.size(18.dp),
-                    )
-                }
-            }
-        }
-    }
-}
-
-/** 五个固定行位；歌曲开头/结尾缺少的前后行留空，不增删歌词区的高度。 */
-internal fun vinylLyricPreviewRows(lines: List<LyricLine>, currentIndex: Int, trackTitle: String?): List<String?> =
-    (-2..2).map { offset ->
-        lines.getOrNull(currentIndex + offset)?.text ?: trackTitle.takeIf { offset == 0 }
-    }
-
-@Composable
-internal fun VinylLyricsPreview(
-    lines: List<LyricLine>,
-    currentIndex: Int,
-    trackTitle: String?,
-    interactionSource: MutableInteractionSource,
-    onNavigateToLyrics: () -> Unit,
-    centered: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    val rowHeight = with(LocalDensity.current) { 24.sp.toDp() }
-    val rows = vinylLyricPreviewRows(lines, currentIndex, trackTitle)
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable(
-                indication = null,
-                interactionSource = interactionSource,
-                onClick = onNavigateToLyrics,
-            ),
-        verticalArrangement = Arrangement.spacedBy(3.dp),
-    ) {
-        rows.forEachIndexed { index, text ->
-            Box(Modifier.fillMaxWidth().height(rowHeight), contentAlignment = Alignment.CenterStart) {
-                if (text != null) {
-                    val isCurrent = index == 2
-                    Text(
-                        text = text,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .then(
-                                if (isCurrent) {
-                                    Modifier.basicMarquee(
-                                        iterations = Int.MAX_VALUE,
-                                        initialDelayMillis = 1000,
-                                        repeatDelayMillis = 1200,
-                                        velocity = 32.dp,
-                                    )
-                                } else Modifier
-                            ),
-                        textAlign = if (centered) TextAlign.Center else TextAlign.Start,
-                        fontSize = when (index) { 2 -> 16.sp; 1, 3 -> 13.sp; else -> 12.sp },
-                        lineHeight = 24.sp,
-                        fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
-                        color = when (index) { 2 -> FullPlayerTextPrimary; 1, 3 -> FullPlayerTextPrimary.copy(alpha = 0.47f); else -> FullPlayerTextPrimary.copy(alpha = 0.27f) },
-                        maxLines = 1,
-                        overflow = if (isCurrent) TextOverflow.Clip else TextOverflow.Ellipsis,
                     )
                 }
             }

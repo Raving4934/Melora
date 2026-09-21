@@ -301,6 +301,8 @@ object PlaybackController {
                 resolution == null && DownloadCenter.saved(currentTrack.uid) == null &&
                 player.playbackState == Player.STATE_BUFFERING,
             positionMs = player.currentPosition.coerceAtLeast(0),
+            positionSampleRealtimeMs = SystemClock.elapsedRealtime(),
+            positionAdvancing = player.isPlaying,
             durationMs = player.duration.takeIf { it > 0 } ?: 0,
             mode = player.playMode(),
             speed = player.playbackParameters.speed,
@@ -313,7 +315,7 @@ object PlaybackController {
         // 曲目变化（含启动恢复队列、切歌、自动连播）即加载详情与歌词，不再只依赖过渡事件
         if (currentTrack?.uid != detailUid) {
             detailUid = currentTrack?.uid
-            if (currentTrack != null && currentTrack.isOnline) {
+            if (currentTrack != null) {
                 loadTrackDetails()
             } else {
                 _lyric.value = null
@@ -328,7 +330,11 @@ object PlaybackController {
         val position = player.currentPosition.coerceAtLeast(0)
         val duration = player.duration.takeIf { it > 0 } ?: snapshot.durationMs
         if (position != snapshot.positionMs || duration != snapshot.durationMs) {
-            _state.value = snapshot.copy(positionMs = position, durationMs = duration)
+            _state.value = snapshot.copy(
+                positionMs = position, durationMs = duration,
+                positionSampleRealtimeMs = SystemClock.elapsedRealtime(),
+                positionAdvancing = player.isPlaying,
+            )
         }
         saveProgress(force = false)
         updateRecentPlayback(player)
@@ -422,7 +428,7 @@ object PlaybackController {
         if (track != null) {
             appContext?.let { LocalTagFiller.consider(it, track) }
         }
-        if (track == null || !track.isOnline) {
+        if (track == null) {
             lyricJob?.cancel()
             _lyric.value = null
             return
@@ -446,7 +452,7 @@ object PlaybackController {
         val context = appContext ?: return
         // 预取下一首歌词：自动连播时歌词秒现（听书连播同理）
         val next = snapshot.queue.getOrNull(snapshot.currentIndex + 1)
-        if (next != null && next.isOnline) {
+        if (next != null) {
             scope.launch { LyricRepository.prefetch(context, next) }
         }
     }
@@ -1099,7 +1105,7 @@ internal fun notificationLyricLine(
     lyric: PlayerLyric?,
 ): String? {
     if (!enabled || currentUid == null || lyric?.uid != currentUid) return null
-    return lyric.lines.lastOrNull { it.timeMs <= positionMs }?.text?.takeIf { it.isNotBlank() }
+    return lyric.lines.getOrNull(lyricIndexAt(lyric.lines, positionMs))?.text?.takeIf { it.isNotBlank() }
 }
 
 /** 单曲队列策略：按 uid 去重，不把来源列表隐式变成播放队列。 */

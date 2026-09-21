@@ -90,12 +90,18 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
     val density = LocalDensity.current
     val haptics = LocalHapticFeedback.current
     val playerLyric by PlaybackController.lyric.collectAsStateWithLifecycle()
+    val lyricLines = playerLyricLines(state.current?.uid, playerLyric)
+    val lyricPosition = rememberLyricPosition(state, visible = lyricLines.isNotEmpty())
+    val displayLyricLines = remember(state.current, lyricLines) { fullPlayerLyricsOrFallback(state.current, lyricLines) }
+    val lyricFrameState = rememberLyricFrame(displayLyricLines, lyricPosition)
+    val lyricFrame by lyricFrameState
     val sheetState = rememberSaveable(saver = AnchoredDraggableState.Saver<PlayerSheetAnchor>()) {
         AnchoredDraggableState(PlayerSheetAnchor.Collapsed)
     }
     val swipeOffset = remember { Animatable(0f) }
     val verticalPagerState = rememberPagerState(pageCount = { 2 })
     var pageShowsCover by remember { mutableStateOf(true) }
+    var pageShowsLyrics by remember { mutableStateOf(false) }
     var pageIsLight by remember(playerIsDark) { mutableStateOf(!playerIsDark) }
     var sheetCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
     var miniBounds by remember { mutableStateOf<Rect?>(null) }
@@ -139,7 +145,8 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
             derivedStateOf { playerSheetIsCollapsed(sheetState.settledValue, sheetState.targetValue, progress()) }
         }
         val showMini by remember(progress) { derivedStateOf { progress() < 0.22f } }
-        val canDrag by remember(offset, playbackPage) { derivedStateOf { offset() > 0.5f || playbackPage() } }
+        val canCollapse = remember(playbackPage) { { playbackPage() && !pageShowsLyrics } }
+        val canDrag by remember(offset, canCollapse) { derivedStateOf { offset() > 0.5f || canCollapse() } }
         val morphing = remember(progress, playbackPage) {
             {
                 val p = progress()
@@ -148,7 +155,7 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
         }
         val artworkAlpha = remember(morphing) { { if (morphing()) 0f else 1f } }
 
-        val nestedScroll = remember(sheetState, travel, velocityThreshold, fluidSpec, decay, playbackPage, offset) {
+        val nestedScroll = remember(sheetState, travel, velocityThreshold, fluidSpec, decay, canCollapse, offset) {
             object : NestedScrollConnection {
                 suspend fun settle(velocity: Float): Velocity {
                     val target = playerSheetTarget(offset(), travel, velocity, velocityThreshold, sheetState.settledValue)
@@ -161,7 +168,7 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
                     } else Offset.Zero
 
                 override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset =
-                    if (source == NestedScrollSource.UserInput && available.y > 0f && playbackPage()) {
+                    if (source == NestedScrollSource.UserInput && available.y > 0f && canCollapse()) {
                         Offset(0f, sheetState.dispatchRawDelta(available.y))
                     } else Offset.Zero
 
@@ -169,7 +176,7 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
                     if (offset() > 0.5f && offset() < travel) settle(available.y) else Velocity.Zero
 
                 override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity =
-                    if (playbackPage() && (offset() > 0.5f || available.y > velocityThreshold)) settle(available.y)
+                    if (canCollapse() && (offset() > 0.5f || available.y > velocityThreshold)) settle(available.y)
                     else Velocity.Zero
             }
         }
@@ -198,15 +205,9 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
             scope.launch { swipeOffset.snapTo((swipeOffset.value + delta).coerceIn(-maxSwipePx, maxSwipePx)) }
         }
         // 迷你条第二行：当前歌词（无歌词/间奏时给出占位）
-        val currentLyricText = remember(playerLyric, state.positionMs) {
-            val lines = playerLyric?.lines.orEmpty()
-            if (lines.isEmpty()) {
-                "暂无歌词"
-            } else {
-                val index = lines.indexOfLast { state.positionMs >= it.timeMs }
-                if (index < 0) "♪" else lines[index].text.trim().ifBlank { "♪" }
-            }
-        }
+        val currentLine = lyricLines.getOrNull(lyricFrame.focusIndex)
+        val currentLyricText = currentLine?.text?.trim()?.ifBlank { "♪" }
+            ?: if (lyricLines.isEmpty()) "暂无歌词" else "♪"
         // 播放状态优先于歌词：缓冲/解析/换源时给出明确状态，真正播放后才展示歌词
         val playbackStatus = when {
             state.message?.contains("重新解析") == true || state.message?.contains("换源") == true ->
@@ -251,6 +252,9 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
                 Box(Modifier.fillMaxSize().graphicsLayer { alpha = playerMotionPhase(progress(), 0.18f, 0.88f) }) {
                     FullPlayerPageContent(
                         state = state,
+                        lyricPosition = lyricPosition,
+                        lyricFrame = lyricFrameState,
+                        lyricLines = lyricLines,
                         isCollapsed = collapsed,
                         isVisible = expanded && (twoPanes || verticalPagerState.currentPage == 0),
                         queuePagerState = verticalPagerState,
@@ -267,7 +271,7 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
                         artworkAlpha = artworkAlpha,
                         coverStyle = playerCoverStyle,
                         artworkRotation = vinylRotation,
-                        onPageVisualChanged = { cover, light -> pageShowsCover = cover; pageIsLight = light },
+                        onPageVisualChanged = { cover, light, lyrics -> pageShowsCover = cover; pageIsLight = light; pageShowsLyrics = lyrics },
                     )
                 }
             }
@@ -369,13 +373,19 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
                                         .padding(top = 3.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    Text(
-                                        text = subtitleText,
-                                        fontSize = 12.sp,
-                                        color = miniColors.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f),
+                                    if (playbackStatus == null && currentLine != null) {
+                                        TimedLyricText(
+                                            line = currentLine, position = lyricPosition,
+                                            active = lyricFrame.focusIndex in lyricFrame.activeIndices,
+                                            color = miniColors.onSurfaceVariant,
+                                            style = LocalTextStyle.current.copy(fontSize = 12.sp),
+                                            modifier = Modifier.weight(1f), maxLines = 1, glow = false,
+                                            inactiveAlpha = 1f,
+                                        )
+                                    } else Text(
+                                        text = subtitleText, fontSize = 12.sp,
+                                        color = miniColors.onSurfaceVariant, maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
                                     )
                                     Spacer(Modifier.width(8.dp))
                                     Text(

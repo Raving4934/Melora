@@ -428,8 +428,8 @@ class DesktopLyricService : Service() {
                 MeloraSettings.singleLineLyric,
                 MeloraSettings.lyricMaxLines,
             ) { state, lyric, singleLine, maxLines ->
-                val lines = lyric?.lines.orEmpty()
-                val index = lines.indexOfLast { state.positionMs >= it.timeMs }
+                val lines = lyric?.takeIf { it.uid == state.current?.uid }?.lines.orEmpty()
+                val index = lyricIndexAt(lines, state.positionMs)
                 if (index >= 0) {
                     // 多行窗口：当前行 + 翻译（小号）+ 后续段落，总行数不超过设置的最大行数
                     val window = desktopLyricWindow(lines, index, singleLine, maxLines)

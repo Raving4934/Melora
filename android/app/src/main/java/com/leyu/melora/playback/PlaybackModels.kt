@@ -51,6 +51,8 @@ data class PlayerUiState(
     val playing: Boolean = false,
     val buffering: Boolean = false,
     val positionMs: Long = 0,
+    val positionSampleRealtimeMs: Long = 0,
+    val positionAdvancing: Boolean = false,
     val durationMs: Long = 0,
     val mode: PlayMode = PlayMode.List,
     val speed: Float = 1.0f,
@@ -67,10 +69,20 @@ data class PlayerUiState(
     val pendingQueueId: String? = null,
 )
 
+/** 所有格式共用一份时序模型；words 为空意味着只有行级时间，不能假定逐词进度。 */
+data class LyricWord(val text: String, val startMs: Long, val endMs: Long)
+
+enum class LyricAlignment { Start, End }
+
 data class LyricLine(
-    val timeMs: Long,
+    val startMs: Long,
     val text: String,
     val translation: String? = null,
+    val endMs: Long? = null,
+    val words: List<LyricWord> = emptyList(),
+    val romanization: String? = null,
+    val alignment: LyricAlignment = LyricAlignment.Start,
+    val isBackground: Boolean = false,
 )
 
 data class PlayerLyric(

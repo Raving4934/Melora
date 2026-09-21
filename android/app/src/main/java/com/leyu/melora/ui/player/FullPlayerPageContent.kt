@@ -1,13 +1,14 @@
 package com.leyu.melora.ui.player
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+
+import com.leyu.melora.ui.common.PageBackHandler as BackHandler
 import com.leyu.melora.ui.common.DetailPageHost
 import com.leyu.melora.ui.common.MeloraBottomSheet
-import com.leyu.melora.ui.common.PageBackHandler as BackHandler
 import com.leyu.melora.playback.AudioSpecification
 import com.leyu.melora.playback.TrackRegistry
 
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.getValue
 import org.json.JSONObject
 import dev.chrisbanes.haze.rememberHazeState
 import dev.chrisbanes.haze.hazeSource
@@ -65,7 +66,6 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -127,7 +127,6 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.LocalTextStyle
-import androidx.compose.material3.ripple
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -154,8 +153,6 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.rememberTextMeasurer
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -163,7 +160,6 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.style.LineHeightStyle
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -217,15 +213,18 @@ data class LyricsUiConfig(
 // VerticalPager Page 0: 全屏播放页
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FullPlayerPageContent(
+internal fun FullPlayerPageContent(
     state: PlayerUiState,
+    lyricPosition: androidx.compose.runtime.State<Long>,
+    lyricFrame: androidx.compose.runtime.State<com.leyu.melora.playback.LyricFrame>,
+    lyricLines: List<LyricLine>,
     onOpenQueue: () -> Unit,
     queuePagerState: PagerState,
     onArtworkPositioned: (LayoutCoordinates) -> Unit,
     artworkAlpha: () -> Float,
     coverStyle: PlayerCoverStyle,
     artworkRotation: () -> Float,
-    onPageVisualChanged: (Boolean, Boolean) -> Unit,
+    onPageVisualChanged: (Boolean, Boolean, Boolean) -> Unit,
     modifier: Modifier = Modifier,
     isVisible: Boolean = true,
     isCollapsed: Boolean = false,
@@ -250,8 +249,6 @@ fun FullPlayerPageContent(
     val audioEffectPreset by MeloraSettings.audioEffectPreset.collectAsStateWithLifecycle()
     val audioEffectState by AudioEffects.state.collectAsStateWithLifecycle()
     val miniLyricsEnabled by MeloraSettings.miniLyricsEnabled.collectAsStateWithLifecycle()
-    val playerLyric by PlaybackController.lyric.collectAsStateWithLifecycle()
-    val lyricLines = playerLyricLines(track?.uid, playerLyric)
 
     // 重新进入全屏或切回封面页时补齐缺图，不依赖歌词是否已缓存。
     LaunchedEffect(track?.uid, coverPagerState.currentPage, isVisible) {
@@ -268,6 +265,7 @@ fun FullPlayerPageContent(
         onPageVisualChanged(
             collection == null && coverPagerState.currentPage == 1 && !coverPagerState.isScrollInProgress,
             pageIsLight,
+            collection == null && coverPagerState.currentPage == 2,
         )
     }
     DetailPageHost(
@@ -406,7 +404,8 @@ fun FullPlayerPageContent(
                             artworkAlpha = artworkAlpha,
                             artworkRotation = artworkRotation,
                             onArtworkPositioned = onArtworkPositioned,
-                            positionMs = state.positionMs,
+                            position = lyricPosition,
+                            frame = lyricFrame,
                             onNavigateToLyrics = {
                                 scope.launch { coverPagerState.animateScrollToPage(2) }
                             },
@@ -414,7 +413,8 @@ fun FullPlayerPageContent(
                         2 -> LyricsPage(
                             track = track,
                             lyrics = lyricLines,
-                            positionMs = state.positionMs,
+                            position = lyricPosition,
+                            frame = lyricFrame,
                             config = lyricsConfig,
                             onConfigChange = { lyricsConfig = it },
                         )
@@ -1032,11 +1032,11 @@ private fun VinylCoverPage(
     artworkAlpha: () -> Float,
     artworkRotation: () -> Float,
     onArtworkPositioned: (LayoutCoordinates) -> Unit,
-    positionMs: Long,
+    position: androidx.compose.runtime.State<Long>,
+    frame: androidx.compose.runtime.State<com.leyu.melora.playback.LyricFrame>,
     onNavigateToLyrics: () -> Unit,
 ) {
     val lines = fullPlayerLyricsOrFallback(track, lyrics)
-    val currentIndex = lines.indexOfLast { positionMs >= it.timeMs }.coerceAtLeast(0)
     val centered = nowPlayingArtworkShape(coverStyle) == NowPlayingArtworkShape.Circle
     val previewHeight = if (compact) 28.dp else with(LocalDensity.current) { 24.sp.toDp() * 5 } + 12.dp
     val lyricsHeight = if (miniLyricsEnabled) previewHeight + 16.dp else 0.dp
@@ -1070,37 +1070,15 @@ private fun VinylCoverPage(
             )
             if (miniLyricsEnabled) {
                 Spacer(Modifier.height(12.dp))
-                val interactionSource = remember { MutableInteractionSource() }
-                if (compact) {
-                    Text(
-                        text = vinylLyricPreviewRows(lines, currentIndex, track?.title)[2].orEmpty(),
-                        color = FullPlayerTextMuted,
-                        fontSize = 12.sp,
-                        textAlign = if (centered) TextAlign.Center else TextAlign.Start,
-                        maxLines = 1,
-                        overflow = TextOverflow.Clip,
-                        modifier = (if (centered) Modifier.width(side) else Modifier.fillMaxWidth())
-                            .basicMarquee(
-                                iterations = Int.MAX_VALUE,
-                                initialDelayMillis = 1000,
-                                repeatDelayMillis = 1200,
-                                velocity = 32.dp,
-                            )
-                            .height(previewHeight).clickable(
-                            interactionSource = interactionSource,
-                            indication = null,
-                            onClick = onNavigateToLyrics,
-                        ),
-                    )
-                } else {
-                    VinylLyricsPreview(
+                key(track?.uid, lines, compact) {
+                    LyricsViewport(
                         lines = lines,
-                        currentIndex = currentIndex,
-                        trackTitle = track?.title,
-                        interactionSource = interactionSource,
-                        onNavigateToLyrics = onNavigateToLyrics,
+                        position = position,
+                        config = LyricsUiConfig(fontSizeSp = if (compact) 12f else 16f),
+                        mini = true, frameState = frame,
                         centered = centered,
-                        modifier = if (centered) Modifier.width(side) else Modifier.fillMaxWidth(),
+                        modifier = (if (centered) Modifier.width(side) else Modifier.fillMaxWidth()).height(previewHeight),
+                        onLineClick = { onNavigateToLyrics() },
                     )
                 }
                 Spacer(Modifier.height(12.dp))
@@ -1114,127 +1092,31 @@ private fun VinylCoverPage(
     }
 }
 
-// 播放页 Page 2: 全屏歌词流；所有行同字号，当前行加粗提亮，其余统一渐隐
+// 全屏和 mini 只使用同一渲染核心，外层保留字号/对齐工具与视口遮罩。
 @Composable
 private fun LyricsPage(
     track: UiTrack?,
     lyrics: List<LyricLine>,
-    positionMs: Long,
+    position: androidx.compose.runtime.State<Long>,
+    frame: androidx.compose.runtime.State<com.leyu.melora.playback.LyricFrame>,
     config: LyricsUiConfig,
     onConfigChange: (LyricsUiConfig) -> Unit,
 ) {
     val lines = remember(track?.uid, track?.title, track?.artist, lyrics) { fullPlayerLyricsOrFallback(track, lyrics) }
-    val currentIndex = lines.indexOfLast { positionMs >= it.timeMs }.coerceAtLeast(0)
-    val density = LocalDensity.current
-    val activeWeight = if (config.isBold) FontWeight.W800 else FontWeight.W600
-    val base = config.fontSizeSp
-    val lineGap = (base * 0.66f).dp
-    val textMeasurer = rememberTextMeasurer(cacheSize = 4)
-    val textStyle = LocalTextStyle.current
-
     Column(Modifier.fillMaxSize()) {
-        BoxWithConstraints(
-            modifier = Modifier.weight(1f).fillMaxWidth()
-                .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
-                .drawWithContent {
-                    drawContent()
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            0f to Color.Transparent,
-                            0.12f to Color.Black,
-                            0.88f to Color.Black,
-                            1f to Color.Transparent,
-                        ),
-                        blendMode = BlendMode.DstIn,
-                    )
-                },
-        ) {
-            // 每一首/每份歌词拥有独立锚点；不能继承上一首的滚动和测量结果。
-            key(track?.uid, lines, config, constraints.maxWidth, constraints.maxHeight, density.fontScale) {
-                val initialIndex = remember { currentIndex }
-                val textConstraints = Constraints(maxWidth = constraints.maxWidth)
-                fun rowHeight(line: LyricLine): Int {
-                    val main = textMeasurer.measure(
-                        text = line.text,
-                        style = textStyle.copy(fontSize = base.sp, fontWeight = activeWeight, lineHeight = (base * 1.3f).sp),
-                        constraints = textConstraints,
-                    ).size.height
-                    val translation = line.translation?.let {
-                        textMeasurer.measure(
-                            text = it,
-                            style = textStyle.copy(fontSize = (base * 0.68f).sp, lineHeight = (base * 0.95f).sp),
-                            constraints = textConstraints,
-                        ).size.height + with(density) { 3.dp.roundToPx() }
-                    } ?: 0
-                    return main + translation
-                }
-                // 半视口首尾留白保证第一行/最后一行都能居中；初始半行偏移与列表一起提交。
-                val inset = constraints.maxHeight / 2
-                val initialOffset = lyricCenterScrollOffset(rowHeight(lines[initialIndex]))
-                val listState = rememberLazyListState(
-                    initialFirstVisibleItemIndex = initialIndex,
-                    initialFirstVisibleItemScrollOffset = initialOffset,
-                )
-                LaunchedEffect(currentIndex, listState) {
-                    val offset = lyricCenterScrollOffset(rowHeight(lines[currentIndex]))
-                    // 首帧已按真实文字高度居中，不再先跳到行首、再二次动画校正。
-                    if (listState.firstVisibleItemIndex != currentIndex || listState.firstVisibleItemScrollOffset != offset) {
-                        listState.animateScrollToItem(currentIndex, offset)
-                    }
-                }
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(vertical = with(density) { inset.toDp() }),
-                    verticalArrangement = Arrangement.spacedBy(lineGap),
-                    horizontalAlignment = if (config.isCentered) Alignment.CenterHorizontally else Alignment.Start,
-                ) {
-                    itemsIndexed(lines, key = { index, _ -> index }) { index, line ->
-                        val isCurrent = index == currentIndex
-                        val targetAlpha = when {
-                            isCurrent -> 1f
-                            config.isBlurEnabled -> 0.24f
-                            else -> 0.36f
-                        }
-                        val lineAlpha by animateFloatAsState(targetAlpha, tween(280), label = "lyricLineAlpha")
-                        val translationAlpha by animateFloatAsState(
-                            if (isCurrent) 0.78f else targetAlpha * 0.9f,
-                            tween(280), label = "lyricTranslationAlpha",
-                        )
-                        Column(
-                            modifier = Modifier.fillMaxWidth().clickable(
-                                indication = null,
-                                interactionSource = remember { MutableInteractionSource() },
-                            ) { PlaybackController.seekTo(line.timeMs) },
-                            horizontalAlignment = if (config.isCentered) Alignment.CenterHorizontally else Alignment.Start,
-                        ) {
-                            Text(
-                                text = line.text,
-                                fontSize = base.sp,
-                                fontWeight = activeWeight,
-                                color = FullPlayerTextPrimary.copy(alpha = lineAlpha),
-                                textAlign = if (config.isCentered) TextAlign.Center else TextAlign.Start,
-                                lineHeight = (base * 1.3f).sp,
-                            )
-                            line.translation?.let { translation ->
-                                Text(
-                                    text = translation,
-                                    fontSize = (base * 0.68f).sp,
-                                    color = FullPlayerTextPrimary.copy(alpha = translationAlpha),
-                                    textAlign = if (config.isCentered) TextAlign.Center else TextAlign.Start,
-                                    lineHeight = (base * 0.95f).sp,
-                                    modifier = Modifier.padding(top = 3.dp),
-                                )
-                            }
-                        }
-                    }
-                }
-            }
+        key(track?.uid, lines) {
+            LyricsViewport(lines, position, config, frameState = frame,
+                modifier = Modifier.weight(1f).fillMaxWidth()
+                    .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+                    .drawWithContent {
+                        drawContent()
+                        drawRect(Brush.verticalGradient(0f to Color.Transparent, 0.12f to Color.Black,
+                            0.88f to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
+                    },
+                onLineClick = { if (lyrics.isNotEmpty()) PlaybackController.seekTo(it.startMs) },
+            )
         }
-        LyricsSettingsTools(
-            config = config,
-            onConfigChange = onConfigChange,
-        )
+        LyricsSettingsTools(config = config, onConfigChange = onConfigChange)
     }
 }
 

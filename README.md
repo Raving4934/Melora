@@ -46,6 +46,7 @@ Self-hosted music streaming service & standalone Android local music player
 ### 📱 Android Client
 - **Local Library Management**: Scans on-device audio files while filtering out short clips and system notifications; reads ID3 tags, embedded album art, and lyrics from common formats (MP3, FLAC, M4A).
 - **Playback & UI**: Built with Jetpack Compose, featuring cover/vinyl playback views, scrolling synchronized lyrics, desktop floating lyrics, and native media notifications/lock-screen controls.
+- **Native Timed Lyrics**: Full-screen and mini surfaces share one renderer, with word fill for enhanced LRC and Apple/AMLL-style TTML, translations/romanization, duet alignment, and background vocals. Manual browsing resumes spring following after about three seconds. Plain LRC stays line-synchronized without fabricated word timing. Lyrics use the existing online/embedded sources; no TTML catalog or automatic matching service is bundled.
 - **Source Scripts & Search**: Supports user-imported extension scripts (compatible with the LX specification) running inside an embedded QuickJS sandbox; provides multi-source concurrent search and streaming result aggregation.
 
 ### 🖥️ Web / NAS Server
