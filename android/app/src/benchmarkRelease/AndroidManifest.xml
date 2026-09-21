@@ -1,5 +1,6 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application android:label="乐屿 · 动效测试" tools:replace="android:label">
         <!-- 仅存在于隔离性能测试包，不进入debug/release产品。 -->
         <provider
             android:name="com.leyu.melora.benchmark.LibraryFixtureProvider"
