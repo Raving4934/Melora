@@ -72,30 +72,13 @@ fun AudiobooksScreen(
     primaryHeader: @Composable () -> Unit = {},
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val homeState = rememberLazyListState()
     val pullEnabled by MeloraSettings.pullToRefresh.collectAsStateWithLifecycle()
     val recentSongs by UserLibrary.recents.collectAsStateWithLifecycle()
     var ranks by remember {
         mutableStateOf(OnlineCache.peek<List<KwBookApi.BookRankTab>>("book.ranks")?.takeIf { it.isNotEmpty() } ?: DefaultRanks)
     }
-    var selectedTab by remember { mutableIntStateOf(0) }
-    var selectedTag by remember { mutableIntStateOf(0) }
-    var rankPage by remember { mutableStateOf<String?>(null) }
+    var rankPage by remember { mutableStateOf<KwBookApi.BookRankTab?>(null) }
     var openedPlaylist by remember { mutableStateOf<OnlinePlaylist?>(null) }
-    val tab = ranks.getOrElse(selectedTab) { ranks.first() }
-    val tag = tab.tags.getOrElse(selectedTag) { tab.tags.first() }
-    val cacheKey = "book.rank.${tab.id}.${tag.id}"
-    val rankState = key(cacheKey) { rememberLazyListState() }
-    FastScrollToTopEffect(scrollToTopRequest, homeState)
-    var playlists by remember(cacheKey) { mutableStateOf(OnlineCache.peek<List<OnlinePlaylist>>(cacheKey).orEmpty()) }
-    var page by remember(cacheKey) { mutableIntStateOf(1) }
-    var hasMore by remember(cacheKey) { mutableStateOf(false) }
-    var loading by remember(cacheKey) { mutableStateOf(playlists.isEmpty()) }
-    var loadingMore by remember(cacheKey) { mutableStateOf(false) }
-    var error by remember(cacheKey) { mutableStateOf<String?>(null) }
-    var retry by remember(cacheKey) { mutableIntStateOf(0) }
-    var refreshing by remember(cacheKey) { mutableStateOf(false) }
     val recentChapter = remember(recentSongs) { recentSongs.firstOrNull(OnlineSong::isBookChapter) }
     val recentPlaylist = remember(recentChapter) { recentChapter?.asPlaylist() }
 
@@ -105,38 +88,6 @@ fun AudiobooksScreen(
             if (it.isNotEmpty()) { ranks = it; OnlineCache.put("book.ranks", it) }
         }
     }
-    LaunchedEffect(cacheKey, retry) {
-        val cached = OnlineCache.get<List<OnlinePlaylist>>(cacheKey, LIST_TTL)
-        if (cached != null && retry == 0) {
-            playlists = cached; page = 1; hasMore = cached.size >= 50; loading = false; error = null
-            return@LaunchedEffect
-        }
-        if (playlists.isEmpty()) loading = true
-        error = null
-        runCatchingCancellable { KwBookApi.rank(tab.id, tag.id, 1) }
-            .onSuccess { playlists = it.items; page = 1; hasMore = it.hasMore; if (it.items.isNotEmpty()) OnlineCache.put(cacheKey, it.items) }
-            .onFailure { if (playlists.isEmpty()) error = it.message ?: "听书内容加载失败" }
-        loading = false
-    }
-    LaunchedEffect(cacheKey) { if (rankPage != null) rankState.scrollToItem(0) }
-
-    fun openRank(tabId: String) {
-        selectedTab = ranks.indexOfFirst { it.id == tabId }.takeIf { it >= 0 } ?: 0
-        selectedTag = 0
-        rankPage = tabId
-    }
-    fun loadMore() {
-        if (loadingMore || !hasMore) return
-        val activeTab = tab; val activeTag = tag
-        loadingMore = true
-        scope.launch {
-            runCatchingCancellable { KwBookApi.rank(activeTab.id, activeTag.id, page + 1) }
-                .onSuccess { playlists = (playlists + it.items).distinctBy(OnlinePlaylist::id); page++; hasMore = it.hasMore }
-                .onFailure { PlaybackController.postMessage(context, it.message ?: "加载更多失败") }
-            loadingMore = false
-        }
-    }
-
     DetailPageHost(
         target = openedPlaylist,
         modifier = modifier,
@@ -152,66 +103,120 @@ fun AudiobooksScreen(
         DetailPageHost(
             target = rankPage,
             modifier = Modifier.fillMaxSize(),
-            detail = { rankId ->
-                val rankTab = ranks.firstOrNull { it.id == rankId } ?: ranks.first()
-                val rankTag = rankTab.tags.getOrElse(selectedTag) { rankTab.tags.first() }
-                RankPage(
-                    rankTab,
-                    rankTag,
-                    rankState,
-                    playlists,
-                    loading,
-                    error,
-                    hasMore,
-                    loadingMore,
-                    onBack = { rankPage = null; selectedTab = 0; selectedTag = 0 },
-                    onSelect = { selectedTag = it },
-                    onRetry = { retry++ },
-                    onLoadMore = ::loadMore,
-                    onOpen = { openedPlaylist = it },
-                )
+            contentKey = { it.id },
+            detail = { rank ->
+                RankPage(rank, onBack = { rankPage = null }, onOpen = { openedPlaylist = it })
             },
         ) {
-            ChromeScaffold(
-                modifier = Modifier.fillMaxSize(),
-                expectedTopBarHeight = 64.dp,
-                topBar = primaryHeader,
-            ) {
-                PullRefreshContainer(
-                    enabled = pullEnabled,
-                    refreshing = refreshing,
-                    onRefresh = {
-            if (!refreshing) {
-                refreshing = true
-                val activeTab = tab; val activeTag = tag
-                scope.launch {
-                    runCatchingCancellable { KwBookApi.rank(activeTab.id, activeTag.id, 1) }
-                        .onSuccess { playlists = it.items; page = 1; hasMore = it.hasMore; error = null; if (it.items.isNotEmpty()) OnlineCache.put(cacheKey, it.items) }
-                        .onFailure { PlaybackController.postMessage(context, it.message ?: "听书内容同步失败") }
-                    refreshing = false
+            // 首页始终展示热播榜；打开其他榜单不能换掉仍参与过渡的首页数据。
+            val homeTab = ranks.firstOrNull { it.id == "13" } ?: DefaultRanks.first()
+            BookRankContent(
+                tabId = homeTab.id,
+                tagId = homeTab.tags.first().id,
+                scrollToTopRequest = scrollToTopRequest,
+                pullEnabled = pullEnabled,
+                primaryHeader = { primaryHeader() },
+                onOpen = { openedPlaylist = it },
+            ) { count ->
+                item("bento") {
+                    BookBento(
+                        recent = recentPlaylist,
+                        chapter = recentChapter,
+                        ranks = ranks,
+                        onRecent = {
+                            if (recentPlaylist == null) PlaybackController.postMessage(context, "暂无最近收听记录")
+                            else openedPlaylist = recentPlaylist
+                        },
+                        onRecentPlay = { recentPlaylist?.let { playOnlinePlaylist(context, it) } },
+                        onRank = { id -> rankPage = ranks.firstOrNull { it.id == id } ?: DefaultRanks.first { it.id == id } },
+                    )
                 }
+                item("hot-title") { SectionTitle(count) }
             }
-        },
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    BookGrid(homeState, playlists, loading, error, hasMore, loadingMore, { retry++ }, ::loadMore, { openedPlaylist = it }) {
-            item("bento") {
-                BookBento(
-                    recent = recentPlaylist,
-                    chapter = recentChapter,
-                    ranks = ranks,
-                    onRecent = {
-                        if (recentPlaylist == null) PlaybackController.postMessage(context, "暂无最近收听记录")
-                        else openedPlaylist = recentPlaylist
-                    },
-                    onRecentPlay = { recentPlaylist?.let { playOnlinePlaylist(context, it) } },
-                    onRank = ::openRank,
-                )
-            }
-            item("hot-title") { SectionTitle(playlists.size) }
-                    }
+        }
+    }
+}
+
+/** 缓存数据与分页游标一起恢复，不能把已翻页的列表当成第一页。 */
+internal data class BookRankSnapshot(
+    val items: List<OnlinePlaylist> = emptyList(),
+    val page: Int = 0,
+    val hasMore: Boolean = false,
+) {
+    fun withPage(result: KwBookApi.BookPage, number: Int) = BookRankSnapshot(
+        items = (if (number == 1) result.items else items + result.items).distinctBy(OnlinePlaylist::id),
+        page = number,
+        hasMore = result.hasMore,
+    )
+}
+
+/** 首页和各榜单各自持有状态，共用唯一的加载/分页/渲染链路。 */
+@Composable
+private fun BookRankContent(
+    tabId: String,
+    tagId: String,
+    onOpen: (OnlinePlaylist) -> Unit,
+    primaryHeader: @Composable (LazyListState) -> Unit,
+    scrollToTopRequest: Int = 0,
+    pullEnabled: Boolean = false,
+    padding: PaddingValues = PaddingValues(16.dp, 0.dp, 16.dp, 24.dp),
+    before: LazyListScope.(Int) -> Unit = {},
+) = key(tabId, tagId) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val listState = rememberLazyListState()
+    val cacheKey = "book.rank.$tabId.$tagId"
+    var snapshot by remember { mutableStateOf(OnlineCache.peek<BookRankSnapshot>(cacheKey) ?: BookRankSnapshot()) }
+    var loading by remember { mutableStateOf(snapshot.items.isEmpty()) }
+    var refreshing by remember { mutableStateOf(false) }
+    var loadingMore by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    FastScrollToTopEffect(scrollToTopRequest, listState)
+
+    suspend fun load(number: Int) {
+        error = null
+        try {
+            runCatchingCancellable { KwBookApi.rank(tabId, tagId, number) }
+                .onSuccess {
+                    snapshot = snapshot.withPage(it, number)
+                    OnlineCache.put(cacheKey, snapshot)
                 }
-            }
+                .onFailure {
+                    if (snapshot.items.isEmpty()) error = it.message ?: "听书内容加载失败"
+                    else PlaybackController.postMessage(context, it.message ?: "听书内容同步失败")
+                }
+        } finally {
+            loading = false
+            refreshing = false
+            loadingMore = false
+        }
+    }
+    fun refresh() {
+        if (loading || refreshing || loadingMore) return
+        refreshing = true
+        loading = snapshot.items.isEmpty()
+        scope.launch { load(1) }
+    }
+    fun loadMore() {
+        if (loading || refreshing || loadingMore || !snapshot.hasMore) return
+        loadingMore = true
+        scope.launch { load(snapshot.page + 1) }
+    }
+    LaunchedEffect(Unit) {
+        val cached = OnlineCache.get<BookRankSnapshot>(cacheKey, LIST_TTL)
+        if (cached != null) { snapshot = cached; loading = false } else {
+            loading = true
+            load(1)
+        }
+    }
+    ChromeScaffold(
+        modifier = Modifier.fillMaxSize(),
+        expectedTopBarHeight = 64.dp,
+        topBar = { primaryHeader(listState) },
+    ) {
+        PullRefreshContainer(enabled = pullEnabled, refreshing = refreshing, onRefresh = ::refresh, modifier = Modifier.fillMaxSize()) {
+            BookGrid(listState, snapshot.items, loading, error, snapshot.hasMore, loadingMore,
+                ::refresh, ::loadMore, onOpen, padding = padding) { before(snapshot.items.size) }
         }
     }
 }
@@ -225,20 +230,19 @@ private fun SectionTitle(count: Int) {
 }
 
 @Composable
-private fun RankPage(
-    tab: KwBookApi.BookRankTab, tag: KwBookApi.BookTag, listState: LazyListState,
-    playlists: List<OnlinePlaylist>, loading: Boolean, error: String?, hasMore: Boolean, loadingMore: Boolean,
-    onBack: () -> Unit, onSelect: (Int) -> Unit, onRetry: () -> Unit, onLoadMore: () -> Unit, onOpen: (OnlinePlaylist) -> Unit,
-) {
+private fun RankPage(tab: KwBookApi.BookRankTab, onBack: () -> Unit, onOpen: (OnlinePlaylist) -> Unit) {
     BackHandler(onBack = onBack)
-    val scrollToTop = rememberFastScrollToTop(listState)
+    var selectedTag by remember { mutableIntStateOf(0) }
+    val tag = tab.tags.getOrElse(selectedTag) { tab.tags.first() }
     var showCategories by remember { mutableStateOf(false) }
     val hasCategories = tab.tags.size > 1
-    ChromeScaffold(
-        modifier = Modifier.fillMaxSize(),
-        containerColor = MeloraAppearance.canvas,
-        expectedTopBarHeight = 64.dp,
-        topBar = {
+    BookRankContent(
+        tabId = tab.id,
+        tagId = tag.id,
+        onOpen = onOpen,
+        padding = PaddingValues(16.dp, 8.dp, 16.dp, 24.dp),
+        primaryHeader = { listState ->
+            val scrollToTop = rememberFastScrollToTop(listState)
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -268,23 +272,9 @@ private fun RankPage(
                 }
             }
         },
-    ) {
-        BookGrid(
-            listState,
-            playlists,
-            loading,
-            error,
-            hasMore,
-            loadingMore,
-            onRetry,
-            onLoadMore,
-            onOpen,
-            modifier = Modifier.fillMaxSize(),
-            padding = PaddingValues(16.dp, 8.dp, 16.dp, 24.dp),
-        )
-    }
+    )
     if (showCategories && hasCategories) {
-        RankCategorySheet(tab, tag.id, { showCategories = false; onSelect(it) }, { showCategories = false })
+        RankCategorySheet(tab, tag.id, { showCategories = false; selectedTag = it }, { showCategories = false })
     }
 }
 
