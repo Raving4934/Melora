@@ -470,14 +470,9 @@ internal fun LocalSongsListContent(
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
+                    contentPadding = chromeContentPadding(PaddingValues(top = 24.dp, bottom = 60.dp)),
                 ) {
-                    item {
-                        EmptyLocalState(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 140.dp, bottom = 60.dp),
-                        )
-                    }
+                    item { EmptyLocalState(Modifier.fillMaxWidth()) }
                 }
             }
             return@ChromeScaffold

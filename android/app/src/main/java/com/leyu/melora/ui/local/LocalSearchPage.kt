@@ -43,6 +43,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -57,7 +58,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -131,23 +132,32 @@ internal fun LocalSearchPage(
                     ) {
                         Icon(Icons.Outlined.Search, contentDescription = null, tint = TextMuted, modifier = Modifier.size(17.dp))
                         Spacer(Modifier.width(8.dp))
-                        Box(Modifier.weight(1f)) {
-                            if (query.isEmpty()) {
-                                Text(
-                                    "在 ${songs.size} 首歌曲中搜索",
-                                    fontSize = 13.sp,
-                                    color = TextMuted,
-                                )
-                            }
-                            BasicTextField(
-                                value = query,
-                                onValueChange = onQueryChange,
-                                singleLine = true,
-                                textStyle = TextStyle(fontSize = 13.sp, color = TextMain),
-                                cursorBrush = SolidColor(BrandBlue),
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        }
+                        val inputStyle = LocalTextStyle.current.copy(
+                            fontSize = 13.sp,
+                            lineHeight = 18.sp,
+                            color = TextMain,
+                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                        )
+                        BasicTextField(
+                            value = query,
+                            onValueChange = onQueryChange,
+                            singleLine = true,
+                            textStyle = inputStyle,
+                            cursorBrush = SolidColor(BrandBlue),
+                            modifier = Modifier.weight(1f),
+                            decorationBox = { field ->
+                                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
+                                    if (query.isEmpty()) {
+                                        Text(
+                                            "在 ${songs.size} 首歌曲中搜索",
+                                            style = inputStyle.copy(color = TextMuted),
+                                            maxLines = 1,
+                                        )
+                                    }
+                                    field()
+                                }
+                            },
+                        )
                         if (query.isNotEmpty()) {
                             Box(
                                 modifier = Modifier
