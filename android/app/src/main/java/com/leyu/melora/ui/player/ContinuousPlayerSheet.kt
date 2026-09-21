@@ -383,7 +383,7 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
                                             active = lyricFrame.focusIndex in lyricFrame.activeIndices,
                                             color = miniColors.onSurfaceVariant,
                                             style = LocalTextStyle.current.copy(fontSize = 12.sp),
-                                            modifier = Modifier.weight(1f), maxLines = 1, glow = false,
+                                            modifier = Modifier.weight(1f), maxLines = 1,
                                             inactiveAlpha = 1f,
                                         )
                                     } else Text(

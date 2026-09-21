@@ -1,8 +1,6 @@
 package com.leyu.melora.ui.player
 
-import android.os.Build
 import android.os.SystemClock
-import androidx.compose.foundation.Canvas
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
@@ -19,10 +17,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.BlurredEdgeTreatment
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -86,44 +82,38 @@ internal fun TimedLyricText(
     style: TextStyle,
     modifier: Modifier = Modifier,
     maxLines: Int = Int.MAX_VALUE,
-    glow: Boolean = true,
+    mutedColor: Color? = null,
     inactiveAlpha: Float = 0.36f,
     marquee: Boolean = false,
 ) {
     var layout by remember(line.text, style) { mutableStateOf<TextLayoutResult?>(null) }
     val runs = remember(line, layout) { layout?.let { wordRuns(line, it) }.orEmpty() }
-    // 先对已填充的字形做整层柔化，再绘制清晰文本；不能在字框内裁剪阴影，否则会出现硬矩形。
-    Box(modifier.then(if (marquee) Modifier.basicMarquee(iterations = Int.MAX_VALUE,
-        initialDelayMillis = 1000, repeatDelayMillis = 1200, velocity = 32.dp) else Modifier)) {
-        if (active && glow && runs.isNotEmpty() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            Canvas(Modifier.matchParentSize().blur(4.dp, BlurredEdgeTreatment.Unbounded)) {
-                layout?.let { drawTimedWords(it, runs, position.value, color, 0.28f) }
-            }
-        }
-        Text(
-            text = line.text,
-            style = style,
-            color = color.copy(alpha = if (active && line.words.isEmpty()) 1f else if (active) 0.4f else inactiveAlpha),
-            maxLines = maxLines,
-            overflow = if (marquee) TextOverflow.Clip else TextOverflow.Ellipsis,
-            onTextLayout = { layout = it },
-            modifier = Modifier.fillMaxWidth().drawWithCache {
-                onDrawWithContent {
-                    drawContent()
-                    if (active && runs.isNotEmpty()) layout?.let { drawTimedWords(it, runs, position.value, color) }
-                }
+    Text(
+        text = line.text,
+        style = style,
+        color = when {
+            active && line.words.isEmpty() -> color
+            mutedColor != null -> mutedColor
+            else -> color.copy(alpha = if (active) 0.4f else inactiveAlpha)
+        },
+        maxLines = maxLines,
+        overflow = if (marquee) TextOverflow.Clip else TextOverflow.Ellipsis,
+        onTextLayout = { layout = it },
+        modifier = modifier.then(if (marquee) Modifier.basicMarquee(iterations = Int.MAX_VALUE,
+            initialDelayMillis = 1000, repeatDelayMillis = 1200, velocity = 32.dp) else Modifier)
+            .drawWithContent {
+                drawContent()
+                if (active && runs.isNotEmpty()) layout?.let { drawTimedWords(it, runs, position.value, color) }
             },
-        )
-    }
+    )
 }
 
-/** 两个绘制层共享相同的字形遮罩；显式 alpha，避免继承 Text 基础暗色的透明度。 */
+/** 单色只在字形内填充；透明端保持同一 RGB，避免黑色透明端混出脏边。 */
 private fun DrawScope.drawTimedWords(
     text: TextLayoutResult,
     runs: List<Pair<LyricWord, List<GlyphRun>>>,
     time: Long,
     color: Color,
-    alpha: Float = 1f,
 ) {
     for ((word, segments) in runs) {
         var remaining = segments.sumOf { it.bounds.width.toDouble() }.toFloat() * lyricWordProgress(word, time)
@@ -134,9 +124,9 @@ private fun DrawScope.drawTimedWords(
             if (filled <= 0f) continue
             val edge = if (segment.rtl) rect.right - filled else rect.left + filled
             val feather = minOf(8.dp.toPx(), rect.width * 0.2f)
-            val brush = if (segment.rtl) Brush.horizontalGradient(listOf(Color.Transparent, color), edge - feather, edge)
-                else Brush.horizontalGradient(listOf(color, Color.Transparent), edge, edge + feather)
-            clipRect(rect.left, rect.top, rect.right, rect.bottom) { drawText(text, brush = brush, alpha = alpha) }
+            val brush = if (segment.rtl) Brush.horizontalGradient(listOf(color.copy(alpha = 0f), color), edge - feather, edge)
+                else Brush.horizontalGradient(listOf(color, color.copy(alpha = 0f)), edge, edge + feather)
+            clipRect(rect.left, rect.top, rect.right, rect.bottom) { drawText(text, brush = brush, alpha = 1f) }
         }
     }
 }
@@ -187,16 +177,21 @@ internal fun LyricsViewport(
     val frame by frameState
     val density = LocalDensity.current
     val baseStyle = LocalTextStyle.current
+    val dark = LocalPlayerColors.current.isDark
+    val ink = if (mini) FullPlayerTextPrimary else if (dark) Color(0xFFF5F5F5) else Color(0xFF252525)
+    val muted = if (dark) {
+        if (config.isBlurEnabled) Color(0xFF5B5B5B) else Color(0xFF858585)
+    } else if (config.isBlurEnabled) Color(0xFFB4B4B4) else Color(0xFF969696)
+    val alignment = if (centered || config.isCentered) Alignment.CenterHorizontally else Alignment.Start
     val fontSize = if (mini) config.fontSizeSp.coerceIn(12f, 16f) else config.fontSizeSp
     val style = baseStyle.copy(fontSize = fontSize.sp, lineHeight = (if (mini) 24f else fontSize * 1.3f).sp,
         fontWeight = if (config.isBold) FontWeight.ExtraBold else FontWeight.SemiBold,
         textAlign = if (centered || config.isCentered) TextAlign.Center else TextAlign.Start)
-    val subStyle = baseStyle.copy(fontSize = (fontSize * 0.68f).sp, lineHeight = (fontSize * 0.95f).sp)
+    val subStyle = baseStyle.copy(fontSize = (fontSize * 0.68f).sp, lineHeight = (fontSize * 0.95f).sp, textAlign = style.textAlign)
     val measurer = rememberTextMeasurer(cacheSize = 32)
     BoxWithConstraints(modifier.clipToBounds()) {
         val width = constraints.maxWidth
         val height = constraints.maxHeight
-        val duet = remember(lines) { lines.any { it.alignment == LyricAlignment.End } }
         // 只测量聚焦锚点，不在首次展示时排版整首歌词；可见行由 LazyColumn 自行测量。
         val rowHeight: (Int) -> Int = remember(lines, width, style, subStyle, mini, density.density, density.fontScale) {
             val cache = mutableMapOf<Int, Int>();
@@ -204,10 +199,9 @@ internal fun LyricsViewport(
                 if (mini) with(density) { 24.sp.roundToPx() }
                 else {
                     val line = lines[index]
-                    val measureWidth = if (duet) (width * 0.88f).toInt() else width
-                    measurer.measure(line.text, style, constraints = Constraints(maxWidth = measureWidth)).size.height +
+                    measurer.measure(line.text, style, constraints = Constraints(maxWidth = width)).size.height +
                         listOfNotNull(line.translation, line.romanization).sumOf {
-                            measurer.measure(it, subStyle, constraints = Constraints(maxWidth = measureWidth)).size.height + with(density) { 3.dp.roundToPx() }
+                            measurer.measure(it, subStyle, constraints = Constraints(maxWidth = width)).size.height + with(density) { 3.dp.roundToPx() }
                         }
                 }
             } }
@@ -257,32 +251,24 @@ internal fun LyricsViewport(
                     else if (active) 1f else 0.97f,
                     if (motionEnabled) spring(dampingRatio = 0.9f, stiffness = 300f) else snap(), label = "lyricFocusScale",
                 )
-                val align = when {
-                    duet && line.alignment == LyricAlignment.End -> Alignment.End
-                    duet -> Alignment.Start
-                    centered || config.isCentered -> Alignment.CenterHorizontally
-                    else -> Alignment.Start
-                }
-                val textAlign = when (align) { Alignment.End -> TextAlign.End; Alignment.CenterHorizontally -> TextAlign.Center; else -> TextAlign.Start }
                 Column(Modifier.fillMaxWidth().clickable {
                     onLineClick(line)
                     if (!mini) { browsing = false; scope.launch { follow(index) } }
-                }, horizontalAlignment = align) {
-                    Column(Modifier.fillMaxWidth(if (duet && !mini) 0.88f else 1f)
+                }, horizontalAlignment = alignment) {
+                    Column(Modifier.fillMaxWidth()
                         .graphicsLayer {
                             alpha = if (line.isBackground) 0.78f else 1f
                             scaleX = scale.value; scaleY = scale.value
-                            transformOrigin = TransformOrigin(when (align) { Alignment.End -> 1f; Alignment.CenterHorizontally -> 0.5f; else -> 0f }, 0.5f)
+                            transformOrigin = TransformOrigin(if (alignment == Alignment.CenterHorizontally) 0.5f else 0f, 0.5f)
                         }) {
-                        TimedLyricText(line, position, active, FullPlayerTextPrimary,
-                            style.copy(textAlign = textAlign),
+                        TimedLyricText(line, position, active, ink, style,
                             modifier = if (mini) Modifier.fillMaxWidth().height(with(density) { 24.sp.toDp() }) else Modifier.fillMaxWidth(),
                             maxLines = if (mini) 1 else Int.MAX_VALUE,
-                            glow = !mini && motionEnabled, marquee = mini && active && motionEnabled,
+                            mutedColor = if (mini) null else muted, marquee = mini && active && motionEnabled,
                             inactiveAlpha = if (mini) { if (distance == 1) 0.47f else 0.27f } else if (config.isBlurEnabled) 0.24f else 0.36f)
                         if (!mini) for (text in listOfNotNull(line.translation, line.romanization)) Text(
-                            text, style = subStyle.copy(textAlign = textAlign),
-                            color = FullPlayerTextPrimary.copy(alpha = if (active) 0.78f else 0.32f),
+                            text, style = subStyle,
+                            color = if (!active) muted else if (dark) Color(0xFFBDBDBD) else Color(0xFF686868),
                             modifier = Modifier.fillMaxWidth().padding(top = 3.dp),
                         )
                     }

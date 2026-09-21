@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.size
 import android.graphics.Bitmap
 import java.io.File
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.SideEffect
@@ -125,7 +126,7 @@ class LyricsRendererInstrumentedTest {
     }
 
     @Test
-    fun duetViewportPlacesStartAndEndLinesOnOppositeSides() {
+    fun singerMetadataDoesNotMoveFullLyricsBetweenSides() {
         val lines = listOf(
             LyricLine(startMs = 0L, text = "左声部", alignment = LyricAlignment.Start),
             LyricLine(startMs = 1_000L, text = "右声部", alignment = LyricAlignment.End),
@@ -143,11 +144,54 @@ class LyricsRendererInstrumentedTest {
 
         assertIsDisplayed("左声部")
         assertIsDisplayed("右声部")
-        assertTrue("start-aligned duet column should begin before end-aligned column", left.left < right.left)
-        assertTrue("start-aligned duet column should end before end-aligned column", left.right < right.right)
-        assertTrue("duet text should occupy opposite horizontal regions", left.center.x < right.center.x)
+        assertEquals("singer metadata must not override page alignment", left.left, right.left, 0.5f)
         assertTrue("duet lines should remain inside the viewport", viewport.contains(left.center) && viewport.contains(right.center))
-        saveProof("duet", composeRule.onNodeWithTag(VIEWPORT_TAG).captureToImage())
+        saveProof("aligned", composeRule.onNodeWithTag(VIEWPORT_TAG).captureToImage())
+    }
+
+    @Test
+    fun miniKeepsBothSingersAtTheCoverCenter() {
+        val lines = listOf(LyricLine(0, "主唱", alignment = LyricAlignment.Start),
+            LyricLine(1000, "对唱", alignment = LyricAlignment.End))
+        setViewport(lines, mutableLongStateOf(0L), height = 120.dp, mini = true, centered = true)
+        composeRule.waitForIdle()
+        assertEquals(viewportBounds().center.x, textBounds("主唱").center.x, 0.5f)
+        assertEquals(viewportBounds().center.x, textBounds("对唱").center.x, 0.5f)
+        saveProof("mini-aligned", composeRule.onNodeWithTag(VIEWPORT_TAG).captureToImage())
+    }
+
+    @Test
+    fun fullLyricsCenterSettingOverridesSingerMetadata() {
+        val lines = listOf(LyricLine(0, "主唱", alignment = LyricAlignment.Start),
+            LyricLine(1000, "对唱", alignment = LyricAlignment.End))
+        setViewport(lines, mutableLongStateOf(0L), height = 220.dp, config = LyricsUiConfig(isCentered = true))
+        composeRule.waitForIdle()
+        assertEquals(viewportBounds().center.x, textBounds("主唱").center.x, 0.5f)
+        assertEquals(viewportBounds().center.x, textBounds("对唱").center.x, 0.5f)
+    }
+
+    @Test
+    fun lightFullLyricsUseNeutralInkInsteadOfTheCoverTint() {
+        val line = LyricLine(0, "Hello world", words = listOf(LyricWord("Hello", 0, 1000), LyricWord(" world", 1000, 2000)))
+        setViewport(listOf(line), mutableLongStateOf(1500L), height = 180.dp, playerDark = false)
+        composeRule.waitForIdle()
+        val image = composeRule.onNodeWithTag(VIEWPORT_TAG).captureToImage()
+        val bitmap = image.asAndroidBitmap()
+        var dark = 0
+        var tinted = 0
+        for (y in 0 until bitmap.height) for (x in 0 until bitmap.width) {
+            val pixel = bitmap.getPixel(x, y)
+            val red = android.graphics.Color.red(pixel)
+            val green = android.graphics.Color.green(pixel)
+            val blue = android.graphics.Color.blue(pixel)
+            if (minOf(red, green, blue) < 70) {
+                dark++
+                if (maxOf(red, green, blue) - minOf(red, green, blue) > 16) tinted++
+            }
+        }
+        assertTrue("no readable filled glyphs", dark > 50)
+        assertEquals("cover tint leaked into lyric ink", 0, tinted)
+        saveProof("monochrome-light", image)
     }
 
     @Test
@@ -265,7 +309,6 @@ class LyricsRendererInstrumentedTest {
                             .testTag(HIGHLIGHT_TAG)
                             .padding(8.dp),
                         maxLines = 1,
-                        glow = true,
                     )
                 }
             }
@@ -327,10 +370,12 @@ class LyricsRendererInstrumentedTest {
         centered: Boolean = false,
         config: LyricsUiConfig = LyricsUiConfig(),
         motionEnabled: Boolean = true,
+        playerDark: Boolean = true,
         onLineClick: (LyricLine) -> Unit = {},
     ) {
         composeRule.setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
+            MaterialTheme(colorScheme = if (playerDark) darkColorScheme() else lightColorScheme()) {
+                PlayerAppearanceProvider(dark = playerDark, artworkColor = Color(0xFF3A78FF)) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -348,6 +393,7 @@ class LyricsRendererInstrumentedTest {
                         motionEnabled = motionEnabled,
                         onLineClick = onLineClick,
                     )
+                }
                 }
             }
         }
