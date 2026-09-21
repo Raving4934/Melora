@@ -33,7 +33,20 @@ PRIVATE_AUDIO_PROTOCOL_PATTERNS = (
 
 # Keep the generic insecure-HTTP check narrow enough to avoid flagging local
 # test servers, license metadata, and the reviewed musicSdk source surface.
-HTTP_URL = re.compile(rb"\bhttp" + rb"://[A-Za-z0-9][A-Za-z0-9._:-]*(?:/|\?|#)", re.IGNORECASE)
+HTTP_URL = re.compile(
+    rb"\bhttp" + rb"""://[A-Za-z0-9][A-Za-z0-9._:-]*(?:/|\?|#)[^\s"'<>\\]*""",
+    re.IGNORECASE,
+)
+# XML parser feature/property names are identifiers, not fetched endpoints.
+# Match whole identifiers only: never exempt a parser file or an entire domain.
+XML_CONFIGURATION_URIS = {
+    b"http://apache.org/xml/features/disallow-doctype-decl",
+    b"http://xml.org/sax/features/external-general-entities",
+    b"http://xml.org/sax/features/external-parameter-entities",
+    b"http://apache.org/xml/features/nonvalidating/load-external-dtd",
+    b"http://javax.xml.XMLConstants/property/accessExternalDTD",
+    b"http://javax.xml.XMLConstants/property/accessExternalSchema",
+}
 
 SOURCE_SUFFIXES = {".go", ".java", ".js", ".jsx", ".kt", ".kts", ".mjs", ".py", ".sh", ".ts", ".tsx"}
 PRIVATE_BINARY_SUFFIXES = {".aab", ".apk", ".der", ".jks", ".key", ".keystore", ".p12", ".pem", ".pfx"}
@@ -143,7 +156,7 @@ def violations(name: str, content: bytes) -> list[str]:
     # endpoints.  Test servers, metadata, and the reviewed musicSdk surface are
     # intentionally outside this rule.
     if _is_android_app_production_source(path):
-        if HTTP_URL.search(content):
+        if any(match.group() not in XML_CONFIGURATION_URIS for match in HTTP_URL.finditer(content)):
             issues.append("insecure HTTP endpoint in production source")
 
     return list(dict.fromkeys(issues))

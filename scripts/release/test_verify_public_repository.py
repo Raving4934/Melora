@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import unittest
 
 from verify_public_repository import violations
@@ -69,6 +70,38 @@ class PublicBoundaryTest(unittest.TestCase):
                 "android/app/src/main/java/com/example/Resolver.kt",
                 b'val endpoint = "http://media.example.invalid/audio.mp3"',
             ),
+        )
+
+    def test_xml_security_configuration_identifiers_are_not_network_endpoints(self) -> None:
+        identifiers = [
+            b"http://apache.org/xml/features/disallow-doctype-decl",
+            b"http://xml.org/sax/features/external-general-entities",
+            b"http://xml.org/sax/features/external-parameter-entities",
+            b"http://apache.org/xml/features/nonvalidating/load-external-dtd",
+            b"http://javax.xml.XMLConstants/property/accessExternalDTD",
+            b"http://javax.xml.XMLConstants/property/accessExternalSchema",
+        ]
+        name = "android/app/src/main/java/com/example/Parser.kt"
+        for uri in identifiers:
+            with self.subTest(uri=uri):
+                self.assertEqual(violations(name, b'factory.setFeature("' + uri + b'", false)'), [])
+                for suffix in [b"/audio.mp3", b"?download=1", b"#audio", b"Extra"]:
+                    self.assertIn(
+                        "insecure HTTP endpoint in production source",
+                        violations(name, b'val endpoint = "' + uri + suffix + b'"'),
+                    )
+        self.assertIn(
+            "insecure HTTP endpoint in production source",
+            violations(name, b'val feature = "' + identifiers[0] + b'"; val url = "http://apache.org/audio.mp3"'),
+        )
+
+    def test_real_lyric_parser_keeps_xml_security_identifiers_without_exempting_file(self) -> None:
+        name = "android/app/src/main/java/com/leyu/melora/playback/LyricParser.kt"
+        content = (Path(__file__).resolve().parents[2] / name).read_bytes()
+        self.assertEqual(violations(name, content), [])
+        self.assertIn(
+            "insecure HTTP endpoint in production source",
+            violations(name, content + b'\nval endpoint = "http://media.example.invalid/audio.mp3"'),
         )
 
     def test_placeholder_names_are_allowed(self) -> None:
