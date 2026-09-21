@@ -1,6 +1,16 @@
 package com.leyu.melora.ui.player
 
+import android.animation.ValueAnimator
+import android.content.BroadcastReceiver
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Bitmap
+import android.graphics.BitmapShader
+import android.graphics.RuntimeShader
+import android.graphics.Shader
+import android.os.Build
+import android.os.PowerManager
+import androidx.annotation.RequiresApi
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
@@ -8,17 +18,30 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.MotionDurationScale
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.core.graphics.scale
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import coil3.SingletonImageLoader
 import coil3.request.CachePolicy
 import coil3.request.ImageRequest
@@ -31,6 +54,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -40,6 +65,110 @@ private const val BackdropBlurRadius = 8
 private const val BackdropBlurPasses = 3
 private const val BackdropPaletteMaxAxisSamples = 12
 private const val BackdropLoadTimeoutMillis = 15_000L
+
+private const val PlayerBackdropRuntimeShaderSource = """
+uniform shader image;
+uniform float2 resolution;
+uniform float2 imageSize;
+uniform float time;
+
+half4 main(float2 fragCoord) {
+    float2 safeResolution = max(resolution, float2(1.0));
+    float2 safeImageSize = max(imageSize, float2(1.0));
+    float coverScale = max(
+        safeResolution.x / safeImageSize.x,
+        safeResolution.y / safeImageSize.y
+    );
+    float2 imageCoord = (fragCoord - safeResolution * 0.5) / coverScale + safeImageSize * 0.5;
+    float2 uv = fragCoord / safeResolution;
+    float2 flow = float2(
+        sin(time * 0.17 + uv.y * 5.2) * 2.8,
+        cos(time * 0.13 + uv.x * 4.3) * 2.8
+    );
+    half4 base = image.eval(imageCoord);
+    half4 flowed = image.eval(imageCoord + flow);
+    float mixAmount = 0.10 + 0.08 * (0.5 + 0.5 * sin(time * 0.11 + uv.x * 2.0 + uv.y * 1.5));
+    return half4(mix(base.rgb, flowed.rgb, mixAmount), base.a);
+}
+"""
+
+/**
+ * 播放器动态效果共用的环境门控。调用方再叠加自己的业务条件，例如播放状态或页面类型。
+ *
+ * 歌词 glow/自动滚动可以直接复用这个接口；它不绑定 RuntimeShader，也不要求正在播放，
+ * 因而不会把播放器背景的语义泄漏到其它动效。
+ */
+@Composable
+internal fun rememberPlayerMotionEnabled(isVisible: Boolean): Boolean {
+    val context = LocalContext.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val lifecycleResumed = remember(lifecycle) {
+        mutableStateOf(lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+    }
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, _ ->
+            lifecycleResumed.value = lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+
+    val powerManager = remember(context) { context.getSystemService(PowerManager::class.java) }
+    val powerSaveMode = remember(powerManager) {
+        mutableStateOf(powerManager?.isPowerSaveMode == true)
+    }
+    DisposableEffect(context, powerManager) {
+        if (powerManager == null) {
+            onDispose { }
+        } else {
+            val receiver = object : BroadcastReceiver() {
+                override fun onReceive(context: android.content.Context?, intent: Intent?) {
+                    powerSaveMode.value = powerManager.isPowerSaveMode
+                }
+            }
+            ContextCompat.registerReceiver(
+                context,
+                receiver,
+                IntentFilter(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED),
+                ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
+            onDispose { context.unregisterReceiver(receiver) }
+        }
+    }
+
+    val animationsEnabled = remember { mutableStateOf(ValueAnimator.areAnimatorsEnabled()) }
+    LaunchedEffect(Unit) {
+        val motionScale = currentCoroutineContext()[MotionDurationScale]
+        snapshotFlow {
+            motionScale?.scaleFactor ?: if (ValueAnimator.areAnimatorsEnabled()) 1f else 0f
+        }.collectLatest { scale ->
+            animationsEnabled.value = scale > 0f
+        }
+    }
+
+    return playerMotionEnabled(
+        isVisible = isVisible,
+        lifecycleResumed = lifecycleResumed.value,
+        powerSaveMode = powerSaveMode.value,
+        animationsEnabled = animationsEnabled.value,
+    )
+}
+
+/** 纯策略函数供单元测试使用；不包含 API 或播放器业务语义。 */
+internal fun playerMotionEnabled(
+    isVisible: Boolean,
+    lifecycleResumed: Boolean,
+    powerSaveMode: Boolean,
+    animationsEnabled: Boolean,
+): Boolean = isVisible && lifecycleResumed && !powerSaveMode && animationsEnabled
+
+/** API 33+ 的背景动态时钟还需满足播放中且已有可用封面；暂停不卸载 shader。 */
+internal fun playerBackdropClockEnabled(
+    apiLevel: Int,
+    playing: Boolean,
+    hasArtwork: Boolean,
+    playerMotionEnabled: Boolean,
+): Boolean = apiLevel >= Build.VERSION_CODES.TIRAMISU && playing && hasArtwork && playerMotionEnabled
 
 /**
  * 全屏播放器的低内存封面背景。
@@ -54,6 +183,8 @@ internal fun PlayerBackdrop(
     onEntryReady: (PlayerBackdropCacheEntry?) -> Unit,
     modifier: Modifier = Modifier,
     isVisible: Boolean = true,
+    playing: Boolean = false,
+    motionEnabled: Boolean = rememberPlayerMotionEnabled(isVisible),
 ) {
     val context = LocalContext.current
     val source = remember(artwork) { normalizePlayerBackdropUri(artwork) }
@@ -102,6 +233,12 @@ internal fun PlayerBackdrop(
 
     val overlay = LocalPlayerColors.current.backdrop
     val scrim = remember(overlay) { Brush.verticalGradient(*overlay.scrimStops.toTypedArray()) }
+    val clockEnabled = playerBackdropClockEnabled(
+        apiLevel = Build.VERSION.SDK_INT,
+        playing = playing,
+        hasArtwork = entry != null,
+        playerMotionEnabled = motionEnabled && isVisible,
+    )
     Box(modifier = modifier.background(overlay.baseColor)) {
         // 只对已就绪的 128px 环境图交叉淡化；缓存命中也走相同过渡，不排队等旧动画。
         Crossfade(
@@ -110,21 +247,107 @@ internal fun PlayerBackdrop(
             animationSpec = tween(PlayerBackdropTransitionMillis),
             label = "playerBackdropImage",
         ) { bitmap ->
-            val imageBitmap = remember(bitmap) { bitmap?.asImageBitmap() }
             Box(Modifier.fillMaxSize().background(overlay.baseColor)) {
-                if (imageBitmap != null) {
-                    Image(
-                        bitmap = imageBitmap,
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop,
+                if (bitmap != null) {
+                    PlayerBackdropArtwork(
+                        bitmap = bitmap,
                         alpha = overlay.artworkAlpha,
+                        clockEnabled = clockEnabled,
+                        modifier = Modifier.fillMaxSize(),
                     )
                 }
             }
         }
         Box(Modifier.fillMaxSize().background(scrim))
     }
+}
+
+@Composable
+private fun PlayerBackdropArtwork(
+    bitmap: Bitmap,
+    alpha: Float,
+    clockEnabled: Boolean,
+    modifier: Modifier,
+) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        PlayerBackdropRuntimeArtwork(
+            bitmap = bitmap,
+            alpha = alpha,
+            clockEnabled = clockEnabled,
+            modifier = modifier,
+        )
+    } else {
+        val imageBitmap = remember(bitmap) { bitmap.asImageBitmap() }
+        Image(
+            bitmap = imageBitmap,
+            contentDescription = null,
+            modifier = modifier,
+            contentScale = ContentScale.Crop,
+            alpha = alpha,
+        )
+    }
+}
+
+@Composable
+@RequiresApi(Build.VERSION_CODES.TIRAMISU)
+private fun PlayerBackdropRuntimeArtwork(
+    bitmap: Bitmap,
+    alpha: Float,
+    clockEnabled: Boolean,
+    modifier: Modifier,
+) {
+    val imageShader = remember(bitmap) {
+        BitmapShader(bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply {
+            setFilterMode(BitmapShader.FILTER_MODE_LINEAR)
+        }
+    }
+    val runtimeShader = remember(bitmap) {
+        RuntimeShader(PlayerBackdropRuntimeShaderSource).apply {
+            setInputShader("image", imageShader)
+        }
+    }
+    val paint = remember(runtimeShader) {
+        Paint().apply {
+            isAntiAlias = true
+            shader = runtimeShader
+        }
+    }
+    val currentAlpha = rememberUpdatedState(alpha)
+    val animationTimeNanos = remember(bitmap) { mutableLongStateOf(0L) }
+    LaunchedEffect(bitmap, clockEnabled) {
+        if (clockEnabled) {
+            var elapsedNanos = animationTimeNanos.longValue
+            var previousFrameNanos = 0L
+            while (isActive) {
+                withFrameNanos { frameNanos ->
+                    if (previousFrameNanos != 0L) {
+                        elapsedNanos += (frameNanos - previousFrameNanos).coerceIn(0L, 100_000_000L)
+                    }
+                    previousFrameNanos = frameNanos
+                    animationTimeNanos.longValue = elapsedNanos
+                }
+            }
+        }
+    }
+
+    Box(
+        modifier = modifier.drawWithCache {
+            // shader 按 bitmap 记忆；尺寸变化只更新 uniform，不重新编译 AGSL 源码。
+            runtimeShader.setFloatUniform("imageSize", bitmap.width.toFloat(), bitmap.height.toFloat())
+            runtimeShader.setFloatUniform("resolution", size.width.coerceAtLeast(1f), size.height.coerceAtLeast(1f))
+            onDrawBehind {
+                // 只在绘制阶段读取时钟；帧 tick 只使 draw invalidation，不触发组合重建。
+                runtimeShader.setFloatUniform(
+                    "time",
+                    animationTimeNanos.longValue / 1_000_000_000f,
+                )
+                paint.alpha = currentAlpha.value
+                drawIntoCanvas { canvas ->
+                    canvas.drawRect(0f, 0f, size.width, size.height, paint)
+                }
+            }
+        },
+    )
 }
 
 /** null result 表示尚在加载；完成后的 null/失败则清空，过期请求无权修改已显示结果。 */

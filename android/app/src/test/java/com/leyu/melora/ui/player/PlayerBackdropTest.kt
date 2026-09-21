@@ -5,6 +5,7 @@ import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.luminance
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertSame
@@ -13,6 +14,37 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PlayerBackdropTest {
+    @Test
+    fun sharedMotionGateStopsWhenHiddenBackgroundPowerSavingOrAnimationsAreDisabled() {
+        assertTrue(
+            playerMotionEnabled(
+                isVisible = true,
+                lifecycleResumed = true,
+                powerSaveMode = false,
+                animationsEnabled = true,
+            ),
+        )
+        assertFalse(playerMotionEnabled(false, true, false, true))
+        assertFalse(playerMotionEnabled(true, false, false, true))
+        assertFalse(playerMotionEnabled(true, true, true, true))
+        assertFalse(playerMotionEnabled(true, true, false, false))
+    }
+
+    @Test
+    fun backdropClockRequiresApi33PlaybackMotionAndArtwork() {
+        val enabled = playerBackdropClockEnabled(
+            apiLevel = 33,
+            playing = true,
+            hasArtwork = true,
+            playerMotionEnabled = true,
+        )
+        assertTrue(enabled)
+        assertFalse(playerBackdropClockEnabled(32, true, true, true))
+        assertFalse(playerBackdropClockEnabled(33, false, true, true))
+        assertFalse(playerBackdropClockEnabled(33, true, false, true))
+        assertFalse(playerBackdropClockEnabled(33, true, true, false))
+    }
+
     @Test
     fun loadingKeepsTheDisplayedImageAndToneTogether() {
         val request = Any()

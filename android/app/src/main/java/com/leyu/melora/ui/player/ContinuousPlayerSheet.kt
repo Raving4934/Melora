@@ -89,6 +89,7 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
     val haptics = LocalHapticFeedback.current
+    val playerMotionEnabled = rememberPlayerMotionEnabled(isVisible = true)
     val playerLyric by PlaybackController.lyric.collectAsStateWithLifecycle()
     val lyricLines = playerLyricLines(state.current?.uid, playerLyric)
     val lyricPosition = rememberLyricPosition(state, visible = lyricLines.isNotEmpty())
@@ -243,6 +244,8 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
                 PlayerBackdrop(
                     artwork = track.artwork,
                     isVisible = expanded,
+                    playing = state.positionAdvancing,
+                    motionEnabled = playerMotionEnabled,
                     entry = playerBackdropEntry,
                     onEntryReady = { playerBackdropEntry = it },
                     modifier = Modifier.fillMaxSize().graphicsLayer {
@@ -253,6 +256,7 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
                     FullPlayerPageContent(
                         state = state,
                         lyricPosition = lyricPosition,
+                        motionEnabled = playerMotionEnabled && expanded && (twoPanes || verticalPagerState.currentPage == 0),
                         lyricFrame = lyricFrameState,
                         lyricLines = lyricLines,
                         isCollapsed = collapsed,

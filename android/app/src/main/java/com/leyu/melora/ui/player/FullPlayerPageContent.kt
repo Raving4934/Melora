@@ -216,6 +216,7 @@ data class LyricsUiConfig(
 internal fun FullPlayerPageContent(
     state: PlayerUiState,
     lyricPosition: androidx.compose.runtime.State<Long>,
+    motionEnabled: Boolean,
     lyricFrame: androidx.compose.runtime.State<com.leyu.melora.playback.LyricFrame>,
     lyricLines: List<LyricLine>,
     onOpenQueue: () -> Unit,
@@ -406,6 +407,7 @@ internal fun FullPlayerPageContent(
                             onArtworkPositioned = onArtworkPositioned,
                             position = lyricPosition,
                             frame = lyricFrame,
+                            motionEnabled = motionEnabled,
                             onNavigateToLyrics = {
                                 scope.launch { coverPagerState.animateScrollToPage(2) }
                             },
@@ -415,6 +417,7 @@ internal fun FullPlayerPageContent(
                             lyrics = lyricLines,
                             position = lyricPosition,
                             frame = lyricFrame,
+                            motionEnabled = motionEnabled,
                             config = lyricsConfig,
                             onConfigChange = { lyricsConfig = it },
                         )
@@ -1033,6 +1036,7 @@ private fun VinylCoverPage(
     artworkRotation: () -> Float,
     onArtworkPositioned: (LayoutCoordinates) -> Unit,
     position: androidx.compose.runtime.State<Long>,
+    motionEnabled: Boolean,
     frame: androidx.compose.runtime.State<com.leyu.melora.playback.LyricFrame>,
     onNavigateToLyrics: () -> Unit,
 ) {
@@ -1075,7 +1079,7 @@ private fun VinylCoverPage(
                         lines = lines,
                         position = position,
                         config = LyricsUiConfig(fontSizeSp = if (compact) 12f else 16f),
-                        mini = true, frameState = frame,
+                        mini = true, frameState = frame, motionEnabled = motionEnabled,
                         centered = centered,
                         modifier = (if (centered) Modifier.width(side) else Modifier.fillMaxWidth()).height(previewHeight),
                         onLineClick = { onNavigateToLyrics() },
@@ -1098,6 +1102,7 @@ private fun LyricsPage(
     track: UiTrack?,
     lyrics: List<LyricLine>,
     position: androidx.compose.runtime.State<Long>,
+    motionEnabled: Boolean,
     frame: androidx.compose.runtime.State<com.leyu.melora.playback.LyricFrame>,
     config: LyricsUiConfig,
     onConfigChange: (LyricsUiConfig) -> Unit,
@@ -1105,7 +1110,7 @@ private fun LyricsPage(
     val lines = remember(track?.uid, track?.title, track?.artist, lyrics) { fullPlayerLyricsOrFallback(track, lyrics) }
     Column(Modifier.fillMaxSize()) {
         key(track?.uid, lines) {
-            LyricsViewport(lines, position, config, frameState = frame,
+            LyricsViewport(lines, position, config, frameState = frame, motionEnabled = motionEnabled,
                 modifier = Modifier.weight(1f).fillMaxWidth()
                     .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
                     .drawWithContent {
