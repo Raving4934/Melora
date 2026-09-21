@@ -1,7 +1,10 @@
 package com.leyu.melora.ui.player
 
+import android.os.Build
 import android.os.SystemClock
+import androidx.compose.foundation.Canvas
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.interaction.DragInteraction
@@ -16,14 +19,15 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.BlurredEdgeTreatment
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithCache
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
@@ -87,45 +91,54 @@ internal fun TimedLyricText(
     marquee: Boolean = false,
 ) {
     var layout by remember(line.text, style) { mutableStateOf<TextLayoutResult?>(null) }
-    Text(
-        text = line.text,
-        style = style,
-        color = color.copy(alpha = if (active && line.words.isEmpty()) 1f else if (active) 0.4f else inactiveAlpha),
-        maxLines = maxLines,
-        overflow = if (marquee) TextOverflow.Clip else TextOverflow.Ellipsis,
-        onTextLayout = { layout = it },
-        modifier = modifier.then(if (marquee) Modifier.basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1000, repeatDelayMillis = 1200, velocity = 32.dp) else Modifier).drawWithCache {
-            val text = layout
-            val runs = if (text != null && line.words.isNotEmpty()) wordRuns(line, text) else emptyList()
-            val halo = Shadow(color.copy(alpha = 0.45f), Offset.Zero, 7.dp.toPx())
-            onDrawWithContent {
-                drawContent()
-                if (active && text != null && runs.isNotEmpty()) {
-                    val time = position.value
-                    for ((word, segments) in runs) {
-                        var remaining = segments.sumOf { it.bounds.width.toDouble() }.toFloat() * lyricWordProgress(word, time)
-                        for (segment in segments) {
-                            val rect = segment.bounds
-                            val filled = remaining.coerceIn(0f, rect.width)
-                            remaining -= rect.width
-                            if (filled <= 0f) continue
-                            val edge = if (segment.rtl) rect.right - filled else rect.left + filled
-                            val feather = minOf(8.dp.toPx(), rect.width * 0.2f)
-                            val brush = if (segment.rtl) Brush.horizontalGradient(
-                                listOf(Color.Transparent, color), edge - feather, edge,
-                            ) else Brush.horizontalGradient(listOf(color, Color.Transparent), edge, edge + feather)
-                            clipRect(rect.left, rect.top, rect.right, rect.bottom) {
-                                if (glow) drawText(text, color = color.copy(alpha = 0.22f),
-                                    shadow = halo,
-                                    alpha = lyricWordProgress(word, time))
-                                drawText(text, brush = brush)
-                            }
-                        }
-                    }
-                }
+    val runs = remember(line, layout) { layout?.let { wordRuns(line, it) }.orEmpty() }
+    // 先对已填充的字形做整层柔化，再绘制清晰文本；不能在字框内裁剪阴影，否则会出现硬矩形。
+    Box(modifier.then(if (marquee) Modifier.basicMarquee(iterations = Int.MAX_VALUE,
+        initialDelayMillis = 1000, repeatDelayMillis = 1200, velocity = 32.dp) else Modifier)) {
+        if (active && glow && runs.isNotEmpty() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            Canvas(Modifier.matchParentSize().blur(4.dp, BlurredEdgeTreatment.Unbounded)) {
+                layout?.let { drawTimedWords(it, runs, position.value, color, 0.28f) }
             }
-        },
-    )
+        }
+        Text(
+            text = line.text,
+            style = style,
+            color = color.copy(alpha = if (active && line.words.isEmpty()) 1f else if (active) 0.4f else inactiveAlpha),
+            maxLines = maxLines,
+            overflow = if (marquee) TextOverflow.Clip else TextOverflow.Ellipsis,
+            onTextLayout = { layout = it },
+            modifier = Modifier.fillMaxWidth().drawWithCache {
+                onDrawWithContent {
+                    drawContent()
+                    if (active && runs.isNotEmpty()) layout?.let { drawTimedWords(it, runs, position.value, color) }
+                }
+            },
+        )
+    }
+}
+
+/** 两个绘制层共享相同的字形遮罩；显式 alpha，避免继承 Text 基础暗色的透明度。 */
+private fun DrawScope.drawTimedWords(
+    text: TextLayoutResult,
+    runs: List<Pair<LyricWord, List<GlyphRun>>>,
+    time: Long,
+    color: Color,
+    alpha: Float = 1f,
+) {
+    for ((word, segments) in runs) {
+        var remaining = segments.sumOf { it.bounds.width.toDouble() }.toFloat() * lyricWordProgress(word, time)
+        for (segment in segments) {
+            val rect = segment.bounds
+            val filled = remaining.coerceIn(0f, rect.width)
+            remaining -= rect.width
+            if (filled <= 0f) continue
+            val edge = if (segment.rtl) rect.right - filled else rect.left + filled
+            val feather = minOf(8.dp.toPx(), rect.width * 0.2f)
+            val brush = if (segment.rtl) Brush.horizontalGradient(listOf(Color.Transparent, color), edge - feather, edge)
+                else Brush.horizontalGradient(listOf(color, Color.Transparent), edge, edge + feather)
+            clipRect(rect.left, rect.top, rect.right, rect.bottom) { drawText(text, brush = brush, alpha = alpha) }
+        }
+    }
 }
 
 private data class GlyphRun(val bounds: Rect, val rtl: Boolean)
@@ -169,6 +182,7 @@ internal fun LyricsViewport(
     centered: Boolean = false,
     onLineClick: (LyricLine) -> Unit,
     frameState: State<LyricFrame> = rememberLyricFrame(lines, position),
+    motionEnabled: Boolean = true,
 ) {
     val frame by frameState
     val density = LocalDensity.current
@@ -219,12 +233,13 @@ internal fun LyricsViewport(
         }
         suspend fun follow(index: Int) {
             if (index !in lines.indices) return
-            val target = list.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }
             val offset = rowHeight(index) / 2
+            if (!motionEnabled) { list.scrollToItem(index, offset); return }
+            val target = list.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }
             if (target != null) list.animateScrollBy((target.offset + offset).toFloat(), spring(dampingRatio = 0.86f, stiffness = 160f))
             else list.animateScrollToItem(index, offset)
         }
-        LaunchedEffect(frame.focusIndex, browsing, rowHeight) {
+        LaunchedEffect(frame.focusIndex, browsing, rowHeight, motionEnabled) {
             if (!browsing) follow(frame.focusIndex.coerceAtLeast(0))
         }
         LazyColumn(
@@ -240,7 +255,7 @@ internal fun LyricsViewport(
                 val scale = animateFloatAsState(
                     if (mini) when (distance) { 0 -> 1f; 1 -> 0.82f; else -> 0.75f }
                     else if (active) 1f else 0.97f,
-                    spring(dampingRatio = 0.9f, stiffness = 300f), label = "lyricFocusScale",
+                    if (motionEnabled) spring(dampingRatio = 0.9f, stiffness = 300f) else snap(), label = "lyricFocusScale",
                 )
                 val align = when {
                     duet && line.alignment == LyricAlignment.End -> Alignment.End
@@ -263,7 +278,7 @@ internal fun LyricsViewport(
                             style.copy(textAlign = textAlign),
                             modifier = if (mini) Modifier.fillMaxWidth().height(with(density) { 24.sp.toDp() }) else Modifier.fillMaxWidth(),
                             maxLines = if (mini) 1 else Int.MAX_VALUE,
-                            glow = !mini, marquee = mini && active,
+                            glow = !mini && motionEnabled, marquee = mini && active && motionEnabled,
                             inactiveAlpha = if (mini) { if (distance == 1) 0.47f else 0.27f } else if (config.isBlurEnabled) 0.24f else 0.36f)
                         if (!mini) for (text in listOfNotNull(line.translation, line.romanization)) Text(
                             text, style = subStyle.copy(textAlign = textAlign),

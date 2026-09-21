@@ -7,6 +7,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import android.graphics.Bitmap
+import java.io.File
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.SideEffect
 import java.util.concurrent.atomic.AtomicInteger
@@ -143,6 +147,7 @@ class LyricsRendererInstrumentedTest {
         assertTrue("start-aligned duet column should end before end-aligned column", left.right < right.right)
         assertTrue("duet text should occupy opposite horizontal regions", left.center.x < right.center.x)
         assertTrue("duet lines should remain inside the viewport", viewport.contains(left.center) && viewport.contains(right.center))
+        saveProof("duet", composeRule.onNodeWithTag(VIEWPORT_TAG).captureToImage())
     }
 
     @Test
@@ -238,7 +243,7 @@ class LyricsRendererInstrumentedTest {
         val position = mutableLongStateOf(0L)
         val compositions = AtomicInteger()
         composeRule.setContent {
-            MaterialTheme {
+            MaterialTheme(colorScheme = darkColorScheme()) {
                 SideEffect { compositions.incrementAndGet() }
                 Box(
                     modifier = Modifier
@@ -273,6 +278,15 @@ class LyricsRendererInstrumentedTest {
         composeRule.waitForIdle()
         val after = composeRule.onNodeWithTag(HIGHLIGHT_TAG).captureToImage()
         assertEquals("word progress recomposed the host", beforeCompositions, compositions.get())
+        val pixels = after.asAndroidBitmap()
+        var brightPixels = 0
+        for (y in 0 until pixels.height) for (x in 0 until pixels.width / 2) {
+            val pixel = pixels.getPixel(x, y)
+            if (android.graphics.Color.red(pixel) > 240 && android.graphics.Color.green(pixel) > 240 &&
+                android.graphics.Color.blue(pixel) > 240) brightPixels++
+        }
+        assertTrue("completed words inherited the dim base text alpha", brightPixels > 50)
+        saveProof("fill", after)
 
         assertTrue(
             "word highlight must change rendered pixels as the manual position advances",
@@ -290,6 +304,21 @@ class LyricsRendererInstrumentedTest {
         assertTrue("virtualization composed $composed lyric rows", composed in 1..40)
     }
 
+    @Test
+    fun reducedMotionStillFollowsTheCurrentLine() {
+        val lines = (0 until 20).map { LyricLine(it * 1_000L, "reduced-$it") }
+        val position = mutableLongStateOf(0L)
+        setViewport(lines, position, height = 320.dp, motionEnabled = false)
+        composeRule.runOnIdle { position.longValue = 18_000L }
+        composeRule.waitForIdle()
+        assertEquals(viewportBounds().center.y, textBounds("reduced-18").center.y, 2f)
+    }
+
+    private fun saveProof(name: String, image: ImageBitmap) {
+        val file = File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir, "lyrics-proof-$name.png")
+        file.outputStream().use { check(image.asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it)) }
+    }
+
     private fun setViewport(
         lines: List<LyricLine>,
         position: State<Long>,
@@ -297,10 +326,11 @@ class LyricsRendererInstrumentedTest {
         mini: Boolean = false,
         centered: Boolean = false,
         config: LyricsUiConfig = LyricsUiConfig(),
+        motionEnabled: Boolean = true,
         onLineClick: (LyricLine) -> Unit = {},
     ) {
         composeRule.setContent {
-            MaterialTheme {
+            MaterialTheme(colorScheme = darkColorScheme()) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -315,6 +345,7 @@ class LyricsRendererInstrumentedTest {
                         modifier = Modifier.fillMaxSize(),
                         mini = mini,
                         centered = centered,
+                        motionEnabled = motionEnabled,
                         onLineClick = onLineClick,
                     )
                 }
