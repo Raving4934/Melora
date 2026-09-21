@@ -29,6 +29,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -74,6 +75,8 @@ internal class ChromeHeaderGeometry {
     private val regions = mutableStateMapOf<Any, Region>()
     val minimumTop: Dp get() = regions.values.minOfOrNull { it.top } ?: 0.dp
     val maximumBottom: Dp get() = regions.values.maxOfOrNull { it.bottom } ?: 0.dp
+    // 已知栏高作为首帧范围；登记尚未完成时不能先创建1px遮罩，下一帧再重建模糊层。
+    fun materialBottom(knownBottom: Dp): Dp = maxOf(maximumBottom, knownBottom)
 
     /** 首帧即使用自身正文；只有更深层正文可接管，绝不采样包含当前顶栏的祖先区域。 */
     fun sourceFor(depth: Int, ownSource: HazeState): HazeState = regions.values
@@ -201,7 +204,10 @@ internal fun ChromeScaffold(
     DisposableEffect(geometry, owner) { onDispose { geometry.remove(owner) } }
     val ownSource = rememberHazeState()
     val bodySource = contentSource ?: ownSource
-    val activeSource = geometry.sourceFor(depth, bodySource)
+    // 登记自身区域不等于采样源变化，不能因此重新执行整页Scaffold/列表测量。
+    val activeSource by remember(geometry, depth, bodySource) {
+        derivedStateOf { geometry.sourceFor(depth, bodySource) }
+    }
     val root = inheritedGeometry == null
     // 无页面标题的外壳只提供安全区/底栏，整块状态栏+标题材质由内容页拥有。
     // 并行进出的两页各自保有一份连续渐变，不能在固定状态栏上抢用目标页的采样源。
@@ -224,7 +230,10 @@ internal fun ChromeScaffold(
     } else LocalChromeSystemTopInset.current
     val headerTop = if (root) 0.dp else chromeHeaderTopInset(inheritedTop, systemTop, stackOnParent)
     val material = if (delegatesHeader) Modifier else
-        Modifier.chromeMaterial(activeSource, enabled, headerTop, geometry, headerColor)
+        Modifier.chromeMaterial(
+            activeSource, enabled, headerTop, geometry, headerColor,
+            knownBottom = headerTop + (if (root) systemTop else 0.dp) + (expectedTopBarHeight ?: 0.dp),
+        )
 
     CompositionLocalProvider(
         LocalChromeGeometry provides geometry,
@@ -294,11 +303,15 @@ private fun Modifier.chromeMaterial(
     topOffset: Dp,
     geometry: ChromeHeaderGeometry,
     canvas: Color = MeloraAppearance.canvas,
+    knownBottom: Dp,
 ): Modifier {
     val density = LocalDensity.current
     if (!enabled) return background(canvas)
-    val start = with(density) { (geometry.minimumTop - topOffset).toPx() }
-    val end = with(density) { (geometry.maximumBottom - topOffset).toPx() }.coerceAtLeast(start + 1f)
+    val bounds by remember(geometry, topOffset, knownBottom) {
+        derivedStateOf { (geometry.minimumTop - topOffset) to (geometry.materialBottom(knownBottom) - topOffset) }
+    }
+    val start = with(density) { bounds.first.toPx() }
+    val end = with(density) { bounds.second.toPx() }.coerceAtLeast(start + 1f)
     // 遮色直接在画布混合，不在 RenderEffect 内生成半透明中间纹理。
     val veil = remember(canvas, start, end) {
         Brush.verticalGradient(listOf(canvas, canvas.copy(alpha = 0f)), startY = start, endY = end)
@@ -322,7 +335,7 @@ private fun Modifier.chromeMaterial(
             fallbackTint = HazeTint(canvas),
         ),
     ) {
-        // 所有栏都使用同一份正文、同一物理坐标范围，不能单独缩放或重启渐变。
+        // 保留全分辨率采样，避免降采样改变渐变末端的边缘与细节。
         inputScale = HazeInputScale.None
         // 使用系统高斯与渐隐遮罩，避开自定义可变半径内核的裁切暗边。
         progressive = null
@@ -345,6 +358,9 @@ internal fun ChromeFloatingBar(
     val geometry = checkNotNull(LocalChromeGeometry.current)
     val depth = LocalChromeDepth.current
     val owner = remember { Any() }
+    val activeSource by remember(geometry, depth, state) {
+        derivedStateOf { geometry.sourceFor(depth, state) }
+    }
     val density = LocalDensity.current
     // 该栏布局高度已知，同帧按物理像素对齐登记，不再等待onSizeChanged回写下一帧。
     val layoutHeight = with(density) { height.roundToPx().toDp() }
@@ -356,7 +372,7 @@ internal fun ChromeFloatingBar(
         modifier = modifier
             .height(height)
             .clipToBounds()
-            .then(Modifier.chromeMaterial(geometry.sourceFor(depth, state), enabled && pinned, topOffset, geometry)),
+            .then(Modifier.chromeMaterial(activeSource, enabled && pinned, topOffset, geometry, knownBottom = topOffset + layoutHeight)),
     ) {
         CompositionLocalProvider(LocalChromeBlurEnabled provides (enabled && pinned)) { content() }
     }

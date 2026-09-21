@@ -4,6 +4,9 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.only
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.snapshots.Snapshot
+import androidx.compose.runtime.snapshots.SnapshotStateObserver
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -15,6 +18,43 @@ import org.junit.Assert.assertSame
 import org.junit.Test
 
 class ChromePaddingTest {
+    @Test fun selfRegistrationDoesNotInvalidateUnchangedMaterialButNestedHeadersDo() {
+        val geometry = ChromeHeaderGeometry()
+        val own = HazeState(initialBlurEnabled = true)
+        val source = derivedStateOf { geometry.sourceFor(1, own) }
+        val bounds = derivedStateOf { geometry.minimumTop to geometry.materialBottom(96.dp) }
+        val observer = SnapshotStateObserver { it() }
+        var invalidations = 0
+        observer.start()
+        try {
+            observer.observeReads(Any(), { invalidations++ }) {
+                assertSame(own, source.value)
+                assertEquals(0.dp to 96.dp, bounds.value)
+            }
+            geometry.update(Any(), 0.dp, 96.dp, 1, own)
+            Snapshot.sendApplyNotifications()
+            assertEquals(0, invalidations)
+            val child = HazeState(initialBlurEnabled = true)
+            geometry.update(Any(), 96.dp, 144.dp, 2, child)
+            Snapshot.sendApplyNotifications()
+            assertEquals(1, invalidations)
+            assertSame(child, source.value)
+            assertEquals(0.dp to 144.dp, bounds.value)
+        } finally { observer.stop(); observer.clear() }
+    }
+
+    @Test fun firstFrameMaterialAlreadyCoversTheKnownHeader() {
+        val geometry = ChromeHeaderGeometry()
+        assertEquals(96.dp, geometry.materialBottom(96.dp))
+        val owner = Any()
+        geometry.update(owner, 0.dp, 96.dp, 1, null)
+        assertEquals(96.dp, geometry.materialBottom(96.dp))
+        geometry.update(Any(), 96.dp, 144.dp, 2, null)
+        assertEquals(144.dp, geometry.materialBottom(96.dp))
+        // 输入区加高后不必等上一帧登记结果才能扩大遮罩。
+        assertEquals(180.dp, geometry.materialBottom(180.dp))
+    }
+
 
     @Test
     fun movingPagesKeepIndependentStatusAndTitleGradients() {
