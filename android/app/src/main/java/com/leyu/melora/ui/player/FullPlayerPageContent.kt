@@ -2,6 +2,7 @@ package com.leyu.melora.ui.player
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.snap
 import androidx.compose.foundation.combinedClickable
@@ -110,6 +111,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.VerticalPager
+import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
@@ -226,6 +228,12 @@ data class LyricsUiConfig(
     }
 }
 
+// 与 Pager 手势松手后的默认吸附一致；点击翻页不能使用更硬、更急的默认 spring。
+private val PlayerPageSnapSpec = spring<Float>(
+    stiffness = Spring.StiffnessMediumLow,
+    visibilityThreshold = 1f,
+)
+
 // VerticalPager Page 0: 全屏播放页
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -308,7 +316,7 @@ internal fun FullPlayerPageContent(
     if (isVisible && (immersive || coverPagerState.currentPage != 1)) {
         BackHandler {
             if (immersive) onImmersiveChange(false)
-            else scope.launch { coverPagerState.animateScrollToPage(1) }
+            else scope.launch { coverPagerState.animateScrollToPage(1, animationSpec = PlayerPageSnapSpec) }
         }
     }
 
@@ -387,12 +395,13 @@ internal fun FullPlayerPageContent(
         val pane: @Composable (Modifier) -> Unit = { paneModifier ->
             HorizontalPager(
                 state = coverPagerState,
+                flingBehavior = PagerDefaults.flingBehavior(coverPagerState, snapAnimationSpec = PlayerPageSnapSpec),
                 modifier = paneModifier.testTag("player-pages"),
                 // PageSize.Fill必须取得完整视口，非零contentPadding会让相邻页在静止时露出。
                 contentPadding = PaddingValues(0.dp),
             ) { pageIndex ->
                 // 先按整页边界裁切，再留正文内距：不串页，也不在屏幕内侧提前硬切。
-                Box(Modifier.fillMaxSize().clipToBounds().padding(pagePadding)) {
+                Box(Modifier.fillMaxSize().testTag("player-page-$pageIndex").clipToBounds().padding(pagePadding)) {
                     when (pageIndex) {
                         0 -> AudioInfoPage(
                             immersive = immersive,
@@ -453,7 +462,7 @@ internal fun FullPlayerPageContent(
                             frame = lyricFrame,
                             motionEnabled = motionEnabled,
                             onNavigateToLyrics = {
-                                scope.launch { coverPagerState.animateScrollToPage(2) }
+                                scope.launch { coverPagerState.animateScrollToPage(2, animationSpec = PlayerPageSnapSpec) }
                             },
                         )
                         2 -> LyricsPage(
