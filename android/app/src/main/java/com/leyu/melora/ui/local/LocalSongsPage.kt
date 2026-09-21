@@ -121,11 +121,14 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.withContext
 
-private data object LocalSearchPageTarget
+/** 每次打开搜索都创建新实例；退出中的实例继续持有 query 直到退场完成。 */
+internal class LocalSearchPageTarget {
+    var query by mutableStateOf("")
+}
 
 /**
- * 本地歌曲页：列表 + 批量管理 + 搜索页（右→左淡入）+ 排序抽屉。
- * 取消搜索时列表页从左→右淡入恢复。
+ * 本地歌曲页：列表 + 批量管理 + 搜索页（连续平移）+ 排序抽屉。
+ * 取消搜索时保留离场内容，列表页从左侧平移恢复。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -139,8 +142,7 @@ internal fun LocalSongsPage(
 
     val sortField by MeloraSettings.localSortField.collectAsStateWithLifecycle()
     val ascending by MeloraSettings.localSortAscending.collectAsStateWithLifecycle()
-    var searching by remember { mutableStateOf(false) }
-    var query by remember { mutableStateOf("") }
+    var searchPage by remember { mutableStateOf<LocalSearchPageTarget?>(null) }
     var showSortSheet by remember { mutableStateOf(false) }
     var moreSong by remember { mutableStateOf<LocalSong?>(null) }
     var pendingDelete by remember { mutableStateOf<List<LocalDeletionTarget>?>(null) }
@@ -252,27 +254,21 @@ internal fun LocalSongsPage(
 
     val ordered = remember(songs, sortField, ascending) { sortLocalSongs(songs, sortField, ascending) }
 
-    BackHandler(enabled = searching) {
-        searching = false
-        query = ""
-    }
+    BackHandler(enabled = searchPage != null) { searchPage = null }
     // 非搜索态：返回先退出批量管理，有父级回调则回退
-    BackHandler(enabled = !searching && (selection.active || onBack != null)) {
+    BackHandler(enabled = searchPage == null && (selection.active || onBack != null)) {
         if (selection.active) selection.finish() else onBack?.invoke()
     }
 
     DetailPageHost(
-        target = if (searching) LocalSearchPageTarget else null,
+        target = searchPage,
         modifier = Modifier.fillMaxSize(),
-        detail = { _ ->
+        detail = { page ->
             LocalSearchPage(
                 songs = ordered,
-                query = query,
-                onQueryChange = { query = it },
-                onCancel = {
-                    searching = false
-                    query = ""
-                },
+                query = page.query,
+                onQueryChange = { page.query = it },
+                onCancel = { searchPage = null },
                 selection = selection,
                 onOpenSortSheet = { showSortSheet = true },
                 onMore = { moreSong = it },
@@ -289,7 +285,7 @@ internal fun LocalSongsPage(
                 listState = listState,
                 onOpenDrawer = onOpenDrawer,
                 onBack = onBack,
-                onOpenSearch = { searching = true },
+                onOpenSearch = { searchPage = LocalSearchPageTarget() },
                 onOpenSortSheet = { showSortSheet = true },
                 onMore = { moreSong = it },
                 onDeleteSelection = { requestDeleteConfirmation(it) },
