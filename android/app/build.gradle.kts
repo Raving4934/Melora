@@ -78,6 +78,19 @@ android {
     }
 }
 
+// Baseline Profile插件先从release复制构建类型，须在DSL最终阶段设置隔离包名，防止initWith覆盖。
+androidComponents.finalizeDsl { extension ->
+    extension.buildTypes.matching { it.name in setOf("benchmarkRelease", "nonMinifiedRelease") }.forEach {
+        it.applicationIdSuffix = ".benchmark"
+        it.signingConfig = extension.signingConfigs.getByName("debug")
+    }
+    // 插件复用release的sourceSet；离线测试目录提供器仅显式加入benchmark变体。
+    extension.sourceSets.getByName("benchmarkRelease").apply {
+        java.srcDir("src/benchmarkRelease/java")
+        manifest.srcFile("src/benchmarkRelease/AndroidManifest.xml")
+    }
+}
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.documentfile)

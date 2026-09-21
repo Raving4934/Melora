@@ -1,5 +1,8 @@
 package com.leyu.melora.ui.player
 
+import com.leyu.melora.ui.common.DetailPageHost
+import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.PageBackHandler as BackHandler
 import com.leyu.melora.playback.AudioSpecification
 import com.leyu.melora.playback.TrackRegistry
 
@@ -26,7 +29,6 @@ import com.leyu.melora.ui.common.CollectionInfoHeader
 import com.leyu.melora.ui.common.albumHeaderCopy
 import com.leyu.melora.ui.common.artistHeaderCopy
 import com.leyu.melora.ui.common.bookHeaderCopy
-import com.leyu.melora.ui.theme.SystemBarsVisibility
 import com.leyu.melora.ui.common.ChromeScaffold
 import com.leyu.melora.ui.theme.MeloraAppearance
 import com.leyu.melora.ui.common.LocalChromeTopInset
@@ -41,7 +43,6 @@ import android.content.Intent
 import android.media.MediaRouter2
 import android.os.Build
 import android.provider.Settings
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandHorizontally
@@ -117,7 +118,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.SliderState
@@ -169,7 +169,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.leyu.melora.playback.LyricLine
-import com.leyu.melora.playback.local.LocalMediaStore
 import com.leyu.melora.playback.PlayerCoverStyle
 import com.leyu.melora.playback.AudioEffects
 import com.leyu.melora.playback.PlaybackController
@@ -185,6 +184,8 @@ import com.leyu.melora.playback.sdk.formatPlayCountLabel
 import com.leyu.melora.ui.common.EmptyState
 import com.leyu.melora.ui.common.ErrorState
 import com.leyu.melora.ui.common.OnlineSongRow
+import com.leyu.melora.ui.common.rememberFastScrollToTop
+import com.leyu.melora.ui.common.titleScrollToTop
 import com.leyu.melora.ui.common.SkeletonSongList
 import com.leyu.melora.ui.common.SongMoreSheet
 import com.leyu.melora.ui.common.sourceAliasDisplay
@@ -269,12 +270,16 @@ fun FullPlayerPageContent(
             pageIsLight,
         )
     }
-    if (collection != null) {
-        BackHandler { openedCollection = null }
-        SongsCollectionPage(collection = collection, onBack = { openedCollection = null })
-        return
-    }
-
+    DetailPageHost(
+        target = collection,
+        modifier = modifier,
+        detail = { detailCollection ->
+            SongsCollectionPage(
+                collection = detailCollection,
+                onBack = { openedCollection = null },
+            )
+        },
+    ) {
     // 若不在主封面页，按返回键先回到中心封面页；在中心封面页按返回键收起全屏
     if (isVisible && coverPagerState.currentPage != 1) {
         BackHandler {
@@ -283,7 +288,7 @@ fun FullPlayerPageContent(
     }
 
     BoxWithConstraints(
-        modifier = modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize(),
     ) {
         val twoPanes = playerUsesTwoPanes(maxWidth.value, maxHeight.value)
         val pagePadding = playerPaneContentPadding(twoPanes, controls = false)
@@ -579,6 +584,7 @@ fun FullPlayerPageContent(
             onDismiss = { showAudioEffects = false },
         )
     }
+    }
 }
 
 // 系统原生媒体输出面板（Android 14+）；不可用时退回系统蓝牙设置
@@ -660,7 +666,16 @@ internal fun SongsCollectionPage(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val listState = rememberLazyListState()
+    val listState = key(
+        collection.source,
+        collection.keyword,
+        collection.title,
+        collection.albumName,
+        collection.artistName,
+        collection.bookAlbumId,
+        collection.preferBook,
+    ) { rememberLazyListState() }
+    val scrollToTop = rememberFastScrollToTop(listState)
     val selection = remember(collection) { SongSelectionState() }
     BackHandler { if (selection.active) selection.finish() else onBack() }
     val controlBarHazeState = rememberHazeState()
@@ -872,6 +887,7 @@ internal fun SongsCollectionPage(
     ChromeScaffold(
         modifier = Modifier.fillMaxSize(),
         contentSource = controlBarHazeState,
+        expectedTopBarHeight = 64.dp,
         topBar = {
             SongSelectionTopBar(selection, songs) {
                 Row(
@@ -881,9 +897,23 @@ internal fun SongsCollectionPage(
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回", tint = MeloraAppearance.textMain)
                     }
-                    Text(collection.title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
-                        color = MeloraAppearance.textMain, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f).padding(end = 16.dp))
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .padding(end = 16.dp)
+                            .titleScrollToTop(scrollToTop),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        Text(
+                            collection.title,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MeloraAppearance.textMain,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
             }
         },
@@ -954,7 +984,6 @@ internal fun SongsCollectionPage(
                             OnlineSongRow(
                                 song = song, showAlbum = collection.albumName == null,
                                 isFavorite = song.uid in favoriteUids,
-                                localBadge = LocalMediaStore.hasLocalFile(song),
                                 onMore = { moreSong = song },
                                 selectionMode = selection.active, selected = song.uid in selection.selectedUids,
                                 onClick = {
@@ -1369,7 +1398,7 @@ private fun TimerSettingsBottomSheet(
 
     val speedOptions = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
 
-    ModalBottomSheet(
+    MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = MeloraAppearance.canvas,
@@ -1389,7 +1418,6 @@ private fun TimerSettingsBottomSheet(
             }
         },
     ) {
-        SystemBarsVisibility()
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1611,7 +1639,7 @@ private fun AudioEffectsBottomSheet(
     val effectState by AudioEffects.state.collectAsStateWithLifecycle()
     val playerState by PlaybackController.state.collectAsStateWithLifecycle()
 
-    ModalBottomSheet(
+    MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = MeloraAppearance.canvas,
@@ -1631,7 +1659,6 @@ private fun AudioEffectsBottomSheet(
             }
         },
     ) {
-        SystemBarsVisibility()
         Column(
             modifier = Modifier
                 .fillMaxWidth()

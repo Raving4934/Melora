@@ -8,7 +8,7 @@ import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.core.content.ContextCompat
-import androidx.activity.compose.BackHandler
+import com.leyu.melora.ui.common.PageBackHandler as BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -95,6 +96,9 @@ import com.leyu.melora.ui.common.BadgePill
 import com.leyu.melora.ui.common.LocalBadgePill
 import com.leyu.melora.ui.common.BrandBlue
 import com.leyu.melora.ui.common.ChromeScaffold
+import com.leyu.melora.ui.common.DetailPageHost
+import com.leyu.melora.ui.common.rememberFastScrollToTop
+import com.leyu.melora.ui.common.titleScrollToTop
 import com.leyu.melora.ui.common.DividerSoft
 import com.leyu.melora.ui.common.MusicShuffleIcon
 import com.leyu.melora.ui.common.PullRefreshContainer
@@ -114,6 +118,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.withContext
+
+private data object LocalSearchPageTarget
 
 /**
  * 本地歌曲页：列表 + 批量管理 + 搜索页（右→左淡入）+ 排序抽屉。
@@ -253,17 +259,26 @@ internal fun LocalSongsPage(
         if (selection.active) selection.finish() else onBack?.invoke()
     }
 
-    Box(Modifier.fillMaxSize()) {
-        val localShift by animateFloatAsState(if (searching) -0.22f else 0f, tween(220), label = "localShift")
-        val localAlpha by animateFloatAsState(if (searching) 0f else 1f, tween(180), label = "localAlpha")
-        Box(
-            Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    translationX = localShift * size.width
-                    alpha = localAlpha
+    DetailPageHost(
+        target = if (searching) LocalSearchPageTarget else null,
+        modifier = Modifier.fillMaxSize(),
+        detail = { _ ->
+            LocalSearchPage(
+                songs = ordered,
+                query = query,
+                onQueryChange = { query = it },
+                onCancel = {
+                    searching = false
+                    query = ""
                 },
-        ) {
+                selection = selection,
+                onOpenSortSheet = { showSortSheet = true },
+                onMore = { moreSong = it },
+                onDeleteSelection = { requestDeleteConfirmation(it) },
+                onAddToPlaylist = { addToPlaylist = it },
+            )
+        },
+        content = {
             LocalSongsListContent(
                 songs = ordered,
                 sortField = sortField,
@@ -286,36 +301,8 @@ internal fun LocalSongsPage(
                     }
                 },
             )
-        }
-
-        val searchShift by animateFloatAsState(if (searching) 0f else 0.22f, tween(220), label = "searchShift")
-        val searchAlpha by animateFloatAsState(if (searching) 1f else 0f, tween(200), label = "searchAlpha")
-        if (searching || searchAlpha > 0.01f) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        translationX = searchShift * size.width
-                        alpha = searchAlpha
-                    },
-            ) {
-                LocalSearchPage(
-                    songs = ordered,
-                    query = query,
-                    onQueryChange = { query = it },
-                    onCancel = {
-                        searching = false
-                        query = ""
-                    },
-                    selection = selection,
-                    onOpenSortSheet = { showSortSheet = true },
-                    onMore = { moreSong = it },
-                    onDeleteSelection = { requestDeleteConfirmation(it) },
-                    onAddToPlaylist = { addToPlaylist = it },
-                )
-            }
-        }
-    }
+        },
+    )
 
     if (showSortSheet) {
         LocalSortSheet(
@@ -391,9 +378,11 @@ internal fun LocalSongsListContent(
     onRefresh: () -> Unit,
 ) {
     val context = LocalContext.current
+    val scrollToTop = rememberFastScrollToTop(listState)
     val playingLocalId = rememberPlayingLocalId()
 
     ChromeScaffold(
+        expectedTopBarHeight = 110.dp,
         topBar = {
             Column(
                 modifier = Modifier
@@ -417,33 +406,42 @@ internal fun LocalSongsListContent(
                         }
                     }
                     Spacer(Modifier.width(12.dp))
-                    Text(
-                        "本地歌曲",
-                        fontSize = 19.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = TextMain,
-                        modifier = Modifier.weight(1f),
-                    )
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .titleScrollToTop(scrollToTop),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        Text(
+                            "本地歌曲",
+                            fontSize = 19.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = TextMain,
+                        )
+                    }
                     IconButton(onClick = onOpenSearch) {
                         Icon(Icons.Outlined.Search, contentDescription = "搜索本地歌曲", tint = TextMain)
                     }
                 }
-                if (songs.isNotEmpty()) {
-                    LocalListHeader(
-                        count = songs.size,
-                        songs = songs,
-                        selection = selection,
-                        onPlayShuffle = {
-                            PlaybackController.playQueue(
-                                context,
-                                songs.shuffled().map { it.toOnlineSong() }.toUiTracks(),
-                                0,
-                                "local.songs",
-                            )
-                        },
-                        onOpenSortSheet = onOpenSortSheet,
-                        onStartSelection = { selection.start() },
-                    )
+                Box(Modifier.fillMaxWidth().height(46.dp)) {
+                    if (songs.isNotEmpty()) {
+                        LocalListHeader(
+                            count = songs.size,
+                            songs = songs,
+                            selection = selection,
+                            onPlayShuffle = {
+                                PlaybackController.playQueue(
+                                    context,
+                                    songs.shuffled().map { it.toOnlineSong() }.toUiTracks(),
+                                    0,
+                                    "local.songs",
+                                )
+                            },
+                            onOpenSortSheet = onOpenSortSheet,
+                            onStartSelection = { selection.start() },
+                        )
+                    }
                 }
             }
         },
@@ -465,7 +463,7 @@ internal fun LocalSongsListContent(
                 canPull = true,
             ) {
                 LazyColumn(
-                    state = rememberLazyListState(),
+                    state = listState,
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     item {

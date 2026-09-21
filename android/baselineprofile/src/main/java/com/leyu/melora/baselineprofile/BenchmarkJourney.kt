@@ -4,7 +4,7 @@ import androidx.benchmark.macro.MacrobenchmarkScope
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Until
 
-internal const val PACKAGE_NAME = "com.leyu.melora"
+internal const val PACKAGE_NAME = "com.leyu.melora.benchmark"
 internal val MAIN_PAGES = listOf("排行榜", "发现", "歌单", "听书", "我的列表")
 
 internal fun MacrobenchmarkScope.openMainPage(label: String) {

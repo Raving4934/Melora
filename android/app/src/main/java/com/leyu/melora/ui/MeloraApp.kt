@@ -21,7 +21,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.WindowInsets
@@ -70,7 +72,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.mutableIntStateOf
@@ -80,15 +85,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.util.VelocityTracker
-import androidx.compose.ui.input.pointer.util.addPointerInputChange
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.LocalDensity
@@ -103,12 +106,14 @@ import com.leyu.melora.playback.DesktopLyricService
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.UserLibrary
-import com.leyu.melora.ui.common.DetailVisibility
+import com.leyu.melora.ui.common.PageBackHandler
+import com.leyu.melora.ui.common.LocalPageActive
 import com.leyu.melora.ui.common.PlatformChoice
 import com.leyu.melora.ui.common.PlatformUnderlineRow
 import com.leyu.melora.ui.common.SourceAliasProvider
 import com.leyu.melora.ui.common.sourceAliasDisplay
 import com.leyu.melora.ui.common.toUiTracks
+import com.leyu.melora.ui.common.titleScrollToTop
 import com.leyu.melora.ui.audiobook.AudiobooksScreen
 import com.leyu.melora.ui.discover.DiscoverScreen
 import com.leyu.melora.ui.leaderboard.LeaderboardScreen
@@ -127,12 +132,14 @@ import com.leyu.melora.ui.player.ContinuousPlayerSheet
 import com.leyu.melora.ui.theme.SystemBarsAppearance
 import com.leyu.melora.ui.search.SearchCategory
 import com.leyu.melora.ui.search.SearchScreen
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import com.leyu.melora.ui.theme.MeloraAppearance
 
 private val MiniPlayerHeight = 64.dp
+private val PrimaryTopBarHeight = 64.dp
 // 统一全局背景底色：高端暖灰画布 (0xFFF4F5F7)
 private val CanvasBackground: Color get() = MeloraAppearance.canvas
 private val TextDark: Color get() = MeloraAppearance.textMain
@@ -172,61 +179,39 @@ private val tabs = listOf(
     MainTabItem("设置", Icons.Outlined.Settings, Color(0xFF546E7A)),
 )
 
-// 统一的全局双向手势修饰器
+internal fun drawerTarget(offset: Float, width: Float, velocity: Float): Float = when {
+    velocity > 500f -> width
+    velocity < -500f -> 0f
+    offset > width * 0.4f -> width
+    else -> 0f
+}
+
+// 拖动和松手共用同一 Animatable；接手时先停旧动画，事件不得排队到松手之后。
+@Composable
 private fun Modifier.drawerSwipeable(
     drawerOffset: Animatable<Float, AnimationVector1D>,
     drawerWidthPx: Float,
     drawerSpring: AnimationSpec<Float>,
     scope: CoroutineScope,
-): Modifier = this.pointerInput(Unit) {
-    val tracker = VelocityTracker()
-    detectHorizontalDragGestures(
-        onDragStart = {
-            tracker.resetTracking()
-        },
-        onDragEnd = {
-            val velocity = tracker.calculateVelocity().x
-            scope.launch {
-                val target = when {
-                    velocity > 500f -> drawerWidthPx
-                    velocity < -500f -> 0f
-                    drawerOffset.value > drawerWidthPx * 0.4f -> drawerWidthPx
-                    else -> 0f
-                }
-                // 已在目标位（关着再左滑 / 全开再右滑）直接落位：
-                // 若仍启动弹簧，松手速度会把页面甩出边界再弹回 —— 就是"皮筋"
-                if (kotlin.math.abs(target - drawerOffset.value) < 1f) {
-                    drawerOffset.snapTo(target)
-                } else {
-                    drawerOffset.animateTo(
-                        targetValue = target,
-                        animationSpec = drawerSpring,
-                        initialVelocity = velocity,
-                    )
-                }
-            }
-        },
-        onDragCancel = {
-            scope.launch {
-                val target = if (drawerOffset.value > drawerWidthPx * 0.4f) drawerWidthPx else 0f
-                drawerOffset.animateTo(target, drawerSpring)
-            }
-        },
-        onHorizontalDrag = { change, dragAmount ->
-            tracker.addPointerInputChange(change)
-            if (dragAmount > 0 || drawerOffset.value > 0f) {
-                change.consume()
-                scope.launch {
-                    drawerOffset.snapTo(
-                        (drawerOffset.value + dragAmount).coerceIn(0f, drawerWidthPx),
-                    )
-                }
-            }
-        },
-    )
-}
+): Modifier = draggable(
+    state = rememberDraggableState { delta ->
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            drawerOffset.snapTo((drawerOffset.value + delta).coerceIn(0f, drawerWidthPx))
+        }
+    },
+    orientation = Orientation.Horizontal,
+    startDragImmediately = drawerOffset.isRunning,
+    onDragStarted = { drawerOffset.stop() },
+    onDragStopped = { velocity ->
+        drawerOffset.animateTo(
+            drawerTarget(drawerOffset.value, drawerWidthPx, velocity),
+            drawerSpring,
+            initialVelocity = velocity,
+        )
+    },
+)
 
-// 完整一体化设计
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MeloraApp(initialTab: Int = 5) {
@@ -245,6 +230,11 @@ fun MeloraApp(initialTab: Int = 5) {
     var searchReturnTab by remember { mutableStateOf<Int?>(null) }
     // 排行榜/歌单顶栏的平台选择态；切 Tab 时自动复位
     var platformPickerOpen by remember { mutableStateOf(false) }
+    var primaryScrollToTopRequest by remember { mutableIntStateOf(0) }
+    fun navigateToTab(target: Int) {
+        val next = target.coerceIn(0, tabs.lastIndex)
+        currentTab = next
+    }
     androidx.compose.runtime.LaunchedEffect(currentTab) { platformPickerOpen = false }
 
     val density = LocalDensity.current
@@ -257,8 +247,21 @@ fun MeloraApp(initialTab: Int = 5) {
 
     // 侧栏横向位移：0f=关闭，drawerWidthPx=完全拉出
     val drawerOffset = remember { Animatable(0f) }
+    androidx.compose.runtime.LaunchedEffect(drawerWidthPx) {
+        val previousWidth = drawerOffset.upperBound
+        val fraction = previousWidth?.takeIf { it > 0f }?.let { drawerOffset.value / it }
+        drawerOffset.updateBounds(0f, drawerWidthPx)
+        if (fraction != null) drawerOffset.snapTo(fraction * drawerWidthPx)
+    }
+    // 位移每帧改变；交互域只在开/关边界改变，不能带动整个导航树逐帧重组。
+    val drawerOpen by remember { derivedStateOf { drawerOffset.value > 0.5f } }
     // 临界阻尼：侧栏推页不来回弹（0.85 会过冲，表现为页面左右"皮筋"）
     val drawerSpring = spring<Float>(dampingRatio = 1f, stiffness = Spring.StiffnessMedium)
+    var pendingDrawerTab by remember { mutableStateOf<Int?>(null) }
+    fun closeDrawer() {
+        pendingDrawerTab = null
+        scope.launch { drawerOffset.animateTo(0f, drawerSpring) }
+    }
 
     // 播放激活状态记录（清空队列时保持底栏，不突兀闪退页面）
     var hasActivePlayback by remember { mutableStateOf(false) }
@@ -300,17 +303,15 @@ fun MeloraApp(initialTab: Int = 5) {
     // 从听书页进入搜索时，系统返回回到听书页；搜索结果详情仍由详情页自己的返回处理。
     BackHandler(
         enabled = currentTab == 0 && searchReturnTab != null &&
-            drawerOffset.value <= 0.5f && !DetailVisibility.visible,
+            !drawerOpen,
     ) {
-        currentTab = searchReturnTab ?: 4
+        navigateToTab(searchReturnTab ?: 4)
         searchReturnTab = null
     }
 
     // 侧栏打开时的系统返回拦截
-    if (drawerOffset.value > 0.5f) {
-        BackHandler {
-            scope.launch { drawerOffset.animateTo(0f, drawerSpring) }
-        }
+    if (drawerOpen) {
+        BackHandler { closeDrawer() }
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -395,8 +396,13 @@ fun MeloraApp(initialTab: Int = 5) {
                                         settingsNavTarget = null
                                         settingsNavSeq++
                                     }
-                                    currentTab = index
-                                    scope.launch { drawerOffset.animateTo(0f, drawerSpring) }
+                                    if (index == currentTab) {
+                                        closeDrawer()
+                                    } else {
+                                        // 页面首次组合/布局先完成，不能让耗时吃掉收回动画的开头。
+                                        pendingDrawerTab = index
+                                        navigateToTab(index)
+                                    }
                                 },
                             )
                         }
@@ -436,6 +442,7 @@ fun MeloraApp(initialTab: Int = 5) {
         // --- 2. 主页面（同一底色，向右平推让位，右划跟手展开侧栏） ---
         ChromeScaffold(
             containerColor = Color.Transparent,
+            expectedTopBarHeight = 0.dp,
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
@@ -447,109 +454,6 @@ fun MeloraApp(initialTab: Int = 5) {
                     drawerSpring = drawerSpring,
                     scope = scope,
                 ),
-            topBar = {
-                // 系统安全区已由根ChromeScaffold占位，详情态不再额外放一次状态栏Spacer。
-                if (!DetailVisibility.visible) when (currentTab) {
-                    0 -> {
-                        // 搜索页由 SearchScreen 内部统一管理吸顶顶栏（标题/分类与搜索输入框同帧渲染，杜绝撕裂下坠）
-                    }
-                    5 -> {
-                        // 本地歌曲页由 LocalSongsPage 内部的吸顶顶栏和搜索完全接管
-                    }
-                    7 -> {
-                        // 设置页由 SettingsMasterScreen 内部的顶栏和子页面返回栏完全接管
-                    }
-                    else -> {
-                        // 顶栏：普通态（侧栏 + 标题 + 平台）⇄ 平台选择态（取消 + 五个平台下划线）
-                        // 两个状态瞬时切换，无动画、无返回按钮，标题永不参与过渡，避免任何抖动
-                        val isPlatformTab = currentTab == 1 || currentTab == 3
-                        val picking = platformPickerOpen && isPlatformTab
-                        BackHandler(enabled = picking) { platformPickerOpen = false }
-                        TopAppBar(
-                            windowInsets = WindowInsets(0.dp, 0.dp, 0.dp, 0.dp),
-                            // 栏内材质由共享框架统一处理，文字和按钮始终保持清晰。
-                            colors = TopAppBarDefaults.topAppBarColors(containerColor = chromeHeaderColor()),
-                            title = {
-                                if (picking) {
-                                    val selectedId by (if (currentTab == 1) MeloraSettings.leaderboardPlatform else MeloraSettings.playlistPlatform).collectAsStateWithLifecycle()
-                                    val choices = if (currentTab == 1) {
-                                        boardPlatforms.map {
-                                            PlatformChoice(it.id, sourceAliasDisplay(it.id, it.name), boardPlatformColors[it.id] ?: MeloraAppearance.brand)
-                                        }
-                                    } else {
-                                        playlistPlatforms.map {
-                                            PlatformChoice(it.id, sourceAliasDisplay(it.id, it.label), it.color)
-                                        }
-                                    }
-                                    PlatformUnderlineRow(
-                                        choices = choices,
-                                        selectedId = selectedId,
-                                        onSelect = { choice ->
-                                            if (choice.id == selectedId) {
-                                                platformPickerOpen = false
-                                            } else if (currentTab == 1) {
-                                                MeloraSettings.updateLeaderboardPlatform(choice.id)
-                                                platformPickerOpen = false
-                                            } else {
-                                                MeloraSettings.updatePlaylistPlatform(choice.id)
-                                                MeloraSettings.updatePlaylistTag("", "全部歌单")
-                                                platformPickerOpen = false
-                                            }
-                                        },
-                                    )
-                                } else {
-                                    Text(
-                                        tabs[currentTab].label,
-                                        fontWeight = FontWeight.Medium,
-                                        fontSize = 19.sp,
-                                        color = TextDark,
-                                    )
-                                }
-                            },
-                            navigationIcon = {
-                                if (!picking) {
-                                    IconButton(onClick = {
-                                        scope.launch {
-                                            if (drawerOffset.value > 10f) {
-                                                drawerOffset.animateTo(0f, drawerSpring)
-                                            } else {
-                                                drawerOffset.animateTo(drawerWidthPx, drawerSpring)
-                                            }
-                                        }
-                                    }) {
-                                        Icon(Icons.Rounded.Menu, contentDescription = "打开侧栏", tint = TextDark)
-                                    }
-                                }
-                            },
-                            actions = {
-                                if (!picking) when (currentTab) {
-                                    1 -> LeaderboardPlatformFilter(onOpenPlatformPicker = { platformPickerOpen = true })
-                                    // 发现页顶栏不放搜索入口，保持版面清爽
-                                    2 -> Unit
-                                    // 歌单页顶栏：最热/最新（酷我）+ 分类筛选 + 平台入口
-                                    3 -> PlaylistTopBarFilter(onOpenPlatformPicker = { platformPickerOpen = true })
-                                    // 听书页搜索直达搜索页的“听书”分类，并保留返回来源。
-                                    4 -> IconButton(onClick = {
-                                        searchCategory = SearchCategory.Audiobook
-                                        searchReturnTab = 4
-                                        currentTab = 0
-                                    }) {
-                                        Icon(Icons.Outlined.Search, contentDescription = "搜索听书", tint = TextDark)
-                                    }
-                                    // 我的列表页顶栏不放搜索入口
-                                    6 -> Unit
-                                    else -> IconButton(onClick = {
-                                        searchReturnTab = null
-                                        currentTab = 0
-                                    }) {
-                                        Icon(Icons.Outlined.Search, contentDescription = "搜索", tint = TextDark)
-                                    }
-                                }
-                            },
-                        )
-                    }
-                }
-            },
             bottomBar = {
                 if (hasActivePlayback) {
                     Spacer(
@@ -561,38 +465,148 @@ fun MeloraApp(initialTab: Int = 5) {
             },
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
-                // Tab 瞬时切换：所有页面均有内存缓存秒显，硬切最干净（无残影/闪白/半截动画）
-                when (currentTab) {
-                    0 -> SearchScreen(
-                        category = searchCategory,
-                        onCategoryChange = { searchCategory = it },
-                        onOpenDrawer = {
-                            scope.launch { drawerOffset.animateTo(drawerWidthPx, drawerSpring) }
-                        },
-                    )
-                    1 -> LeaderboardScreen()
-                    2 -> DiscoverScreen(onNavigateToTab = { currentTab = it })
-                    3 -> PlaylistsScreen()
-                    4 -> AudiobooksScreen()
-                    5 -> LocalSongsPage(
-                        onOpenDrawer = {
-                            scope.launch { drawerOffset.animateTo(drawerWidthPx, drawerSpring) }
-                        },
-                    )
-                    6 -> MyLibraryScreen()
-                    7 -> SettingsMasterScreen(
-                        onOpenDrawer = {
-                            scope.launch { drawerOffset.animateTo(drawerWidthPx, drawerSpring) }
-                        },
-                        requestedSubPage = settingsNavTarget,
-                        requestSeq = settingsNavSeq,
-                    )
+                CompositionLocalProvider(LocalPageActive provides (!drawerOpen)) {
+                    // 同级切换由抽屉收回提供唯一运动，不再叠加横移/交叉淡化。
+                    key(currentTab) {
+                        val visibleTab = currentTab
+                        Box(Modifier.fillMaxSize().onGloballyPositioned {
+                            if (pendingDrawerTab == visibleTab && currentTab == visibleTab) closeDrawer()
+                        }) {
+                        val primaryHeader: @Composable () -> Unit = {
+                            // 顶栏：普通态（侧栏 + 标题 + 平台）⇄ 平台选择态（取消 + 五个平台下划线）
+                            // 平台选择在栏内切换；整条主栏随所属页面一起参与导航过渡。
+                            val isPlatformTab = visibleTab == 1 || visibleTab == 3
+                            val picking = platformPickerOpen && isPlatformTab
+                            PageBackHandler(enabled = picking) { platformPickerOpen = false }
+                            TopAppBar(
+                                windowInsets = WindowInsets(0.dp, 0.dp, 0.dp, 0.dp),
+                                // 栏内材质由共享框架统一处理，文字和按钮始终保持清晰。
+                                colors = TopAppBarDefaults.topAppBarColors(containerColor = chromeHeaderColor()),
+                                title = {
+                                    if (picking) {
+                                        val selectedId by (if (visibleTab == 1) MeloraSettings.leaderboardPlatform else MeloraSettings.playlistPlatform).collectAsStateWithLifecycle()
+                                        val choices = if (visibleTab == 1) {
+                                            boardPlatforms.map {
+                                                PlatformChoice(it.id, sourceAliasDisplay(it.id, it.name), boardPlatformColors[it.id] ?: MeloraAppearance.brand)
+                                            }
+                                        } else {
+                                            playlistPlatforms.map {
+                                                PlatformChoice(it.id, sourceAliasDisplay(it.id, it.label), it.color)
+                                            }
+                                        }
+                                        PlatformUnderlineRow(
+                                            choices = choices,
+                                            selectedId = selectedId,
+                                            onSelect = { choice ->
+                                                if (choice.id == selectedId) {
+                                                    platformPickerOpen = false
+                                                } else if (visibleTab == 1) {
+                                                    MeloraSettings.updateLeaderboardPlatform(choice.id)
+                                                    platformPickerOpen = false
+                                                } else {
+                                                    MeloraSettings.updatePlaylistPlatform(choice.id)
+                                                    MeloraSettings.updatePlaylistTag("", "全部歌单")
+                                                    platformPickerOpen = false
+                                                }
+                                            },
+                                        )
+                                    } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(PrimaryTopBarHeight)
+                                                .titleScrollToTop { primaryScrollToTopRequest++ },
+                                            contentAlignment = Alignment.CenterStart,
+                                        ) {
+                                            Text(
+                                                tabs[visibleTab].label,
+                                                fontWeight = FontWeight.Medium,
+                                                fontSize = 19.sp,
+                                                color = TextDark,
+                                            )
+                                        }
+                                    }
+                                },
+                                navigationIcon = {
+                                    if (!picking) {
+                                        IconButton(onClick = {
+                                            scope.launch {
+                                                if (drawerOffset.value > 10f) {
+                                                    drawerOffset.animateTo(0f, drawerSpring)
+                                                } else {
+                                                    drawerOffset.animateTo(drawerWidthPx, drawerSpring)
+                                                }
+                                            }
+                                        }) {
+                                            Icon(Icons.Rounded.Menu, contentDescription = "打开侧栏", tint = TextDark)
+                                        }
+                                    }
+                                },
+                                actions = {
+                                    if (!picking) when (visibleTab) {
+                                        1 -> LeaderboardPlatformFilter(onOpenPlatformPicker = { platformPickerOpen = true })
+                                        // 发现页顶栏不放搜索入口，保持版面清爽
+                                        2 -> Unit
+                                        // 歌单页顶栏：最热/最新（酷我）+ 分类筛选 + 平台入口
+                                        3 -> PlaylistTopBarFilter(onOpenPlatformPicker = { platformPickerOpen = true })
+                                        // 听书页搜索直达搜索页的“听书”分类，并保留返回来源。
+                                        4 -> IconButton(onClick = {
+                                            searchCategory = SearchCategory.Audiobook
+                                            searchReturnTab = 4
+                                            navigateToTab(0)
+                                        }) {
+                                            Icon(Icons.Outlined.Search, contentDescription = "搜索听书", tint = TextDark)
+                                        }
+                                        // 我的列表页顶栏不放搜索入口
+                                        6 -> Unit
+                                        else -> IconButton(onClick = {
+                                            searchReturnTab = null
+                                            navigateToTab(0)
+                                        }) {
+                                            Icon(Icons.Outlined.Search, contentDescription = "搜索", tint = TextDark)
+                                        }
+                                    }
+                                },
+                            )
+                        }
+                        when (visibleTab) {
+                            0 -> SearchScreen(
+                                category = searchCategory,
+                                onCategoryChange = { searchCategory = it },
+                                onOpenDrawer = {
+                                    scope.launch { drawerOffset.animateTo(drawerWidthPx, drawerSpring) }
+                                },
+                            )
+                            1 -> LeaderboardScreen(primaryHeader = primaryHeader, scrollToTopRequest = primaryScrollToTopRequest)
+                            2 -> DiscoverScreen(primaryHeader = primaryHeader, onNavigateToTab = ::navigateToTab, scrollToTopRequest = primaryScrollToTopRequest)
+                            3 -> PlaylistsScreen(primaryHeader = primaryHeader, scrollToTopRequest = primaryScrollToTopRequest)
+                            4 -> AudiobooksScreen(primaryHeader = primaryHeader, scrollToTopRequest = primaryScrollToTopRequest)
+                            5 -> LocalSongsPage(
+                                onOpenDrawer = {
+                                    scope.launch { drawerOffset.animateTo(drawerWidthPx, drawerSpring) }
+                                },
+                            )
+                            6 -> MyLibraryScreen(
+                                onOpenDrawer = {
+                                    scope.launch { drawerOffset.animateTo(drawerWidthPx, drawerSpring) }
+                                },
+                            )
+                            7 -> SettingsMasterScreen(
+                                onOpenDrawer = {
+                                    scope.launch { drawerOffset.animateTo(drawerWidthPx, drawerSpring) }
+                                },
+                                requestedSubPage = settingsNavTarget,
+                                requestSeq = settingsNavSeq,
+                            )
+                        }
+                        }
+                    }
                 }
             }
         }
 
         // --- 3. 抽屉展开时覆盖在主页面上的点击遮罩 ---
-        if (drawerOffset.value > 0.5f) {
+        if (drawerOpen) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -603,7 +617,7 @@ fun MeloraApp(initialTab: Int = 5) {
                         indication = null,
                         interactionSource = remember { MutableInteractionSource() },
                     ) {
-                        scope.launch { drawerOffset.animateTo(0f, drawerSpring) }
+                        closeDrawer()
                     }
                     .drawerSwipeable(
                         drawerOffset = drawerOffset,

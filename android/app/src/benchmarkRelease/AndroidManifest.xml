@@ -1,0 +1,9 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- 仅存在于隔离性能测试包，不进入debug/release产品。 -->
+        <provider
+            android:name="com.leyu.melora.benchmark.LibraryFixtureProvider"
+            android:authorities="${applicationId}.fixture"
+            android:exported="true" />
+    </application>
+</manifest>

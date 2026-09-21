@@ -1,7 +1,7 @@
 package com.leyu.melora.ui.audiobook
 
-import com.leyu.melora.ui.theme.SystemBarsVisibility
-import androidx.activity.compose.BackHandler
+import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.PageBackHandler as BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -66,11 +66,14 @@ private val Shortcuts = listOf(
 )
 
 @Composable
-fun AudiobooksScreen(modifier: Modifier = Modifier) {
+fun AudiobooksScreen(
+    modifier: Modifier = Modifier,
+    scrollToTopRequest: Int = 0,
+    primaryHeader: @Composable () -> Unit = {},
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val homeState = rememberLazyListState()
-    val rankState = rememberLazyListState()
     val pullEnabled by MeloraSettings.pullToRefresh.collectAsStateWithLifecycle()
     val recentSongs by UserLibrary.recents.collectAsStateWithLifecycle()
     var ranks by remember {
@@ -78,12 +81,13 @@ fun AudiobooksScreen(modifier: Modifier = Modifier) {
     }
     var selectedTab by remember { mutableIntStateOf(0) }
     var selectedTag by remember { mutableIntStateOf(0) }
-    var rankPage by rememberDetailState<String>()
-    var openedPlaylist by rememberDetailState<OnlinePlaylist>()
+    var rankPage by remember { mutableStateOf<String?>(null) }
+    var openedPlaylist by remember { mutableStateOf<OnlinePlaylist?>(null) }
     val tab = ranks.getOrElse(selectedTab) { ranks.first() }
     val tag = tab.tags.getOrElse(selectedTag) { tab.tags.first() }
     val cacheKey = "book.rank.${tab.id}.${tag.id}"
-    val listState = if (rankPage == null) homeState else rankState
+    val rankState = key(cacheKey) { rememberLazyListState() }
+    FastScrollToTopEffect(scrollToTopRequest, homeState)
     var playlists by remember(cacheKey) { mutableStateOf(OnlineCache.peek<List<OnlinePlaylist>>(cacheKey).orEmpty()) }
     var page by remember(cacheKey) { mutableIntStateOf(1) }
     var hasMore by remember(cacheKey) { mutableStateOf(false) }
@@ -133,23 +137,50 @@ fun AudiobooksScreen(modifier: Modifier = Modifier) {
         }
     }
 
-    openedPlaylist?.let {
-        PlaylistDetailContent(it, onBack = { openedPlaylist = null }, emptyHint = "该有声专辑暂无可播放音频")
-        return
-    }
-    if (rankPage != null) {
-        RankPage(
-            tab, tag, listState, playlists, loading, error, hasMore, loadingMore,
-            onBack = { rankPage = null; selectedTab = 0; selectedTag = 0 },
-            onSelect = { selectedTag = it },
-            onRetry = { retry++ }, onLoadMore = ::loadMore, onOpen = { openedPlaylist = it },
-        )
-        return
-    }
-    PullRefreshContainer(
-        enabled = pullEnabled,
-        refreshing = refreshing,
-        onRefresh = {
+    DetailPageHost(
+        target = openedPlaylist,
+        modifier = modifier,
+        contentKey = { playlist -> "book:${playlist.source}:${playlist.id}" },
+        detail = { playlist ->
+            PlaylistDetailContent(
+                playlist = playlist,
+                onBack = { openedPlaylist = null },
+                emptyHint = "该有声专辑暂无可播放音频",
+            )
+        },
+    ) {
+        DetailPageHost(
+            target = rankPage,
+            modifier = Modifier.fillMaxSize(),
+            detail = { rankId ->
+                val rankTab = ranks.firstOrNull { it.id == rankId } ?: ranks.first()
+                val rankTag = rankTab.tags.getOrElse(selectedTag) { rankTab.tags.first() }
+                RankPage(
+                    rankTab,
+                    rankTag,
+                    rankState,
+                    playlists,
+                    loading,
+                    error,
+                    hasMore,
+                    loadingMore,
+                    onBack = { rankPage = null; selectedTab = 0; selectedTag = 0 },
+                    onSelect = { selectedTag = it },
+                    onRetry = { retry++ },
+                    onLoadMore = ::loadMore,
+                    onOpen = { openedPlaylist = it },
+                )
+            },
+        ) {
+            ChromeScaffold(
+                modifier = Modifier.fillMaxSize(),
+                expectedTopBarHeight = 64.dp,
+                topBar = primaryHeader,
+            ) {
+                PullRefreshContainer(
+                    enabled = pullEnabled,
+                    refreshing = refreshing,
+                    onRefresh = {
             if (!refreshing) {
                 refreshing = true
                 val activeTab = tab; val activeTag = tag
@@ -161,9 +192,9 @@ fun AudiobooksScreen(modifier: Modifier = Modifier) {
                 }
             }
         },
-        modifier = modifier,
-    ) {
-        BookGrid(listState, playlists, loading, error, hasMore, loadingMore, { retry++ }, ::loadMore, { openedPlaylist = it }) {
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    BookGrid(homeState, playlists, loading, error, hasMore, loadingMore, { retry++ }, ::loadMore, { openedPlaylist = it }) {
             item("bento") {
                 BookBento(
                     recent = recentPlaylist,
@@ -178,6 +209,9 @@ fun AudiobooksScreen(modifier: Modifier = Modifier) {
                 )
             }
             item("hot-title") { SectionTitle(playlists.size) }
+                    }
+                }
+            }
         }
     }
 }
@@ -197,11 +231,13 @@ private fun RankPage(
     onBack: () -> Unit, onSelect: (Int) -> Unit, onRetry: () -> Unit, onLoadMore: () -> Unit, onOpen: (OnlinePlaylist) -> Unit,
 ) {
     BackHandler(onBack = onBack)
+    val scrollToTop = rememberFastScrollToTop(listState)
     var showCategories by remember { mutableStateOf(false) }
     val hasCategories = tab.tags.size > 1
     ChromeScaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = MeloraAppearance.canvas,
+        expectedTopBarHeight = 64.dp,
         topBar = {
             Row(
                 Modifier
@@ -212,7 +248,15 @@ private fun RankPage(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回", tint = TextMain) }
-                Text(tab.name, fontSize = 18.sp, fontWeight = FontWeight.Medium, color = TextMain, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .titleScrollToTop(scrollToTop),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    Text(tab.name, fontSize = 18.sp, fontWeight = FontWeight.Medium, color = TextMain, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
                 if (hasCategories) {
                     ChromeActionSurface(onClick = { showCategories = true }, shape = RoundedCornerShape(12.dp), modifier = Modifier.height(32.dp)) {
                         Row(Modifier.padding(start = 11.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -247,8 +291,7 @@ private fun RankPage(
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun RankCategorySheet(tab: KwBookApi.BookRankTab, selectedTag: String, onSelect: (Int) -> Unit, onDismiss: () -> Unit) {
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = MeloraAppearance.canvas, tonalElevation = 0.dp) {
-        SystemBarsVisibility()
+    MeloraBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = MeloraAppearance.canvas, tonalElevation = 0.dp) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
             Text(tab.name, fontSize = 19.sp, fontWeight = FontWeight.Medium, color = TextMain)
             Text("选择${tab.name}分类", fontSize = 12.sp, color = TextSub, modifier = Modifier.padding(top = 3.dp, bottom = 18.dp))

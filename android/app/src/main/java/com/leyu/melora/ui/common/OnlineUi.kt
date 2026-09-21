@@ -1,6 +1,5 @@
 package com.leyu.melora.ui.common
 
-import com.leyu.melora.ui.theme.SystemBarsVisibility
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
@@ -48,7 +47,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -202,6 +200,8 @@ internal fun preferredLocalArtwork(indexedCover: String?, playbackCover: String?
 @Composable
 fun rememberOnlineSongCover(song: OnlineSong?, enabled: Boolean): String? {
     if (song == null || !enabled) return null
+    // 目录已给封面时 observe 也只返回常量 flow；不为每行创建一次性生命周期订阅。
+    song.img?.let { return it }
     val context = LocalContext.current
     val cover by remember(song.uid, song.img) { CoverLoader.observe(song) }
         .collectAsStateWithLifecycle(initialValue = CoverLoader.cachedUrl(song))
@@ -248,7 +248,6 @@ fun OnlineSongRow(
     // 批量选择模式：右侧 ⋯ 平滑切换为圆形勾选框（行点击由调用方改为切换选中）
     selectionMode: Boolean = false,
     selected: Boolean = false,
-    localBadge: Boolean = false,
     platformDotColor: Color? = null,
 ) {
     val shared = LocalSongListState.current
@@ -257,7 +256,7 @@ fun OnlineSongRow(
     val matchedLocal = remember(song.uid, song.name, song.singer, song.intervalSeconds, localSongs) {
         LocalMediaStore.matchSong(song)
     }
-    val showLocalBadge = localBadge || matchedLocal != null
+    val showLocalBadge = song.source == LocalSong.SOURCE || matchedLocal != null
     // 本地命中后只显示本地实测徽标；位深未知时保持空白，不能拿网络目录能力冒充实测。
     val qualityBadge = if (matchedLocal != null) matchedLocal.audioSpecification.qualityBadge else song.bestQualityBadge
     val artwork = rememberOnlineSongCover(song, enabled = showCovers)
@@ -335,15 +334,10 @@ fun OnlineSongRow(
             )
         }
         if (onMore != null || selectionMode) {
-            val moreAlpha by animateFloatAsState(
-                targetValue = if (selectionMode) 0f else 1f,
-                animationSpec = tween(durationMillis = 180),
-                label = "rowMoreAlpha",
-            )
             val checkAlpha by animateFloatAsState(
                 targetValue = if (selectionMode) 1f else 0f,
                 animationSpec = tween(durationMillis = 180),
-                label = "rowCheckAlpha",
+                label = "rowSelectionAlpha",
             )
             // 同一 36dp 触控位：⋯ 淡出、勾选框淡入，布局零跳动
             Box(modifier = Modifier.size(36.dp), contentAlignment = Alignment.Center) {
@@ -352,7 +346,7 @@ fun OnlineSongRow(
                     IconButton(
                         onClick = onMore,
                         enabled = !selectionMode,
-                        modifier = Modifier.size(36.dp).alpha(moreAlpha),
+                        modifier = Modifier.size(36.dp).alpha(1f - checkAlpha),
                     ) {
                         Icon(Icons.Outlined.MoreVert, contentDescription = "更多", tint = TextMuted, modifier = Modifier.size(20.dp))
                     }
@@ -514,7 +508,7 @@ fun SongMoreSheet(
         return
     }
 
-    ModalBottomSheet(
+    MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = MeloraAppearance.canvas,
@@ -534,7 +528,6 @@ fun SongMoreSheet(
             }
         },
     ) {
-        SystemBarsVisibility()
         Column(modifier = Modifier.padding(bottom = 28.dp)) {
             // 头部：48dp 封面缩略图 + 歌名/歌手与专辑
             Row(
@@ -748,7 +741,7 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
         }
     }
 
-    ModalBottomSheet(
+    MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = MeloraAppearance.canvas,
@@ -768,7 +761,6 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
             }
         },
     ) {
-        SystemBarsVisibility()
         Column(
             modifier = Modifier
                 .padding(bottom = 24.dp)

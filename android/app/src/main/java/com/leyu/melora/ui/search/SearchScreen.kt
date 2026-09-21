@@ -1,6 +1,8 @@
 package com.leyu.melora.ui.search
 
 import com.leyu.melora.ui.common.ChromeScaffold
+import com.leyu.melora.ui.common.DetailPageHost
+import com.leyu.melora.ui.common.rememberFastScrollToTop
 import com.leyu.melora.ui.common.chromeHeaderColor
 
 import androidx.compose.foundation.background
@@ -11,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -36,12 +39,20 @@ import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.sdk.Recommender
 import com.leyu.melora.ui.common.PlaylistDetailContent
 import com.leyu.melora.ui.common.SongMoreSheet
-import com.leyu.melora.ui.common.rememberDetailState
 import com.leyu.melora.ui.common.runCatchingCancellable
 import com.leyu.melora.playback.UiTrack
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+
+internal val SearchChromeHeaderHeight =
+    SearchTopBarHeight +
+        SearchInputSectionHeight +
+        SearchInputSectionBottomSpacing +
+        SearchInputContainerBottomPadding
+
+internal fun searchExpectedTopBarHeight(suggestionsVisible: Boolean) =
+    if (suggestionsVisible) null else SearchChromeHeaderHeight
 
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -101,10 +112,13 @@ fun SearchScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var searchJob by remember { mutableStateOf<Job?>(null) }
     var searchRequestId by remember { mutableIntStateOf(0) }
-    var openedPlaylist by rememberDetailState<OnlinePlaylist>()
+    var openedPlaylist by remember { mutableStateOf<OnlinePlaylist?>(null) }
     var moreSong by remember { mutableStateOf<OnlineSong?>(null) }
 
     val searching = submitted.isNotBlank()
+    val idleListState = rememberLazyListState()
+    val resultListState = rememberLazyListState()
+    val scrollToTop = rememberFastScrollToTop(if (searching) resultListState else idleListState)
     val favoriteUids by UserLibrary.favoriteUids.collectAsStateWithLifecycle()
 
     fun cancelSearch() {
@@ -305,6 +319,14 @@ fun SearchScreen(
         }.getOrDefault(emptyList()).take(8)
     }
 
+    LaunchedEffect(category, selectedPlatform) {
+        idleListState.scrollToItem(0)
+        resultListState.scrollToItem(0)
+    }
+    LaunchedEffect(submitted) {
+        if (submitted.isNotBlank()) resultListState.scrollToItem(0)
+    }
+
     // 关键词/分类/平台变化时刷新结果
     LaunchedEffect(submitted, category, selectedPlatform) {
         if (submitted.isBlank()) {
@@ -333,108 +355,118 @@ fun SearchScreen(
         focusManager.clearFocus()
     }
 
-    if (openedPlaylist != null) {
-        PlaylistDetailContent(
-            playlist = openedPlaylist!!,
-            onBack = { openedPlaylist = null },
-            modifier = modifier.fillMaxSize().padding(horizontal = 16.dp),
-        )
-    } else {
-        ChromeScaffold(
-            modifier = modifier.fillMaxSize(),
-            topBar = {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(chromeHeaderColor()),
-                ) {
-                    SearchTopBar(
-                        onOpenDrawer = onOpenDrawer,
-                        selectedCategory = category,
-                        onCategoryChange = onCategoryChange,
-                    )
-                    Box(
-                        Modifier
+    val visibleSuggestions = suggestions.takeIf { query.isNotBlank() && query.trim() != submitted }.orEmpty()
+    DetailPageHost(
+        target = openedPlaylist,
+        modifier = modifier.fillMaxSize(),
+        contentKey = { playlist -> "${playlist.source}_${playlist.id}_${playlist.isBookAlbum}" },
+        detail = { playlist ->
+            PlaylistDetailContent(
+                playlist = playlist,
+                onBack = { openedPlaylist = null },
+                modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+            )
+        },
+        content = {
+            ChromeScaffold(
+                modifier = Modifier.fillMaxSize(),
+                expectedTopBarHeight = searchExpectedTopBarHeight(visibleSuggestions.isNotEmpty()),
+                topBar = {
+                    Column(
+                        modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp)
-                            .padding(bottom = 8.dp),
+                            .background(chromeHeaderColor()),
                     ) {
-                        SearchInputSection(
+                        SearchTopBar(
+                            onOpenDrawer = onOpenDrawer,
+                            selectedCategory = category,
+                            onCategoryChange = onCategoryChange,
+                            onTitleClick = scrollToTop,
+                        )
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp)
+                                .padding(bottom = SearchInputContainerBottomPadding),
+                        ) {
+                            SearchInputSection(
+                                category = category,
+                                query = query,
+                                selectedPlatform = selectedPlatform,
+                                platformMenuExpanded = platformMenuExpanded,
+                                suggestions = visibleSuggestions,
+                                onQueryChange = { query = it },
+                                onSubmit = { submit(it) },
+                                onClear = {
+                                    query = ""
+                                    submitted = ""
+                                    cancelSearch()
+                                    songs = emptyList()
+                                    playlists = emptyList()
+                                    error = null
+                                },
+                                onPlatformMenuExpandedChange = { platformMenuExpanded = it },
+                                onPlatformChange = { platform ->
+                                    selectedPlatform = platform
+                                    MeloraSettings.updateSearchPlatform(platform.id)
+                                    platformMenuExpanded = false
+                                },
+                            )
+                        }
+                    }
+                },
+            ) {
+                Box(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+                    if (!searching) {
+                        SearchIdleContent(
+                            listState = idleListState,
                             category = category,
-                            query = query,
+                            selectedPlatform = selectedPlatform,
+                            searchHistory = searchHistory,
+                            hotWords = hotWords,
+                            hotLoading = hotLoading,
+                            hotPlaylists = hotPlaylists,
+                            hotPlaylistsLoading = hotPlaylistsLoading,
+                            recommendSongs = recommendSongs,
+                            recommendLoading = recommendLoading,
+                            recommendPlaylists = recommendPlaylists,
+                            recommendPlaylistsLoading = recommendPlaylistsLoading,
+                            recommendBooks = recommendBooks,
+                            recommendBooksLoading = recommendBooksLoading,
+                            favoriteUids = favoriteUids,
+                            onSubmit = { submit(it) },
+                            onOpenPlaylist = { openedPlaylist = it },
+                            onMoreSong = { moreSong = it },
+                            onPlaySong = { song ->
+                                PlaybackController.playTrack(context, UiTrack.fromOnline(song))
+                            },
+                        )
+                    } else {
+                        SearchResultsContent(
+                            listState = resultListState,
+                            category = category,
                             submitted = submitted,
                             selectedPlatform = selectedPlatform,
-                            platformMenuExpanded = platformMenuExpanded,
-                            suggestions = suggestions,
-                            onQueryChange = { query = it },
-                            onSubmit = { submit(it) },
-                            onClear = {
-                                query = ""
-                                submitted = ""
-                                cancelSearch()
-                                songs = emptyList()
-                                playlists = emptyList()
-                                error = null
-                            },
-                            onPlatformMenuExpandedChange = { platformMenuExpanded = it },
-                            onPlatformChange = { platform ->
-                                selectedPlatform = platform
-                                MeloraSettings.updateSearchPlatform(platform.id)
-                                platformMenuExpanded = false
+                            loading = loading,
+                            error = error,
+                            playlists = playlists,
+                            songs = songs,
+                            hasMore = hasMore,
+                            loadingMore = loadingMore,
+                            favoriteUids = favoriteUids,
+                            onRetry = { runSearch(submitted, 1, append = false) },
+                            onLoadMore = { runSearch(submitted, page + 1, append = true) },
+                            onOpenPlaylist = { openedPlaylist = it },
+                            onMoreSong = { moreSong = it },
+                            onPlaySong = { song ->
+                                PlaybackController.playTrack(context, UiTrack.fromOnline(song))
                             },
                         )
                     }
                 }
-            },
-        ) {
-            Box(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-                if (!searching) {
-                    SearchIdleContent(
-                        category = category,
-                        selectedPlatform = selectedPlatform,
-                        searchHistory = searchHistory,
-                        hotWords = hotWords,
-                        hotLoading = hotLoading,
-                        hotPlaylists = hotPlaylists,
-                        hotPlaylistsLoading = hotPlaylistsLoading,
-                        recommendSongs = recommendSongs,
-                        recommendLoading = recommendLoading,
-                        recommendPlaylists = recommendPlaylists,
-                        recommendPlaylistsLoading = recommendPlaylistsLoading,
-                        recommendBooks = recommendBooks,
-                        recommendBooksLoading = recommendBooksLoading,
-                        favoriteUids = favoriteUids,
-                        onSubmit = { submit(it) },
-                        onOpenPlaylist = { openedPlaylist = it },
-                        onMoreSong = { moreSong = it },
-                        onPlaySong = { song ->
-                            PlaybackController.playTrack(context, UiTrack.fromOnline(song))
-                        },
-                    )
-                } else {
-                    SearchResultsContent(
-                        category = category,
-                        submitted = submitted,
-                        selectedPlatform = selectedPlatform,
-                        loading = loading,
-                        error = error,
-                        playlists = playlists,
-                        songs = songs,
-                        hasMore = hasMore,
-                        loadingMore = loadingMore,
-                        favoriteUids = favoriteUids,
-                        onRetry = { runSearch(submitted, 1, append = false) },
-                        onLoadMore = { runSearch(submitted, page + 1, append = true) },
-                        onOpenPlaylist = { openedPlaylist = it },
-                        onMoreSong = { moreSong = it },
-                        onPlaySong = { song ->
-                            PlaybackController.playTrack(context, UiTrack.fromOnline(song))
-                        },
-                    )
-                }
             }
-        }
-    }
+        },
+    )
 
     moreSong?.let { song -> SongMoreSheet(song) { moreSong = null } }
 }

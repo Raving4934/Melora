@@ -15835,16 +15835,6 @@ SPLcom/leyu/melora/ui/common/CardPlayButtonKt$$ExternalSyntheticLambda0;-><init>
 Lcom/leyu/melora/ui/common/CardPlayButtonKt$$ExternalSyntheticLambda1;
 SPLcom/leyu/melora/ui/common/CardPlayButtonKt$$ExternalSyntheticLambda1;-><init>(Ljava/lang/String;Lkotlin/jvm/functions/Function0;Landroidx/compose/ui/Modifier;FFJJII)V
 SPLcom/leyu/melora/ui/common/CardPlayButtonKt$$ExternalSyntheticLambda1;->invoke(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;
-Lcom/leyu/melora/ui/common/DetailState;
-SPLcom/leyu/melora/ui/common/DetailState;-><init>()V
-SPLcom/leyu/melora/ui/common/DetailState;->getValue()Ljava/lang/Object;
-SPLcom/leyu/melora/ui/common/DetailState;->onRemembered()V
-Lcom/leyu/melora/ui/common/DetailVisibility;
-SPLcom/leyu/melora/ui/common/DetailVisibility;-><clinit>()V
-SPLcom/leyu/melora/ui/common/DetailVisibility;-><init>()V
-SPLcom/leyu/melora/ui/common/DetailVisibility;->getVisible()Z
-Lcom/leyu/melora/ui/common/DetailVisibilityKt;
-SPLcom/leyu/melora/ui/common/DetailVisibilityKt;->rememberDetailState(Landroidx/compose/runtime/Composer;I)Landroidx/compose/runtime/MutableState;
 Lcom/leyu/melora/ui/common/OnlineUiKt;
 SPLcom/leyu/melora/ui/common/OnlineUiKt;->rememberOnlineSongCover(Lcom/leyu/melora/playback/sdk/OnlineSong;ZLandroidx/compose/runtime/Composer;I)Ljava/lang/String;
 Lcom/leyu/melora/ui/common/PullRefreshKt;

@@ -1,5 +1,6 @@
 package com.leyu.melora.ui.local
 
+import com.leyu.melora.ui.common.MeloraBottomSheet
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -41,7 +42,6 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -105,6 +105,7 @@ internal fun LocalSearchPage(
     val filtered = remember(songs, query) { if (query.isBlank()) songs else songs.filter { it.matches(query) } }
 
     ChromeScaffold(
+        expectedTopBarHeight = if (query.isNotBlank() && filtered.isNotEmpty()) 110.dp else 64.dp,
         topBar = {
             Column(
                 modifier = Modifier
@@ -279,7 +280,7 @@ internal fun LocalSortSheet(
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
+    MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = MeloraAppearance.card,

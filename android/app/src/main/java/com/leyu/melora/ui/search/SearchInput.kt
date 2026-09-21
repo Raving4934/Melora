@@ -53,12 +53,14 @@ import com.leyu.melora.ui.common.sourceAliasDisplay
 import com.leyu.melora.ui.common.sourceAliasDisplayMusic
 import com.leyu.melora.ui.theme.MeloraAppearance
 
+internal val SearchInputSectionHeight = 48.dp
+internal val SearchInputSectionBottomSpacing = 14.dp
+internal val SearchInputContainerBottomPadding = 8.dp
 
 @Composable
 internal fun SearchInputSection(
     category: SearchCategory,
     query: String,
-    submitted: String,
     selectedPlatform: PlatformSource,
     platformMenuExpanded: Boolean,
     suggestions: List<String>,
@@ -78,7 +80,7 @@ internal fun SearchInputSection(
             border = if (chromeHeaderBlurred()) null else MeloraAppearance.cardBorder,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp),
+                .height(SearchInputSectionHeight),
         ) {
             Row(
                 modifier = Modifier
@@ -233,7 +235,7 @@ internal fun SearchInputSection(
         }
 
         // --- 1.1 输入联想面板 ---
-        if (suggestions.isNotEmpty() && query.isNotBlank() && query.trim() != submitted) {
+        if (suggestions.isNotEmpty()) {
             Surface(
                 shape = RoundedCornerShape(18.dp),
                 color = CardWhite,
@@ -279,6 +281,6 @@ internal fun SearchInputSection(
             }
         }
 
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(SearchInputSectionBottomSpacing))
     }
 }

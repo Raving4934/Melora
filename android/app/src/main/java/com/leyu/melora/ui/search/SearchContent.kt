@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Surface
@@ -59,6 +60,7 @@ import com.leyu.melora.ui.theme.MeloraAppearance
 
 @Composable
 internal fun SearchResultsContent(
+    listState: LazyListState,
     category: SearchCategory,
     submitted: String,
     selectedPlatform: PlatformSource,
@@ -88,6 +90,7 @@ internal fun SearchResultsContent(
                 val columns = responsiveGridColumns()
                 val rows = playlists.chunked(columns)
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
@@ -141,6 +144,7 @@ internal fun SearchResultsContent(
                 EmptyState("没有找到「$submitted」相关内容", Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current))
             } else {
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
                 ) {

@@ -1,5 +1,6 @@
 package com.leyu.melora.ui.discover
 
+import com.leyu.melora.ui.common.PageBackHandler as BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -54,6 +56,8 @@ import com.leyu.melora.ui.common.chromeContentPadding
 import com.leyu.melora.ui.common.chromeHeaderColor
 import com.leyu.melora.ui.common.EmptyState
 import com.leyu.melora.ui.common.ErrorState
+import com.leyu.melora.ui.common.rememberFastScrollToTop
+import com.leyu.melora.ui.common.titleScrollToTop
 import com.leyu.melora.ui.common.LoadMoreOnScroll
 import com.leyu.melora.ui.common.ShimmerBox
 import com.leyu.melora.ui.common.SkeletonGrid
@@ -67,6 +71,16 @@ internal val TextSub: Color get() = MeloraAppearance.textSub
 internal val CardBg: Color get() = MeloraAppearance.card
 internal val BrandBlue: Color get() = MeloraAppearance.brand
 internal val DividerSoft: Color get() = MeloraAppearance.divider
+
+// 顶部 1+1+2+2 卡片的几何契约：内容可横向滚动，但卡片本身不随状态或字体变化。
+internal const val DISCOVER_TOP_CARD_HEIGHT_DP = 175
+internal const val DISCOVER_TOP_PRIMARY_CARD_WIDTH_DP = 138
+internal const val DISCOVER_TOP_STACK_WIDTH_DP = 116
+internal const val DISCOVER_TOP_HORIZONTAL_GAP_DP = 10
+internal const val DISCOVER_TOP_STACK_GAP_DP = 9
+
+internal fun discoverStackCardHeightDp(): Int =
+    (DISCOVER_TOP_CARD_HEIGHT_DP - DISCOVER_TOP_STACK_GAP_DP) / 2
 
 // 发现页歌单卡骨架：与 136dp 横滑全幅卡同构（1:1 整卡微光）
 @Composable
@@ -105,7 +119,8 @@ internal fun MillionPlaylistsPage(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
-    androidx.activity.compose.BackHandler(onBack = onBack)
+    val scrollToTop = rememberFastScrollToTop(listState)
+    BackHandler(onBack = onBack)
     var items by remember { mutableStateOf<List<OnlinePlaylist>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var loadingMore by remember { mutableStateOf(false) }
@@ -138,12 +153,14 @@ internal fun MillionPlaylistsPage(
     ChromeScaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = MeloraAppearance.canvas,
+        expectedTopBarHeight = 64.dp,
         topBar = {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .height(64.dp)
                     .background(chromeHeaderColor())
-                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                    .padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onBack) {
@@ -153,7 +170,13 @@ internal fun MillionPlaylistsPage(
                         tint = MeloraAppearance.textMain,
                     )
                 }
-                Column(modifier = Modifier.weight(1f)) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(64.dp)
+                        .titleScrollToTop(scrollToTop),
+                    verticalArrangement = Arrangement.Center,
+                ) {
                     Text("百万热播", fontSize = 17.sp, fontWeight = FontWeight.Medium, color = TextMain)
                     Text("真实播放量 ≥ 100 万的平台歌单", fontSize = 11.sp, color = TextSub)
                 }
@@ -263,8 +286,8 @@ internal fun DailyRecommendCard(
         shadowElevation = 0.dp,
         border = MeloraAppearance.cardBorder,
         modifier = Modifier
-            .width(138.dp)
-            .height(175.dp),
+            .width(DISCOVER_TOP_PRIMARY_CARD_WIDTH_DP.dp)
+            .height(DISCOVER_TOP_CARD_HEIGHT_DP.dp),
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             // 背景封面底图（关闭单曲封面或未加载时不显示占位图）
@@ -296,18 +319,27 @@ internal fun DailyRecommendCard(
                 color = Color(0xFFFFD600), // Vibrant Golden Yellow
                 modifier = Modifier
                     .padding(10.dp)
+                    // 字号变化可以扩展，日/月内容变化不能改变徽块宽度。
+                    .width(with(LocalDensity.current) { 26.sp.toDp() } + 16.dp)
+                    .heightIn(min = with(LocalDensity.current) { 28.sp.toDp() } + 6.dp)
                     .align(Alignment.TopStart),
             ) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                    verticalArrangement = Arrangement.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 3.dp),
                 ) {
                     Text(
                         text = day,
+                        style = androidx.compose.ui.text.TextStyle(fontFeatureSettings = "tnum"),
                         fontSize = 17.sp,
                         fontWeight = FontWeight.Black,
                         color = Color(0xFF111827),
                         lineHeight = 18.sp,
+                        maxLines = 1,
+                        softWrap = false,
                     )
                     Text(
                         text = month,
@@ -315,6 +347,8 @@ internal fun DailyRecommendCard(
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF111827),
                         lineHeight = 10.sp,
+                        maxLines = 1,
+                        softWrap = false,
                     )
                 }
             }
@@ -334,6 +368,8 @@ internal fun DailyRecommendCard(
                         fontSize = 17.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                     RecommendationSubtitle(subtitle, loading)
                 }
@@ -369,8 +405,8 @@ internal fun GuessYouLikeCard(
         shadowElevation = 0.dp,
         border = MeloraAppearance.cardBorder,
         modifier = Modifier
-            .width(138.dp)
-            .height(175.dp),
+            .width(DISCOVER_TOP_PRIMARY_CARD_WIDTH_DP.dp)
+            .height(DISCOVER_TOP_CARD_HEIGHT_DP.dp),
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             // 背景封面底图（关闭单曲封面或未加载时不显示占位图）
@@ -411,6 +447,8 @@ internal fun GuessYouLikeCard(
                         fontSize = 17.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                     RecommendationSubtitle(subtitle, loading)
                 }
@@ -467,15 +505,19 @@ internal fun WatermarkGradientCard(
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                softWrap = false,
                 modifier = Modifier
+                    .fillMaxWidth()
                     .align(Alignment.TopStart)
-                    .padding(start = 12.dp, top = 12.dp),
+                    .padding(start = 12.dp, end = 12.dp, top = 12.dp),
             )
         }
     }
 }
 
-/** 骨架/文字占用同一字体行高，先返回的推荐内容不会使标题和播放按钮跳位。 */
+/** loading/成功/失败共用同一文字行槽，先返回的推荐内容不会使标题和播放按钮跳位。 */
 @Composable
 private fun RecommendationSubtitle(text: String, loading: Boolean) {
     val lineHeight = with(LocalDensity.current) { 24.sp.toDp() }
@@ -483,19 +525,14 @@ private fun RecommendationSubtitle(text: String, loading: Boolean) {
         modifier = Modifier.fillMaxWidth().padding(top = 1.dp).height(lineHeight),
         contentAlignment = Alignment.CenterStart,
     ) {
-        if (loading) {
-            ShimmerBox(
-                modifier = Modifier.fillMaxWidth(0.72f).height(9.dp),
-                cornerRadius = 5.dp,
-                baseColor = Color.White.copy(alpha = 0.20f),
-                highlightColor = Color.White.copy(alpha = 0.34f),
-            )
-        } else {
-            Text(
-                text = text, fontSize = 11.sp, lineHeight = 24.sp,
-                color = Color.White.copy(alpha = 0.85f), maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+        Text(
+            text = if (loading) "加载中…" else text,
+            fontSize = 11.sp,
+            lineHeight = 24.sp,
+            color = Color.White.copy(alpha = if (loading) 0.58f else 0.85f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            softWrap = false,
+        )
     }
 }

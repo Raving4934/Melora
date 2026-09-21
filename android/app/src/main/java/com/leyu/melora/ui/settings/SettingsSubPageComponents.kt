@@ -808,7 +808,7 @@ internal fun OtherSettingsSubPage(onBack: () -> Unit) {
 internal fun AboutSubPage(onBack: () -> Unit) {
     var modal by remember { mutableStateOf<AboutModal?>(null) }
 
-    ChromeScaffold(topBar = { SubPageTopBar(title = "关于乐屿", onBack = onBack) }) {
+    ChromeScaffold(expectedTopBarHeight = 64.dp, topBar = { SubPageTopBar(title = "关于乐屿", onBack = onBack) }) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = chromeContentPadding(PaddingValues(horizontal = 16.dp, vertical = 10.dp)),

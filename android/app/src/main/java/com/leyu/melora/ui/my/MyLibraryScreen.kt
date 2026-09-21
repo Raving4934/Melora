@@ -1,5 +1,8 @@
 package com.leyu.melora.ui.my
 
+import com.leyu.melora.ui.common.MeloraBottomSheet
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -14,8 +17,8 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.material.icons.outlined.Delete
 import kotlin.math.roundToInt
 import androidx.compose.material.icons.outlined.Person
-import com.leyu.melora.ui.theme.SystemBarsVisibility
-import androidx.activity.compose.BackHandler
+import com.leyu.melora.ui.common.PageBackHandler as BackHandler
+import com.leyu.melora.ui.common.DetailPageHost
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -27,6 +30,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -35,9 +39,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -73,13 +79,13 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -103,6 +109,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -127,6 +134,8 @@ import com.leyu.melora.ui.common.SongSelectionState
 import com.leyu.melora.ui.common.AddToPlaylistSheet
 import com.leyu.melora.ui.common.ChromeActionSurface
 import com.leyu.melora.ui.common.ChromeScaffold
+import com.leyu.melora.ui.common.rememberFastScrollToTop
+import com.leyu.melora.ui.common.titleScrollToTop
 import com.leyu.melora.ui.common.LocalChromeTopInset
 import com.leyu.melora.ui.common.chromeContentPadding
 import com.leyu.melora.ui.common.chromeHeaderColor
@@ -146,10 +155,8 @@ import com.leyu.melora.ui.common.TextMain
 import com.leyu.melora.ui.common.TextTabs
 import com.leyu.melora.ui.common.TextMuted
 import com.leyu.melora.ui.common.TextSub
-import com.leyu.melora.ui.common.rememberDetailState
 import com.leyu.melora.ui.common.rememberOnlineSongCover
 import com.leyu.melora.ui.common.toUiTracks
-import com.leyu.melora.playback.local.LocalMediaStore
 import com.leyu.melora.ui.player.SongsCollection
 import com.leyu.melora.ui.player.platformLabel
 import com.leyu.melora.ui.player.SongsCollectionPage
@@ -157,6 +164,14 @@ import com.leyu.melora.ui.theme.MeloraAppearance
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import org.json.JSONObject
+
+private sealed interface LibraryDetail {
+    data class Playlist(val value: OnlinePlaylist) : LibraryDetail
+    data class UserPlaylist(val value: UserLibrary.UserPlaylist) : LibraryDetail
+    data class Collection(val value: SongsCollection) : LibraryDetail
+    data class Board(val value: BoardItem) : LibraryDetail
+    data class Container(val value: UserLibrary.RecentContainer) : LibraryDetail
+}
 
 // 我的页子页面：目录页点入口后进入的专用页
 private enum class MyPage {
@@ -167,8 +182,12 @@ private enum class MyPage {
 }
 
 @Composable
-fun MyLibraryScreen(modifier: Modifier = Modifier) {
+fun MyLibraryScreen(
+    modifier: Modifier = Modifier,
+    onOpenDrawer: () -> Unit = {},
+) {
     val context = LocalContext.current
+    val hubListState = rememberLazyListState()
     val favoriteSongs by UserLibrary.favorites.collectAsStateWithLifecycle()
     val recentSongs by UserLibrary.recents.collectAsStateWithLifecycle()
     val favoritePlaylists by UserLibrary.favoritePlaylists.collectAsStateWithLifecycle()
@@ -183,13 +202,9 @@ fun MyLibraryScreen(modifier: Modifier = Modifier) {
     val singleSongs = favoriteSongs.filterNot { it.isBookChapter }
     val favoriteChapters = favoriteSongs.filter { it.isBookChapter }
 
-    var page by rememberDetailState<MyPage>()
-    var favoritesInitialTab by remember { mutableIntStateOf(0) }
-    var openedPlaylist by rememberDetailState<OnlinePlaylist>()
-    var openedUserPlaylist by rememberDetailState<UserLibrary.UserPlaylist>()
-    var openedCollection by rememberDetailState<SongsCollection>()
-    var openedContainerSongs by rememberDetailState<UserLibrary.RecentContainer>()
-    var openedBoard by rememberDetailState<BoardItem>()
+    var page by remember { mutableStateOf<MyPage?>(null) }
+    var favoritesTab by rememberSaveable { mutableIntStateOf(0) }
+    var detail by remember { mutableStateOf<LibraryDetail?>(null) }
     var moreSong by remember { mutableStateOf<OnlineSong?>(null) }
     var showCreateSheet by remember { mutableStateOf(false) }
     var playlistToRename by remember { mutableStateOf<UserLibrary.UserPlaylist?>(null) }
@@ -198,15 +213,15 @@ fun MyLibraryScreen(modifier: Modifier = Modifier) {
     val openContainer: (UserLibrary.RecentContainer) -> Unit = { container ->
         when (container.kind) {
             "board" -> {
-                openedBoard = BoardItem(
+                detail = LibraryDetail.Board(BoardItem(
                     id = container.id,
                     name = container.name,
                     bangid = container.id,
                     img = container.img,
-                )
+                ))
             }
-            "daily", "guess", "new" -> openedContainerSongs = container
-            "album" -> openedCollection = SongsCollection(
+            "daily", "guess", "new" -> detail = LibraryDetail.Container(container)
+            "album" -> detail = LibraryDetail.Collection(SongsCollection(
                 title = container.name,
                 subtitle = "专辑 · 收录歌曲",
                 keyword = container.name,
@@ -214,15 +229,15 @@ fun MyLibraryScreen(modifier: Modifier = Modifier) {
                 albumName = container.name,
                 artistName = container.artist.takeIf { it.isNotBlank() },
                 artwork = container.img,
-            )
-            "artist" -> openedCollection = SongsCollection(
+            ))
+            "artist" -> detail = LibraryDetail.Collection(SongsCollection(
                 title = container.name,
                 subtitle = "歌手 · 全部歌曲",
                 keyword = container.name,
                 source = container.source.ifBlank { "kw" },
                 artistName = container.name,
-            )
-            else -> openedPlaylist = playlistFromContainer(container)
+            ))
+            else -> detail = LibraryDetail.Playlist(playlistFromContainer(container))
         }
     }
 
@@ -269,129 +284,125 @@ fun MyLibraryScreen(modifier: Modifier = Modifier) {
 
     moreSong?.let { song -> SongMoreSheet(song, onDismiss = { moreSong = null }) }
 
-    when {
-        openedPlaylist != null -> {
-            PlaylistDetailContent(playlist = openedPlaylist!!, onBack = { openedPlaylist = null })
-            return
+    DetailPageHost(target = detail, modifier = modifier, detail = { target ->
+        when (target) {
+            is LibraryDetail.Playlist -> PlaylistDetailContent(target.value, onBack = { detail = null })
+            is LibraryDetail.UserPlaylist -> UserPlaylistDetail(
+                playlist = target.value, onBack = { detail = null }, onRename = { playlistToRename = it },
+                onDelete = { playlistToDelete = it; detail = null },
+            )
+            is LibraryDetail.Collection -> SongsCollectionPage(target.value, onBack = { detail = null })
+            is LibraryDetail.Board -> {
+                val source = recentContainers.firstOrNull { it.kind == "board" && it.id == target.value.bangid }?.source ?: "kw"
+                val platform = boardPlatforms.firstOrNull { it.id == source } ?: boardPlatforms.first()
+                BoardDetailContent(platform = platform, board = target.value, onBack = { detail = null })
+            }
+            is LibraryDetail.Container -> {
+                val container = target.value
+                OnlineSongsPage(
+                    title = container.name, subtitle = "最近播放 · 为你精选", queueId = container.queueId,
+                    cacheKey = "discover.${container.kind}.list", onBack = { detail = null },
+                    container = UserLibrary.PlayContainer(
+                        kind = container.kind, id = container.id, name = container.name, img = container.img,
+                        source = container.source, queueId = container.queueId,
+                    ),
+                    fetchPage = { page -> fetchContainerSongs(container.kind, page) },
+                )
+            }
         }
-        openedUserPlaylist != null -> {
-            UserPlaylistDetail(
-                playlist = openedUserPlaylist!!,
-                onBack = { openedUserPlaylist = null },
-                onRename = { playlistToRename = it },
-                onDelete = {
-                    playlistToDelete = it
-                    openedUserPlaylist = null
+    }) {
+        DetailPageHost(target = page, detail = { visiblePage ->
+            when (visiblePage) {
+                MyPage.Favorites -> FavoritesPage(
+                    singleSongs = singleSongs,
+                    favoriteCollections = favoriteCollections,
+                    favoriteAlbums = favoriteAlbums,
+                    favoriteArtists = favoriteArtists,
+                    favoriteBooks = favoriteBooks,
+                    favoriteChapters = favoriteChapters,
+                    tab = favoritesTab,
+                    onTabChange = { favoritesTab = it },
+                    onBack = { page = null },
+                    onOpenPlaylist = { detail = LibraryDetail.Playlist(it) },
+                    onOpenAlbum = { album ->
+                        detail = LibraryDetail.Collection(SongsCollection(
+                            title = album.name,
+                            subtitle = "专辑 · 收录歌曲",
+                            keyword = album.name,
+                            source = album.source.ifBlank { "kw" },
+                            albumName = album.name,
+                            artistName = album.artist.takeIf { it.isNotBlank() },
+                            artwork = album.img,
+                        ))
+                    },
+                    onOpenArtist = { artist ->
+                        detail = LibraryDetail.Collection(SongsCollection(
+                            title = artist.name, subtitle = "歌手 · 全部歌曲", keyword = artist.name,
+                            source = artist.source.ifBlank { "kw" }, artistName = artist.name, artwork = artist.img,
+                        ))
+                    },
+                    onMoreSong = { moreSong = it },
+                )
+                MyPage.Recents -> RecentsPage(
+                    recentSongs = recentSongs,
+                    recentContainers = recentContainers,
+                    onBack = { page = null },
+                    onOpenContainer = openContainer,
+                    onOpenBookAlbum = { detail = LibraryDetail.Playlist(it) },
+                    onMoreSong = { moreSong = it },
+                )
+                MyPage.UserPlaylists -> UserPlaylistsPage(
+                    playlists = userPlaylists,
+                    onBack = { page = null },
+                    onOpen = { detail = LibraryDetail.UserPlaylist(it) },
+                    onCreate = { showCreateSheet = true },
+                    onRename = { playlistToRename = it },
+                    onDelete = { playlistToDelete = it },
+                )
+                MyPage.Downloads -> DownloadsPage(onBack = { page = null })
+            }
+        }) {
+            ChromeScaffold(
+                expectedTopBarHeight = 64.dp,
+                topBar = {
+                    Row(
+                        Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        IconButton(onClick = onOpenDrawer) {
+                            Icon(Icons.Rounded.Menu, "打开侧栏", tint = TextMain)
+                        }
+                        Box(
+                            Modifier.weight(1f).height(64.dp).padding(start = 4.dp)
+                                .titleScrollToTop(rememberFastScrollToTop(hubListState)),
+                            contentAlignment = Alignment.CenterStart,
+                        ) {
+                            Text("我的列表", fontSize = 19.sp, fontWeight = FontWeight.Medium, color = TextMain)
+                        }
+                    }
                 },
-            )
-            return
-        }
-        openedCollection != null -> {
-            SongsCollectionPage(collection = openedCollection!!, onBack = { openedCollection = null })
-            return
-        }
-        openedBoard != null -> {
-            val board = openedBoard!!
-            val source = recentContainers.firstOrNull { it.kind == "board" && it.id == board.bangid }?.source
-                ?: "kw"
-            val platform = boardPlatforms.firstOrNull { it.id == source } ?: boardPlatforms.first()
-            BoardDetailContent(platform = platform, board = board, onBack = { openedBoard = null })
-            return
-        }
-        openedContainerSongs != null -> {
-            val container = openedContainerSongs!!
-            OnlineSongsPage(
-                title = container.name,
-                subtitle = "最近播放 · 为你精选",
-                queueId = container.queueId,
-                cacheKey = "discover.${container.kind}.list",
-                onBack = { openedContainerSongs = null },
-                container = UserLibrary.PlayContainer(
-                    kind = container.kind,
-                    id = container.id,
-                    name = container.name,
-                    img = container.img,
-                    source = container.source,
-                    queueId = container.queueId,
-                ),
-                fetchPage = { page -> fetchContainerSongs(container.kind, page) },
-            )
-            return
+            ) {
+                MyHubPage(
+                    modifier = Modifier,
+                    favoriteSongs = favoriteSongs,
+                    favoriteTotal = favoriteSongs.size + favoritePlaylists.size + favoriteAlbums.size + favoriteArtists.size,
+                    recentSongs = recentSongs,
+                    recentContainers = recentContainers,
+                    favoriteCollections = favoriteCollections,
+                    favoriteBooks = favoriteBooks,
+                    userPlaylists = userPlaylists,
+                    onOpenPage = { page = it },
+                    onOpenContainer = openContainer,
+                    onOpenBookProgram = { detail = LibraryDetail.Playlist(it) },
+                    onOpenUserPlaylist = { detail = LibraryDetail.UserPlaylist(it) },
+                    onOpenPlaylist = { detail = LibraryDetail.Playlist(it) },
+                    onOpenFavoritesTab = { favoritesTab = it; page = MyPage.Favorites },
+                    onCreatePlaylist = { showCreateSheet = true },
+                    listState = hubListState,
+                )
+            }
         }
     }
-
-    val openPage = page
-    if (openPage != null) {
-        when (openPage) {
-            MyPage.Favorites -> FavoritesPage(
-                singleSongs = singleSongs,
-                favoriteCollections = favoriteCollections,
-                favoriteAlbums = favoriteAlbums,
-                favoriteArtists = favoriteArtists,
-                favoriteBooks = favoriteBooks,
-                favoriteChapters = favoriteChapters,
-                initialTab = favoritesInitialTab,
-                onBack = { page = null },
-                onOpenPlaylist = { openedPlaylist = it },
-                onOpenAlbum = { album ->
-                    openedCollection = SongsCollection(
-                        title = album.name,
-                        subtitle = "专辑 · 收录歌曲",
-                        keyword = album.name,
-                        source = album.source.ifBlank { "kw" },
-                        albumName = album.name,
-                        artistName = album.artist.takeIf { it.isNotBlank() },
-                        artwork = album.img,
-                    )
-                },
-                onOpenArtist = { artist ->
-                    openedCollection = SongsCollection(
-                        title = artist.name, subtitle = "歌手 · 全部歌曲", keyword = artist.name,
-                        source = artist.source.ifBlank { "kw" }, artistName = artist.name, artwork = artist.img,
-                    )
-                },
-                onMoreSong = { moreSong = it },
-            )
-            MyPage.Recents -> RecentsPage(
-                recentSongs = recentSongs,
-                recentContainers = recentContainers,
-                onBack = { page = null },
-                onOpenContainer = openContainer,
-                onOpenBookAlbum = { openedPlaylist = it },
-                onMoreSong = { moreSong = it },
-            )
-            MyPage.UserPlaylists -> UserPlaylistsPage(
-                playlists = userPlaylists,
-                onBack = { page = null },
-                onOpen = { openedUserPlaylist = it },
-                onCreate = { showCreateSheet = true },
-                onRename = { playlistToRename = it },
-                onDelete = { playlistToDelete = it },
-            )
-            MyPage.Downloads -> DownloadsPage(onBack = { page = null })
-        }
-        return
-    }
-
-    // 目录页
-    MyHubPage(
-        modifier = modifier,
-        favoriteSongs = favoriteSongs,
-        favoriteTotal = favoriteSongs.size + favoritePlaylists.size + favoriteAlbums.size + favoriteArtists.size,
-        recentSongs = recentSongs,
-        recentContainers = recentContainers,
-        favoriteCollections = favoriteCollections,
-        favoriteBooks = favoriteBooks,
-        userPlaylists = userPlaylists,
-        onOpenPage = { page = it },
-        onOpenContainer = openContainer,
-        onOpenBookProgram = { openedPlaylist = it },
-        onOpenUserPlaylist = { openedUserPlaylist = it },
-        onOpenPlaylist = { openedPlaylist = it },
-        onOpenFavoritesTab = { favoritesInitialTab = it; page = MyPage.Favorites },
-        onCreatePlaylist = { showCreateSheet = true },
-    )
-
 }
 
 // ---------- 目录页 ----------
@@ -413,6 +424,7 @@ private fun MyHubPage(
     onOpenPlaylist: (OnlinePlaylist) -> Unit,
     onOpenFavoritesTab: (Int) -> Unit,
     onCreatePlaylist: () -> Unit,
+    listState: LazyListState,
 ) {
     val context = LocalContext.current
     val downloads by DownloadCenter.records.collectAsStateWithLifecycle()
@@ -429,6 +441,7 @@ private fun MyHubPage(
         .take(3)
     val recentTotal = recentEntryCount(recentSongs, recentContainers)
     LazyColumn(
+        state = listState,
         modifier = modifier
             .fillMaxSize()
             .padding(horizontal = 16.dp),
@@ -957,6 +970,8 @@ private fun PlaylistListRow(
 private fun SubPageScaffold(
     title: String,
     onBack: () -> Unit,
+    onTitleClick: () -> Unit = {},
+    expectedTopBarHeight: Dp? = null,
     actions: @Composable () -> Unit = {},
     header: @Composable (@Composable () -> Unit) -> Unit = { it() },
     topBarContent: @Composable () -> Unit = {},
@@ -983,15 +998,22 @@ private fun SubPageScaffold(
                             IconButton(onClick = onBack) {
                                 Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = TextMain)
                             }
-                            Text(
-                                title,
-                                fontSize = 17.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = TextMain,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f),
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .titleScrollToTop(onTitleClick),
+                                contentAlignment = Alignment.CenterStart,
+                            ) {
+                                Text(
+                                    title,
+                                    fontSize = 17.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = TextMain,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                             actions()
                         }
                         topBarContent()
@@ -999,6 +1021,7 @@ private fun SubPageScaffold(
                 }
             }
         },
+        expectedTopBarHeight = expectedTopBarHeight,
         bottomBar = bottomBar,
     ) {
         content()
@@ -1020,14 +1043,26 @@ private fun FavoritesPage(
     onOpenAlbum: (UserLibrary.FavoriteAlbum) -> Unit,
     onOpenArtist: (UserLibrary.FavoriteArtist) -> Unit,
     onMoreSong: (OnlineSong) -> Unit,
-    initialTab: Int = 0,
+    tab: Int,
+    onTabChange: (Int) -> Unit,
 ) {
     val context = LocalContext.current
-    var tab by remember { mutableIntStateOf(initialTab.coerceIn(0, 5)) }
     val selection = remember { SongSelectionState() }
+    // 每个收藏分类独立保存滚动位置，切换 Tab 不丢失上下文。
+    val listStates = listOf(
+        rememberLazyListState(),
+        rememberLazyListState(),
+        rememberLazyListState(),
+        rememberLazyListState(),
+        rememberLazyListState(),
+        rememberLazyListState(),
+    )
+    val listState = listStates[tab]
+    val scrollToTop = rememberFastScrollToTop(listState)
     SubPageScaffold(
         title = "我的收藏",
         onBack = { if (selection.active) selection.finish() else onBack() },
+        onTitleClick = scrollToTop,
         header = { normal -> SongSelectionTopBar(selection, singleSongs, normal) },
         topBarContent = {
             TextTabs(
@@ -1041,7 +1076,7 @@ private fun FavoritesPage(
                     favoriteArtists.size,
                 ),
                 selected = tab,
-                onSelect = { selection.finish(); tab = it },
+                onSelect = { selection.finish(); onTabChange(it) },
             )
             if (tab == 0 && singleSongs.isNotEmpty()) {
                 Row(
@@ -1067,6 +1102,7 @@ private fun FavoritesPage(
                         )
                     } else {
                         LazyColumn(
+                            state = listState,
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
                         ) {
@@ -1075,7 +1111,6 @@ private fun FavoritesPage(
                                     song = song,
                                     showAlbum = true,
                                     isFavorite = true,
-                                    localBadge = LocalMediaStore.hasLocalFile(song),
                                     selectionMode = selection.active,
                                     selected = song.uid in selection.selectedUids,
                                     onMore = { onMoreSong(song) },
@@ -1097,6 +1132,7 @@ private fun FavoritesPage(
                         PlaylistListColumn(
                             playlists = favoriteCollections,
                             onOpen = onOpenPlaylist,
+                            listState = listState,
                         )
                     }
 
@@ -1107,6 +1143,7 @@ private fun FavoritesPage(
                         )
                     } else {
                         LazyColumn(
+                            state = listState,
                             modifier = Modifier.fillMaxSize(),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                             contentPadding = chromeContentPadding(PaddingValues(horizontal = 16.dp, vertical = 6.dp)),
@@ -1133,6 +1170,7 @@ private fun FavoritesPage(
                         PlaylistListColumn(
                             playlists = favoriteBooks,
                             onOpen = onOpenPlaylist,
+                            listState = listState,
                         )
                     }
 
@@ -1140,6 +1178,7 @@ private fun FavoritesPage(
                         EmptyState("还没有收藏的歌手\n在艺术家详情页点击红心收藏", Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current))
                     } else {
                         LazyColumn(
+                            state = listState,
                             modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp),
                             contentPadding = chromeContentPadding(PaddingValues(horizontal = 16.dp, vertical = 6.dp)),
                         ) {
@@ -1160,6 +1199,7 @@ private fun FavoritesPage(
                         )
                     } else {
                         LazyColumn(
+                            state = listState,
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
                         ) {
@@ -1182,8 +1222,10 @@ private fun FavoritesPage(
 private fun PlaylistListColumn(
     playlists: List<OnlinePlaylist>,
     onOpen: (OnlinePlaylist) -> Unit,
+    listState: LazyListState,
 ) {
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(10.dp),
         contentPadding = chromeContentPadding(PaddingValues(horizontal = 16.dp, vertical = 6.dp)),
@@ -1225,7 +1267,17 @@ private fun RecentsPage(
     onMoreSong: (OnlineSong) -> Unit,
 ) {
     val context = LocalContext.current
-    var tab by remember { mutableIntStateOf(0) }
+    var tab by rememberSaveable { mutableIntStateOf(0) }
+    // 最近播放的五个分类各自保留滚动位置，切换分类不会重置列表。
+    val listStates = listOf(
+        rememberLazyListState(),
+        rememberLazyListState(),
+        rememberLazyListState(),
+        rememberLazyListState(),
+        rememberLazyListState(),
+    )
+    val listState = listStates[tab]
+    val scrollToTop = rememberFastScrollToTop(listState)
     val songs = recentSongs.filterNot { it.isBookChapter }
     val chapters = recentSongs.filter { it.isBookChapter }.distinctBy { it.albumId.ifBlank { it.uid } }
     // 容器按类型分流：歌单/榜单/推荐 与 听书专辑
@@ -1235,6 +1287,7 @@ private fun RecentsPage(
     SubPageScaffold(
         title = "最近播放",
         onBack = onBack,
+        onTitleClick = scrollToTop,
         actions = {
             if (recentSongs.isNotEmpty() || recentContainers.isNotEmpty()) {
                 Text(
@@ -1288,29 +1341,29 @@ private fun RecentsPage(
                 EmptyState("暂无播放记录", Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current))
             } else {
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
                 ) {
                     if (recentContainers.isNotEmpty()) {
-                        item { RecentSectionTitle("最近收听") }
-                        items(recentContainers, key = { "c:${it.key}" }) { container ->
+                        item(contentType = "section") { RecentSectionTitle("最近收听") }
+                        items(recentContainers, key = { "c:${it.key}" }, contentType = { "container" }) { container ->
                             RecentContainerRow(container, onOpenContainer)
                         }
                     }
                     if (songs.isNotEmpty()) {
-                        item { RecentSectionTitle("单曲") }
-                        itemsIndexed(songs, key = { index, song -> "s:${song.uid}:$index" }) { index, song ->
+                        item(contentType = "section") { RecentSectionTitle("单曲") }
+                        itemsIndexed(songs, key = { index, song -> "s:${song.uid}:$index" }, contentType = { _, _ -> "song" }) { index, song ->
                             OnlineSongRow(
                                 song = song,
-                                localBadge = LocalMediaStore.hasLocalFile(song),
                                 onMore = { onMoreSong(song) },
                                 onClick = { PlaybackController.playTrack(context, UiTrack.fromOnline(song)) },
                             )
                         }
                     }
                     if (chapters.isNotEmpty()) {
-                        item { RecentSectionTitle("节目") }
-                        itemsIndexed(chapters, key = { index, song -> "b:${song.albumId}:$index" }) { _, song ->
+                        item(contentType = "section") { RecentSectionTitle("节目") }
+                        itemsIndexed(chapters, key = { index, song -> "b:${song.albumId}:$index" }, contentType = { _, _ -> "program" }) { _, song ->
                             BookProgramRow(
                                 song = song,
                                 subtitle = "最近播放：${chapterTitle(song)}",
@@ -1327,13 +1380,13 @@ private fun RecentsPage(
                 EmptyState("暂无播放记录", Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current))
             } else {
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
                 ) {
                     itemsIndexed(songs, key = { index, song -> "${song.uid}:$index" }) { index, song ->
                         OnlineSongRow(
                             song = song,
-                            localBadge = LocalMediaStore.hasLocalFile(song),
                             onMore = { onMoreSong(song) },
                             onClick = { PlaybackController.playTrack(context, UiTrack.fromOnline(song)) },
                         )
@@ -1346,6 +1399,7 @@ private fun RecentsPage(
                 EmptyState("暂无歌单/专辑播放记录", Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current))
             } else {
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     contentPadding = chromeContentPadding(PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 24.dp)),
@@ -1361,6 +1415,7 @@ private fun RecentsPage(
                 EmptyState("暂无听书播放记录", Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current))
             } else {
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     contentPadding = chromeContentPadding(PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 24.dp)),
@@ -1376,10 +1431,11 @@ private fun RecentsPage(
                 EmptyState("暂无节目播放记录", Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current))
             } else {
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
                 ) {
-                    itemsIndexed(chapters, key = { index, song -> "b:${song.albumId}:$index" }) { _, song ->
+                    itemsIndexed(chapters, key = { index, song -> "b:${song.albumId}:$index" }, contentType = { _, _ -> "program" }) { _, song ->
                         BookProgramRow(
                             song = song,
                             subtitle = "最近播放：${chapterTitle(song)}",
@@ -1520,6 +1576,8 @@ private fun DownloadsPage(onBack: () -> Unit) {
     val records by DownloadCenter.records.collectAsStateWithLifecycle()
     var actionRecordId by remember { mutableStateOf<String?>(null) }
     var addToPlaylistSong by remember { mutableStateOf<OnlineSong?>(null) }
+    val listState = rememberLazyListState()
+    val scrollToTop = rememberFastScrollToTop(listState)
 
     val retry: (OnlineSong) -> Unit = { song ->
         PlaybackController.postMessage(context, "开始下载：${song.name}")
@@ -1533,6 +1591,8 @@ private fun DownloadsPage(onBack: () -> Unit) {
     SubPageScaffold(
         title = "下载",
         onBack = onBack,
+        onTitleClick = scrollToTop,
+        expectedTopBarHeight = 64.dp,
         actions = {
             if (records.any { it.status == DownloadCenter.Status.Done || it.status == DownloadCenter.Status.Failed }) {
                 Text(
@@ -1557,6 +1617,7 @@ private fun DownloadsPage(onBack: () -> Unit) {
             )
         } else {
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 contentPadding = chromeContentPadding(PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 24.dp)),
@@ -1932,7 +1993,7 @@ private fun DownloadRecordSheet(
     val isPlaying = isCurrent && playback.playing
     val selectedDownloadQuality by MeloraSettings.downloadQuality.collectAsStateWithLifecycle()
 
-    ModalBottomSheet(
+    MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = MeloraAppearance.canvas,
@@ -1952,7 +2013,6 @@ private fun DownloadRecordSheet(
             }
         },
     ) {
-        SystemBarsVisibility()
         Column(modifier = Modifier.padding(bottom = 28.dp)) {
             // 头部卡片：48dp 封面/下载图标 + 任务名与状态详情
             Row(
@@ -2180,7 +2240,7 @@ private fun PlaylistEditSheet(
         runCatching { focusRequester.requestFocus() }
     }
 
-    ModalBottomSheet(
+    MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = MeloraAppearance.canvas,
@@ -2200,7 +2260,6 @@ private fun PlaylistEditSheet(
             }
         },
     ) {
-        SystemBarsVisibility()
         Column(
             modifier = Modifier
                 .padding(horizontal = 20.dp)
@@ -2384,7 +2443,7 @@ private fun PlaylistMoreSheet(
     onDelete: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState()
-    ModalBottomSheet(
+    MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = MeloraAppearance.canvas,
@@ -2404,7 +2463,6 @@ private fun PlaylistMoreSheet(
             }
         },
     ) {
-        SystemBarsVisibility()
         Column(modifier = Modifier.padding(bottom = 28.dp)) {
             // 头部卡片：48dp 歌单封面/图集 + 歌单名与歌曲数量
             Row(
@@ -2506,7 +2564,7 @@ private fun PlaylistDeleteConfirmSheet(
     onConfirm: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState()
-    ModalBottomSheet(
+    MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = MeloraAppearance.canvas,
@@ -2526,7 +2584,6 @@ private fun PlaylistDeleteConfirmSheet(
             }
         },
     ) {
-        SystemBarsVisibility()
         Column(
             modifier = Modifier
                 .padding(horizontal = 20.dp)
@@ -2609,10 +2666,14 @@ private fun UserPlaylistsPage(
 ) {
     val context = LocalContext.current
     var moreTarget by remember { mutableStateOf<UserLibrary.UserPlaylist?>(null) }
+    val listState = rememberLazyListState()
+    val scrollToTop = rememberFastScrollToTop(listState)
 
     SubPageScaffold(
         title = "自建歌单",
         onBack = onBack,
+        onTitleClick = scrollToTop,
+        expectedTopBarHeight = 64.dp,
         actions = {
             IconButton(onClick = onCreate) {
                 Icon(Icons.Outlined.Add, contentDescription = "新建歌单", tint = BrandBlue)
@@ -2626,6 +2687,7 @@ private fun UserPlaylistsPage(
             )
         } else {
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 contentPadding = chromeContentPadding(PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 24.dp)),
@@ -2719,12 +2781,15 @@ private fun UserPlaylistDetail(
     val playlists by UserLibrary.playlists.collectAsStateWithLifecycle()
     val current = playlists.firstOrNull { it.id == playlist.id } ?: playlist
     val songs = current.songs
+    val listState = key(current.id) { rememberLazyListState() }
+    val scrollToTop = rememberFastScrollToTop(listState)
     var moreSong by remember { mutableStateOf<OnlineSong?>(null) }
     var showMoreMenu by remember { mutableStateOf(false) }
     // 系统返回手势先退出二级歌单页，而不是直接退出应用
     BackHandler(onBack = onBack)
 
     ChromeScaffold(
+        expectedTopBarHeight = 64.dp,
         topBar = {
             Row(
                 modifier = Modifier
@@ -2737,15 +2802,22 @@ private fun UserPlaylistDetail(
                 IconButton(onClick = onBack) {
                     Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = TextMain)
                 }
-                Text(
-                    current.name,
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = TextMain,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .titleScrollToTop(scrollToTop),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    Text(
+                        current.name,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = TextMain,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 if (songs.isNotEmpty()) {
                     ChromeActionSurface(
                         onClick = {
@@ -2787,13 +2859,13 @@ private fun UserPlaylistDetail(
             )
         } else {
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
             ) {
                 itemsIndexed(songs, key = { index, song -> "${song.uid}:$index" }) { index, song ->
                     OnlineSongRow(
                         song = song,
-                        localBadge = LocalMediaStore.hasLocalFile(song),
                         showAlbum = true,
                         onMore = { moreSong = song },
                         onClick = { PlaybackController.playTrack(context, UiTrack.fromOnline(song)) },

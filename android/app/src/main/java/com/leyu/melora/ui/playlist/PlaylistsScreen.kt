@@ -69,6 +69,8 @@ import com.leyu.melora.playback.sdk.OnlinePlaylist
 import com.leyu.melora.playback.sdk.OnlineRepository
 import com.leyu.melora.playback.sdk.TagInfo
 import com.leyu.melora.ui.common.BrandBlue
+import com.leyu.melora.ui.common.ChromeScaffold
+import com.leyu.melora.ui.common.DetailPageHost
 import com.leyu.melora.ui.common.CardPlayButton
 import com.leyu.melora.ui.common.LocalChromeTopInset
 import com.leyu.melora.ui.common.chromeContentPadding
@@ -79,13 +81,13 @@ import com.leyu.melora.ui.common.SkeletonCrossfade
 import com.leyu.melora.ui.common.SkeletonGrid
 import com.leyu.melora.ui.common.responsiveGridColumns
 import com.leyu.melora.ui.common.PullRefreshContainer
+import com.leyu.melora.ui.common.FastScrollToTopEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.leyu.melora.ui.common.OnlinePlaylistCard
 import com.leyu.melora.ui.common.PlaylistDetailContent
 import com.leyu.melora.ui.common.LoadMoreOnScroll
 import com.leyu.melora.ui.common.SongArtwork
 import com.leyu.melora.ui.common.TextMain
-import com.leyu.melora.ui.common.rememberDetailState
 import com.leyu.melora.ui.common.TextSub
 import com.leyu.melora.ui.common.toUiTracks
 import com.leyu.melora.ui.common.runCatchingCancellable
@@ -107,7 +109,11 @@ val playlistPlatforms = listOf(
 // 歌单页：左侧最热/最新切换，右侧分类（底部弹窗）+ 平台筛选，主体双列歌单网格
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun PlaylistsScreen(modifier: Modifier = Modifier) {
+fun PlaylistsScreen(
+    modifier: Modifier = Modifier,
+    scrollToTopRequest: Int = 0,
+    primaryHeader: @Composable () -> Unit = {},
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -117,12 +123,13 @@ fun PlaylistsScreen(modifier: Modifier = Modifier) {
     val selectedTagId by MeloraSettings.playlistTagId.collectAsStateWithLifecycle()
     val sortOrder by MeloraSettings.playlistSort.collectAsStateWithLifecycle()
     val pullEnabled by MeloraSettings.pullToRefresh.collectAsStateWithLifecycle()
-    var openedPlaylist by rememberDetailState<OnlinePlaylist>()
+    var openedPlaylist by remember { mutableStateOf<OnlinePlaylist?>(null) }
 
     // 仅酷我官方接口支持"最热/最新"；酷狗/企鹅两参数同榜、网易仅最热、咪咕仅推荐
     val sortId = if (selectedPlatform.id == "kw" && sortOrder == 1) "new" else "hot"
     val pageKey = "playlists.${selectedPlatform.id}.$sortId.$selectedTagId"
     val listState = key(pageKey) { rememberLazyListState() }
+    FastScrollToTopEffect(scrollToTopRequest, listState)
     var refreshing by remember(pageKey) { mutableStateOf(false) }
     var loadingMore by remember(pageKey) { mutableStateOf(false) }
     // 秒开优先：切平台/分类先拿已有缓存渲染，过期由后台静默刷新，不再整页闪骨架
@@ -174,18 +181,26 @@ fun PlaylistsScreen(modifier: Modifier = Modifier) {
         }
     }
 
-    if (openedPlaylist != null) {
-        PlaylistDetailContent(
-            playlist = openedPlaylist!!,
-            onBack = { openedPlaylist = null },
-        )
-        return
-    }
-
-    PullRefreshContainer(
-        enabled = pullEnabled,
-        refreshing = refreshing,
-        onRefresh = {
+    DetailPageHost(
+        target = openedPlaylist,
+        modifier = modifier,
+        contentKey = { playlist -> "${playlist.source}:${playlist.id}" },
+        detail = { playlist ->
+            PlaylistDetailContent(
+                playlist = playlist,
+                onBack = { openedPlaylist = null },
+            )
+        },
+    ) {
+        ChromeScaffold(
+            modifier = Modifier.fillMaxSize(),
+            expectedTopBarHeight = 64.dp,
+            topBar = primaryHeader,
+        ) {
+            PullRefreshContainer(
+                enabled = pullEnabled,
+                refreshing = refreshing,
+                onRefresh = {
             if (!refreshing) {
                 refreshing = true
                 scope.launch {
@@ -202,94 +217,96 @@ fun PlaylistsScreen(modifier: Modifier = Modifier) {
                 }
             }
         },
-        modifier = modifier,
-    ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp),
-    ) {
-        Spacer(Modifier.height(8.dp))
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                        Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp),
+                ) {
+                    Spacer(Modifier.height(8.dp))
 
-        val columns = responsiveGridColumns()
-        SkeletonCrossfade(
-            visible = loading,
-            modifier = Modifier.fillMaxSize(),
-            skeleton = {
-                SkeletonGrid(
-                    columns = columns,
-                    cards = columns * 2,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(top = LocalChromeTopInset.current),
-                )
-            },
-        ) {
-            when {
-                error != null -> ErrorState(
-                    error!!,
-                    onRetry = { retryKey++ },
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(top = LocalChromeTopInset.current),
-                )
-                playlists.isEmpty() -> EmptyState(
-                    "该分类暂无歌单",
-                    Modifier
-                        .fillMaxSize()
-                        .padding(top = LocalChromeTopInset.current),
-                )
-                else -> {
-                    LoadMoreOnScroll(listState, hasMore, loadingMore, onLoadMore = ::loadMore)
-                    LazyColumn(
-                        state = listState,
+                    val columns = responsiveGridColumns()
+                    SkeletonCrossfade(
+                        visible = loading,
                         modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                        contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
-                    ) {
-                        val rows = playlists.chunked(columns)
-                        items(
-                            count = rows.size,
-                            key = { rowIndex -> rows[rowIndex].joinToString("|") { "${it.source}:${it.id}" } },
-                        ) { rowIndex ->
-                            val rowItems = rows[rowIndex]
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            ) {
-                                rowItems.forEach { playlist ->
-                                    OnlinePlaylistCard(
-                                        playlist = playlist,
-                                        onClick = { openedPlaylist = playlist },
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                }
-                                repeat(columns - rowItems.size) {
-                                    Spacer(Modifier.weight(1f))
-                                }
-                            }
-                        }
-                    if (hasMore) {
-                        item {
-                            Box(
+                        skeleton = {
+                            SkeletonGrid(
+                                columns = columns,
+                                cards = columns * 2,
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 16.dp),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Text(
-                                    if (loadingMore) "正在加载…" else "上滑加载更多",
-                                    fontSize = 13.sp,
-                                    color = BrandBlue,
-                                    modifier = Modifier.clickable(enabled = !loadingMore) { loadMore() },
-                                )
+                                    .fillMaxSize()
+                                    .padding(top = LocalChromeTopInset.current),
+                            )
+                        },
+                    ) {
+                        when {
+                            error != null -> ErrorState(
+                                error!!,
+                                onRetry = { retryKey++ },
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(top = LocalChromeTopInset.current),
+                            )
+                            playlists.isEmpty() -> EmptyState(
+                                "该分类暂无歌单",
+                                Modifier
+                                    .fillMaxSize()
+                                    .padding(top = LocalChromeTopInset.current),
+                            )
+                            else -> {
+                                LoadMoreOnScroll(listState, hasMore, loadingMore, onLoadMore = ::loadMore)
+                                LazyColumn(
+                                    state = listState,
+                                    modifier = Modifier.fillMaxSize(),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                                    contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
+                                ) {
+                                    val rows = playlists.chunked(columns)
+                                    items(
+                                        count = rows.size,
+                                        key = { rowIndex -> rows[rowIndex].joinToString("|") { "${it.source}:${it.id}" } },
+                                    ) { rowIndex ->
+                                        val rowItems = rows[rowIndex]
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                        ) {
+                                            rowItems.forEach { playlist ->
+                                                OnlinePlaylistCard(
+                                                    playlist = playlist,
+                                                    onClick = { openedPlaylist = playlist },
+                                                    modifier = Modifier.weight(1f),
+                                                )
+                                            }
+                                            repeat(columns - rowItems.size) {
+                                                Spacer(Modifier.weight(1f))
+                                            }
+                                        }
+                                    }
+                                if (hasMore) {
+                                    item {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 16.dp),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Text(
+                                                if (loadingMore) "正在加载…" else "上滑加载更多",
+                                                fontSize = 13.sp,
+                                                color = BrandBlue,
+                                                modifier = Modifier.clickable(enabled = !loadingMore) { loadMore() },
+                                            )
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
-                    }
                     }
                 }
             }
         }
-    }
     }
 }

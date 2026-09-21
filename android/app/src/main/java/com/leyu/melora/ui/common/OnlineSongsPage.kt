@@ -1,6 +1,6 @@
 package com.leyu.melora.ui.common
 
-import androidx.activity.compose.BackHandler
+import com.leyu.melora.ui.common.PageBackHandler as BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -30,6 +31,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -79,7 +81,8 @@ fun OnlineSongsPage(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val listState = rememberLazyListState()
+    val listState = key(cacheKey) { rememberLazyListState() }
+    val scrollToTop = rememberFastScrollToTop(listState)
     val favoriteUids by UserLibrary.favoriteUids.collectAsStateWithLifecycle()
     // 系统返回键先退出本页回到列表，而不是退出应用
     BackHandler(onBack = onBack)
@@ -145,6 +148,7 @@ fun OnlineSongsPage(
     }
 
     ChromeScaffold(
+        expectedTopBarHeight = 64.dp,
         topBar = {
             Row(
                 modifier = Modifier
@@ -161,7 +165,13 @@ fun OnlineSongsPage(
                         tint = TextMain,
                     )
                 }
-                Column(modifier = Modifier.weight(1f)) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .titleScrollToTop(scrollToTop),
+                    verticalArrangement = Arrangement.Center,
+                ) {
                     Text(
                         text = title,
                         fontSize = 17.sp,

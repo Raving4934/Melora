@@ -2,7 +2,7 @@ package com.leyu.melora.ui.common
 
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
-import androidx.activity.compose.BackHandler
+import com.leyu.melora.ui.common.PageBackHandler as BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -85,6 +86,7 @@ fun PlaylistDetailContent(
         val context = LocalContext.current
         val scope = rememberCoroutineScope()
         val listState = rememberLazyListState()
+        val scrollToTop = rememberFastScrollToTop(listState)
         val controlBarHazeState = rememberHazeState()
         val blurEnabled by MeloraSettings.blurTopBar.collectAsStateWithLifecycle()
         val bodyHazeModifier = if (blurEnabled) {
@@ -190,6 +192,7 @@ fun PlaylistDetailContent(
         ChromeScaffold(
             modifier = modifier,
             contentSource = controlBarHazeState,
+            expectedTopBarHeight = 64.dp,
             topBar = {
                 Column(
                     modifier = Modifier
@@ -208,15 +211,22 @@ fun PlaylistDetailContent(
                             IconButton(onClick = onBack) {
                                 Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = TextMain)
                             }
-                            Text(
-                                playlist.name,
-                                fontSize = 17.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = TextMain,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f),
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .titleScrollToTop(scrollToTop),
+                                contentAlignment = Alignment.CenterStart,
+                            ) {
+                                Text(
+                                    playlist.name,
+                                    fontSize = 17.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = TextMain,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                         }
                     }
                 }

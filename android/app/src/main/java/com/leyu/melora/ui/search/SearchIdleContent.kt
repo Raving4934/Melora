@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -62,6 +63,7 @@ import com.leyu.melora.ui.theme.MeloraAppearance
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun SearchIdleContent(
+    listState: LazyListState,
     category: SearchCategory,
     selectedPlatform: PlatformSource,
     searchHistory: List<String>,
@@ -82,6 +84,7 @@ internal fun SearchIdleContent(
     onPlaySong: (OnlineSong) -> Unit,
 ) {
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(16.dp),
         contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),

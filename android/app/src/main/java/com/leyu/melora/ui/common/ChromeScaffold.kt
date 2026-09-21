@@ -1,5 +1,6 @@
 package com.leyu.melora.ui.common
 
+import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -36,10 +37,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.ui.theme.MeloraAppearance
@@ -124,8 +129,48 @@ internal fun withChromeTopInset(base: PaddingValues, topInset: Dp, direction: La
         bottom = base.calculateBottomPadding(),
     )
 
+/** 委托标题时，外壳不裁掉横屏安全区；交给内容页在全宽材质内统一避让。 */
+internal fun chromeBodyPadding(padding: PaddingValues, direction: LayoutDirection, delegatesHeader: Boolean): PaddingValues =
+    PaddingValues(
+        start = if (delegatesHeader) 0.dp else padding.calculateStartPadding(direction),
+        end = if (delegatesHeader) 0.dp else padding.calculateEndPadding(direction),
+        bottom = padding.calculateBottomPadding(),
+    )
+
+/** 已知栏高时首帧直接给出正文起点，避免等待 Scaffold 测量回写后整页下坠。 */
+internal fun chromeContentTopInset(
+    measured: Dp,
+    headerTop: Dp,
+    systemTop: Dp,
+    root: Boolean,
+    topBarHeight: Dp?,
+): Dp = topBarHeight?.let { headerTop + (if (root) systemTop else 0.dp) + it } ?: measured
+
 /**
- * 系统区由根层占一次；详情替换主栏，只有常驻搜索条显式叠在父导航下。
+ * Compose Insets 在冷启动的首次 composition 可能暂时为 0。根栏始终保留稳定状态栏占位，
+ * 系统栏显隐只改变图标可见性，不能触发整个页面上下重排。
+ */
+internal fun resolveSystemTopInsetPx(
+    composeInset: Int,
+    platformInset: Int,
+    resourceInset: Int,
+): Int = maxOf(composeInset, platformInset, resourceInset)
+
+/** 同一屏幕方向内只允许系统顶部占位增大，状态栏隐藏时不得因 OEM 返回 0 而缩小正文起点。 */
+internal fun resolveStableSystemTopInsetPx(
+    previousInset: Int,
+    composeInset: Int,
+    platformInset: Int,
+    resourceInset: Int,
+): Int = maxOf(previousInset, resolveSystemTopInsetPx(composeInset, platformInset, resourceInset))
+
+private fun Context.statusBarHeightPx(): Int {
+    val resourceId = resources.getIdentifier("status_bar_height", "dimen", "android")
+    return if (resourceId != 0) resources.getDimensionPixelSize(resourceId) else 0
+}
+
+/**
+ * 系统区只占一次；无标题外壳委托内容页完整绘制系统区与标题，叠加操作栏仍共享页内坐标。
  * Material Scaffold 同帧测量并保留原 contentPadding；切换开关不改变布局。
  * 状态栏与标题/操作栏共用原生模糊和同一渐变；嵌套栏只采样最内层正文。
  * contentSource 用于正文内有吸顶栏的页面：页面只记录正文项，绝不记录栏本身。
@@ -138,6 +183,7 @@ internal fun ChromeScaffold(
     headerColor: Color = MeloraAppearance.canvas,
     contentSource: HazeState? = null,
     stackOnParent: Boolean = false,
+    expectedTopBarHeight: Dp? = null,
     topBar: @Composable () -> Unit = {},
     bottomBar: @Composable () -> Unit = {},
     content: @Composable BoxScope.() -> Unit,
@@ -146,6 +192,8 @@ internal fun ChromeScaffold(
     val inheritedTop = LocalChromeTopInset.current
     val direction = LocalLayoutDirection.current
     val density = LocalDensity.current
+    val view = LocalView.current
+    val orientation = LocalConfiguration.current.orientation
     val inheritedGeometry = LocalChromeGeometry.current
     val geometry = remember(inheritedGeometry) { inheritedGeometry ?: ChromeHeaderGeometry() }
     val depth = LocalChromeDepth.current + 1
@@ -155,11 +203,28 @@ internal fun ChromeScaffold(
     val bodySource = contentSource ?: ownSource
     val activeSource = geometry.sourceFor(depth, bodySource)
     val root = inheritedGeometry == null
+    // 无页面标题的外壳只提供安全区/底栏，整块状态栏+标题材质由内容页拥有。
+    // 并行进出的两页各自保有一份连续渐变，不能在固定状态栏上抢用目标页的采样源。
+    val delegatesHeader = root && expectedTopBarHeight == 0.dp
+    val stableSystemTopPx = remember(view, orientation) { intArrayOf(view.context.statusBarHeightPx()) }
     val systemTop = if (root) with(density) {
-        WindowInsets.safeDrawing.getTop(this).toDp()
+        val stableTypes = WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.displayCutout()
+        val platformTop = ViewCompat.getRootWindowInsets(view)
+            ?.getInsetsIgnoringVisibility(stableTypes)
+            ?.top
+            ?: 0
+        val resolved = resolveStableSystemTopInsetPx(
+            previousInset = stableSystemTopPx[0],
+            composeInset = WindowInsets.safeDrawing.getTop(this),
+            platformInset = platformTop,
+            resourceInset = view.context.statusBarHeightPx(),
+        )
+        stableSystemTopPx[0] = resolved
+        resolved.toDp()
     } else LocalChromeSystemTopInset.current
     val headerTop = if (root) 0.dp else chromeHeaderTopInset(inheritedTop, systemTop, stackOnParent)
-    val material = Modifier.chromeMaterial(activeSource, enabled, headerTop, geometry, headerColor)
+    val material = if (delegatesHeader) Modifier else
+        Modifier.chromeMaterial(activeSource, enabled, headerTop, geometry, headerColor)
 
     CompositionLocalProvider(
         LocalChromeGeometry provides geometry,
@@ -189,22 +254,33 @@ internal fun ChromeScaffold(
             },
             bottomBar = bottomBar,
         ) { padding ->
-            val headerBottom = padding.calculateTopPadding()
-            SideEffect { geometry.update(owner, headerTop, headerBottom, depth, bodySource) }
-            val sidesAndBottom = PaddingValues(
-                start = padding.calculateStartPadding(direction),
-                end = padding.calculateEndPadding(direction),
-                bottom = padding.calculateBottomPadding(),
+            val headerBottom = chromeContentTopInset(
+                measured = padding.calculateTopPadding(),
+                headerTop = headerTop,
+                systemTop = systemTop,
+                root = root,
+                topBarHeight = expectedTopBarHeight,
             )
+            SideEffect {
+                if (!delegatesHeader) geometry.update(owner, headerTop, headerBottom, depth, bodySource)
+                else geometry.remove(owner)
+            }
+            val sidesAndBottom = chromeBodyPadding(padding, direction, delegatesHeader)
             Box(
                 modifier = Modifier.fillMaxSize()
                     .padding(sidesAndBottom)
-                    .consumeWindowInsets(padding)
-                    .then(if (enabled && contentSource == null && activeSource === bodySource && headerBottom > 0.dp) {
+                    .consumeWindowInsets(if (delegatesHeader) PaddingValues(
+                        top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding(),
+                    ) else padding)
+                    .then(if (!delegatesHeader && enabled && contentSource == null && activeSource === bodySource && headerBottom > 0.dp) {
                         Modifier.hazeSource(bodySource)
                     } else Modifier),
             ) {
-                CompositionLocalProvider(LocalChromeTopInset provides headerBottom) { content() }
+                CompositionLocalProvider(
+                    LocalChromeTopInset provides headerBottom,
+                    LocalChromeGeometry provides if (delegatesHeader) null else geometry,
+                    LocalChromeDepth provides if (delegatesHeader) 0 else depth,
+                ) { content() }
             }
         }
     }

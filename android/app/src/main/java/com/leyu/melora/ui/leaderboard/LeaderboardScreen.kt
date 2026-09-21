@@ -2,12 +2,16 @@ package com.leyu.melora.ui.leaderboard
 
 import com.leyu.melora.ui.common.ChromeActionSurface
 import com.leyu.melora.ui.common.ChromeScaffold
+import com.leyu.melora.ui.common.DetailPageHost
 import com.leyu.melora.ui.common.chromeContentPadding
 import com.leyu.melora.ui.common.LocalChromeTopInset
+import com.leyu.melora.ui.common.FastScrollToTopEffect
+import com.leyu.melora.ui.common.rememberFastScrollToTop
+import com.leyu.melora.ui.common.titleScrollToTop
 
 import android.content.Context
 
-import androidx.activity.compose.BackHandler
+import com.leyu.melora.ui.common.PageBackHandler as BackHandler
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -30,6 +34,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -48,6 +53,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -90,7 +96,6 @@ import com.leyu.melora.ui.common.SkeletonSongList
 import com.leyu.melora.ui.common.OnlineSongRow
 import com.leyu.melora.ui.common.SongMoreSheet
 import com.leyu.melora.ui.common.TextMain
-import com.leyu.melora.ui.common.rememberDetailState
 import com.leyu.melora.ui.common.TextMuted
 import com.leyu.melora.ui.common.TextSub
 import com.leyu.melora.ui.common.sourceAliasDisplay
@@ -168,7 +173,11 @@ private val genreTagColors = listOf(
 )
 
 @Composable
-fun LeaderboardScreen(modifier: Modifier = Modifier) {
+fun LeaderboardScreen(
+    modifier: Modifier = Modifier,
+    scrollToTopRequest: Int = 0,
+    primaryHeader: @Composable () -> Unit = {},
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     // 平台切换完全由顶栏"平台筛选"驱动，页面即时跟随设置
@@ -186,7 +195,9 @@ fun LeaderboardScreen(modifier: Modifier = Modifier) {
     var loading by remember(platform.id) { mutableStateOf(boards.isEmpty()) }
     var error by remember { mutableStateOf<String?>(null) }
     var retryKey by remember(platform.id) { mutableIntStateOf(0) }
-    var selectedBoard by rememberDetailState<BoardItem>()
+    var selectedBoard by remember { mutableStateOf<BoardItem?>(null) }
+    val listState = key(platform.id) { rememberLazyListState() }
+    FastScrollToTopEffect(scrollToTopRequest, listState)
 
     LaunchedEffect(platform.id, retryKey) {
         val fresh = OnlineCache.get<List<BoardItem>>(boardsKey, cacheTtl)
@@ -208,136 +219,148 @@ fun LeaderboardScreen(modifier: Modifier = Modifier) {
         loading = false
     }
 
-    if (selectedBoard != null) {
-        BoardDetailContent(
-            platform = platform,
-            board = selectedBoard!!,
-            onBack = { selectedBoard = null },
-        )
-        return
-    }
-
-    PullRefreshContainer(
-        enabled = pullEnabled,
-        refreshing = refreshing,
-        onRefresh = {
-            if (!refreshing) {
-                refreshing = true
-                scope.launch {
-                    runCatchingCancellable { OnlineRepository.boards(context, platform.id) }
-                        .onSuccess {
-                            boards = it
-                            if (it.isNotEmpty()) OnlineCache.put(boardsKey, it)
-                            error = null
-                        }
-                        .onFailure { PlaybackController.postMessage(context, it.message ?: "榜单同步失败") }
-                    refreshing = false
-                }
-            }
-        },
+    DetailPageHost(
+        target = selectedBoard,
         modifier = modifier,
+        contentKey = { board -> "${platform.id}:${board.bangid}" },
+        detail = { board ->
+            BoardDetailContent(
+                platform = platform,
+                board = board,
+                onBack = { selectedBoard = null },
+            )
+        },
     ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp),
-    ) {
-        SkeletonCrossfade(
-            visible = loading,
+        ChromeScaffold(
             modifier = Modifier.fillMaxSize(),
-            skeleton = { SkeletonLeaderboard(modifier = Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current)) },
+            expectedTopBarHeight = 64.dp,
+            topBar = primaryHeader,
         ) {
-            when {
-                error != null -> ErrorState(error!!, onRetry = { retryKey++ }, modifier = Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current))
-                boards.isEmpty() -> EmptyState("该平台暂无榜单", Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current))
-                else -> LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                    contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
+            PullRefreshContainer(
+                enabled = pullEnabled,
+                refreshing = refreshing,
+                onRefresh = {
+                    if (!refreshing) {
+                        refreshing = true
+                        scope.launch {
+                            runCatchingCancellable { OnlineRepository.boards(context, platform.id) }
+                                .onSuccess {
+                                    boards = it
+                                    if (it.isNotEmpty()) OnlineCache.put(boardsKey, it)
+                                    error = null
+                                }
+                                .onFailure { PlaybackController.postMessage(context, it.message ?: "榜单同步失败") }
+                            refreshing = false
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp),
                 ) {
-                    item {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(
-                                Icons.Outlined.Whatshot,
-                                contentDescription = null,
-                                tint = Color(0xFFDC2626),
-                                modifier = Modifier.size(18.dp),
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                text = "${sourceAliasDisplay(platform.id, platform.name)}官方榜",
-                                fontSize = 17.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = TextMain,
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                text = "官方榜单 · 每日更新",
-                                fontSize = 11.sp,
-                                color = TextMuted,
-                                modifier = Modifier.padding(top = 2.dp),
-                            )
-                        }
-                    }
-
-                    // 主打三大榜（含实时 Top 3 直读）
-                    items(boards.take(3), key = { "${platform.id}:${it.bangid}" }) { board ->
-                        val position = boards.take(3).indexOf(board)
-                        BoardPeekCard(
-                            platform = platform.id,
-                            board = board,
-                            gradient = peakGradients[position % peakGradients.size],
-                            badgeColor = peakBadges[position % peakBadges.size],
-                            onOpen = { selectedBoard = board },
-                        )
-                    }
-
-                    if (boards.size > 3) {
-                        item {
-                            Spacer(Modifier.height(4.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
+                    SkeletonCrossfade(
+                        visible = loading,
+                        modifier = Modifier.fillMaxSize(),
+                        skeleton = { SkeletonLeaderboard(modifier = Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current)) },
+                    ) {
+                        when {
+                            error != null -> ErrorState(error!!, onRetry = { retryKey++ }, modifier = Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current))
+                            boards.isEmpty() -> EmptyState("该平台暂无榜单", Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current))
+                            else -> LazyColumn(
+                                state = listState,
+                                modifier = Modifier.fillMaxSize(),
+                                verticalArrangement = Arrangement.spacedBy(16.dp),
+                                contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
                             ) {
-                                Icon(
-                                    Icons.Outlined.Explore,
-                                    contentDescription = null,
-                                    tint = BrandBlue,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    text = "更多垂类榜单",
-                                    fontSize = 17.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = TextMain,
-                                )
-                            }
-                        }
+                                item {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Icon(
+                                            Icons.Outlined.Whatshot,
+                                            contentDescription = null,
+                                            tint = Color(0xFFDC2626),
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            text = "${sourceAliasDisplay(platform.id, platform.name)}官方榜",
+                                            fontSize = 17.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = TextMain,
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            text = "官方榜单 · 每日更新",
+                                            fontSize = 11.sp,
+                                            color = TextMuted,
+                                            modifier = Modifier.padding(top = 2.dp),
+                                        )
+                                    }
+                                }
 
-                        items(
-                            items = boards.drop(3).chunked(3),
-                            key = { rowItems -> rowItems.joinToString("|") { it.id } },
-                        ) { rowItems ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                rowItems.forEach { board ->
-                                    val tagColor = genreTagColors[(boards.indexOf(board)) % genreTagColors.size]
-                                    GenreBoardCard(
+                                // 主打三大榜（含实时 Top 3 直读）
+                                items(boards.take(3), key = { "${platform.id}:${it.bangid}" }) { board ->
+                                    val position = boards.take(3).indexOf(board)
+                                    BoardPeekCard(
                                         platform = platform.id,
                                         board = board,
-                                        tagColor = tagColor,
-                                        modifier = Modifier.weight(1f),
-                                        onClick = { selectedBoard = board },
+                                        gradient = peakGradients[position % peakGradients.size],
+                                        badgeColor = peakBadges[position % peakBadges.size],
+                                        onOpen = { selectedBoard = board },
                                     )
                                 }
-                                repeat(3 - rowItems.size) {
-                                    Spacer(Modifier.weight(1f))
+
+                                if (boards.size > 3) {
+                                    item {
+                                        Spacer(Modifier.height(4.dp))
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Icon(
+                                                Icons.Outlined.Explore,
+                                                contentDescription = null,
+                                                tint = BrandBlue,
+                                                modifier = Modifier.size(18.dp),
+                                            )
+                                            Spacer(Modifier.width(6.dp))
+                                            Text(
+                                                text = "更多垂类榜单",
+                                                fontSize = 17.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = TextMain,
+                                            )
+                                        }
+                                    }
+
+                                    items(
+                                        items = boards.drop(3).chunked(3),
+                                        key = { rowItems -> rowItems.joinToString("|") { it.id } },
+                                    ) { rowItems ->
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        ) {
+                                            rowItems.forEach { board ->
+                                                val tagColor = genreTagColors[(boards.indexOf(board)) % genreTagColors.size]
+                                                GenreBoardCard(
+                                                    platform = platform.id,
+                                                    board = board,
+                                                    tagColor = tagColor,
+                                                    modifier = Modifier.weight(1f),
+                                                    onClick = { selectedBoard = board },
+                                                )
+                                            }
+                                            repeat(3 - rowItems.size) {
+                                                Spacer(Modifier.weight(1f))
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -346,8 +369,6 @@ fun LeaderboardScreen(modifier: Modifier = Modifier) {
             }
         }
     }
-    }
-
 }
 
 // 榜单歌曲详情
@@ -359,9 +380,11 @@ internal fun BoardDetailContent(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val boardKey = "${platform.id}:${board.bangid}"
+    val listState = key(boardKey) { rememberLazyListState() }
+    val scrollToTop = rememberFastScrollToTop(listState)
     // 系统返回键先退出榜单详情回到榜单列表，而不是退出应用
     BackHandler(onBack = onBack)
-    val boardKey = "${platform.id}:${board.bangid}"
     val detailCacheKey = boardPageCacheKey(platform.id, board.bangid)
     // 详情只读取完整第一页快照；预览快照不参与详情分页。
     val cachedPage = remember(boardKey) { OnlineCache.peek<SongPage>(detailCacheKey) }
@@ -401,7 +424,7 @@ internal fun BoardDetailContent(
 
     LaunchedEffect(boardKey) { load(1, append = false) }
 
-    ChromeScaffold(topBar = {
+    ChromeScaffold(expectedTopBarHeight = 64.dp, topBar = {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -412,7 +435,13 @@ internal fun BoardDetailContent(
             IconButton(onClick = onBack) {
                 Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = TextMain)
             }
-            Column(modifier = Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .titleScrollToTop(scrollToTop),
+                verticalArrangement = Arrangement.Center,
+            ) {
                 Text(board.name, fontSize = 17.sp, fontWeight = FontWeight.Medium, color = TextMain, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             if (songs.isNotEmpty()) {
@@ -466,6 +495,7 @@ internal fun BoardDetailContent(
             error != null -> ErrorState(error!!, onRetry = { scope.launch { load(1, false) } }, modifier = Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current))
             songs.isEmpty() -> EmptyState("榜单暂无歌曲", Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current))
             else -> LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
             ) {

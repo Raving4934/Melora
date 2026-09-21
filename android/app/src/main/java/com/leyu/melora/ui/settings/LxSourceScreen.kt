@@ -1,6 +1,6 @@
 package com.leyu.melora.ui.settings
 
-import com.leyu.melora.ui.theme.SystemBarsVisibility
+import com.leyu.melora.ui.common.MeloraBottomSheet
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -57,7 +57,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -619,13 +618,12 @@ private fun SourceModalSheet(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
+    MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = MeloraAppearance.canvas,
         dragHandle = { SourceSheetDragHandle() },
     ) {
-        SystemBarsVisibility()
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -993,13 +991,12 @@ private fun SourceRow(
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         val actionBusy = actionStatus?.busy == true
         val metrics = LxScriptPool.metrics(script.id)
-        ModalBottomSheet(
+        MeloraBottomSheet(
             onDismissRequest = { sheetOpen = false },
             sheetState = sheetState,
             containerColor = MeloraAppearance.canvas,
             dragHandle = { SourceSheetDragHandle() },
         ) {
-            SystemBarsVisibility()
             Column(
                 modifier = Modifier
                     .fillMaxWidth()

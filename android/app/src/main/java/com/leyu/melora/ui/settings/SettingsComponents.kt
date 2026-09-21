@@ -1,6 +1,6 @@
 package com.leyu.melora.ui.settings
 
-import androidx.activity.compose.BackHandler
+import com.leyu.melora.ui.common.PageBackHandler as BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -84,7 +84,7 @@ internal fun SettingsPageContent(
     when (subPage) {
         SettingsSubPage.None -> SettingsMainMenu(onOpenDrawer = onOpenDrawer, onNavigate = onNavigate)
         SettingsSubPage.Basic -> BasicSettingsSubPage(onBack = onBack)
-        SettingsSubPage.CustomSource -> ChromeScaffold(topBar = { SubPageTopBar(title = "自定义源管理", onBack = onBack) }) {
+        SettingsSubPage.CustomSource -> ChromeScaffold(expectedTopBarHeight = 64.dp, topBar = { SubPageTopBar(title = "自定义源管理", onBack = onBack) }) {
             LxSourceScreen()
         }
         SettingsSubPage.Playback -> PlaybackSettingsSubPage(onBack = onBack)
@@ -104,7 +104,7 @@ internal fun SettingsSubPageScaffold(
     content: LazyListScope.() -> Unit,
 ) {
     BackHandler(onBack = onBack)
-    ChromeScaffold(topBar = { SubPageTopBar(title = title, onBack = onBack) }) {
+    ChromeScaffold(expectedTopBarHeight = 64.dp, topBar = { SubPageTopBar(title = title, onBack = onBack) }) {
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -176,7 +176,7 @@ internal fun SettingsMainMenu(
         SettingsMenuEntry(Icons.Outlined.Info, Color(0xFF4B5563), "关于乐屿", "版本 v${BuildConfig.VERSION_NAME} · Media3 播放引擎", SettingsSubPage.About),
     )
 
-    ChromeScaffold(topBar = {
+    ChromeScaffold(expectedTopBarHeight = 64.dp, topBar = {
         TopAppBar(
             windowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
             colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),

@@ -1,11 +1,7 @@
 package com.leyu.melora.ui.settings
 
-import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.layout.Column
+import com.leyu.melora.ui.common.DetailPageHost
+import com.leyu.melora.ui.common.PageBackHandler as BackHandler
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -55,18 +51,22 @@ fun SettingsMasterScreen(
         }
     }
 
-    Column(modifier = modifier.fillMaxSize()) {
-        AnimatedContent(
-            targetState = currentSubPage,
-            transitionSpec = { fadeIn() togetherWith fadeOut() },
-            label = "SettingsPageTransition",
-        ) { subPage ->
+    DetailPageHost(
+        target = currentSubPage.takeUnless { it == SettingsSubPage.None },
+        modifier = modifier.fillMaxSize(),
+        detail = { subPage ->
             SettingsPageContent(
                 subPage = subPage,
                 onOpenDrawer = onOpenDrawer,
                 onNavigate = { currentSubPage = it },
                 onBack = { currentSubPage = SettingsSubPage.None },
             )
-        }
-    }
+        },
+        content = {
+            SettingsMainMenu(
+                onOpenDrawer = onOpenDrawer,
+                onNavigate = { currentSubPage = it },
+            )
+        },
+    )
 }

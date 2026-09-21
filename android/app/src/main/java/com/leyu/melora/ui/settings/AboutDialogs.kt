@@ -1,6 +1,6 @@
 package com.leyu.melora.ui.settings
 
-import com.leyu.melora.ui.theme.SystemBarsVisibility
+import com.leyu.melora.ui.common.MeloraBottomSheet
 import com.leyu.melora.ui.common.runCatchingCancellable
 import android.content.Intent
 import java.net.URLEncoder
@@ -39,7 +39,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -93,14 +92,13 @@ internal fun AboutModalSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    ModalBottomSheet(
+    MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = SettingsCardBg,
         dragHandle = null,
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
     ) {
-        SystemBarsVisibility()
         Column(
             modifier = Modifier
                 .fillMaxWidth()

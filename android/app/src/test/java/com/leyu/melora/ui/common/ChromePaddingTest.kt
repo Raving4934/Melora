@@ -15,6 +15,45 @@ import org.junit.Assert.assertSame
 import org.junit.Test
 
 class ChromePaddingTest {
+
+    @Test
+    fun movingPagesKeepIndependentStatusAndTitleGradients() {
+        val hub = ChromeHeaderGeometry()
+        val detail = ChromeHeaderGeometry()
+        val hubSource = HazeState(initialBlurEnabled = true)
+        val detailSource = HazeState(initialBlurEnabled = true)
+        hub.update(Any(), 0.dp, 96.dp, 1, hubSource)
+        detail.update(Any(), 0.dp, 144.dp, 1, detailSource)
+        // 导航目标变化不能让离场页的渐变范围/采样源跳到另一页。
+        assertEquals(0.dp, hub.minimumTop)
+        assertEquals(96.dp, hub.maximumBottom)
+        assertSame(hubSource, hub.sourceFor(1, hubSource))
+        assertEquals(0.dp, detail.minimumTop)
+        assertEquals(144.dp, detail.maximumBottom)
+        assertSame(detailSource, detail.sourceFor(1, detailSource))
+    }
+
+    @Test
+    fun startupSystemInsetUsesStableFallbackBeforeComposeInsetsArrive() {
+        assertEquals(96, resolveSystemTopInsetPx(0, 96, 88))
+        assertEquals(96, resolveSystemTopInsetPx(96, 0, 88))
+        assertEquals(88, resolveSystemTopInsetPx(0, 0, 88))
+    }
+
+    @Test
+    fun hiddenStatusBarKeepsTheSameStableLayoutInset() {
+        val visible = resolveStableSystemTopInsetPx(0, 96, 96, 88)
+        val hidden = resolveStableSystemTopInsetPx(visible, 0, 0, 88)
+        assertEquals(visible, hidden)
+    }
+
+    @Test
+    fun orientationStartsWithResourceFallbackUntilRealInsetsArrive() {
+        val initial = resolveStableSystemTopInsetPx(0, 0, 0, 88)
+        assertEquals(88, initial)
+        assertEquals(96, resolveStableSystemTopInsetPx(initial, 96, 96, 88))
+    }
+
     @Test
     fun landscapeForegroundInsetsKeepCutoutEdgesWithoutDuplicatingStatusBarSpace() {
         val density = Density(2f)
@@ -60,11 +99,11 @@ class ChromePaddingTest {
     }
 
     @Test
-    fun hidingStatusBarOnlyRemovesItsTopSpace() {
+    fun hidingStatusBarKeepsContentTopSpace() {
         val base = PaddingValues(top = 8.dp, bottom = 220.dp)
         val visible = withChromeTopInset(base, 96.dp, LayoutDirection.Ltr)
-        val hidden = withChromeTopInset(base, 64.dp, LayoutDirection.Ltr)
-        assertEquals(32.dp, visible.calculateTopPadding() - hidden.calculateTopPadding())
+        val hidden = withChromeTopInset(base, 96.dp, LayoutDirection.Ltr)
+        assertEquals(visible.calculateTopPadding(), hidden.calculateTopPadding())
         assertEquals(220.dp, hidden.calculateBottomPadding())
     }
 
@@ -295,6 +334,44 @@ class ChromePaddingTest {
             geometry.remove(controls)
             assertEquals(96.dp, geometry.maximumBottom)
         }
+    }
+
+    @Test
+    fun delegatedHeaderKeepsTheFullWidthForLandscapeMaterial() {
+        val padding = PaddingValues(start = 32.dp, top = 24.dp, end = 8.dp, bottom = 64.dp)
+        for (direction in listOf(LayoutDirection.Ltr, LayoutDirection.Rtl)) {
+            val shell = chromeBodyPadding(padding, direction, delegatesHeader = true)
+            assertEquals(0.dp, shell.calculateLeftPadding(direction))
+            assertEquals(0.dp, shell.calculateRightPadding(direction))
+            assertEquals(64.dp, shell.calculateBottomPadding())
+            val page = chromeBodyPadding(padding, direction, delegatesHeader = false)
+            assertEquals(padding.calculateLeftPadding(direction), page.calculateLeftPadding(direction))
+            assertEquals(padding.calculateRightPadding(direction), page.calculateRightPadding(direction))
+            assertEquals(64.dp, page.calculateBottomPadding())
+        }
+    }
+
+    @Test
+    fun delegatingTheWholeHeaderDoesNotMoveContentOrDoubleTheStatusInset() {
+        for (systemTop in listOf(0.dp, 24.dp, 32.dp, 44.dp)) {
+            for (bar in listOf(64.dp, 110.dp, 120.dp)) {
+                val splitHeader = chromeContentTopInset(0.dp, systemTop, systemTop, root = false, topBarHeight = bar)
+                val wholeHeader = chromeContentTopInset(0.dp, 0.dp, systemTop, root = true, topBarHeight = bar)
+                assertEquals(splitHeader, wholeHeader)
+                assertEquals(systemTop + bar, wholeHeader)
+            }
+        }
+    }
+
+    @Test
+    fun knownTopBarHeightPreventsFirstFrameContentDrop() {
+        assertEquals(96.dp, chromeContentTopInset(0.dp, 0.dp, 32.dp, root = true, topBarHeight = 64.dp))
+        assertEquals(142.dp, chromeContentTopInset(0.dp, 32.dp, 32.dp, root = false, topBarHeight = 110.dp))
+    }
+
+    @Test
+    fun unknownTopBarHeightStillUsesMeasuredScaffoldInset() {
+        assertEquals(128.dp, chromeContentTopInset(128.dp, 0.dp, 32.dp, root = true, topBarHeight = null))
     }
 
 }
