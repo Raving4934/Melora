@@ -184,6 +184,7 @@ go build -o melora-server main.go
 ## 💖 Acknowledgements
 
 - [lyswhut/lx-music-desktop](https://github.com/lyswhut/lx-music-desktop): Parts of the catalog metadata structures and source extension protocol compatibility are derived from LX Music (licensed under Apache-2.0). Thanks to the original author and open-source community for their exploration and contributions.
+- <a href="https://linux.do" target="_blank"><img src="https://cdn3.ldstatic.com/original/4X/d/1/4/d146c68151340881c884d95e0da4acdf369258c6.png" alt="LINUX.DO" height="24" /></a>: A friendly technical community.
 
 ---
 

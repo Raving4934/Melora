@@ -184,6 +184,7 @@ go build -o melora-server main.go
 ## 💖 致谢与开源参考
 
 - [lyswhut/lx-music-desktop](https://github.com/lyswhut/lx-music-desktop)：本项目的部分目录数据结构与音源扩展协议兼容自落雪音乐（基于 Apache-2.0 许可证开源），感谢原作者及社区的探索与贡献。
+- <a href="https://linux.do" target="_blank"><img src="https://cdn3.ldstatic.com/original/4X/d/1/4/d146c68151340881c884d95e0da4acdf369258c6.png" alt="LINUX.DO" height="24" /></a>：一个友好的技术社区。
 
 ---
 
