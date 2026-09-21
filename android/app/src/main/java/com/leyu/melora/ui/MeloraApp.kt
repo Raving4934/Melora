@@ -51,6 +51,7 @@ import androidx.compose.material.icons.outlined.Headphones
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Leaderboard
 import androidx.compose.material.icons.outlined.MusicNote
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.QueueMusic
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
@@ -127,6 +128,7 @@ import com.leyu.melora.ui.settings.SettingsMasterScreen
 import com.leyu.melora.ui.settings.SettingsSubPage
 import com.leyu.melora.ui.common.ChromeActionSurface
 import com.leyu.melora.ui.common.ChromeScaffold
+import com.leyu.melora.ui.common.DetailPageHost
 import com.leyu.melora.ui.common.chromeHeaderColor
 import com.leyu.melora.ui.player.ContinuousPlayerSheet
 import com.leyu.melora.ui.theme.SystemBarsAppearance
@@ -179,6 +181,92 @@ private val tabs = listOf(
     MainTabItem("设置", Icons.Outlined.Settings, Color(0xFF546E7A)),
 )
 
+internal enum class DiscoverCatalog(val tab: Int) {
+    Playlists(3), Leaderboards(1);
+
+    companion object {
+        fun fromTab(tab: Int): DiscoverCatalog? = entries.firstOrNull { it.tab == tab }
+    }
+}
+
+/** 同一套目录标题/筛选；入口只决定导航按钮，不复制歌单或排行榜页面。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MainPageHeader(
+    tab: Int,
+    onTitleClick: () -> Unit,
+    navigationIcon: @Composable () -> Unit,
+    onSearch: () -> Unit = {},
+) {
+    var platformPickerOpen by remember(tab) { mutableStateOf(false) }
+    // 顶栏：普通态（侧栏 + 标题 + 平台）⇄ 平台选择态（取消 + 五个平台下划线）
+    // 平台选择在栏内切换；整条主栏随所属页面一起参与导航过渡。
+    val isPlatformTab = tab == 1 || tab == 3
+    val picking = platformPickerOpen && isPlatformTab
+    PageBackHandler(enabled = picking) { platformPickerOpen = false }
+    TopAppBar(
+        windowInsets = WindowInsets(0.dp, 0.dp, 0.dp, 0.dp),
+        // 栏内材质由共享框架统一处理，文字和按钮始终保持清晰。
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = chromeHeaderColor()),
+        title = {
+            if (picking) {
+                val selectedId by (if (tab == 1) MeloraSettings.leaderboardPlatform else MeloraSettings.playlistPlatform).collectAsStateWithLifecycle()
+                val choices = if (tab == 1) {
+                    boardPlatforms.map {
+                        PlatformChoice(it.id, sourceAliasDisplay(it.id, it.name), boardPlatformColors[it.id] ?: MeloraAppearance.brand)
+                    }
+                } else {
+                    playlistPlatforms.map {
+                        PlatformChoice(it.id, sourceAliasDisplay(it.id, it.label), it.color)
+                    }
+                }
+                PlatformUnderlineRow(
+                    choices = choices,
+                    selectedId = selectedId,
+                    onSelect = { choice ->
+                        if (choice.id == selectedId) {
+                            platformPickerOpen = false
+                        } else if (tab == 1) {
+                            MeloraSettings.updateLeaderboardPlatform(choice.id)
+                            platformPickerOpen = false
+                        } else {
+                            MeloraSettings.updatePlaylistPlatform(choice.id)
+                            MeloraSettings.updatePlaylistTag("", "全部歌单")
+                            platformPickerOpen = false
+                        }
+                    },
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(PrimaryTopBarHeight)
+                        .titleScrollToTop(onTitleClick),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    Text(
+                        tabs[tab].label,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 19.sp,
+                        color = TextDark,
+                    )
+                }
+            }
+        },
+        navigationIcon = { if (!picking) navigationIcon() },
+        actions = {
+            if (!picking) when (tab) {
+                1 -> LeaderboardPlatformFilter(onOpenPlatformPicker = { platformPickerOpen = true })
+                3 -> PlaylistTopBarFilter(onOpenPlatformPicker = { platformPickerOpen = true })
+                4 -> IconButton(onClick = onSearch) {
+                    Icon(Icons.Outlined.Search, contentDescription = "搜索听书", tint = TextDark)
+                }
+                else -> Unit
+            }
+        },
+    )
+}
+
 internal fun drawerTarget(offset: Float, width: Float, velocity: Float): Float = when {
     velocity > 500f -> width
     velocity < -500f -> 0f
@@ -228,14 +316,11 @@ fun MeloraApp(initialTab: Int = 5) {
     var settingsNavTarget by remember { mutableStateOf<SettingsSubPage?>(null) }
     var settingsNavSeq by remember { mutableIntStateOf(0) }
     var searchReturnTab by remember { mutableStateOf<Int?>(null) }
-    // 排行榜/歌单顶栏的平台选择态；切 Tab 时自动复位
-    var platformPickerOpen by remember { mutableStateOf(false) }
     var primaryScrollToTopRequest by remember { mutableIntStateOf(0) }
     fun navigateToTab(target: Int) {
         val next = target.coerceIn(0, tabs.lastIndex)
         currentTab = next
     }
-    androidx.compose.runtime.LaunchedEffect(currentTab) { platformPickerOpen = false }
 
     val density = LocalDensity.current
     // 侧栏宽度调至紧凑精致的 208dp
@@ -473,98 +558,21 @@ fun MeloraApp(initialTab: Int = 5) {
                             if (pendingDrawerTab == visibleTab && currentTab == visibleTab) closeDrawer()
                         }) {
                         val primaryHeader: @Composable () -> Unit = {
-                            // 顶栏：普通态（侧栏 + 标题 + 平台）⇄ 平台选择态（取消 + 五个平台下划线）
-                            // 平台选择在栏内切换；整条主栏随所属页面一起参与导航过渡。
-                            val isPlatformTab = visibleTab == 1 || visibleTab == 3
-                            val picking = platformPickerOpen && isPlatformTab
-                            PageBackHandler(enabled = picking) { platformPickerOpen = false }
-                            TopAppBar(
-                                windowInsets = WindowInsets(0.dp, 0.dp, 0.dp, 0.dp),
-                                // 栏内材质由共享框架统一处理，文字和按钮始终保持清晰。
-                                colors = TopAppBarDefaults.topAppBarColors(containerColor = chromeHeaderColor()),
-                                title = {
-                                    if (picking) {
-                                        val selectedId by (if (visibleTab == 1) MeloraSettings.leaderboardPlatform else MeloraSettings.playlistPlatform).collectAsStateWithLifecycle()
-                                        val choices = if (visibleTab == 1) {
-                                            boardPlatforms.map {
-                                                PlatformChoice(it.id, sourceAliasDisplay(it.id, it.name), boardPlatformColors[it.id] ?: MeloraAppearance.brand)
-                                            }
-                                        } else {
-                                            playlistPlatforms.map {
-                                                PlatformChoice(it.id, sourceAliasDisplay(it.id, it.label), it.color)
-                                            }
-                                        }
-                                        PlatformUnderlineRow(
-                                            choices = choices,
-                                            selectedId = selectedId,
-                                            onSelect = { choice ->
-                                                if (choice.id == selectedId) {
-                                                    platformPickerOpen = false
-                                                } else if (visibleTab == 1) {
-                                                    MeloraSettings.updateLeaderboardPlatform(choice.id)
-                                                    platformPickerOpen = false
-                                                } else {
-                                                    MeloraSettings.updatePlaylistPlatform(choice.id)
-                                                    MeloraSettings.updatePlaylistTag("", "全部歌单")
-                                                    platformPickerOpen = false
-                                                }
-                                            },
-                                        )
-                                    } else {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .height(PrimaryTopBarHeight)
-                                                .titleScrollToTop { primaryScrollToTopRequest++ },
-                                            contentAlignment = Alignment.CenterStart,
-                                        ) {
-                                            Text(
-                                                tabs[visibleTab].label,
-                                                fontWeight = FontWeight.Medium,
-                                                fontSize = 19.sp,
-                                                color = TextDark,
-                                            )
-                                        }
-                                    }
+                            MainPageHeader(
+                                tab = visibleTab,
+                                onTitleClick = { primaryScrollToTopRequest++ },
+                                onSearch = {
+                                    searchCategory = SearchCategory.Audiobook
+                                    searchReturnTab = 4
+                                    navigateToTab(0)
                                 },
                                 navigationIcon = {
-                                    if (!picking) {
-                                        IconButton(onClick = {
-                                            scope.launch {
-                                                if (drawerOffset.value > 10f) {
-                                                    drawerOffset.animateTo(0f, drawerSpring)
-                                                } else {
-                                                    drawerOffset.animateTo(drawerWidthPx, drawerSpring)
-                                                }
-                                            }
-                                        }) {
-                                            Icon(Icons.Rounded.Menu, contentDescription = "打开侧栏", tint = TextDark)
+                                    IconButton(onClick = {
+                                        scope.launch {
+                                            drawerOffset.animateTo(if (drawerOffset.value > 10f) 0f else drawerWidthPx, drawerSpring)
                                         }
-                                    }
-                                },
-                                actions = {
-                                    if (!picking) when (visibleTab) {
-                                        1 -> LeaderboardPlatformFilter(onOpenPlatformPicker = { platformPickerOpen = true })
-                                        // 发现页顶栏不放搜索入口，保持版面清爽
-                                        2 -> Unit
-                                        // 歌单页顶栏：最热/最新（酷我）+ 分类筛选 + 平台入口
-                                        3 -> PlaylistTopBarFilter(onOpenPlatformPicker = { platformPickerOpen = true })
-                                        // 听书页搜索直达搜索页的“听书”分类，并保留返回来源。
-                                        4 -> IconButton(onClick = {
-                                            searchCategory = SearchCategory.Audiobook
-                                            searchReturnTab = 4
-                                            navigateToTab(0)
-                                        }) {
-                                            Icon(Icons.Outlined.Search, contentDescription = "搜索听书", tint = TextDark)
-                                        }
-                                        // 我的列表页顶栏不放搜索入口
-                                        6 -> Unit
-                                        else -> IconButton(onClick = {
-                                            searchReturnTab = null
-                                            navigateToTab(0)
-                                        }) {
-                                            Icon(Icons.Outlined.Search, contentDescription = "搜索", tint = TextDark)
-                                        }
+                                    }) {
+                                        Icon(Icons.Rounded.Menu, contentDescription = "打开侧栏", tint = TextDark)
                                     }
                                 },
                             )
@@ -578,7 +586,41 @@ fun MeloraApp(initialTab: Int = 5) {
                                 },
                             )
                             1 -> LeaderboardScreen(primaryHeader = primaryHeader, scrollToTopRequest = primaryScrollToTopRequest)
-                            2 -> DiscoverScreen(primaryHeader = primaryHeader, onNavigateToTab = ::navigateToTab, scrollToTopRequest = primaryScrollToTopRequest)
+                            2 -> {
+                                var catalog by remember { mutableStateOf<DiscoverCatalog?>(null) }
+                                DetailPageHost(
+                                    target = catalog,
+                                    detail = { destination ->
+                                        // 先登记目录层返回，内部歌单详情和平台选择仍优先消费Back。
+                                        PageBackHandler { catalog = null }
+                                        var scrollRequest by remember { mutableIntStateOf(0) }
+                                        val header: @Composable () -> Unit = {
+                                            MainPageHeader(
+                                                tab = destination.tab,
+                                                onTitleClick = { scrollRequest++ },
+                                                navigationIcon = {
+                                                    IconButton(onClick = { catalog = null }) {
+                                                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回发现", tint = TextDark)
+                                                    }
+                                                },
+                                            )
+                                        }
+                                        when (destination) {
+                                            DiscoverCatalog.Playlists -> PlaylistsScreen(primaryHeader = header, scrollToTopRequest = scrollRequest)
+                                            DiscoverCatalog.Leaderboards -> LeaderboardScreen(primaryHeader = header, scrollToTopRequest = scrollRequest)
+                                        }
+                                    },
+                                ) {
+                                    DiscoverScreen(
+                                        primaryHeader = primaryHeader,
+                                        onNavigateToTab = { target ->
+                                            val destination = DiscoverCatalog.fromTab(target)
+                                            if (destination != null) catalog = destination else navigateToTab(target)
+                                        },
+                                        scrollToTopRequest = primaryScrollToTopRequest,
+                                    )
+                                }
+                            }
                             3 -> PlaylistsScreen(primaryHeader = primaryHeader, scrollToTopRequest = primaryScrollToTopRequest)
                             4 -> AudiobooksScreen(primaryHeader = primaryHeader, scrollToTopRequest = primaryScrollToTopRequest)
                             5 -> LocalSongsPage(
