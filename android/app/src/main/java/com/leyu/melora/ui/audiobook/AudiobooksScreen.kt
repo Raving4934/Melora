@@ -49,6 +49,8 @@ import com.leyu.melora.ui.search.SearchCategory
 import com.leyu.melora.ui.search.SearchScreen
 import com.leyu.melora.ui.theme.MeloraAppearance
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import android.os.SystemClock
 import org.json.JSONObject
 
 private const val RANK_TTL = 24 * 60 * 60 * 1000L
@@ -138,9 +140,9 @@ fun AudiobooksScreen(
         ) {
             // 首页始终展示热播榜；打开其他榜单不能换掉仍参与过渡的首页数据。
             val homeTab = ranks.firstOrNull { it.id == "13" } ?: DefaultRanks.first()
-            BookRankContent(
-                tabId = homeTab.id,
-                tagId = homeTab.tags.first().id,
+            BookCatalogContent(
+                cacheKey = "book.rank.${homeTab.id}.${homeTab.tags.first().id}",
+                loadPage = { KwBookApi.rank(homeTab.id, homeTab.tags.first().id, it) },
                 scrollToTopRequest = scrollToTopRequest,
                 pullEnabled = pullEnabled,
                 primaryHeader = { primaryHeader { detail = BookDetail.Search() } },
@@ -166,46 +168,49 @@ fun AudiobooksScreen(
 }
 
 /** 缓存数据与分页游标一起恢复，不能把已翻页的列表当成第一页。 */
-internal data class BookRankSnapshot(
+internal data class BookCatalogSnapshot(
     val items: List<OnlinePlaylist> = emptyList(),
     val page: Int = 0,
     val hasMore: Boolean = false,
 ) {
-    fun withPage(result: KwBookApi.BookPage, number: Int) = BookRankSnapshot(
+    fun withPage(result: KwBookApi.BookPage, number: Int) = BookCatalogSnapshot(
         items = (if (number == 1) result.items else items + result.items).distinctBy(OnlinePlaylist::id),
         page = number,
         hasMore = result.hasMore,
     )
 }
 
-/** 首页和各榜单各自持有状态，共用唯一的加载/分页/渲染链路。 */
+/** 首页、榜单与创作者作品各自持有状态，共用加载/分页/卡片渲染链路。 */
 @Composable
-private fun BookRankContent(
-    tabId: String,
-    tagId: String,
+private fun BookCatalogContent(
+    cacheKey: String,
+    loadPage: suspend (Int) -> KwBookApi.BookPage,
     onOpen: (OnlinePlaylist) -> Unit,
     primaryHeader: @Composable (LazyListState) -> Unit,
     scrollToTopRequest: Int = 0,
     pullEnabled: Boolean = false,
+    emptyMessage: String = "暂无相关内容",
     padding: PaddingValues = PaddingValues(16.dp, 0.dp, 16.dp, 24.dp),
     before: LazyListScope.(Int) -> Unit = {},
-) = key(tabId, tagId) {
+) = key(cacheKey) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
-    val cacheKey = "book.rank.$tabId.$tagId"
-    var snapshot by remember { mutableStateOf(OnlineCache.peek<BookRankSnapshot>(cacheKey) ?: BookRankSnapshot()) }
-    var loading by remember { mutableStateOf(snapshot.items.isEmpty()) }
+    var snapshot by remember { mutableStateOf(OnlineCache.peek<BookCatalogSnapshot>(cacheKey) ?: BookCatalogSnapshot()) }
+    var loading by remember { mutableStateOf(snapshot.page == 0) }
     var refreshing by remember { mutableStateOf(false) }
     var loadingMore by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     FastScrollToTopEffect(scrollToTopRequest, listState)
 
     suspend fun load(number: Int) {
-        error = null
+        val skeletonSince = if (loading && snapshot.items.isEmpty() && error == null) SystemClock.uptimeMillis() else null
         try {
-            runCatchingCancellable { KwBookApi.rank(tabId, tagId, number) }
-                .onSuccess {
+            val result = runCatchingCancellable { loadPage(number) }
+            // 首次空白页骨架至少完整显示300ms；缓存刷新不延迟、不清空已有卡片。
+            skeletonSince?.let { delay((300L - (SystemClock.uptimeMillis() - it)).coerceAtLeast(0L)) }
+            result.onSuccess {
+                    error = null
                     snapshot = snapshot.withPage(it, number)
                     OnlineCache.put(cacheKey, snapshot)
                 }
@@ -231,7 +236,7 @@ private fun BookRankContent(
         scope.launch { load(snapshot.page + 1) }
     }
     LaunchedEffect(Unit) {
-        val cached = OnlineCache.get<BookRankSnapshot>(cacheKey, LIST_TTL)
+        val cached = OnlineCache.get<BookCatalogSnapshot>(cacheKey, LIST_TTL)
         if (cached != null) { snapshot = cached; loading = false } else {
             loading = true
             load(1)
@@ -244,8 +249,49 @@ private fun BookRankContent(
     ) {
         PullRefreshContainer(enabled = pullEnabled, refreshing = refreshing, onRefresh = ::refresh, modifier = Modifier.fillMaxSize()) {
             BookGrid(listState, snapshot.items, loading, error, snapshot.hasMore, loadingMore,
-                ::refresh, ::loadMore, onOpen, padding = padding) { before(snapshot.items.size) }
+                ::refresh, ::loadMore, onOpen, padding = padding, emptyMessage = emptyMessage) { before(snapshot.items.size) }
         }
+    }
+}
+
+/** 创作者先展示整部作品；选书后复用统一章节详情，返回保留原作品列表位置。 */
+@Composable
+internal fun BookAuthorPage(author: String, onBack: () -> Unit) = key(author) {
+    var openedAlbum by remember { mutableStateOf<OnlinePlaylist?>(null) }
+    val pullEnabled by MeloraSettings.pullToRefresh.collectAsStateWithLifecycle()
+    BackHandler(onBack = onBack)
+    DetailPageHost(
+        target = openedAlbum,
+        contentKey = { "${it.source}:${it.id}" },
+        modifier = Modifier.fillMaxSize(),
+        detail = { PlaylistDetailContent(it, onBack = { openedAlbum = null }, emptyHint = "暂无可播放章节") },
+    ) {
+        BookCatalogContent(
+            cacheKey = "book.author.${author.trim()}",
+            loadPage = { KwBookApi.authorAlbums(author, it) },
+            onOpen = { openedAlbum = it },
+            pullEnabled = pullEnabled,
+            emptyMessage = "暂未找到该作者／主播的听书作品",
+            padding = PaddingValues(16.dp, 8.dp, 16.dp, 24.dp),
+            primaryHeader = { listState ->
+                val scrollToTop = rememberFastScrollToTop(listState)
+                Row(
+                    Modifier.fillMaxWidth().background(chromeHeaderColor()).height(64.dp)
+                        .padding(start = 4.dp, end = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回", tint = TextMain) }
+                    Column(
+                        Modifier.weight(1f).fillMaxHeight().titleScrollToTop(scrollToTop),
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Text(author, fontSize = 18.sp, fontWeight = FontWeight.Medium, color = TextMain,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("听书作品", fontSize = 12.sp, color = TextSub)
+                    }
+                }
+            },
+        )
     }
 }
 
@@ -264,9 +310,9 @@ private fun RankPage(tab: KwBookApi.BookRankTab, onBack: () -> Unit, onOpen: (On
     val tag = tab.tags.getOrElse(selectedTag) { tab.tags.first() }
     var showCategories by remember { mutableStateOf(false) }
     val hasCategories = tab.tags.size > 1
-    BookRankContent(
-        tabId = tab.id,
-        tagId = tag.id,
+    BookCatalogContent(
+        cacheKey = "book.rank.${tab.id}.${tag.id}",
+        loadPage = { KwBookApi.rank(tab.id, tag.id, it) },
         onOpen = onOpen,
         padding = PaddingValues(16.dp, 8.dp, 16.dp, 24.dp),
         primaryHeader = { listState ->
@@ -385,16 +431,17 @@ private fun RecentCard(
 private fun BookGrid(
     state: LazyListState, playlists: List<OnlinePlaylist>, loading: Boolean, error: String?, hasMore: Boolean, loadingMore: Boolean,
     onRetry: () -> Unit, onLoadMore: () -> Unit, onOpen: (OnlinePlaylist) -> Unit, modifier: Modifier = Modifier,
-    padding: PaddingValues = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp), before: LazyListScope.() -> Unit = {},
+    padding: PaddingValues = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
+    emptyMessage: String = "暂无相关内容", before: LazyListScope.() -> Unit = {},
 ) {
     val columns = responsiveGridColumns()
     if (playlists.isNotEmpty()) LoadMoreOnScroll(state, hasMore, loadingMore, onLoadMore = onLoadMore)
     LazyColumn(state = state, modifier = modifier.fillMaxSize(), contentPadding = chromeContentPadding(padding), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         before()
         when {
+            error != null && playlists.isEmpty() -> item("error") { Box(Modifier.fillMaxWidth().height(360.dp)) { ErrorState(error, modifier = Modifier.fillMaxSize(), onRetry = onRetry, retrying = loading) } }
             loading && playlists.isEmpty() -> item("loading") { SkeletonGrid(columns = columns, cards = columns * 2, spacing = 10.dp) }
-            error != null && playlists.isEmpty() -> item("error") { Box(Modifier.fillMaxWidth().height(360.dp)) { ErrorState(error, modifier = Modifier.fillMaxSize(), onRetry = onRetry) } }
-            playlists.isEmpty() -> item("empty") { Box(Modifier.fillMaxWidth().height(360.dp)) { EmptyState("暂无相关内容", Modifier.fillMaxSize()) } }
+            playlists.isEmpty() -> item("empty") { Box(Modifier.fillMaxWidth().height(360.dp)) { EmptyState(if (hasMore) "当前页暂无匹配作品，点击下方继续加载" else emptyMessage, Modifier.fillMaxSize()) } }
             else -> itemsIndexed(playlists.chunked(columns), key = { _, row -> row.joinToString(":") { it.id } }) { _, row ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     row.forEach { book -> OnlineAudiobookCard(book, { onOpen(book) }, Modifier.weight(1f)) }
@@ -405,7 +452,7 @@ private fun BookGrid(
         if (hasMore) item("more") {
             Box(Modifier.fillMaxWidth().padding(vertical = 16.dp), contentAlignment = Alignment.Center) {
                 if (loadingMore) CircularProgressIndicator(Modifier.size(18.dp), color = BrandBlue, strokeWidth = 1.7.dp)
-                else Text("上滑加载更多", fontSize = 13.sp, color = BrandBlue, modifier = Modifier.clickable(onClick = onLoadMore).padding(8.dp))
+                else Text("点击加载更多", fontSize = 13.sp, color = BrandBlue, modifier = Modifier.clickable(onClick = onLoadMore).padding(8.dp))
             }
         }
     }

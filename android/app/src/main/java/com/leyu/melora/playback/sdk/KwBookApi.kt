@@ -6,6 +6,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 /**
@@ -328,8 +329,13 @@ object KwBookApi {
         val url = "https://search.kuwo.cn/r.s?all=${urlencode(keyword)}&ft=album" +
             "&pn=${page - 1}&rn=$PAGE_SIZE_SEARCH&rformat=json&encoding=utf8&client=kt&mobi=1&newver=1" +
             "&show_series_listen=1"
-        val response = getObject(url) ?: return BookPage(emptyList(), false)
-        val rows = response.optJSONArray("albumlist") ?: return BookPage(emptyList(), false)
+        return searchPageFromResponse(checkNotNull(getObject(url)) { "听书作品加载失败，请检查网络后重试" })
+    }
+
+    /** 解析公开专辑搜索响应；空 albumlist 是合法零结果，缺失/错误结构则显式失败。 */
+    internal fun searchPageFromResponse(response: JSONObject): BookPage {
+        val rows = response.optJSONArray("albumlist")
+            ?: throw IllegalStateException("酷我听书搜索响应缺少 albumlist 数组")
         val items = mutableListOf<OnlinePlaylist>()
         val seen = mutableSetOf<String>()
         for (i in 0 until rows.length()) {
@@ -355,6 +361,41 @@ object KwBookApi {
         }
         return BookPage(items, rows.length() >= PAGE_SIZE_SEARCH)
     }
+
+    /**
+     * 按作者/主播入口查听书专辑：只复用专辑搜索，不把单曲或章节搜索结果混入专辑卡片。
+     * 搜索页是本方法的游标；过滤后即使当前页为空，也必须保留原搜索页的 hasMore。
+     */
+    suspend fun authorAlbums(author: String, page: Int): BookPage {
+        val requestedAuthor = author.trim()
+        if (requestedAuthor.isBlank() || page < 1) return BookPage(emptyList(), false)
+        return filterAuthorAlbums(requestedAuthor, search(requestedAuthor, page))
+    }
+
+    /** 仅过滤当前搜索页，不为凑满一页继续扫描，保持 search 的分页游标语义。 */
+    internal fun filterAuthorAlbums(author: String, page: BookPage): BookPage {
+        if (author.isBlank()) return BookPage(emptyList(), false)
+        return page.copy(items = page.items.filter { authorMatches(author, it.author) })
+    }
+
+    /**
+     * 作者字段是多人列表时按完整姓名段匹配，避免 contains 把“张三”误匹配到“张三丰”。
+     * 分隔规则与公开目录元数据链路保持一致。
+     */
+    internal fun authorMatches(requested: String, listed: String): Boolean {
+        val requestedNames = splitAuthorNames(requested)
+            .map(::authorNameKey)
+            .filter(String::isNotBlank)
+        if (requestedNames.isEmpty()) return false
+        return splitAuthorNames(listed)
+            .map(::authorNameKey)
+            .any { it in requestedNames }
+    }
+
+    private fun splitAuthorNames(value: String): List<String> =
+        value.split('、', '/', ',', '，', '&').map(String::trim)
+
+    private fun authorNameKey(value: String): String = value.trim().lowercase(Locale.ROOT)
 
     // ---------- 有声专辑章节 ----------
 

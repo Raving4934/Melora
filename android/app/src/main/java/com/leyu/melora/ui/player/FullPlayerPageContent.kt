@@ -24,6 +24,7 @@ import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 
+import com.leyu.melora.ui.audiobook.BookAuthorPage
 import com.leyu.melora.ui.common.PageBackHandler as BackHandler
 import com.leyu.melora.ui.common.DetailPageHost
 import com.leyu.melora.ui.common.MeloraBottomSheet
@@ -435,15 +436,7 @@ internal fun FullPlayerPageContent(
                             },
                             onOpenArtist = { artist ->
                                 onImmersiveChange(false)
-                                val onlineSource = track?.source
-                                    ?.takeIf { it.isNotBlank() && it != "local" } ?: "kw"
-                                openedCollection = SongsCollection(
-                                    title = artist,
-                                    subtitle = "歌手 · 全部歌曲",
-                                    keyword = artist,
-                                    source = onlineSource,
-                                    artistName = artist,
-                                )
+                                openedCollection = artistCollection(track, artist)
                             },
                         )
                         1 -> VinylCoverPage(
@@ -788,12 +781,26 @@ data class SongsCollection(
     val artistName: String? = null,
     // 有声专辑：走 KwBookApi 章节接口，顺序与听书页一致
     val bookAlbumId: String? = null,
-    // 旧队列/旧记录缺少 albumId 时，仍按有声专辑处理（先按专辑名反查 id）
+    // 听书专辑进入章节；听书创作者进入作品目录，不走音乐单曲搜索。
     val preferBook: Boolean = false,
     val artwork: String? = null,
     val description: String = "",
     val playCountLabel: String = "",
-)
+) {
+    val isBookAuthor: Boolean get() = preferBook && albumName == null && bookAlbumId == null
+}
+
+internal fun artistCollection(track: UiTrack?, artist: String): SongsCollection {
+    val book = track?.raw?.optBoolean("isBookChapter") == true
+    return SongsCollection(
+        title = artist,
+        subtitle = if (book) "作者 / 主播 · 听书作品" else "歌手 · 全部歌曲",
+        keyword = artist,
+        source = track?.source?.takeIf { it.isNotBlank() && it != "local" } ?: "kw",
+        artistName = artist,
+        preferBook = book,
+    )
+}
 
 /**
  * 专辑/歌手全部歌曲页：单平台搜索 + 过滤，按页懒加载。
@@ -805,6 +812,10 @@ internal fun SongsCollectionPage(
     collection: SongsCollection,
     onBack: () -> Unit,
 ) {
+    if (collection.isBookAuthor) {
+        BookAuthorPage(collection.artistName ?: collection.title, onBack)
+        return
+    }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val listState = key(
