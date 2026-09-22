@@ -381,7 +381,13 @@ object KwBookApi {
             if (!seen.add(song.uid)) continue
             items += song
         }
-        return BookChapters(items, bookPageHasMore(page, metadata.total, rows.length()), metadata, page)
+        val hasMore = bookPageHasMore(page, metadata.total, rows.length())
+        items.forEachIndexed { index, song ->
+            song.raw.put("bookPage", page)
+                .put("bookPageEnd", index == items.lastIndex)
+                .put("bookHasMore", hasMore)
+        }
+        return BookChapters(items, hasMore, metadata, page)
     }
 
     internal fun bookMetadataFromDetail(data: JSONObject): BookMetadata = BookMetadata(

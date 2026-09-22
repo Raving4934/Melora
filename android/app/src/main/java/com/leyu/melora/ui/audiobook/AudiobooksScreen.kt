@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.leyu.melora.playback.MeloraSettings
+import com.leyu.melora.playback.UiTrack
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.UserLibrary
 import com.leyu.melora.playback.sdk.KwBookApi
@@ -154,7 +155,7 @@ fun AudiobooksScreen(
                             if (recentPlaylist == null) PlaybackController.postMessage(context, "暂无最近收听记录")
                             else detail = BookDetail.Album(recentPlaylist)
                         },
-                        onRecentPlay = { recentPlaylist?.let { playOnlinePlaylist(context, it) } },
+                        onRecentPlay = { recentChapter?.let { PlaybackController.playTrack(context, UiTrack.fromOnline(it)) } },
                         onRank = { id -> rankPage = ranks.firstOrNull { it.id == id } ?: DefaultRanks.first { it.id == id } },
                     )
                 }

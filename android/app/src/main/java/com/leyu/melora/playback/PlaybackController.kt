@@ -19,6 +19,8 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import com.leyu.melora.playback.sdk.CoverLoader
 import com.leyu.melora.playback.sdk.OnlineCache
+import com.leyu.melora.playback.sdk.KwBookApi
+import com.leyu.melora.playback.sdk.OnlinePlaylist
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.local.LocalMediaStore
 import com.leyu.melora.playback.local.LocalTagFiller
@@ -63,6 +65,7 @@ object PlaybackController {
     private var recoveryJob: Job? = null
     private var recoveryGeneration = 0L
     private var queueLoadJob: Job? = null
+    private var bookQueue: BookPlaybackQueue? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val _state = MutableStateFlow(PlayerUiState())
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
@@ -168,6 +171,11 @@ object PlaybackController {
     }
 
     private fun attach(player: MediaController) {
+        bookQueue = BookPlaybackQueue(
+            player, scope, TrackRegistry::get, ::buildItem, KwBookApi::album,
+            changed = { saveQueue(force = true); publish() },
+            reportError = { _state.value = _state.value.copy(message = it) },
+        )
         player.addListener(
             object : Player.Listener {
                 override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -197,6 +205,7 @@ object PlaybackController {
                 }
 
                 override fun onEvents(player: Player, events: Player.Events) {
+                    bookQueue?.check()
                     if (recoveryJob != null && (!player.playWhenReady || player.playbackState != Player.STATE_BUFFERING)) {
                         interruptRecovery()
                     }
@@ -548,6 +557,7 @@ object PlaybackController {
             _state.value = _state.value.copy(pendingQueueId = queueId)
             return
         }
+        bookQueue?.stop()
         currentQueueId = queueId
         _state.value = _state.value.copy(pendingQueueId = null, message = null)
         TrackRegistry.registerAll(tracks)
@@ -555,7 +565,12 @@ object PlaybackController {
         val index = startIndex.coerceIn(0, items.lastIndex)
         prefetchTrack(tracks[index])
         player.setMediaItems(items, index, C.TIME_UNSET)
+        val bookId = OnlineSong.from(tracks[index].raw)?.bookId()
+        if (bookId != null && queueId == bookQueueId(bookId) &&
+            tracks.all { OnlineSong.from(it.raw)?.bookId() == bookId }
+        ) bookQueue?.start(bookId)
         player.prepareAndPlay()
+        saveQueue(force = true)
         publish()
     }
 
@@ -623,6 +638,40 @@ object PlaybackController {
         queueLoadJob?.start()
     }
 
+    /** 听书卡片“播放全部”：保留完整目录快照的分页信息，后续章节由播放层续页。 */
+    fun playBook(context: Context, playlist: OnlinePlaylist) {
+        val id = playlist.id.removePrefix("kw:").removePrefix("book_album_")
+        if (id.isBlank()) return
+        UserLibrary.markContainerPlayed(
+            UserLibrary.PlayContainer("book", playlist.id, playlist.name, playlist.img, playlist.source, bookQueueId(id)),
+        )
+        requestQueue<KwBookApi.BookChapters>(
+            context, bookQueueId(id), "playlistDetail.book.book_album_$id", { it.items },
+        ) { KwBookApi.album(id, 1) }
+    }
+
+    /** 任意单章入口都在这里接入同书目录；不会把听书语义散落到各个页面。 */
+    private fun playBookChapterNow(track: UiTrack, id: String) {
+        val player = controller
+        if (player != null && bookQueue?.albumId == id) {
+            val index = (0 until player.mediaItemCount).firstOrNull { player.getMediaItemAt(it).mediaId == track.uid }
+            if (index != null) {
+                if (player.currentMediaItemIndex != index || player.playbackState == Player.STATE_ENDED) {
+                    player.seekToDefaultPosition(index)
+                }
+                bookQueue?.retry()
+                player.prepareAndPlay()
+                saveQueue(force = true)
+                publish()
+                return
+            }
+        }
+        val cached = OnlineCache.peek<KwBookApi.BookChapters>("playlistDetail.book.book_album_$id")?.items.orEmpty()
+        val index = cached.indexOfFirst { it.uid == track.uid }
+        val tracks = if (index >= 0) cached.map(UiTrack::fromOnline) else listOf(track)
+        playQueueNow(tracks, index.coerceAtLeast(0), bookQueueId(id))
+    }
+
     /** 仅用于明确的播放全部、随机播放或批量播放操作；单曲入口使用 playTrack。 */
     fun playQueue(
         context: Context,
@@ -633,7 +682,7 @@ object PlaybackController {
     ) {
         if (tracks.isEmpty()) return
         requestPlayback(context, tracks[startIndex.coerceIn(tracks.indices)], container) {
-            playQueueNow(tracks, startIndex, queueId)
+            playQueueNow(tracks, startIndex, queueId ?: container?.queueId)
         }
     }
 
@@ -685,7 +734,13 @@ object PlaybackController {
 
     /** 保留现有队列；已有曲目直接跳转，否则仅在当前曲目后插入这一首。 */
     fun playTrack(context: Context, track: UiTrack, container: UserLibrary.PlayContainer? = null) {
-        requestPlayback(context, track, container) { playTrackNow(track) }
+        val bookId = OnlineSong.from(track.raw)?.bookId()
+        val origin = container ?: bookId?.let {
+            UserLibrary.PlayContainer("book", "book_album_$it", track.album.ifBlank { track.title }, track.artwork, track.source, bookQueueId(it))
+        }
+        requestPlayback(context, track, origin) {
+            if (bookId != null) playBookChapterNow(track, bookId) else playTrackNow(track)
+        }
     }
 
     private fun playTrackNow(track: UiTrack) {
@@ -697,6 +752,7 @@ object PlaybackController {
         }
         // 冷启动直接点歌曲也保留上次队列，但不能先触发旧歌自动播放/解析。
         restoreQueue(player, autoPlay = false)
+        bookQueue?.stop()
         val target = singleTrackQueueTarget(
             (0 until player.mediaItemCount).map { player.getMediaItemAt(it).mediaId },
             player.currentMediaItemIndex,
@@ -720,11 +776,12 @@ object PlaybackController {
     fun addToQueue(context: Context, track: UiTrack) {
         appContext = context.applicationContext
         val player = controller ?: return
+        bookQueue?.stop()
         TrackRegistry.register(track)
         if ((0 until player.mediaItemCount).none { player.getMediaItemAt(it).mediaId == track.uid }) {
             player.addMediaItem(buildItem(track))
-            saveQueue(force = true)
         }
+        saveQueue(force = true)
         _state.value = _state.value.copy(message = "已加入播放队列")
         publish()
     }
@@ -732,6 +789,7 @@ object PlaybackController {
     fun addToQueueNext(context: Context, track: UiTrack) {
         appContext = context.applicationContext
         val player = controller ?: return
+        bookQueue?.stop()
         TrackRegistry.register(track)
         val at = (player.currentMediaItemIndex + 1).coerceIn(0, player.mediaItemCount)
         player.addMediaItem(at, buildItem(track))
@@ -763,6 +821,7 @@ object PlaybackController {
         if (player.playWhenReady) {
             player.pause()
         } else {
+            bookQueue?.retry()
             player.prepareAndPlay()
         }
     }
@@ -771,6 +830,11 @@ object PlaybackController {
         interruptRecovery()
         val player = controller ?: return
         if (player.mediaItemCount == 0) return
+        if (bookQueue?.next() == true) {
+            // 若已自然播完，play保留续播意图，不prepare重放当前章节。
+            player.play()
+            return
+        }
         player.seekToNextMediaItem()
         player.prepareAndPlay()
     }
@@ -814,6 +878,10 @@ object PlaybackController {
 
     fun cycleMode() {
         val player = controller ?: return
+        if (bookQueue?.albumId != null) {
+            _state.value = _state.value.copy(message = "听书按章节顺序播放")
+            return
+        }
         when (player.playMode()) {
             PlayMode.List -> {
                 player.repeatMode = Player.REPEAT_MODE_ONE
@@ -849,6 +917,7 @@ object PlaybackController {
         interruptRecovery()
         cancelPendingPlayback()
         AudioCacheStore.cancelPrefetch()
+        bookQueue?.stop()
         clearSavedQueue()
         controller?.let { player ->
             if (stopEngine) player.stop() else player.pause()
@@ -948,7 +1017,7 @@ object PlaybackController {
         val index = player.currentMediaItemIndex.coerceAtLeast(0)
         val all = (0 until count).mapNotNull { i -> TrackRegistry.get(player.getMediaItemAt(i).mediaId) }
         if (all.size != count) return
-        val fingerprint = playbackQueueFingerprint(all, index)
+        val fingerprint = "${bookQueue?.albumId}:${currentQueueId}:" + playbackQueueFingerprint(all, index)
         if (!force && fingerprint == lastQueueFingerprint) return
         val window = if (count <= MAX_SAVED_QUEUE) {
             0 to count
@@ -961,6 +1030,8 @@ object PlaybackController {
         prefs.edit {
             putString(KEY_QUEUE, array.toString())
             putInt(KEY_QUEUE_INDEX, (index - window.first).coerceAtLeast(0))
+            putString("bookId", bookQueue?.albumId)
+            putString("queueId", currentQueueId)
         }
         lastQueueFingerprint = fingerprint
     }
@@ -981,11 +1052,16 @@ object PlaybackController {
         TrackRegistry.registerAll(tracks)
         val items = tracks.map(::buildItem)
         val index = prefs.getInt(KEY_QUEUE_INDEX, 0).coerceIn(0, items.lastIndex)
+        currentQueueId = prefs.getString("queueId", null)
+        val bookId = prefs.getString("bookId", null)?.takeIf { id ->
+            tracks.all { OnlineSong.from(it.raw)?.bookId() == id }
+        }
         player.setMediaItems(items, index, C.TIME_UNSET)
+        if (bookId != null) bookQueue?.start(bookId)
         if (autoPlay) {
             player.prepareAndPlay()
         }
-        lastQueueFingerprint = playbackQueueFingerprint(tracks, index)
+        lastQueueFingerprint = "${bookQueue?.albumId}:${currentQueueId}:" + playbackQueueFingerprint(tracks, index)
         Log.d(TAG, "已恢复上次播放队列：${tracks.size} 首，当前第 ${index + 1} 首")
     }
 

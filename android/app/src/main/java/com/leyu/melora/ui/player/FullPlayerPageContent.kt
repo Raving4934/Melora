@@ -185,6 +185,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.leyu.melora.playback.LyricLine
 import com.leyu.melora.playback.PlayerCoverStyle
 import com.leyu.melora.playback.AudioEffects
+import com.leyu.melora.playback.bookId
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlayerUiState
@@ -888,7 +889,7 @@ internal fun SongsCollectionPage(
     fun playContainer(): UserLibrary.PlayContainer? {
         val album = collection.albumName?.trim().orEmpty()
         val img = artwork ?: if (isArtist) null else songs.firstOrNull()?.let { CoverLoader.cachedUrl(it) }
-        val bookId = resolvedBookId
+        val bookId = resolvedBookId ?: songs.firstOrNull()?.takeIf { collection.preferBook }?.bookId()
         return when {
             collection.preferBook || bookId != null -> bookId?.let {
                 UserLibrary.PlayContainer(

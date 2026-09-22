@@ -36,18 +36,21 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.UserLibrary
-import com.leyu.melora.playback.sdk.KwBookApi
 import com.leyu.melora.playback.sdk.OnlinePlaylist
 import com.leyu.melora.playback.sdk.OnlineRepository
 import com.leyu.melora.ui.theme.MeloraAppearance
 
 // 歌单/有声专辑点击播放：优先缓存秒播，未缓存则拉第一页再播（带 queueId 供卡片按钮跟随状态）
 fun playOnlinePlaylist(context: android.content.Context, playlist: OnlinePlaylist) {
+    if (playlist.isBookAlbum) {
+        PlaybackController.playBook(context, playlist)
+        return
+    }
     val queueId = "playlist.${playlist.source}.${playlist.id}"
     val cacheKey = "playlistSongs.${playlist.source}.${playlist.id}"
     UserLibrary.markContainerPlayed(
         UserLibrary.PlayContainer(
-            kind = if (playlist.isBookAlbum) "book" else "playlist",
+            kind = "playlist",
             id = playlist.id,
             name = playlist.name,
             img = playlist.img,
@@ -56,8 +59,7 @@ fun playOnlinePlaylist(context: android.content.Context, playlist: OnlinePlaylis
         ),
     )
     PlaybackController.requestQueue(context, queueId, cacheKey, songs = { it }) {
-        if (playlist.isBookAlbum) KwBookApi.album(playlist.id, 1).items
-        else OnlineRepository.playlistSongs(context, playlist.source, playlist.id, 1).list
+        OnlineRepository.playlistSongs(context, playlist.source, playlist.id, 1).list
     }
 }
 
