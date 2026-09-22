@@ -2,7 +2,6 @@ package com.leyu.melora.playback.sdk
 
 import android.content.Context
 import android.util.Log
-import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.SourceAlias
 import com.leyu.melora.playback.lx.LxScriptEngine
 import kotlinx.coroutines.CancellationException
@@ -91,11 +90,8 @@ object MusicSdkEngine {
         } else {
             ensureStarted(context)
         }
-        val requestParams = JSONObject(params.toString()).apply {
-            if (!has("channel")) put("channel", MeloraSettings.dataChannel.value)
-        }
         val slot = slots[loadBalancer.reserve()]
-        val task = Task(action, source, requestParams, timeoutMs)
+        val task = Task(action, source, JSONObject(params.toString()), timeoutMs)
         try {
             (if (background) slot.low else slot.high).send(task)
         } catch (error: Throwable) {

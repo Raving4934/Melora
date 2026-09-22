@@ -12,7 +12,6 @@ class UnknownBackupSettingsTest {
     @Test
     fun unknownFieldsAreIgnoredWhileKnownSettingsStillRestore() {
         val originalShowExit = MeloraSettings.showExitButton.value
-        val originalDataChannel = MeloraSettings.dataChannel.value
         try {
             val legacy = JSONObject()
                 .put("unknownObjectSetting", JSONObject())
@@ -25,16 +24,15 @@ class UnknownBackupSettingsTest {
             assertFalse(prepared.has("unknownObjectSetting"))
             assertFalse(prepared.has("unknownArraySetting"))
             assertEquals(false, prepared.getBoolean("showExitButton"))
-            assertEquals("app", prepared.getString("dataChannel"))
+            assertFalse(prepared.has("dataChannel"))
 
             BackupSettings.apply(prepared)
             assertFalse(MeloraSettings.showExitButton.value)
-            assertEquals("app", MeloraSettings.dataChannel.value)
+            assertFalse(BackupSettings.collect().has("dataChannel"))
             assertFalse(BackupSettings.collect().has("unknownObjectSetting"))
             assertFalse(BackupSettings.collect().has("unknownArraySetting"))
         } finally {
             MeloraSettings.updateShowExit(originalShowExit)
-            MeloraSettings.updateDataChannel(originalDataChannel)
         }
     }
 }

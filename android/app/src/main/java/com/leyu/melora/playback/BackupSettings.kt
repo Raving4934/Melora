@@ -46,7 +46,6 @@ internal object BackupSettings {
         field("playerCoverStyle", MeloraSettings.KEY_PLAYER_COVER_STYLE, MeloraSettings.playerCoverStyle, { PlayerCoverStyle.restore(it as? String, MeloraSettings.playerCoverStyle.value) }, PlayerCoverStyle::storageValue),
         field("notificationCover", MeloraSettings.KEY_NOTIFICATION_COVER, MeloraSettings.showNotificationCover, ::backupBoolean),
         field("autoSwitchSource", MeloraSettings.KEY_AUTO_SWITCH_SOURCE, MeloraSettings.autoSwitchSource, ::backupBoolean),
-        field("dataChannel", MeloraSettings.KEY_DATA_CHANNEL, MeloraSettings.dataChannel, ::backupString),
         field("playQualityWifi", MeloraSettings.KEY_QUALITY_WIFI, MeloraSettings.playQualityWifi, ::backupString),
         field("playQualityMobile", MeloraSettings.KEY_QUALITY_MOBILE, MeloraSettings.playQualityMobile, ::backupString),
         field("downloadQuality", MeloraSettings.KEY_DOWNLOAD_QUALITY, MeloraSettings.downloadQuality, ::backupString),

@@ -1,7 +1,7 @@
 import { httpFetch } from '../../request'
 import { decodeName, formatPlayTime, sizeFormate } from '../../index'
 import { formatSingerName } from '../utils'
-import { requestByDataChannel } from '../channel'
+import { requestWithFallback } from '../requestWithFallback'
 
 export default {
   limit: 30,
@@ -141,7 +141,7 @@ export default {
   },
   search(str, page = 1, limit) {
     if (limit == null) limit = this.limit
-    return requestByDataChannel(
+    return requestWithFallback(
       () => this.appSearch(str, page, limit),
       () => this.webSearch(str, page, limit),
     ).then(result => {

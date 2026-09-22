@@ -1,7 +1,6 @@
 // 乐屿 musicSdk 运行时入口：把 musicSdk（Apache-2.0）适配进 QuickJS。
 // 统一协议：__meloraInvoke(payloadJson) 发起调用，__meloraTake() 轮询取回 JSON 结果。
 import './bootstrap'
-import { setDataChannel } from './src/musicSdk/channel'
 
 import kwMusicSearch from './src/musicSdk/kw/musicSearch'
 import kwSongList from './src/musicSdk/kw/songList'
@@ -119,8 +118,6 @@ const lyricsOf = (raw) => {
 }
 
 async function dispatch(action, source, params = {}) {
-  // 数据通道：由客户端设置下发（auto/app/web），按首选失败后回退
-  if (params.channel) setDataChannel(params.channel)
   const platform = PLATFORMS[source]
   if (!platform) throw new Error(`不支持的平台: ${source}`)
 

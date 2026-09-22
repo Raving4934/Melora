@@ -1,10 +1,10 @@
 import { httpFetch } from '../../request'
 import { decodeName } from '../../index'
-import { requestByDataChannel } from '../channel'
+import { requestWithFallback } from '../requestWithFallback'
 
 export default {
   getList() {
-    return requestByDataChannel(
+    return requestWithFallback(
       () => this.appHot(),
       () => this.gatewayHot(),
     ).then(list => ({ source: 'kg', list }))

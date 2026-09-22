@@ -115,6 +115,7 @@ class BackupDocumentTest {
         assertFalse(settings.has("unknownObjectSetting"))
         assertFalse(settings.has("unknownArraySetting"))
         assertFalse(settings.has("followSystemTheme"))
+        assertFalse(settings.has("dataChannel"))
     }
 
     @Test
@@ -129,7 +130,7 @@ class BackupDocumentTest {
         assertFalse(prepared.has("unknownObjectSetting"))
         assertFalse(prepared.has("unknownArraySetting"))
         assertEquals(false, prepared.getBoolean("showExitButton"))
-        assertEquals("app", prepared.getString("dataChannel"))
+        assertFalse(prepared.has("dataChannel"))
     }
 
     @Test

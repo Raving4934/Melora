@@ -397,8 +397,6 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
                         }
                     }
                 }
-                HorizontalDivider(color = DividerSoft, thickness = 0.6.dp, modifier = Modifier.padding(horizontal = 14.dp))
-                DataChannelRow()
             }
         }
 
@@ -1337,58 +1335,4 @@ private fun InfoText(text: String) {
         lineHeight = 18.sp,
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
     )
-}
-
-// 数据通道：auto=App 优先自动回退，app=App 优先，web=网页端优先
-@Composable
-private fun DataChannelRow() {
-    val channel by MeloraSettings.dataChannel.collectAsStateWithLifecycle()
-    val options = listOf("auto" to "自动", "app" to "App", "web" to "网页")
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-            Text("数据通道", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = TextMain)
-            Text(
-                text = when (channel) {
-                    "app" -> "优先请求各平台 App 端接口，失败回退网页端"
-                    "web" -> "优先请求网页端接口，失败回退 App 端"
-                    else -> "自动优先 App 轻量接口，失败回退网页端"
-                },
-                fontSize = 12.sp,
-                color = TextSub,
-                modifier = Modifier.padding(top = 2.dp),
-            )
-        }
-        Surface(shape = RoundedCornerShape(16.dp), color = MeloraAppearance.segmentTrack) {
-            Row(modifier = Modifier.padding(2.dp), verticalAlignment = Alignment.CenterVertically) {
-                options.forEach { (value, label) ->
-                    val selected = channel == value
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = if (selected) MeloraAppearance.card else Color.Transparent,
-                        shadowElevation = if (selected) 1.dp else 0.dp,
-                        modifier = Modifier.clickable(
-                            indication = null,
-                            interactionSource = remember { MutableInteractionSource() },
-                        ) {
-                            MeloraSettings.updateDataChannel(value)
-                            SourceResolver.clearCache()
-                        },
-                    ) {
-                        Text(
-                            text = label,
-                            fontSize = 12.sp,
-                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                            color = if (selected) TextMain else TextSub,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                        )
-                    }
-                }
-            }
-        }
-    }
 }

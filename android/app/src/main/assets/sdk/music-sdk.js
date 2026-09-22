@@ -6605,16 +6605,6 @@
     } };
   }
 
-  // src/musicSdk/channel.js
-  var current = "auto";
-  var setDataChannel = (value) => {
-    current = value === "app" || value === "web" ? value : "auto";
-  };
-  var requestByDataChannel = (appRequest, webRequest) => {
-    const [primary, fallback] = current === "web" ? [webRequest, appRequest] : [appRequest, webRequest];
-    return Promise.resolve().then(primary).catch(() => Promise.resolve().then(fallback));
-  };
-
   // src/request.js
   var import_buffer2 = __toESM(require_buffer(), 1);
   var native = globalThis.__lxNative;
@@ -8031,6 +8021,9 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
     }
   };
 
+  // src/musicSdk/requestWithFallback.js
+  var requestWithFallback = (primary, fallback) => Promise.resolve().then(primary).catch(() => Promise.resolve().then(fallback));
+
   // src/musicSdk/kg/musicSearch.js
   var musicSearch_default2 = {
     limit: 30,
@@ -8167,7 +8160,7 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
     },
     search(str, page = 1, limit) {
       if (limit == null) limit = this.limit;
-      return requestByDataChannel(
+      return requestWithFallback(
         () => this.appSearch(str, page, limit),
         () => this.webSearch(str, page, limit)
       ).then((result) => {
@@ -13519,7 +13512,7 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
   // src/musicSdk/kg/hotSearch.js
   var hotSearch_default2 = {
     getList() {
-      return requestByDataChannel(
+      return requestWithFallback(
         () => this.appHot(),
         () => this.gatewayHot()
       ).then((list) => ({ source: "kg", list }));
@@ -17827,7 +17820,6 @@ ${result.lyric}`;
     };
   };
   async function dispatch(action, source, params = {}) {
-    if (params.channel) setDataChannel(params.channel);
     const platform = PLATFORMS[source];
     if (!platform) throw new Error(`不支持的平台: ${source}`);
     switch (action) {

@@ -213,7 +213,7 @@ class BackupRoundTripTest {
         assertEquals(ThemeMode.Light, MeloraSettings.themeMode.value)
         assertEquals("flac", MeloraSettings.playQualityWifi.value)
         assertFalse(MeloraSettings.showExitButton.value)
-        assertEquals("app", MeloraSettings.dataChannel.value)
+        assertFalse(BackupSettings.collect().has("dataChannel"))
         assertTrue(MeloraSettings.localFolders.value.isEmpty())
         assertEquals(MeloraSettings.DEFAULT_DOWNLOAD_PATH, MeloraSettings.downloadPath.value)
         assertTrue(result.contains("授权"))

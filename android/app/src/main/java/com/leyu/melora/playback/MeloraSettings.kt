@@ -59,8 +59,6 @@ object MeloraSettings {
     val downloadEmbedLyric = MutableStateFlow(false)
 
     // --- 音源设置 ---
-    // 数据通道：auto=App 优先自动回退，app=App 优先，web=网页端优先
-    val dataChannel = MutableStateFlow("auto")
     val autoSwitchSource = MutableStateFlow(true)
 
     // --- 页面平台选择（持久化） ---
@@ -133,7 +131,6 @@ object MeloraSettings {
         downloadEmbedCover.value = prefs.getBoolean(KEY_DL_EMBED_COVER, false)
         downloadEmbedLyric.value = prefs.getBoolean(KEY_DL_EMBED_LYRIC, false)
         autoSwitchSource.value = prefs.getBoolean(KEY_AUTO_SWITCH_SOURCE, true)
-        dataChannel.value = prefs.getString(KEY_DATA_CHANNEL, "auto") ?: "auto"
         searchPlatform.value = prefs.getString(KEY_SEARCH_PLATFORM, "all") ?: "all"
         leaderboardPlatform.value = prefs.getString(KEY_LEADERBOARD_PLATFORM, "kw") ?: "kw"
         playlistPlatform.value = prefs.getString(KEY_PLAYLIST_PLATFORM, "kw") ?: "kw"
@@ -212,7 +209,6 @@ object MeloraSettings {
     fun updateDownloadEmbedCover(value: Boolean) = synchronized(BackupStateLock.monitor) { downloadEmbedCover.value = value; persist { putBoolean(KEY_DL_EMBED_COVER, value) } }
     fun updateDownloadEmbedLyric(value: Boolean) = synchronized(BackupStateLock.monitor) { downloadEmbedLyric.value = value; persist { putBoolean(KEY_DL_EMBED_LYRIC, value) } }
     fun updateAutoSwitchSource(value: Boolean) = synchronized(BackupStateLock.monitor) { autoSwitchSource.value = value; persist { putBoolean(KEY_AUTO_SWITCH_SOURCE, value) } }
-    fun updateDataChannel(value: String) = synchronized(BackupStateLock.monitor) { dataChannel.value = value; persist { putString(KEY_DATA_CHANNEL, value) } }
     fun updateRememberProgress(value: Boolean) = synchronized(BackupStateLock.monitor) { rememberProgress.value = value; persist { putBoolean(KEY_REMEMBER_PROGRESS, value) } }
     fun updateAutoClearPlayed(value: Boolean) = synchronized(BackupStateLock.monitor) { autoClearPlayed.value = value; persist { putBoolean(KEY_AUTO_CLEAR_PLAYED, value) } }
     fun updatePauseOnOtherAudio(value: Boolean) = synchronized(BackupStateLock.monitor) { pauseOnOtherAudio.value = value; persist { putBoolean(KEY_PAUSE_OTHER_AUDIO, value) } }
@@ -277,7 +273,6 @@ object MeloraSettings {
     internal const val KEY_DL_EMBED_COVER = "download.embedCover"
     internal const val KEY_DL_EMBED_LYRIC = "download.embedLyric"
     internal const val KEY_AUTO_SWITCH_SOURCE = "source.autoSwitch"
-    internal const val KEY_DATA_CHANNEL = "source.dataChannel"
     internal const val KEY_SEARCH_PLATFORM = "ui.searchPlatform"
     internal const val KEY_LEADERBOARD_PLATFORM = "ui.leaderboardPlatform"
     internal const val KEY_PLAYLIST_PLATFORM = "ui.playlistPlatform"
