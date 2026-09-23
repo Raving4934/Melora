@@ -124,8 +124,12 @@ object Downloader {
     suspend fun deletePermanently(context: Context, record: DownloadCenter.Record): Result<String> {
         val cancelled = cancel(record.id)
         DownloadNotifications.cancel(context, record.id.hashCode())
-        val result = if (record.hasSavedResource && (record.fileName != null || record.savedUri != null)) {
-            deleteSaved(context.applicationContext, record)
+        // 用户点下删除到取得任务锁之间可能刚好完成发布。未持有文件快照的在途记录，
+        // 必须读取取消同步后的最终地址；已有文件快照仍绑定原URI，不误删后续升级文件。
+        val target = if (record.hasSavedResource) record
+            else DownloadCenter.records.value.firstOrNull { it.id == record.id } ?: record
+        val result = if (target.hasSavedResource && (target.fileName != null || target.savedUri != null)) {
+            deleteSaved(context.applicationContext, target)
         } else {
             Result.success(if (cancelled || record.status == DownloadCenter.Status.Paused) "下载任务已删除" else "下载记录已删除")
         }
@@ -316,9 +320,9 @@ object Downloader {
                 target.size, target.name, target.modifiedAt)
         }
         fun finish(verified: VerifiedTarget, detail: String): String {
-            ensureCurrent(recordId, token)
-            register(verified)
+            // IO线程在同一令牌边界提交索引与完成记录，取消不能夹在两者之间留下悬空URI。
             if (!updateCurrent(recordId, token) {
+                    register(verified)
                     DownloadCenter.done(recordId, detail, verified.target.name, verified.target.uri.toString(), audioSpec = verified.audio.spec)
                     DownloadNotifications.done(context, notificationId, verified.target.name)
                 }

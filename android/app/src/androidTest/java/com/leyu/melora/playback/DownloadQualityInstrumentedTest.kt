@@ -144,6 +144,91 @@ class DownloadQualityInstrumentedTest {
         }
     }
 
+    @Test fun pauseDuringFinalRegistrationCannotLeaveAnIndexForADeletedFile() = runBlocking<Unit> {
+        seed("128k", "fixture-128.mp3")
+        MeloraSettings.downloadQuality.value = "128k"
+        DownloadCenter.start(song.uid, song, "等待下载")
+        val record = DownloadCenter.records.value.first { it.id == song.uid }
+        val indexLock = LocalMediaStore.javaClass.getDeclaredField("lock").apply { isAccessible = true }
+            .get(LocalMediaStore)
+        var task: kotlinx.coroutines.Deferred<Result<String>>? = null
+        val pauseFailure = java.util.concurrent.atomic.AtomicReference<Throwable?>()
+        val pause = Thread({
+            try { Downloader.pause(context, song.uid) } catch (error: Throwable) { pauseFailure.set(error) }
+        }, "pause-final-registration")
+        fun awaitCondition(message: String, condition: () -> Boolean) {
+            val deadline = android.os.SystemClock.uptimeMillis() + 5_000
+            while (!condition()) {
+                assertTrue(message, android.os.SystemClock.uptimeMillis() < deadline)
+                Thread.sleep(5)
+            }
+        }
+        try {
+            synchronized(indexLock) {
+                task = Downloader.retry(context, record)
+                // 精确停在最终本地登记的入口，而不是按下载耗时猜测竞态时刻。
+                awaitCondition("下载未到达最终索引登记") {
+                    Thread.getAllStackTraces().any { (thread, stack) ->
+                        thread.state == Thread.State.BLOCKED && stack.any {
+                            it.className == LocalMediaStore::class.java.name && it.methodName == "registerDownloaded"
+                        }
+                    }
+                }
+                pause.start()
+                awaitCondition("暂停未进入任务边界") {
+                    pause.state == Thread.State.BLOCKED || pause.state == Thread.State.TERMINATED
+                }
+            }
+            withTimeout(5_000) { requireNotNull(task).join() }
+            pause.join(5_000)
+            assertFalse("暂停任务未退出", pause.isAlive)
+            assertNull(pauseFailure.get())
+            assertEquals("完成/暂停交错后不得保留失效的本地索引", files().size, LocalMediaStore.songs.value.size)
+            val finished = requireNotNull(DownloadCenter.saved(song.uid))
+            assertEquals(DownloadCenter.Status.Done, finished.status)
+            assertEquals(1, files().size)
+            assertTrue(LocalMediaStore.songs.value.any { it.uri == finished.savedUri })
+        } finally {
+            task?.cancel()
+            task?.join()
+            if (pause.state != Thread.State.NEW) pause.join(5_000)
+        }
+    }
+
+    @Test fun deletingWithOldDownloadingSnapshotRemovesCompletedFileAndLocalEntry() = runBlocking<Unit> {
+        seed("128k", "fixture-128.mp3")
+        MeloraSettings.downloadQuality.value = "128k"
+        MeloraSettings.downloadConcurrentTasks.value = 1
+        val gate = downloadGate()
+        gate.acquire()
+        var slotReleased = false
+        val task = async { Downloader.download(context, song) }
+        try {
+            awaitPersistedQueuedRecord()
+            val oldRecord = DownloadCenter.records.value.first { it.id == song.uid }
+            assertEquals(DownloadCenter.Status.Downloading, oldRecord.status)
+            assertFalse(oldRecord.hasSavedResource)
+
+            gate.release()
+            slotReleased = true
+            task.await().getOrThrow()
+
+            val completed = requireNotNull(DownloadCenter.saved(song.uid))
+            val savedUri = requireNotNull(completed.savedUri)
+            assertEquals(DownloadCenter.Status.Done, completed.status)
+            assertEquals(1, files().size)
+            assertTrue(LocalMediaStore.songs.value.any { it.uri == savedUri })
+
+            Downloader.deletePermanently(context, oldRecord).getOrThrow()
+
+            assertTrue(files().isEmpty())
+            assertFalse(LocalMediaStore.songs.value.any { it.uri == savedUri })
+            assertNull(DownloadCenter.records.value.firstOrNull { it.id == song.uid })
+        } finally {
+            if (!slotReleased) gate.release()
+        }
+    }
+
     @Test fun conflictingUpgradeIsRejectedWithoutReplacingOrdinaryTask() = runBlocking<Unit> {
         seed("128k", "fixture-128.mp3")
         val local = localFixture("fixture-128.mp3")
