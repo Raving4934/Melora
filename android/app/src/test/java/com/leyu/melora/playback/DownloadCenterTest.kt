@@ -1,6 +1,7 @@
 package com.leyu.melora.playback
 
 import com.leyu.melora.playback.sdk.OnlineSong
+import com.leyu.melora.playback.local.LocalSong
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -10,6 +11,41 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DownloadCenterTest {
+    @Test fun upgradeIntentSurvivesPauseAndJsonRoundTrip() {
+        val local = LocalSong("fixture", "file:///fixture/audio.flac", "Fixture", "Artist", "Album",
+            1000, 1000, "audio/flac", 44100, -1, 0, 0, folder = "/fixture", bitDepth = 16)
+        val taskId = "upgrade-record-test"
+        try {
+            DownloadCenter.start(taskId, OnlineSong(songJson(null)), "下载", local)
+            DownloadCenter.paused(taskId)
+            val record = DownloadCenter.records.value.first { it.id == taskId }
+            val restored = DownloadCenter.recordFromJson(DownloadCenter.recordToJson(record))!!
+            assertEquals(taskId, restored.id)
+            assertEquals(local, restored.upgradeFrom)
+            assertEquals(DownloadCenter.Status.Paused, restored.status)
+            DownloadCenter.start(taskId, OnlineSong(songJson(null)), "普通下载")
+            assertNull(DownloadCenter.records.value.first { it.id == taskId }.upgradeFrom)
+        } finally { DownloadCenter.remove(taskId) }
+    }
+
+    @Test fun rejectedUpgradeRestoresOldResourceWithoutRemovingOtherRecords() {
+        val id = "upgrade-restore-test"
+        val otherId = "upgrade-restore-other"
+        try {
+            DownloadCenter.start(id, OnlineSong(songJson(null)), "旧记录")
+            DownloadCenter.done(id, "完成", "old.flac", "file:///fixture/old.flac")
+            val old = DownloadCenter.records.value.first { it.id == id }
+            DownloadCenter.start(id, OnlineSong(songJson(null)), "本次任务")
+            DownloadCenter.start(otherId, OnlineSong(songJson(null)), "另一首")
+            DownloadCenter.restoreRecord(id, old)
+            assertEquals(old, DownloadCenter.records.value.first { it.id == id })
+            assertTrue(DownloadCenter.records.value.any { it.id == otherId })
+            DownloadCenter.restoreRecord(id, null)
+            assertFalse(DownloadCenter.records.value.any { it.id == id })
+            assertTrue(DownloadCenter.records.value.any { it.id == otherId })
+        } finally { DownloadCenter.remove(id); DownloadCenter.remove(otherId) }
+    }
+
     @Test
     fun explicitTaskIdSurvivesResolvedSongSnapshotAndPausedRoundTrip() {
         val taskId = "local_task-download-center"

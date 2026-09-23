@@ -446,7 +446,7 @@ fun ErrorState(
 fun SongMoreSheet(
     song: OnlineSong,
     onRemoveFromPlaylist: (() -> Unit)? = null,
-    // 本地歌曲复用同一抽屉：可下载所选音质，并追加「永久删除」
+    // 本地歌曲复用同一抽屉：检查并下载更高音质，并追加「永久删除」
     allowDownload: Boolean = true,
     onDeleteLocal: (() -> Unit)? = null,
     localCoverSong: com.leyu.melora.playback.local.LocalSong? = null,
@@ -487,12 +487,18 @@ fun SongMoreSheet(
     // 已有低音质本地文件不能挡住升级入口，是否重复由下载器依据真实规格判断。
     val downloadAllowed = allowDownload
     var showPlaylistPicker by remember { mutableStateOf(false) }
-    val startDownload = {
-        PlaybackController.postMessage(context, "开始下载：${song.name}")
-        scope.launch {
-            val result = Downloader.download(context, song)
-            result.onSuccess { PlaybackController.postMessage(context, it) }
-                .onFailure { PlaybackController.postMessage(context, it.message ?: "下载失败") }
+    val startDownload: () -> Unit = {
+        val local = matchedLocal
+        if (local != null) {
+            // 检查归下载器应用级任务所有，关闭抽屉也能收到结果，不产生一闪而过的下载记录。
+            Downloader.upgrade(context, song, local)
+        } else {
+            PlaybackController.postMessage(context, "开始下载：${song.name}")
+            scope.launch {
+                Downloader.download(context, song)
+                    .onSuccess { PlaybackController.postMessage(context, it) }
+                    .onFailure { PlaybackController.postMessage(context, it.message ?: "下载失败") }
+            }
         }
     }
     val storagePermissionLauncher = rememberLauncherForActivityResult(
@@ -623,8 +629,8 @@ fun SongMoreSheet(
                 SheetAction(
                     icon = Icons.Outlined.Download,
                     tint = Color(0xFF1E88E5),
-                    label = if (matchedLocal != null) "下载所选音质" else "下载音频",
-                    subtitle = "按下载设置保存，可另存更高音质",
+                    label = if (matchedLocal != null) "下载更高音质" else "下载音频",
+                    subtitle = if (matchedLocal != null) "先检查音质提升，无更优版本不新增记录" else "按下载设置保存",
                 ) {
                     val needsStorage = Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
                         ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=

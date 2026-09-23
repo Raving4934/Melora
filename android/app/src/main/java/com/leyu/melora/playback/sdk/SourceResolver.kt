@@ -397,7 +397,7 @@ object SourceResolver {
     internal fun qualitySatisfies(requested: String, actual: String): Boolean =
         qualityRank(actual) >= qualityRank(normalizedQuality(requested))
 
-    private fun qualityRank(quality: String): Int = when (quality.trim().lowercase(Locale.ROOT)) {
+    internal fun qualityRank(quality: String): Int = when (quality.trim().lowercase(Locale.ROOT)) {
         "master", "atmos_plus", "atmos", "hires", "flac24bit", "flac32bit" -> 4
         "flac", "wav", "ape" -> 3
         "320k" -> 2

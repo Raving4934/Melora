@@ -10,10 +10,14 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
 import com.leyu.melora.playback.local.LocalMediaStore
+import com.leyu.melora.playback.local.LocalSong
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.sdk.SourceResolver
 import java.io.File
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collect
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Before
@@ -72,8 +76,8 @@ class DownloadQualityInstrumentedTest {
         context.root.deleteRecursively()
     }
 
-    private fun seed(requested: String, file: String, reported: String = requested) {
-        val payload = instrumentation.context.assets.open("audio/$file").use { it.readBytes() }
+    private fun seed(requested: String, file: String, reported: String = requested, payloadOverride: ByteArray? = null) {
+        val payload = payloadOverride ?: instrumentation.context.assets.open("audio/$file").use { it.readBytes() }
         val resource = AudioCacheStore.registerResolved(context, song.uid, requested,
             SourceResolver.Resolved("https://example.test/$requested/$file", reported, song, false, "lx:download-test:$requested:$file"))
         ownsCache = true
@@ -160,6 +164,138 @@ class DownloadQualityInstrumentedTest {
         assertNotEquals(old.savedUri, repaired.savedUri)
         assertTrue(bytes(repaired.savedUri!!).size > 42)
         assertEquals(24, repaired.audioSpec?.bitDepth)
+    }
+
+    private fun localFixture(asset: String): LocalSong {
+        val file = File(context.cacheDir, "upgrade-local-$asset")
+        instrumentation.context.assets.open("audio/$asset").use { input -> file.outputStream().use(input::copyTo) }
+        val audio = requireNotNull(inspectDownloadAudio(context, Uri.fromFile(file)))
+        return LocalSong("upgrade-fixture", Uri.fromFile(file).toString(), song.name, song.singer, song.albumName,
+            audio.durationMs, file.length(), audio.spec.mimeType.orEmpty(), audio.spec.sampleRate, audio.spec.bitrate,
+            0, 0, folder = file.parent.orEmpty(), bitDepth = audio.spec.bitDepth)
+    }
+
+    @Test fun unrecognizedPrefixDoesNotFabricateAudioQuality() {
+        val stream = java.io.ByteArrayInputStream(ByteArray(128 * 1024 + 17))
+        val probe = probeDownloadUpgrade(stream)
+        assertNull(probe.spec)
+        assertEquals(128 * 1024, probe.prefix.size)
+        assertEquals(17, stream.available())
+    }
+
+    @Test fun alreadySufficientLocalQualitySkipsWithoutSourceOrDownloadRecord() = runBlocking<Unit> {
+        val local = localFixture("fixture-24.flac")
+        MeloraSettings.downloadQuality.value = "flac24bit"
+        val original = local.toOnlineSong()
+        val result = Downloader.upgrade(context, original, local).await().getOrThrow()
+        assertTrue(result.contains("已达到"))
+        assertFalse(DownloadCenter.records.value.any { it.id == original.uid })
+        assertTrue(files().isEmpty())
+        assertEquals(result, PlaybackController.state.value.message)
+    }
+
+    @Test fun sameActualQualityNeverAppearsInDownloadHistory() = runBlocking<Unit> {
+        val local = localFixture("fixture-16.flac")
+        seed("flac24bit", "fixture-16.flac", "flac")
+        MeloraSettings.downloadQuality.value = "flac24bit"
+        val snapshots = mutableListOf<List<DownloadCenter.Record>>()
+        val observer = launch(Dispatchers.Unconfined) { DownloadCenter.records.collect { snapshots += it } }
+        try {
+            val result = Downloader.upgrade(context, song, local).await().getOrThrow()
+            assertTrue(result.contains("暂无更优"))
+            assertTrue(snapshots.all { list -> list.none { it.id == song.uid } })
+            assertTrue(files().isEmpty())
+            assertEquals(result, PlaybackController.state.value.message)
+        } finally { observer.cancel() }
+    }
+
+    @Test fun claimedHrWithSameActualQualityPreservesExistingRecordAndFile() = runBlocking<Unit> {
+        seed("flac", "fixture-16.flac"); download("flac")
+        val old = requireNotNull(DownloadCenter.saved(song.uid))
+        val before = bytes(old.savedUri!!)
+        val local = localFixture("fixture-16.flac")
+        seed("flac24bit", "fixture-16.flac", "flac24bit")
+        MeloraSettings.downloadQuality.value = "flac24bit"
+        val snapshots = mutableListOf<DownloadCenter.Record?>()
+        val observer = launch(Dispatchers.Unconfined) {
+            DownloadCenter.records.collect { snapshots += it.firstOrNull { record -> record.id == song.uid } }
+        }
+        try {
+            assertTrue(Downloader.upgrade(context, song, local).await().getOrThrow().contains("暂无更优"))
+            assertTrue(snapshots.all { it == old })
+            assertArrayEquals(before, bytes(old.savedUri))
+            assertEquals(1, files().size)
+        } finally { observer.cancel() }
+    }
+
+    @Test fun sameMp3ClaimedAsHrDoesNotCreateARecord() = runBlocking<Unit> {
+        val local = localFixture("fixture-128.mp3")
+        seed("flac24bit", "fixture-128.mp3", "flac24bit")
+        MeloraSettings.downloadQuality.value = "flac24bit"
+        assertTrue(Downloader.upgrade(context, song, local).await().getOrThrow().contains("暂无更优"))
+        assertFalse(DownloadCenter.records.value.any { it.id == song.uid })
+        assertTrue(files().isEmpty())
+    }
+
+    @Test fun real320kCanUpgrade128kWithoutStartingAnotherResolver() = runBlocking<Unit> {
+        val local = localFixture("fixture-128.mp3")
+        seed("320k", "fixture-320.mp3")
+        MeloraSettings.downloadQuality.value = "320k"
+        Downloader.upgrade(context, song, local).await().getOrThrow()
+        assertEquals("HQ", DownloadCenter.saved(song.uid)?.audioSpec?.qualityBadge)
+        assertEquals(1, files().size)
+    }
+
+    @Test fun actualUpgradeReusesPrefixAndPreservesOriginalFile() = runBlocking<Unit> {
+        val local = localFixture("fixture-128.mp3")
+        val before = bytes(local.uri)
+        seed("flac24bit", "fixture-24.flac")
+        MeloraSettings.downloadQuality.value = "flac24bit"
+        Downloader.upgrade(context, song, local).await().getOrThrow()
+        val record = requireNotNull(DownloadCenter.saved(song.uid))
+        assertEquals(DownloadCenter.Status.Done, record.status)
+        assertEquals(24, inspectDownloadAudio(context, Uri.parse(record.savedUri))?.spec?.bitDepth)
+        assertEquals(local, record.upgradeFrom)
+        assertArrayEquals(before, bytes(local.uri))
+        assertEquals(1, files().size)
+    }
+
+    @Test fun missingSourceIsAnErrorNotNoBetterQualityAndCreatesNoRecord() = runBlocking<Unit> {
+        val local = localFixture("fixture-128.mp3")
+        MeloraSettings.downloadQuality.value = "flac24bit"
+        val original = local.toOnlineSong()
+        val result = Downloader.upgrade(context, original, local).await()
+        assertTrue(result.isFailure)
+        assertFalse(result.exceptionOrNull()?.message.orEmpty().contains("暂无更优"))
+        assertFalse(DownloadCenter.records.value.any { it.id == original.uid })
+        assertTrue(files().isEmpty())
+    }
+
+    @Test fun nonAudioSourceResponseIsNotReportedAsNoBetterQuality() = runBlocking<Unit> {
+        val local = localFixture("fixture-128.mp3")
+        seed("flac24bit", "fixture-24.flac", payloadOverride = "{\"error\":\"unavailable\"}".toByteArray())
+        MeloraSettings.downloadQuality.value = "flac24bit"
+        val result = Downloader.upgrade(context, song, local).await()
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("无法确认"))
+        assertFalse(DownloadCenter.records.value.any { it.id == song.uid })
+        assertTrue(files().isEmpty())
+    }
+
+    @Test fun upgradeRetryKeepsOriginalTaskIdAndUpgradeIntent() = runBlocking<Unit> {
+        val local = localFixture("fixture-128.mp3")
+        val id = "local_upgrade-retry"
+        try {
+            DownloadCenter.start(id, song, "升级下载", local)
+            DownloadCenter.paused(id)
+            val record = DownloadCenter.records.value.first { it.id == id }
+            seed("flac24bit", "fixture-24.flac")
+            MeloraSettings.downloadQuality.value = "flac24bit"
+            Downloader.retry(context, record).await().getOrThrow()
+            assertEquals(DownloadCenter.Status.Done, DownloadCenter.records.value.first { it.id == id }.status)
+            assertFalse(DownloadCenter.records.value.any { it.id == song.uid })
+            assertEquals(local, DownloadCenter.saved(id)?.upgradeFrom)
+        } finally { DownloadCenter.remove(id) }
     }
 
     private class FixtureContext(base: Context) : ContextWrapper(base) {

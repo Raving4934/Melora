@@ -2,6 +2,7 @@ package com.leyu.melora.playback
 
 import android.content.Context
 import com.leyu.melora.playback.sdk.OnlineSong
+import com.leyu.melora.playback.local.LocalSong
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONArray
@@ -26,6 +27,8 @@ object DownloadCenter {
         val hasSavedResource: Boolean = !fileName.isNullOrBlank() || !savedUri.isNullOrBlank(),
         /** 已保存文件被实际探测到的音质规格；未知时为 null。 */
         val audioSpec: AudioSpecification? = null,
+        /** 升级任务重试仍以原本地文件为下限，不能悄悄退化为普通下载。 */
+        val upgradeFrom: LocalSong? = null,
     ) {
         /** 封面只以歌曲快照为唯一数据源，避免记录字段与 song.img 长期不一致。 */
         val img: String? get() = song?.img
@@ -60,12 +63,13 @@ object DownloadCenter {
     fun start(song: OnlineSong, detail: String) = begin(song.uid, song, detail, persist = true)
 
     /** 任务 ID 与解析后的歌曲快照分离；本地歌曲匹配在线资源后仍保持同一条下载记录。 */
-    fun start(id: String, song: OnlineSong, detail: String) = begin(id, song, detail, persist = true)
+    fun start(id: String, song: OnlineSong, detail: String, upgradeFrom: LocalSong? = null) =
+        begin(id, song, detail, persist = true, upgradeFrom = upgradeFrom)
 
     /** 先同步展示排队状态，但不在调用线程写磁盘；工作协程真正启动后再持久化。 */
     fun queued(id: String, song: OnlineSong, detail: String = "等待下载…") = begin(id, song, detail, persist = false)
 
-    private fun begin(id: String, song: OnlineSong, detail: String, persist: Boolean) = update(persist = persist) { list ->
+    private fun begin(id: String, song: OnlineSong, detail: String, persist: Boolean, upgradeFrom: LocalSong? = null) = update(persist = persist) { list ->
         val previous = list.firstOrNull { it.id == id }
         val saved = previous?.takeIf { it.hasSavedResource && hasResourceAddress(it.fileName, it.savedUri) }
         listOf(
@@ -81,6 +85,7 @@ object DownloadCenter {
                 savedUri = saved?.savedUri,
                 hasSavedResource = saved != null,
                 audioSpec = saved?.audioSpec,
+                upgradeFrom = upgradeFrom,
             ),
         ) + list.filterNot { it.id == id }
     }
@@ -194,6 +199,13 @@ object DownloadCenter {
         list.map { record -> if (record.id == id) withArtwork(record, url) else record }
     }
 
+    /** 预检与完整文件规格不一致时撤销本次任务，保留此前仍有效的历史资源。 */
+    internal fun restoreRecord(id: String, previous: Record?) = update(persist = true) { list ->
+        list.filterNot { it.id == id }.toMutableList().apply {
+            if (previous != null) add(list.indexOfFirst { it.id == id }.coerceIn(0, size), previous)
+        }
+    }
+
     fun remove(id: String) = update(persist = true) { list ->
         list.filterNot { it.id == id }
     }
@@ -261,6 +273,7 @@ object DownloadCenter {
             savedUri = rawSavedUri.takeIf { keepResource },
             hasSavedResource = keepResource,
             audioSpec = audioSpec,
+            upgradeFrom = node.optJSONObject("upgradeFrom")?.let(LocalSong::fromJson),
         )
     }
 
@@ -277,6 +290,7 @@ object DownloadCenter {
             put("updatedAt", record.updatedAt)
             put("savedUri", if (keepResource) record.savedUri ?: "" else "")
             put("hasSavedResource", keepResource)
+            record.upgradeFrom?.let { put("upgradeFrom", it.toJson()) }
             if (keepResource) record.audioSpec?.let { put("audioSpec", audioSpecificationToJson(it)) }
         }
     }

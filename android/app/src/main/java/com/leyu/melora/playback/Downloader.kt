@@ -26,6 +26,8 @@ import com.leyu.melora.playback.sdk.SourceResolver
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
+import java.io.ByteArrayInputStream
+import java.io.SequenceInputStream
 import java.io.OutputStream
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -63,10 +65,13 @@ object Downloader {
     private data class DownloadRequest(
         val quality: String, val path: String, val nameFormat: String,
         val skipExisting: Boolean, val autoSwitch: Boolean, val embedCover: Boolean, val embedLyric: Boolean,
+        val upgradeFrom: LocalSong? = null,
     )
     private data class ActiveDownload(
         val token: Long,
         val task: Deferred<Result<String>>,
+        var recordStarted: Boolean,
+        val previousRecord: DownloadCenter.Record?,
     )
     private val tasks = mutableMapOf<String, ActiveDownload>()
     private var nextTaskToken = 0L
@@ -79,6 +84,14 @@ object Downloader {
     /** 下载归应用级作用域所有；关闭操作面板或离开页面只停止等待，不会中断实际任务。 */
     suspend fun download(context: Context, song: OnlineSong): Result<String> =
         submit(context, song).await()
+
+    /** 升级检查与下载共用任务去重/并发/缓存，检查期间不创建下载记录。 */
+    fun upgrade(context: Context, song: OnlineSong, local: LocalSong): Deferred<Result<String>> =
+        submit(context, song, local)
+
+    /** 继续/重试保留原任务ID与升级下限，不因本地歌曲已匹配到在线ID而另建记录。 */
+    fun retry(context: Context, record: DownloadCenter.Record): Deferred<Result<String>> =
+        submit(context, requireNotNull(record.song), record.upgradeFrom, record.id)
 
     /** 取消指定歌曲的唯一在途任务；终态由调用方明确写入，旧任务不得覆盖新状态。 */
     private fun cancel(uid: String): Boolean {
@@ -131,30 +144,34 @@ object Downloader {
         return uniqueSongs.size
     }
 
-    private fun submit(context: Context, song: OnlineSong): Deferred<Result<String>> {
+    private fun submit(context: Context, song: OnlineSong, upgradeFrom: LocalSong? = null, taskId: String = song.uid): Deferred<Result<String>> {
         val appContext = context.applicationContext
         val request = DownloadRequest(MeloraSettings.downloadQuality.value, MeloraSettings.downloadPath.value,
             MeloraSettings.downloadFileNameFormat.value, MeloraSettings.downloadSkipSameName.value,
-            MeloraSettings.downloadAutoSwitchSource.value, MeloraSettings.downloadEmbedCover.value, MeloraSettings.downloadEmbedLyric.value)
+            MeloraSettings.downloadAutoSwitchSource.value, MeloraSettings.downloadEmbedCover.value, MeloraSettings.downloadEmbedLyric.value, upgradeFrom)
         var created = false
         val task = synchronized(taskLock) {
-            tasks[song.uid]?.task?.takeUnless { it.isCompleted } ?: run {
+            tasks[taskId]?.task?.takeUnless { it.isCompleted } ?: run {
                 val token = ++nextTaskToken
                 val deferred = taskScope.async(start = CoroutineStart.LAZY) {
-                    performDownload(appContext, song, request, token)
+                    performDownload(appContext, song, request, token, taskId)
                 }
-                tasks[song.uid] = ActiveDownload(token, deferred)
-                DownloadCenter.queued(song.uid, song)
+                tasks[taskId] = ActiveDownload(token, deferred, upgradeFrom == null,
+                    DownloadCenter.records.value.firstOrNull { it.id == taskId })
+                if (upgradeFrom == null) DownloadCenter.queued(taskId, song)
                 deferred.invokeOnCompletion {
                     synchronized(taskLock) {
-                        if (tasks[song.uid]?.token == token) tasks.remove(song.uid)
+                        if (tasks[taskId]?.token == token) tasks.remove(taskId)
                     }
                 }
                 created = true
                 deferred
             }
         }
-        if (created) task.start()
+        if (created) {
+            if (upgradeFrom != null) PlaybackController.postMessage(appContext, "正在检查更高音质…")
+            task.start()
+        }
         return task
     }
 
@@ -163,11 +180,21 @@ object Downloader {
         original: OnlineSong,
         request: DownloadRequest,
         token: Long,
+        taskId: String,
     ): Result<String> = runCatching {
-        val taskId = original.uid
+        val localSpec = request.upgradeFrom?.let { local ->
+            val spec = local.audioSpecification.takeIf { it.verifiedQuality != null }
+                ?: inspectDownloadAudio(context, local.uri.toUri())?.spec
+                ?: error("无法识别本地歌曲音质，请重新扫描后再试")
+            val quality = spec.verifiedQuality ?: error("本地歌曲音质未知，未开始升级")
+            if (SourceResolver.qualityRank(quality) >= SourceResolver.qualityRank(SourceResolver.normalizedQuality(request.quality))) {
+                return@runCatching "本地已达到所选音质，无需升级"
+            }
+            spec
+        }
         slots.acquire()
         try {
-            updateCurrent(taskId, token) { DownloadCenter.start(taskId, original, "准备下载…") }
+            if (localSpec == null) updateCurrent(taskId, token) { DownloadCenter.start(taskId, original, "准备下载…") }
             val song = try {
                 if (original.source == LocalSong.SOURCE) check(com.leyu.melora.playback.sdk.LxScriptPool.hasEnabledScripts(context)) {
                     SourceResolver.NO_SOURCE_MESSAGE
@@ -183,9 +210,9 @@ object Downloader {
                 throw failure
             }
             ensureCurrent(taskId, token)
-            updateCurrent(taskId, token) { DownloadCenter.start(taskId, song, "准备下载…") }
+            if (localSpec == null) updateCurrent(taskId, token) { DownloadCenter.start(taskId, song, "准备下载…") }
             try {
-                downloadToTarget(context, song, taskId, request, token)
+                downloadToTarget(context, song, taskId, request, token, localSpec)
             } catch (failure: Exception) {
                 if (failure !is CancellationException) failCurrent(context, taskId, token, failure)
                 throw failure
@@ -193,7 +220,14 @@ object Downloader {
         } finally {
             slots.release()
         }
-    }.onFailure { if (it is CancellationException) throw it }
+    }.onSuccess {
+        if (request.upgradeFrom != null) updateCurrent(taskId, token) { PlaybackController.postMessage(context, it) }
+    }.onFailure {
+        if (it is CancellationException) throw it
+        if (request.upgradeFrom != null) updateCurrent(taskId, token) {
+            PlaybackController.postMessage(context, it.message ?: "音质检查失败，请稍后重试")
+        }
+    }
 
     private fun ensureCurrent(uid: String, token: Long) {
         val current = synchronized(taskLock) { tasks[uid]?.token == token }
@@ -209,8 +243,10 @@ object Downloader {
     private fun failCurrent(context: Context, uid: String, token: Long, failure: Exception) {
         val message = failure.message ?: "下载失败"
         updateCurrent(uid, token) {
-            DownloadCenter.failed(uid, message)
-            DownloadNotifications.failed(context, uid.hashCode(), message)
+            if (tasks[uid]?.recordStarted == true) {
+                DownloadCenter.failed(uid, message)
+                DownloadNotifications.failed(context, uid.hashCode(), message)
+            }
         }
     }
 
@@ -223,6 +259,7 @@ object Downloader {
         recordId: String,
         request: DownloadRequest,
         token: Long,
+        localSpec: AudioSpecification?,
     ): String {
         val baseName = buildBaseName(song, request.nameFormat)
         val previous = DownloadCenter.saved(recordId)
@@ -254,7 +291,12 @@ object Downloader {
         val initial = downloadTargets(context, request.path, baseName).mapNotNull(::inspect)
         val initialByTarget = initial.associateBy(VerifiedTarget::target)
         initial.forEach(::register) // 保留旧高版在本地候选中，随后下载低码率副本也不会抢占播放。
-        if (request.skipExisting) {
+        val upgradeBaseline = localSpec?.let { baseline ->
+            (listOf(baseline) + initial.map { it.audio.spec }).maxBy { SourceResolver.qualityRank(it.verifiedQuality.orEmpty()) }
+        }
+        if (upgradeBaseline != null && SourceResolver.qualityRank(upgradeBaseline.verifiedQuality.orEmpty()) >=
+            SourceResolver.qualityRank(SourceResolver.normalizedQuality(request.quality))) return "本地已达到所选音质，无需升级"
+        if (request.skipExisting && upgradeBaseline == null) {
             initial.firstOrNull { downloadQualityMatches(it.audio.spec, request.quality) }?.let {
                 return finish(it, "已跳过（已有同版本、同音质文件）")
             }
@@ -262,16 +304,21 @@ object Downloader {
         val tempDir = File(context.cacheDir, TEMP_DIRECTORY).apply { mkdirs() }
         val temp = File.createTempFile("melora-", ".part", tempDir)
         try {
-            val input = AudioCacheStore.openForDownload(context, song, request.quality, request.autoSwitch)
-            ensureCurrent(recordId, token)
+            val (input, prefix) = openDownloadInput(context, song, request, upgradeBaseline, recordId, token)
+                ?: return "当前可用音源暂无更优音质版本"
             val coroutine = currentCoroutineContext()
             input.stream.use { stream ->
+                ensureCurrent(recordId, token)
+                if (upgradeBaseline != null) updateCurrent(recordId, token) {
+                    tasks.getValue(recordId).recordStarted = true
+                    DownloadCenter.start(recordId, song, "已确认更高音质，开始下载…", request.upgradeFrom)
+                }
                 updateCurrent(recordId, token) {
                     DownloadNotifications.progress(context, notificationId, baseName, null)
                 }
                 temp.outputStream().use { output ->
                     copyWithProgress(
-                        input = stream,
+                        input = if (prefix.isEmpty()) stream else SequenceInputStream(ByteArrayInputStream(prefix), stream),
                         output = output,
                         totalBytes = input.contentLength,
                         checkActive = {
@@ -293,6 +340,15 @@ object Downloader {
             val audio = inspectDownloadAudio(context, Uri.fromFile(temp)) ?: error("下载内容不是可识别的音频，原文件未修改")
             check(audio.durationMs > 0 && (song.intervalSeconds <= 0 || audio.durationMs >= song.intervalSeconds * 650L)) {
                 "下载音频时长异常，可能是试听片段；原文件未修改"
+            }
+            if (upgradeBaseline != null && isBetterDownloadQuality(audio.spec, upgradeBaseline) != true) {
+                updateCurrent(recordId, token) {
+                    val active = tasks.getValue(recordId)
+                    DownloadCenter.restoreRecord(recordId, active.previousRecord)
+                    active.recordStarted = false
+                    DownloadNotifications.cancel(context, notificationId)
+                }
+                return if (audio.spec.verifiedQuality == null) "无法确认实际音质提升，原文件未修改" else "当前可用音源暂无更优音质版本"
             }
             val extension = detectAudioExtension(temp) ?: audioExtensionFromContentType(audio.spec.mimeType)
                 ?: error("无法识别实际音频格式，原文件未修改")
@@ -408,6 +464,43 @@ object Downloader {
         if (!measured.matches(identity, trustedIdentity = false)) return null
         DownloadCenter.rememberSavedUri(uid, found.toString(), measured.spec)
         return found
+    }
+
+    /** 只读有界前缀；命中后复用同一条流与已读字节，不二次解析或重新下载。 */
+    private suspend fun openDownloadInput(
+        context: Context, song: OnlineSong, request: DownloadRequest, baseline: AudioSpecification?,
+        recordId: String, token: Long,
+    ): Pair<CachedAudioInput, ByteArray>? {
+        repeat(if (baseline == null) 1 else 3) {
+            val input = AudioCacheStore.openForDownload(context, song, request.quality, request.autoSwitch)
+            try {
+                ensureCurrent(recordId, token)
+                if (baseline == null) return input to byteArrayOf()
+                val probe = probeDownloadUpgrade(input.stream)
+                currentCoroutineContext().ensureActive()
+                ensureCurrent(recordId, token)
+                val actual = probe.spec ?: error("无法确认音源的实际音质，未开始下载")
+                actual.verifiedQuality?.let { quality ->
+                    audioResourceId(input.resourceKey)?.let { resource ->
+                        SourceResolver.confirmQuality(resource, quality)
+                        AudioCacheStore.recordObservedQuality(context, song.uid, resource, quality)
+                    }
+                }
+                when (isBetterDownloadQuality(actual, baseline)) {
+                    true -> return input to probe.prefix
+                    null -> error("无法确认音源的实际音质，未开始下载")
+                    false -> {
+                        input.stream.close()
+                        // 标称HR却返回低档时，纠正该资源后再让原解析器尝试同档其它资源；不污染全局失败名单。
+                        if (SourceResolver.qualityRank(input.actualQuality) <= SourceResolver.qualityRank(baseline.verifiedQuality.orEmpty())) return null
+                    }
+                }
+            } catch (failure: Exception) {
+                runCatching { input.stream.close() }
+                throw failure
+            }
+        }
+        error("音源标注与实际音质不一致，暂未确认更优版本")
     }
 
     /** 以已保存记录的真实地址删除，不受用户后来更改下载目录影响。 */

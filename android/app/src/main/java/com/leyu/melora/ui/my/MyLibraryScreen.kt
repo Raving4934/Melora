@@ -1581,12 +1581,18 @@ private fun DownloadsPage(onBack: () -> Unit) {
     val listState = rememberLazyListState()
     val scrollToTop = rememberFastScrollToTop(listState)
 
-    val retry: (OnlineSong) -> Unit = { song ->
-        PlaybackController.postMessage(context, "开始下载：${song.name}")
-        scope.launch {
-            Downloader.download(context, song)
-                .onSuccess { PlaybackController.postMessage(context, it) }
-                .onFailure { PlaybackController.postMessage(context, it.message ?: "下载失败") }
+    val retry: (DownloadCenter.Record) -> Unit = { record ->
+        if (record.song != null) {
+            if (record.upgradeFrom != null) {
+                Downloader.retry(context, record)
+            } else {
+                PlaybackController.postMessage(context, "开始下载：${record.name}")
+                scope.launch {
+                    Downloader.retry(context, record).await()
+                        .onSuccess { PlaybackController.postMessage(context, it) }
+                        .onFailure { PlaybackController.postMessage(context, it.message ?: "下载失败") }
+                }
+            }
         }
     }
 
@@ -1637,8 +1643,8 @@ private fun DownloadsPage(onBack: () -> Unit) {
                         DownloadRecordCard(
                             record = record,
                             onPause = { Downloader.pause(context, record.id) },
-                            onResume = { record.song?.let(retry) },
-                            onRetry = { record.song?.let(retry) },
+                            onResume = { retry(record) },
+                            onRetry = { retry(record) },
                             onMore = { actionRecordId = record.id },
                         )
                     }
@@ -1664,11 +1670,11 @@ private fun DownloadsPage(onBack: () -> Unit) {
                 actionRecordId = null
             },
             onResume = {
-                record.song?.let(retry)
+                retry(record)
                 actionRecordId = null
             },
             onRetry = {
-                record.song?.let(retry)
+                retry(record)
                 actionRecordId = null
             },
             onDeleteFile = {
