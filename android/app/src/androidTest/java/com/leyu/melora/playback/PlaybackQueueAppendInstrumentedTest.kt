@@ -70,7 +70,7 @@ class PlaybackQueueAppendInstrumentedTest {
         }
     }
 
-    @Test fun appendRestoresSavedQueueBeforeAddingWithoutAutoplay() = withPlayer(empty = true) { player, _ ->
+    @Test fun appendRestoresSavedQueueBeforeAddingWithoutAutoplay() = withPlayer(empty = true, listen = true) { player, _ ->
         val saved = JSONArray().put(JSONObject().put("uid", "saved-a")).put(JSONObject().put("uid", "saved-b"))
         prefs.edit().putString("queue", saved.toString()).putInt("index", 1).commit()
         main { PlaybackController.addToQueue(context, listOf(track("c"))) }
@@ -93,12 +93,87 @@ class PlaybackQueueAppendInstrumentedTest {
         }
     }
 
-    private fun withPlayer(empty: Boolean = false, test: (ExoPlayer, MediaController) -> Unit) {
+    @Test fun clearQueueRemovesSavedQueueAndAppendCannotResurrectIt() = withPlayer(listen = true) { player, _ ->
+        main {
+            PlaybackController.addToQueue(context, listOf(track("c")))
+            assertTrue(prefs.contains("queue"))
+            PlaybackController.clearQueue()
+            assertNull(PlaybackController.state.value.current)
+            assertTrue(PlaybackController.state.value.queue.isEmpty())
+            assertFalse(prefs.contains("queue"))
+        }
+        await { player.mediaItemCount == 0 }
+        main { PlaybackController.addToQueue(context, listOf(track("new"))) }
+        await { player.mediaItemCount == 1 }
+        main { assertEquals(listOf("new"), uids(player)) }
+    }
+
+    @Test fun serviceExitClearsSavedQueueEvenWithoutConnectedUi() = withPlayer { player, _ ->
+        main {
+            PlaybackController.addToQueue(context, listOf(track("c")))
+            assertNotNull(PlaybackController.state.value.current)
+            field("controller").set(PlaybackController, null)
+            // 通知栏使用服务端Player，不能依赖界面控制器仍然连接。
+            PlaybackController.stop(player)
+            assertEquals(0, player.mediaItemCount)
+            assertFalse(prefs.contains("queue"))
+            assertNull(PlaybackController.state.value.current)
+            assertTrue(PlaybackController.state.value.queue.isEmpty())
+            assertFalse(PlaybackController.state.value.playing)
+        }
+    }
+
+    @Test fun serviceExitDoesNotRestoreOldTracksOnNextQueueUse() = withPlayer(listen = true) { player, controller ->
+        main { PlaybackController.addToQueue(context, listOf(track("c"))) }
+        // 先让已保存队列真正到达服务端，再模拟通知栏退出命令。
+        await { player.mediaItemCount == 3 }
+        main {
+            PlaybackController.stop(player)
+            assertFalse(prefs.contains("queue"))
+        }
+        await { controller.mediaItemCount == 0 }
+        instrumentation.waitForIdleSync()
+        main {
+            assertFalse(prefs.contains("queue"))
+            assertNull(PlaybackController.state.value.current)
+            PlaybackController.addToQueue(context, listOf(track("new")))
+        }
+        await { player.mediaItemCount == 1 }
+        main { assertEquals(listOf("new"), uids(player)) }
+    }
+
+    @Test fun externalTimelineClearIsPersistedAfterCallbacksSettle() = withPlayer(listen = true) { player, controller ->
+        main { PlaybackController.addToQueue(context, listOf(track("c"))) }
+        await { player.mediaItemCount == 3 }
+        main { player.clearMediaItems() }
+        await { controller.mediaItemCount == 0 && PlaybackController.state.value.current == null }
+        instrumentation.waitForIdleSync()
+        assertFalse("外部清空不能留下待恢复的旧队列", prefs.contains("queue"))
+    }
+
+    @Test fun disconnectInvalidatesControllerButKeepsSavedQueueForRecovery() = withPlayer(listen = true) { _, controller ->
+        main { PlaybackController.addToQueue(context, listOf(track("c"))) }
+        val saved = prefs.getString("queue", null)
+        main { controller.release() }
+        await { field("controller").get(PlaybackController) == null }
+        main {
+            assertNull(field("controllerFuture").get(PlaybackController))
+            assertFalse(PlaybackController.state.value.ready)
+            assertNull(PlaybackController.state.value.current)
+            assertEquals(saved, prefs.getString("queue", null))
+        }
+    }
+
+    private fun withPlayer(empty: Boolean = false, listen: Boolean = false, test: (ExoPlayer, MediaController) -> Unit) {
         val audio = silentWav()
         val player = main { ExoPlayer.Builder(context).build().apply { volume = 0f } }
         val session = main { MediaSession.Builder(context, player).setId("append-${System.nanoTime()}").build() }
-        val controller = main { MediaController.Builder(context, session.token).buildAsync() }.get(5, TimeUnit.SECONDS)
-        val fields = listOf("controller", "appContext", "lastQueueFingerprint", "detailUid", "currentQueueId").associateWith(::field)
+        val controller = main {
+            MediaController.Builder(context, session.token)
+                .setListener(field("controllerListener").get(PlaybackController) as MediaController.Listener)
+                .buildAsync()
+        }.get(5, TimeUnit.SECONDS)
+        val fields = listOf("controller", "controllerFuture", "bookQueue", "appContext", "lastQueueFingerprint", "detailUid", "currentQueueId").associateWith(::field)
         val previous = main { fields.mapValues { it.value.get(PlaybackController) } }
         @Suppress("UNCHECKED_CAST")
         val state = field("_state").get(PlaybackController) as MutableStateFlow<PlayerUiState>
@@ -120,6 +195,10 @@ class PlaybackQueueAppendInstrumentedTest {
                 await { player.playbackState == Player.STATE_READY && controller.playbackState == Player.STATE_READY }
                 main { controller.seekTo(12_000) }
                 await { player.currentPosition in 11_800L..12_200L && controller.currentPosition in 11_800L..12_200L }
+            }
+            if (listen) main {
+                PlaybackController.javaClass.getDeclaredMethod("attach", MediaController::class.java)
+                    .apply { isAccessible = true }.invoke(PlaybackController, controller)
             }
             test(player, controller)
         } finally {

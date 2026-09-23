@@ -60,7 +60,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.PlayerUiState
-import com.leyu.melora.playback.UiTrack
 import com.leyu.melora.ui.theme.SystemBarsAppearance
 import com.leyu.melora.ui.theme.LocalForceHideStatusBar
 import kotlinx.coroutines.launch
@@ -74,9 +73,8 @@ private fun formatClockMs(ms: Long): String {
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
-    var lastTrack by remember { mutableStateOf<UiTrack?>(null) }
-    LaunchedEffect(state.current) { if (state.current != null) lastTrack = state.current }
-    val track = state.current ?: lastTrack ?: return
+    // 迷你条、过渡封面和全屏共用当前曲目；空队列不能保留已失效的旧封面。
+    val track = state.current ?: return
     // loading 保留上一幅环境背景；loader 统一发布新图+色调，失败/无封面才清空。
     var playerBackdropEntry by remember { mutableStateOf<PlayerBackdropCacheEntry?>(null) }
     var immersive by rememberSaveable { mutableStateOf(false) }

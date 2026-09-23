@@ -74,17 +74,23 @@ class PlaybackQueuePersistenceTest {
         val state = stateField.get(owner) as MutableStateFlow<PlayerUiState>
         val previous = state.value
         try {
-            for (end in listOf(owner::clearQueue, owner::stop)) {
+            for (end in listOf(owner::clearQueue, { owner.stop() })) {
                 val pending = Job()
                 jobField.set(owner, pending)
                 actionField.set(owner, PendingPlaybackSelection(listOf(track("pending")), insertSingle = true))
-                state.value = previous.copy(pendingQueueId = "same-queue")
+                state.value = previous.copy(
+                    current = track("old"), queue = listOf(track("old")),
+                    playing = true, pendingQueueId = "same-queue",
+                )
                 end()
                 end() // 重复停止/清空必须幂等。
                 assertTrue(pending.isCancelled)
                 assertNull(jobField.get(owner))
                 assertNull(actionField.get(owner))
                 assertNull(state.value.pendingQueueId)
+                assertNull(state.value.current)
+                assertTrue(state.value.queue.isEmpty())
+                assertFalse(state.value.playing)
             }
         } finally {
             jobField.set(owner, null)

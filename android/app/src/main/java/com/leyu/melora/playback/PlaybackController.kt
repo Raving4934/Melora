@@ -62,6 +62,25 @@ object PlaybackController {
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var controller: MediaController? = null
     private var appContext: Context? = null
+    private val controllerListener = object : MediaController.Listener {
+        override fun onDisconnected(disconnected: MediaController) {
+            if (controller !== disconnected) return
+            controller = null
+            controllerFuture = null
+            bookQueue?.stop()
+            bookQueue = null
+            interruptRecovery()
+            cancelPendingPlayback()
+            lyricJob?.cancel()
+            artworkJob?.cancel()
+            detailUid = null
+            _lyric.value = null
+            // 断连不等于用户清空：保留磁盘队列供下次连接恢复，但不能再操作失效控制器。
+            val previous = _state.value
+            _state.value = PlayerUiState(mode = previous.mode, speed = previous.speed,
+                message = if (previous.current != null) "播放服务已断开，请重新选择歌曲" else previous.message)
+        }
+    }
     private var pendingPlayback: PendingPlaybackSelection? = null
     private var playbackPreflight: Job? = null
     private var urlPrefetchJob: Job? = null
@@ -150,7 +169,7 @@ object PlaybackController {
             registryListenersAttached = true
         }
         val token = SessionToken(application, ComponentName(application, PlaybackService::class.java))
-        val future = MediaController.Builder(application, token).buildAsync()
+        val future = MediaController.Builder(application, token).setListener(controllerListener).buildAsync()
         controllerFuture = future
         future.addListener(
             {
@@ -202,6 +221,7 @@ object PlaybackController {
         player.addListener(
             object : Player.Listener {
                 override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                    if (controller !== player || !player.isConnected) return
                     interruptRecovery()
                     AudioCacheStore.cancelPrefetch()
                     if (urlPrefetchUid != mediaItem?.mediaId) urlPrefetchJob?.cancel()
@@ -227,7 +247,8 @@ object PlaybackController {
                     if (reason == Player.DISCONTINUITY_REASON_SEEK) interruptRecovery()
                 }
 
-                override fun onEvents(player: Player, events: Player.Events) {
+                override fun onEvents(eventsPlayer: Player, events: Player.Events) {
+                    if (controller !== player || !player.isConnected) return
                     bookQueue?.check()
                     if (recoveryJob != null && (!player.playWhenReady || player.playbackState != Player.STATE_BUFFERING)) {
                         interruptRecovery()
@@ -238,8 +259,10 @@ object PlaybackController {
                     publish()
                     updateRecentPlayback(player)
                     if (player.playbackState == Player.STATE_READY) consecutiveErrors = 0
-                    if (events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED)) {
-                        saveQueue()
+                    val timelineChanged = events.contains(Player.EVENT_TIMELINE_CHANGED)
+                    if (timelineChanged || events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED)) {
+                        // 删除最后一首/外部清空也同步落盘，不能等下一次点歌时复活旧队列。
+                        saveQueue(force = timelineChanged && player.mediaItemCount == 0)
                     }
                 }
 
@@ -249,7 +272,7 @@ object PlaybackController {
                 }
             },
         )
-        publish()
+        // init在恢复队列/处理待播请求后统一发布，不先暴露一个临时空队列。
         updateRecentPlayback(player)
     }
 
@@ -300,7 +323,8 @@ object PlaybackController {
     }
 
     private fun publish() {
-        val player = controller ?: return
+        if (editingQueue) return
+        val player = controller?.takeIf { it.isConnected } ?: return
         val queue = (0 until player.mediaItemCount).map { index ->
             val item = player.getMediaItemAt(index)
             TrackRegistry.get(item.mediaId) ?: UiTrack(
@@ -1075,25 +1099,39 @@ object PlaybackController {
         pendingPlayback = null
     }
 
-    fun clearQueue() = endPlayback(stopEngine = false)
+    fun clearQueue() = endPlayback(stopEngine = false, player = controller)
 
-    fun stop() = endPlayback(stopEngine = true)
+    // 通知栏持有服务端Player，即使界面尚未连接，也必须清理同一份持久化队列。
+    fun stop(player: Player? = controller) = endPlayback(stopEngine = true, player = player)
 
-    private fun endPlayback(stopEngine: Boolean) {
+    private fun endPlayback(stopEngine: Boolean, player: Player?) {
         localQueueCheck?.cancel()
         localQueueCheck = null
         interruptRecovery()
         cancelPendingPlayback()
         AudioCacheStore.cancelPrefetch()
-        bookQueue?.stop()
-        clearSavedQueue()
-        controller?.let { player ->
-            if (stopEngine) player.stop() else player.pause()
-            player.clearMediaItems()
+        editingQueue = true
+        try {
+            bookQueue?.stop()
+            player?.let {
+                if (stopEngine) it.stop() else it.pause()
+                it.clearMediaItems()
+            }
+        } finally {
+            editingQueue = false
+            // 停止/暂停回调不能在清空过程中把旧队列重新保存。
+            clearSavedQueue()
         }
         currentQueueId = null
+        lyricJob?.cancel()
+        artworkJob?.cancel()
+        detailUid = null
         _lyric.value = null
-        publish()
+        // 不依赖异步MediaController回调，也不在无控制器时遗留旧曲目。
+        val previous = _state.value
+        _state.value = PlayerUiState(
+            ready = controller?.isConnected == true, mode = previous.mode, speed = previous.speed,
+        )
     }
 
     fun consumeMessage() {
@@ -1179,7 +1217,7 @@ object PlaybackController {
     /** 持久化当前队列（超长队列只保存当前位置附近的窗口），供冷启动恢复 mini 播放条。 */
     private fun saveQueue(force: Boolean = false) {
         if (editingQueue) return
-        val player = controller ?: return
+        val player = controller?.takeIf { it.isConnected } ?: return
         val prefs = queuePrefs() ?: return
         val count = player.mediaItemCount
         if (count == 0) {

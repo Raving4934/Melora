@@ -219,10 +219,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun exitPlayback() {
-        AudioCacheStore.cancelPrefetch()
-        val player = mediaSession?.player ?: return
-        player.stop()
-        player.clearMediaItems()
+        PlaybackController.stop(mediaSession?.player)
         stopSelf()
     }
 

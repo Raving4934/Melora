@@ -347,11 +347,8 @@ fun MeloraApp(initialTab: Int = 5) {
         scope.launch { drawerOffset.animateTo(0f, drawerSpring) }
     }
 
-    // 播放激活状态记录（清空队列时保持底栏，不突兀闪退页面）
-    var hasActivePlayback by remember { mutableStateOf(false) }
-    androidx.compose.runtime.LaunchedEffect(playerState.current) {
-        if (playerState.current != null) hasActivePlayback = true
-    }
+    // 与播放层使用同一状态，清空后同时撤销底栏占位和所有旧曲目展示。
+    val hasActivePlayback = playerState.current != null
 
     // 全局提示消息：显示 2.4 秒后自动消费
     androidx.compose.runtime.LaunchedEffect(playerState.message) {
