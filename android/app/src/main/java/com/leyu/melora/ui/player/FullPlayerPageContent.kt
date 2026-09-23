@@ -253,7 +253,7 @@ internal fun FullPlayerPageContent(
     artworkAlpha: () -> Float,
     coverStyle: PlayerCoverStyle,
     artworkRotation: () -> Float,
-    onPageVisualChanged: (Boolean, Boolean, Boolean) -> Unit,
+    onPageVisualChanged: (showsCover: Boolean, isLight: Boolean, blocksCollapse: Boolean) -> Unit,
     modifier: Modifier = Modifier,
     isVisible: Boolean = true,
     isCollapsed: Boolean = false,
@@ -301,7 +301,8 @@ internal fun FullPlayerPageContent(
         onPageVisualChanged(
             !immersive && collection == null && coverPagerState.currentPage == 1 && !coverPagerState.isScrollInProgress,
             pageIsLight,
-            collection == null && coverPagerState.currentPage == 2,
+            // 详情列表的纵向滚动不得交给外层播放器的下拉收起手势。
+            collection != null || coverPagerState.currentPage == 2,
         )
     }
     DetailPageHost(

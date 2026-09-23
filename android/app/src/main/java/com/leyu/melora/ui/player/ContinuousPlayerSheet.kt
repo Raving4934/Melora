@@ -105,7 +105,7 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
     val swipeOffset = remember { Animatable(0f) }
     val verticalPagerState = rememberPagerState(pageCount = { 2 })
     var pageShowsCover by remember { mutableStateOf(true) }
-    var pageShowsLyrics by remember { mutableStateOf(false) }
+    var pageBlocksCollapse by remember { mutableStateOf(false) }
     var pageIsLight by remember(playerIsDark) { mutableStateOf(!playerIsDark) }
     var sheetCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
     var miniBounds by remember { mutableStateOf<Rect?>(null) }
@@ -150,7 +150,7 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
         }
         val showMini by remember(progress) { derivedStateOf { progress() < 0.22f } }
         LaunchedEffect(collapsed) { if (collapsed) immersive = false }
-        val canCollapse = remember(playbackPage) { { playbackPage() && !pageShowsLyrics && !immersive } }
+        val canCollapse = remember(playbackPage) { { playbackPage() && !pageBlocksCollapse && !immersive } }
         val canDrag by remember(offset, canCollapse) { derivedStateOf { offset() > 0.5f || canCollapse() } }
         val morphing = remember(progress, playbackPage) {
             {
@@ -283,7 +283,7 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
                         artworkAlpha = artworkAlpha,
                         coverStyle = playerCoverStyle,
                         artworkRotation = vinylRotation,
-                        onPageVisualChanged = { cover, light, lyrics -> pageShowsCover = cover; pageIsLight = light; pageShowsLyrics = lyrics },
+                        onPageVisualChanged = { cover, light, blocksCollapse -> pageShowsCover = cover; pageIsLight = light; pageBlocksCollapse = blocksCollapse },
                     )
                 }
             }
