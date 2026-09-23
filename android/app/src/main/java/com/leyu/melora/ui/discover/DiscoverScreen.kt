@@ -60,7 +60,6 @@ import com.leyu.melora.playback.sdk.OnlinePlaylist
 import com.leyu.melora.playback.sdk.OnlineRepository
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.sdk.Recommender
-import com.leyu.melora.playback.sdk.SongPage
 import com.leyu.melora.ui.common.CardPlayButton
 import com.leyu.melora.ui.common.ChromeScaffold
 import com.leyu.melora.ui.common.DetailPageHost
@@ -258,14 +257,14 @@ fun DiscoverScreen(
         } finally { if (refreshTick == round) refreshing = false }
     }
 
-    // 推荐池/榜单统一取数：rec.daily、rec.guess 走个性化推荐引擎，其余为酷我榜单 id
-    suspend fun discoverSongs(source: String, page: Int): SongPage = when (source) {
-        "rec.daily" -> Recommender.daily(context).let { SongPage(it, it.size, 1, 1) }
-        "rec.guess" -> Recommender.guess(context).let { SongPage(it, it.size, 1, 1) }
-        else -> OnlineRepository.boardSongs(context, "kw", source, page)
+    // 三个推荐入口均读取推荐域完整列表，新歌也不能绕回榜单分页。
+    suspend fun discoverSongs(source: String): List<OnlineSong> = when (source) {
+        "rec.daily" -> Recommender.daily(context)
+        "rec.guess" -> Recommender.guess(context)
+        else -> Recommender.newSongs(context)
     }
 
-    // 卡片播放按钮：优先缓存秒播，未缓存则拉第一页后再播
+    // 卡片播放按钮：优先缓存秒播，未缓存则获取完整推荐列表后再播
     fun playDiscoverSongs(source: String, queueId: String, cacheKey: String, containerName: String, containerKind: String) {
         val cached = OnlineCache.peek<List<OnlineSong>>(cacheKey)
         UserLibrary.markContainerPlayed(
@@ -278,7 +277,7 @@ fun DiscoverScreen(
                 queueId = queueId,
             ),
         )
-        PlaybackController.requestQueue(context, queueId, cacheKey, songs = { it }) { discoverSongs(source, 1).list }
+        PlaybackController.requestQueue(context, queueId, cacheKey, songs = { it }) { discoverSongs(source) }
     }
 
     DetailPageHost(
@@ -316,7 +315,7 @@ fun DiscoverScreen(
                         source = "kw",
                         queueId = target.queueId,
                     ),
-                    fetchPage = { page -> discoverSongs(target.source, page) },
+                    fetchSongs = { discoverSongs(target.source) },
                 )
             },
         ) {

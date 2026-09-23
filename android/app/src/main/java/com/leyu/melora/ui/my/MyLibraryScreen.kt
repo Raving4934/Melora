@@ -243,10 +243,10 @@ fun MyLibraryScreen(
         }
     }
 
-    suspend fun fetchContainerSongs(kind: String, pageNum: Int): SongPage = when (kind) {
-        "daily" -> Recommender.daily(context).let { SongPage(it, it.size, 1, 1) }
-        "guess" -> Recommender.guess(context).let { SongPage(it, it.size, 1, 1) }
-        else -> OnlineRepository.boardSongs(context, "kw", "17", pageNum)
+    suspend fun fetchContainerSongs(kind: String): List<OnlineSong> = when (kind) {
+        "daily" -> Recommender.daily(context)
+        "guess" -> Recommender.guess(context)
+        else -> Recommender.newSongs(context)
     }
 
     if (showCreateSheet) {
@@ -308,7 +308,7 @@ fun MyLibraryScreen(
                         kind = container.kind, id = container.id, name = container.name, img = container.img,
                         source = container.source, queueId = container.queueId,
                     ),
-                    fetchPage = { page -> fetchContainerSongs(container.kind, page) },
+                    fetchSongs = { fetchContainerSongs(container.kind) },
                 )
             }
         }
