@@ -4,4 +4,14 @@
     <style name="Theme.Melora" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/splash_background</item>
     </style>
+    <!-- 仅恢复失败时使用；颜色与MeloraAppearance对应，不依赖尚未恢复的设置。 -->
+    <style name="Theme.Melora.RecoveryDialog" parent="android:Theme.Material.Dialog.Alert">
+        <item name="android:colorAccent">#6E9BFF</item>
+        <item name="android:textColorPrimary">#F2F4F7</item>
+        <item name="android:textColorSecondary">#9BA4B4</item>
+        <item name="android:colorBackgroundFloating">#191C23</item>
+        <item name="android:windowMinWidthMinor">88%</item>
+        <item name="android:windowMinWidthMajor">60%</item>
+        <item name="android:backgroundDimAmount">0.32</item>
+    </style>
 </resources>

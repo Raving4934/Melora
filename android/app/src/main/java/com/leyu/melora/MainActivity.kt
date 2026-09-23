@@ -2,8 +2,16 @@ package com.leyu.melora
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
+import android.text.style.RelativeSizeSpan
 import android.util.Log
+import android.util.TypedValue
+import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
@@ -62,11 +70,32 @@ class MainActivity : ComponentActivity() {
     private fun showStartupRecovery(error: Exception) {
         recoveryDialog?.dismiss()
         val app = application as MeloraApplication
-        recoveryDialog = AlertDialog.Builder(this)
-            .setTitle("上次恢复未完成")
-            .setMessage("恢复材料损坏或暂时无法读取，尚未载入应用数据。请勿清除应用数据。\n\n" +
-                "可释放存储空间后重试；也可保留恢复快照，使用当前数据继续（内容可能不完整）。\n\n" +
-                (error.message ?: error.javaClass.simpleName))
+        val builder = AlertDialog.Builder(this, R.style.Theme_Melora_RecoveryDialog)
+        val density = resources.displayMetrics.density
+        val secondary = TypedValue().also {
+            builder.context.theme.resolveAttribute(android.R.attr.textColorSecondary, it, true)
+        }.data
+        val message = SpannableStringBuilder(
+            "恢复记录损坏或无法读取，尚未载入应用数据。请勿清除应用数据。\n\n" +
+                "可释放存储空间后重试；或保留恢复快照，使用当前数据继续（内容可能不完整）。\n\n",
+        ).apply {
+            val detailStart = length
+            append("诊断信息\n").append(error.message ?: error.javaClass.simpleName)
+            setSpan(RelativeSizeSpan(0.85f), detailStart, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            setSpan(ForegroundColorSpan(secondary), detailStart, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        recoveryDialog = builder
+            .setCustomTitle(TextView(builder.context).apply {
+                text = "上次恢复未完成"
+                setTextColor(TypedValue().also {
+                    builder.context.theme.resolveAttribute(android.R.attr.textColorPrimary, it, true)
+                }.data)
+                textSize = 20f
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                val inset = (24 * density).toInt()
+                setPadding(inset, inset, inset, (8 * density).toInt())
+            })
+            .setMessage(message)
             .setCancelable(false)
             .setPositiveButton("重试恢复") { _, _ ->
                 if (!app.continueStartup()) showStartupRecovery(requireNotNull(app.restoreFailure))
@@ -80,7 +109,22 @@ class MainActivity : ComponentActivity() {
                 }
             }
             .setNegativeButton("退出") { _, _ -> finish() }
-            .show()
+            .show().apply {
+                findViewById<TextView>(android.R.id.message)?.apply {
+                    textSize = 15f
+                    setLineSpacing(3 * density, 1f)
+                    setTextIsSelectable(true)
+                }
+                getButton(AlertDialog.BUTTON_NEGATIVE).setTextColor(secondary)
+                val surface = TypedValue().also {
+                    context.theme.resolveAttribute(android.R.attr.colorBackgroundFloating, it, true)
+                }.data
+                window?.setBackgroundDrawable(GradientDrawable().apply {
+                    setColor(surface)
+                    cornerRadius = 24 * density
+                })
+                window?.decorView?.clipToOutline = true
+            }
     }
 
     override fun onDestroy() {
