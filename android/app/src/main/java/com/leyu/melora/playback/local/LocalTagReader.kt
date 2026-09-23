@@ -10,6 +10,8 @@ import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.nio.ByteBuffer
+import java.nio.file.Files
+import java.nio.file.attribute.BasicFileAttributes
 import java.util.LinkedHashMap
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -34,12 +36,19 @@ object LocalTagReader {
     private const val MAX_MEMORY_COVERS = 256
     private const val MAX_DISK_COVERS = 512
     private const val MAX_DISK_COVER_BYTES = 64L * 1024L * 1024L
+    private val UNSAFE_ID_REGEX = Regex("[^A-Za-z0-9_.-]")
     private val coverLock = ReentrantLock()
     private val coverCache = object : LinkedHashMap<String, String>(MAX_MEMORY_COVERS + 1, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean =
             size > MAX_MEMORY_COVERS
     }
     private var coverGeneration = 0L
+
+    private data class DiskCoverEntry(
+        val file: File,
+        val sizeBytes: Long,
+        val lastModified: Long,
+    )
 
     fun read(context: Context, uri: String): Tag? = runCatching {
         LocalMediaIoCoordinator.withRead(context, uri.toUri()) {
@@ -136,7 +145,7 @@ object LocalTagReader {
 
     private fun coverCacheKey(song: LocalSong): String = "${safeId(song.id)}-${song.modifiedAt}"
 
-    private fun safeId(value: String): String = value.replace(Regex("[^A-Za-z0-9_.-]"), "_")
+    private fun safeId(value: String): String = value.replace(UNSAFE_ID_REGEX, "_")
 
     fun clearCoverCache(context: Context) {
         val directory = coverDir(context)
@@ -174,8 +183,12 @@ object LocalTagReader {
             throw IOException("无法创建本地封面缓存目录：${dir.absolutePath}")
         }
         if (removePreviousVersions) {
-            dir.listFiles { file -> file.name.startsWith("${safeId(song.id)}-") && file.name != "$key.img" }
-                ?.forEach { it.delete() }
+            val prefix = "${safeId(song.id)}-"
+            dir.list { _, name -> name.startsWith(prefix) && name != "$key.img" }
+                ?.forEach { name ->
+                    val file = File(dir, name)
+                    if (file.delete()) coverCache.remove(name.removeSuffix(".img"))
+                }
         }
         val cached = File(dir, "$key.img")
         cached.writeBytes(bytes)
@@ -187,19 +200,29 @@ object LocalTagReader {
 
     private fun trimDiskCacheLocked(dir: File, keep: File) {
         // 只枚举封面缓存目录，不扫描本地音频索引或媒体库。
-        val files = dir.listFiles { file -> file.isFile && file.extension == "img" }
-            ?.sortedBy(File::lastModified)
-            ?: return
-        var totalBytes = files.sumOf(File::length)
-        var count = files.size
+        // 不传 NOFOLLOW_LINKS，保持与 File.isFile 一样默认跟随符号链接；单条属性读取失败只跳过该条目。
+        val entries = dir.listFiles { _, name -> name.endsWith(".img") }
+            ?.mapNotNull { file ->
+                try {
+                    val attributes = Files.readAttributes(file.toPath(), BasicFileAttributes::class.java)
+                    if (attributes.isRegularFile) DiskCoverEntry(file, attributes.size(), attributes.lastModifiedTime().toMillis()) else null
+                } catch (_: IOException) {
+                    null
+                }
+            }
+            .orEmpty()
+        var totalBytes = entries.sumOf { it.sizeBytes }
+        var count = entries.size
         if (count <= MAX_DISK_COVERS && totalBytes <= MAX_DISK_COVER_BYTES) return
-        for (file in files) {
+
+        // sortedBy 是稳定排序，相同 mtime 继续保持 listFiles 的原有顺序。
+        for (entry in entries.sortedBy { it.lastModified }) {
             if (count <= MAX_DISK_COVERS && totalBytes <= MAX_DISK_COVER_BYTES) break
+            val file = entry.file
             if (file == keep) continue
-            val size = file.length()
             if (file.delete()) {
                 count--
-                totalBytes -= size
+                totalBytes -= entry.sizeBytes
                 coverCache.remove(file.name.removeSuffix(".img"))
             }
         }

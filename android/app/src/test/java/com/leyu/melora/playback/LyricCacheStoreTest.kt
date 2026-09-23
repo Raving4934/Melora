@@ -95,6 +95,51 @@ class LyricCacheStoreTest {
         assertNotEquals(lyricCacheKey("a/b", ""), lyricCacheKey("a:b", ""))
     }
 
+    @Test fun cacheKeysKeepTheExistingUtf8DiskProtocol() {
+        assertEquals("ffe9aaeaa2a2d5048174df0b80599ef0197ec024c4b051bc9860cff58ef7f9f3", lyricCacheKey("a", ""))
+        assertEquals("755f1f909479dbd487680ffd95ebcffcb808e28cc87151a3e14035c7ab21eb6e", lyricCacheKey("a", "file-v1"))
+        assertEquals("42700023567e91bcab00cd61f1e32cbc41ebe552a23c6b88307be654cd8f974d", lyricCacheKey("歌曲/一", "file-v2"))
+    }
+
+    @Test fun diskTrimReadsAttributesOnceWithoutSeparateFileQueries() = runBlocking {
+        var now = 1_000L
+        val seed = LyricCacheStore(now = { now++ })
+        repeat(6) { index -> seed.load(root, "$index") { lyric("$index") } }
+        val stats = mutableMapOf<String, IntArray>()
+        val directory = object : File(root.path) {
+            override fun listFiles(): Array<File>? = super.listFiles()?.map { file ->
+                val counts = stats.getOrPut(file.name) { IntArray(4) }
+                object : File(file.path) {
+                    override fun toPath(): java.nio.file.Path { counts[0]++; return super.toPath() }
+                    override fun isFile(): Boolean { counts[1]++; return super.isFile() }
+                    override fun length(): Long { counts[2]++; return super.length() }
+                    override fun lastModified(): Long { counts[3]++; return super.lastModified() }
+                }
+            }?.toTypedArray()
+        }
+        LyricCacheStore(maxDiskFiles = 3, now = { now++ }).load(directory, "6") { lyric("6") }
+        assertEquals(7, stats.size)
+        stats.forEach { (name, counts) ->
+            assertEquals("metadata path read repeatedly: $name", 1, counts[0])
+            assertArrayEquals("redundant file queries: $name", intArrayOf(0, 0, 0), counts.copyOfRange(1, 4))
+        }
+        assertEquals(setOf("4", "5", "6").map { file(it).name }.toSet(), root.list()!!.toSet())
+    }
+
+    @Test fun danglingLinksAndDirectoriesDoNotAbortDiskTrimming() = runBlocking {
+        val directory = File(root, "keep-directory").apply { mkdirs() }
+        val link = File(root, "dangling.json").toPath()
+        Files.createSymbolicLink(link, File(root, "missing").toPath())
+        var now = 1_000L
+        val store = LyricCacheStore(maxDiskFiles = 1, now = { now++ })
+        store.load(root, "a") { lyric("a") }
+        store.load(root, "b") { lyric("b") }
+        assertFalse(file("a").exists())
+        assertTrue(file("b").isFile)
+        assertTrue(directory.isDirectory)
+        assertTrue(Files.isSymbolicLink(link))
+    }
+
     @Test fun foregroundAndPrefetchShareOneRequest() = runBlocking {
         val store = LyricCacheStore()
         val started = CompletableDeferred<Unit>()

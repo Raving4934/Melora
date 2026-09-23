@@ -5,6 +5,8 @@ import android.content.ContextWrapper
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
+import java.io.RandomAccessFile
+import java.nio.file.Files
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -68,6 +70,76 @@ class LocalTagReaderTest {
 
         val files = File(cacheRoot, LOCAL_COVER_CACHE_DIR).listFiles().orEmpty()
         assertTrue(files.size <= 512)
+    }
+
+    @Test
+    fun replacingCoverVersionRemovesStaleMemoryUri() {
+        val oldSong = testSong("versioned")
+        val newSong = oldSong.copy(modifiedAt = 2)
+        val unrelated = File(cacheRoot, "$LOCAL_COVER_CACHE_DIR/unrelated.img")
+
+        assertNotNull(LocalTagReader.cacheCover(context, oldSong, byteArrayOf(1)))
+        assertNotNull(coverCache()["versioned-1"])
+        unrelated.writeBytes(byteArrayOf(9))
+
+        assertNotNull(LocalTagReader.cacheCover(context, newSong, byteArrayOf(2)))
+
+        assertNull(coverCache()["versioned-1"])
+        assertNotNull(coverCache()["versioned-2"])
+        assertFalse(File(cacheRoot, "$LOCAL_COVER_CACHE_DIR/versioned-1.img").exists())
+        assertTrue(unrelated.exists())
+    }
+
+    @Test
+    fun diskCacheEvictsTheOldestCoverByModificationTime() {
+        val directory = File(cacheRoot, LOCAL_COVER_CACHE_DIR).apply { mkdirs() }
+        val baseTime = System.currentTimeMillis() - 3_600_000L
+        val oldest = File(directory, "oldest.img").apply {
+            writeBytes(byteArrayOf(1))
+            assertTrue(setLastModified(baseTime))
+        }
+        repeat(511) { index ->
+            File(directory, "newer-$index.img").apply {
+                writeBytes(byteArrayOf(1))
+                assertTrue(setLastModified(baseTime + (index + 1L) * 2_000L))
+            }
+        }
+
+        assertNotNull(LocalTagReader.cacheCover(context, testSong("mtime"), byteArrayOf(2)))
+
+        assertFalse(oldest.exists())
+        assertTrue(File(directory, "newer-510.img").exists())
+    }
+
+    @Test
+    fun diskCacheIsBoundedByByteSize() {
+        val directory = File(cacheRoot, LOCAL_COVER_CACHE_DIR).apply { mkdirs() }
+        val oversized = File(directory, "oversized.img")
+        RandomAccessFile(oversized, "rw").use { it.setLength(64L * 1024L * 1024L) }
+        assertTrue(oversized.setLastModified(System.currentTimeMillis() - 3_600_000L))
+
+        assertNotNull(LocalTagReader.cacheCover(context, testSong("bytes"), byteArrayOf(1)))
+
+        val files = directory.listFiles { file -> file.isFile && file.extension == "img" }.orEmpty()
+        assertTrue(files.sumOf(File::length) <= 64L * 1024L * 1024L)
+        assertFalse(oversized.exists())
+    }
+
+    @Test
+    fun diskCacheSkipsDirectoriesAndDanglingLinksWhenTrimming() {
+        val directory = File(cacheRoot, LOCAL_COVER_CACHE_DIR).apply { mkdirs() }
+        val blockedDirectory = File(directory, "blocked.img").apply { mkdirs() }
+        val danglingLink = File(directory, "dangling.img").toPath()
+        Files.createSymbolicLink(danglingLink, File(directory, "missing.img").toPath())
+        val oversized = File(directory, "oversized.img")
+        RandomAccessFile(oversized, "rw").use { it.setLength(64L * 1024L * 1024L) }
+        assertTrue(oversized.setLastModified(System.currentTimeMillis() - 3_600_000L))
+
+        assertNotNull(LocalTagReader.cacheCover(context, testSong("bad-entries"), byteArrayOf(1)))
+
+        assertFalse(oversized.exists())
+        assertTrue(blockedDirectory.isDirectory)
+        assertTrue(Files.isSymbolicLink(danglingLink))
     }
 
     @Test

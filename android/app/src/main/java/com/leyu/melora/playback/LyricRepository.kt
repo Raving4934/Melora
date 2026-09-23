@@ -14,6 +14,7 @@ import java.io.IOException
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.nio.file.attribute.BasicFileAttributes
 import java.security.MessageDigest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -91,6 +92,7 @@ internal class LyricCacheStore(
 ) {
     private data class Entry(val lyric: PlayerLyric, val savedAt: Long, val bytes: Long)
     private data class Result(val lyric: PlayerLyric?)
+    private data class DiskEntry(val file: File, val bytes: Long, val modified: Long, val obsolete: Boolean)
     private val lock = Any()
     private val entries = LinkedHashMap<String, Entry>(16, .75f, true)
     private var memoryBytes = 0L
@@ -171,7 +173,7 @@ internal class LyricCacheStore(
                 else decodePlayerLyric(obj)?.let { Entry(it, savedAt, text.length * 2L) }
             }
         } catch (_: Exception) { null }
-        if (entry == null) file.delete() else file.setLastModified(now())
+        if (entry == null) file.delete()
         return entry
     }
 
@@ -188,23 +190,31 @@ internal class LyricCacheStore(
             }
             target.toFile().setLastModified(now())
         } finally { temp.delete() }
-        val files = directory.listFiles()?.filter { it.isFile }?.sortedBy { it.lastModified() }.orEmpty()
-        var diskBytes = files.sumOf { it.length() }
+        // 一次读取类型、大小与修改时间；坏条目不阻断其余文件的容量回收。
+        val files = directory.listFiles()?.mapNotNull { file ->
+            try {
+                val stat = Files.readAttributes(file.toPath(), BasicFileAttributes::class.java)
+                if (stat.isRegularFile) DiskEntry(file, stat.size(), stat.lastModifiedTime().toMillis(), !CACHE_FILE.matches(file.name)) else null
+            } catch (_: IOException) { null }
+        }.orEmpty()
+        var diskBytes = files.sumOf { it.bytes }
         var count = files.size
-        for (file in files) {
-            // 旧命名缓存不再读取，首次维护时直接回收；不保留双套缓存协议。
-            val obsolete = !file.name.matches(Regex("[a-f0-9]{64}\\.json"))
-            if (!obsolete && count <= maxDiskFiles && diskBytes <= maxDiskBytes) continue
-            val size = file.length()
-            if (file.delete()) { count--; diskBytes -= size }
+        if (count <= maxDiskFiles && diskBytes <= maxDiskBytes && files.none { it.obsolete }) return
+        for (entry in files.sortedBy { it.modified }) {
+            // 旧命名缓存只回收，不保留双套协议；保持原有mtime淘汰次序。
+            if (!entry.obsolete && count <= maxDiskFiles && diskBytes <= maxDiskBytes) continue
+            if (entry.file.delete()) { count--; diskBytes -= entry.bytes }
         }
     }
 
-    private companion object { const val MAX_FILE_BYTES = 2L * 1024 * 1024 }
+    private companion object {
+        const val MAX_FILE_BYTES = 2L * 1024 * 1024
+        val CACHE_FILE = Regex("[a-f0-9]{64}\\.json")
+    }
 }
 
 internal fun lyricCacheKey(uid: String, version: String): String = MessageDigest.getInstance("SHA-256")
-    .digest("$uid\u0000$version".toByteArray()).joinToString("") { "%02x".format(it) }
+    .digest("$uid\u0000$version".toByteArray()).toHexString()
 
 /** 磁盘缓存编码集中在边界，避免业务模型携带旧字段兼容逻辑。 */
 internal fun encodePlayerLyric(lyric: PlayerLyric): JSONObject {
