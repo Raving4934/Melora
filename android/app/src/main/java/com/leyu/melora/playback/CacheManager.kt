@@ -98,8 +98,7 @@ object CacheManager {
     /** 歌词缓存：内存 + 磁盘（cacheDir/lyrics）。 */
     suspend fun clearLyrics(context: Context) = withContext(Dispatchers.IO) {
         invalidateCachedStats()
-        LyricRepository.clear()
-        runCatching { File(context.cacheDir, LYRIC_DIR).deleteRecursively() }
+        LyricRepository.clear(context)
     }
 
     suspend fun clearAll(context: Context) {

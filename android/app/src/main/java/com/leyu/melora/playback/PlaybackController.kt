@@ -486,17 +486,12 @@ object PlaybackController {
         }
 
         lyricJob?.cancel()
-        val cachedLyric = LyricRepository.cached(track.uid)
-        if (cachedLyric != null) {
-            _lyric.value = cachedLyric
-        } else {
-            _lyric.value = null
-            val context = appContext
-            if (context != null) {
-                lyricJob = scope.launch {
-                    val lyric = recoverableOrNull { LyricRepository.load(context, track) }
-                    if (_state.value.current?.uid == track.uid) _lyric.value = lyric
-                }
+        _lyric.value = null
+        appContext?.let { context ->
+            lyricJob = scope.launch {
+                // 同一入口验证本地文件版本，不能因UID命中旧内存而跳过物理标签更新。
+                val lyric = recoverableOrNull { LyricRepository.load(context, track) }
+                if (_state.value.current?.uid == track.uid) _lyric.value = lyric
             }
         }
 
