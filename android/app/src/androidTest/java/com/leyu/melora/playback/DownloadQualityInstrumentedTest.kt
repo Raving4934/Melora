@@ -16,8 +16,12 @@ import com.leyu.melora.playback.sdk.SourceResolver
 import java.io.File
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.collect
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Before
@@ -101,6 +105,88 @@ class DownloadQualityInstrumentedTest {
         buildList { while (cursor.moveToNext()) add(cursor.getString(0)) }
     }
     private fun bytes(uri: String) = context.contentResolver.openInputStream(Uri.parse(uri))!!.use { it.readBytes() }
+
+    private fun downloadGate(): DynamicDownloadGate =
+        Downloader.javaClass.getDeclaredField("slots").apply { isAccessible = true }.get(Downloader) as DynamicDownloadGate
+
+    private suspend fun awaitPersistedQueuedRecord() {
+        val file = File(context.filesDir, "downloads.json")
+        withTimeout(2_000) {
+            while (true) {
+                val persisted = if (file.isFile) {
+                    runCatching {
+                        val records = JSONArray(file.readText())
+                        (0 until records.length()).any { index ->
+                            records.optJSONObject(index)?.optString("id") == song.uid
+                        }
+                    }.getOrDefault(false)
+                } else {
+                    false
+                }
+                if (persisted) return@withTimeout
+                delay(10)
+            }
+        }
+    }
+
+    @Test fun ordinaryQueuedRecordIsPersistedBeforeWaitingForConcurrencySlot() = runBlocking<Unit> {
+        seed("128k", "fixture-128.mp3")
+        MeloraSettings.downloadQuality.value = "128k"
+        MeloraSettings.downloadConcurrentTasks.value = 1
+        val gate = downloadGate()
+        gate.acquire()
+        val task = async { Downloader.download(context, song) }
+        try {
+            awaitPersistedQueuedRecord()
+        } finally {
+            gate.release()
+            task.await().getOrThrow()
+        }
+    }
+
+    @Test fun conflictingUpgradeIsRejectedWithoutReplacingOrdinaryTask() = runBlocking<Unit> {
+        seed("128k", "fixture-128.mp3")
+        val local = localFixture("fixture-128.mp3")
+        MeloraSettings.downloadQuality.value = "128k"
+        MeloraSettings.downloadConcurrentTasks.value = 1
+        val gate = downloadGate()
+        gate.acquire()
+        val ordinary = async { Downloader.download(context, song) }
+        try {
+            awaitPersistedQueuedRecord()
+            MeloraSettings.downloadQuality.value = "flac24bit"
+            val conflict = Downloader.upgrade(context, song, local).await()
+
+            assertTrue(conflict.isFailure)
+            assertEquals("已有任务在进行，请先暂停后重试", conflict.exceptionOrNull()?.message)
+            assertEquals("已有任务在进行，请先暂停后重试", PlaybackController.state.value.message)
+            assertEquals(1, DownloadCenter.records.value.count { it.id == song.uid })
+            assertEquals(DownloadCenter.Status.Downloading, DownloadCenter.records.value.first { it.id == song.uid }.status)
+        } finally {
+            gate.release()
+            ordinary.await().getOrThrow()
+        }
+    }
+
+    @Test fun equivalentUpgradeRequestsShareOneInFlightTask() = runBlocking<Unit> {
+        val local = localFixture("fixture-128.mp3")
+        seed("flac24bit", "fixture-24.flac")
+        MeloraSettings.downloadQuality.value = "flac24bit"
+        MeloraSettings.downloadConcurrentTasks.value = 1
+        val gate = downloadGate()
+        gate.acquire()
+        var slotReleased = false
+        try {
+            val first = Downloader.upgrade(context, song, local)
+            val second = Downloader.upgrade(context, song, local)
+            assertSame(first, second)
+            gate.release()
+            slotReleased = true
+            first.await().getOrThrow()
+        } finally {
+            if (!slotReleased) gate.release()
+        }
+    }
 
     @Test fun mp3CanUpgradeToReal24bitWithoutDeletingOriginalAndRepeatedDownloadSkips() = runBlocking<Unit> {
         seed("128k", "fixture-128.mp3"); download("128k")

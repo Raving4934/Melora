@@ -34,6 +34,7 @@ import java.nio.file.StandardCopyOption
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
@@ -70,11 +71,14 @@ object Downloader {
     private data class ActiveDownload(
         val token: Long,
         val task: Deferred<Result<String>>,
+        val request: DownloadRequest,
         var recordStarted: Boolean,
         val previousRecord: DownloadCenter.Record?,
     )
     private val tasks = mutableMapOf<String, ActiveDownload>()
     private var nextTaskToken = 0L
+
+    private const val CONFLICT_MESSAGE = "已有任务在进行，请先暂停后重试"
 
     /** 与提交任务使用同一把锁，避免“一键清空”删除正在写入/尚待导出的临时音频。 */
     internal fun clearTemporaryFiles(directory: File): Boolean = synchronized(taskLock) {
@@ -90,11 +94,17 @@ object Downloader {
 
     /** 升级检查与下载共用任务去重/并发/缓存，检查期间不创建下载记录。 */
     fun upgrade(context: Context, song: OnlineSong, local: LocalSong): Deferred<Result<String>> =
-        submit(context, song, local)
+        submit(context, song, local) {
+            PlaybackController.postMessage(context.applicationContext, CONFLICT_MESSAGE)
+        }
 
     /** 继续/重试保留原任务ID与升级下限，不因本地歌曲已匹配到在线ID而另建记录。 */
     fun retry(context: Context, record: DownloadCenter.Record): Deferred<Result<String>> =
-        submit(context, requireNotNull(record.song), record.upgradeFrom, record.id)
+        submit(context, requireNotNull(record.song), record.upgradeFrom, record.id,
+            onConflict = if (record.upgradeFrom != null) {
+                { PlaybackController.postMessage(context.applicationContext, CONFLICT_MESSAGE) }
+            } else null,
+        )
 
     /** 取消指定歌曲的唯一在途任务；终态由调用方明确写入，旧任务不得覆盖新状态。 */
     private fun cancel(uid: String): Boolean {
@@ -143,34 +153,55 @@ object Downloader {
      */
     fun enqueue(context: Context, songs: List<OnlineSong>): Int {
         val uniqueSongs = distinctDownloadSongs(songs)
-        uniqueSongs.forEach { submit(context, it) }
+        uniqueSongs.forEach {
+            submit(context, it) {
+                PlaybackController.postMessage(context.applicationContext, CONFLICT_MESSAGE)
+            }
+        }
         return uniqueSongs.size
     }
 
-    private fun submit(context: Context, song: OnlineSong, upgradeFrom: LocalSong? = null, taskId: String = song.uid): Deferred<Result<String>> {
+    private fun submit(
+        context: Context,
+        song: OnlineSong,
+        upgradeFrom: LocalSong? = null,
+        taskId: String = song.uid,
+        onConflict: (() -> Unit)? = null,
+    ): Deferred<Result<String>> {
         val appContext = context.applicationContext
         val request = DownloadRequest(MeloraSettings.downloadQuality.value, MeloraSettings.downloadPath.value,
             MeloraSettings.downloadFileNameFormat.value, MeloraSettings.downloadSkipSameName.value,
             MeloraSettings.downloadAutoSwitchSource.value, MeloraSettings.downloadEmbedCover.value, MeloraSettings.downloadEmbedLyric.value, upgradeFrom)
         var created = false
+        var conflicted = false
         val task = synchronized(taskLock) {
-            tasks[taskId]?.task?.takeUnless { it.isCompleted } ?: run {
-                val token = ++nextTaskToken
-                val deferred = taskScope.async(start = CoroutineStart.LAZY) {
-                    performDownload(appContext, song, request, token, taskId)
+            val active = tasks[taskId]?.takeUnless { it.task.isCompleted }
+            when {
+                active == null -> {
+                    val token = ++nextTaskToken
+                    val deferred = taskScope.async(start = CoroutineStart.LAZY) {
+                        performDownload(appContext, song, request, token, taskId)
+                    }
+                    tasks[taskId] = ActiveDownload(token, deferred, request, upgradeFrom == null,
+                        DownloadCenter.records.value.firstOrNull { it.id == taskId })
+                    deferred.invokeOnCompletion {
+                        synchronized(taskLock) {
+                            if (tasks[taskId]?.token == token) tasks.remove(taskId)
+                        }
+                    }
+                    created = true
+                    deferred
                 }
-                tasks[taskId] = ActiveDownload(token, deferred, upgradeFrom == null,
-                    DownloadCenter.records.value.firstOrNull { it.id == taskId })
-                if (upgradeFrom == null) DownloadCenter.queued(taskId, song)
-                deferred.invokeOnCompletion {
-                    synchronized(taskLock) {
-                        if (tasks[taskId]?.token == token) tasks.remove(taskId)
+                active.request == request -> active.task
+                else -> {
+                    conflicted = true
+                    CompletableDeferred<Result<String>>().apply {
+                        complete(Result.failure(IllegalStateException(CONFLICT_MESSAGE)))
                     }
                 }
-                created = true
-                deferred
             }
         }
+        if (conflicted) onConflict?.invoke()
         if (created) {
             if (upgradeFrom != null) PlaybackController.postMessage(appContext, "正在检查更高音质…")
             task.start()
@@ -185,6 +216,12 @@ object Downloader {
         token: Long,
         taskId: String,
     ): Result<String> = runCatching {
+        if (request.upgradeFrom == null) {
+            val queued = updateCurrent(taskId, token) {
+                DownloadCenter.queued(taskId, original)
+            }
+            if (!queued) throw CancellationException("下载已取消")
+        }
         val localSpec = request.upgradeFrom?.let { local ->
             val spec = local.audioSpecification.takeIf { it.verifiedQuality != null }
                 ?: inspectDownloadAudio(context, local.uri.toUri())?.spec

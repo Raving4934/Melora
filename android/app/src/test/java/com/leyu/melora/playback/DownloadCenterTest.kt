@@ -67,6 +67,91 @@ class DownloadCenterTest {
     }
 
     @Test
+    fun activeAndPausedRecordsAreNotEvictedByFinishedHistoryLimit() {
+        val activeId = "retention-active"
+        val pausedId = "retention-paused"
+        val finishedIds = (0..200).map { "retention-finished-$it" }
+        val ids = listOf(activeId, pausedId) + finishedIds
+        fun song(id: String) = OnlineSong(songJson(null).put("songmid", id))
+
+        try {
+            DownloadCenter.start(activeId, song(activeId), "等待下载…")
+            DownloadCenter.start(pausedId, song(pausedId), "等待下载…")
+            DownloadCenter.paused(pausedId, "已暂停")
+            finishedIds.forEach { id ->
+                DownloadCenter.start(id, song(id), "下载")
+                DownloadCenter.done(id, "完成")
+            }
+
+            val records = DownloadCenter.records.value
+            assertEquals(DownloadCenter.Status.Downloading, records.first { it.id == activeId }.status)
+            assertEquals(DownloadCenter.Status.Paused, records.first { it.id == pausedId }.status)
+            assertEquals(
+                200,
+                records.count { it.status == DownloadCenter.Status.Done || it.status == DownloadCenter.Status.Failed },
+            )
+            assertFalse(records.any { it.id == finishedIds.first() })
+            assertTrue(records.any { it.id == finishedIds.last() })
+        } finally {
+            ids.forEach(DownloadCenter::remove)
+        }
+    }
+
+    @Test
+    fun largeActiveBatchWithPausedEntriesSurvivesFinishedHistoryAndCanResume() {
+        val activeIds = (0 until 205).map { "retention-active-batch-$it" }
+        val pausedIds = activeIds.filterIndexed { index, _ -> index % 3 == 0 }
+        val finishedIds = (0..200).map { "retention-finished-batch-$it" }
+        val ids = activeIds + finishedIds
+        fun song(id: String) = OnlineSong(songJson(null).put("songmid", id))
+
+        try {
+            activeIds.forEach { id -> DownloadCenter.start(id, song(id), "等待下载…") }
+            pausedIds.forEach { id -> DownloadCenter.paused(id, "已暂停") }
+            finishedIds.forEach { id ->
+                DownloadCenter.start(id, song(id), "下载")
+                DownloadCenter.done(id, "完成")
+            }
+
+            val retained = DownloadCenter.records.value
+            assertEquals(activeIds.asReversed(), retained.filter { it.id in activeIds }.map { it.id })
+            assertEquals(205, retained.count { it.id in activeIds })
+            assertEquals(205 - pausedIds.size, retained.count { it.id in activeIds && it.status == DownloadCenter.Status.Downloading })
+            assertEquals(pausedIds.size, retained.count { it.id in pausedIds && it.status == DownloadCenter.Status.Paused })
+            assertEquals(
+                200,
+                retained.count { it.status == DownloadCenter.Status.Done || it.status == DownloadCenter.Status.Failed },
+            )
+
+            val restored = retained.filter { it.id in activeIds }.map(DownloadCenter::restoreInterrupted)
+            assertEquals(205, restored.size)
+            assertTrue(restored.all { it.status == DownloadCenter.Status.Paused })
+
+            val resumed = pausedIds.first()
+            DownloadCenter.start(resumed, song(resumed), "继续下载")
+            assertEquals(DownloadCenter.Status.Downloading, DownloadCenter.records.value.first { it.id == resumed }.status)
+            assertEquals(205, DownloadCenter.records.value.count { it.id in activeIds })
+        } finally {
+            ids.forEach(DownloadCenter::remove)
+        }
+    }
+
+    @Test
+    fun interruptedDownloadingRecordBecomesPausedAndCanBeRetried() {
+        val record = record(songJson(null)).copy(
+            status = DownloadCenter.Status.Downloading,
+            percent = 62,
+            detail = "下载中",
+        )
+
+        val restored = DownloadCenter.restoreInterrupted(record)
+
+        assertEquals(DownloadCenter.Status.Paused, restored.status)
+        assertEquals(0, restored.percent)
+        assertEquals("下载被中断", restored.detail)
+    }
+
+    @Test
     fun migratesLegacyTopLevelArtworkIntoSongSnapshot() {
         val record = DownloadCenter.recordFromJson(
             recordJson(songJson(img = null)).put("img", "https://example.com/legacy.jpg"),

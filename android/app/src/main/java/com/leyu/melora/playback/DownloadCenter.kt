@@ -34,7 +34,7 @@ object DownloadCenter {
         val img: String? get() = song?.img
     }
 
-    private const val MAX_RECORDS = 200
+    private const val MAX_FINISHED_RECORDS = 200
     private lateinit var file: File
     private val lock = Any()
     private val _records = MutableStateFlow<List<Record>>(emptyList())
@@ -45,14 +45,9 @@ object DownloadCenter {
         file = File(context.applicationContext.filesDir, "downloads.json")
         synchronized(lock) {
             val loaded = read()
-            // 上次进程被杀时仍在下载的条目，恢复为“已中断”；已保存资源字段不受任务状态影响。
-            val restored = loaded.map { record ->
-                if (record.status == Status.Downloading) {
-                    record.copy(status = Status.Failed, percent = 0, detail = "下载被中断")
-                } else {
-                    record
-                }
-            }
+            // 上次进程被杀时仍在下载的条目，恢复为“已中断”；暂停状态可直接继续。
+            // 进行中/暂停记录不计入历史上限，避免重启时被终态历史挤掉。
+            val restored = retainActiveAndRecentFinished(loaded.map(::restoreInterrupted))
             _records.value = restored
             if (restored != loaded) {
                 runCatching { writeTextAtomically(file, toJson().toString()) }
@@ -66,8 +61,8 @@ object DownloadCenter {
     fun start(id: String, song: OnlineSong, detail: String, upgradeFrom: LocalSong? = null) =
         begin(id, song, detail, persist = true, upgradeFrom = upgradeFrom)
 
-    /** 先同步展示排队状态，但不在调用线程写磁盘；工作协程真正启动后再持久化。 */
-    fun queued(id: String, song: OnlineSong, detail: String = "等待下载…") = begin(id, song, detail, persist = false)
+    /** 由下载工作协程调用：先持久化排队状态，再等待并发许可。 */
+    fun queued(id: String, song: OnlineSong, detail: String = "等待下载…") = begin(id, song, detail, persist = true)
 
     private fun begin(id: String, song: OnlineSong, detail: String, persist: Boolean, upgradeFrom: LocalSong? = null) = update(persist = persist) { list ->
         val previous = list.firstOrNull { it.id == id }
@@ -215,9 +210,16 @@ object DownloadCenter {
         list.filter { it.status == Status.Downloading || it.status == Status.Paused }
     }
 
+    internal fun restoreInterrupted(record: Record): Record =
+        if (record.status == Status.Downloading) {
+            record.copy(status = Status.Paused, percent = 0, detail = "下载被中断")
+        } else {
+            record
+        }
+
     private fun update(persist: Boolean, change: (List<Record>) -> List<Record>) = synchronized(lock) {
         val current = _records.value
-        val next = change(current).take(MAX_RECORDS)
+        val next = retainActiveAndRecentFinished(change(current))
         if (next == current) return@synchronized
         _records.value = next
         if (persist && ::file.isInitialized) {
@@ -233,6 +235,17 @@ object DownloadCenter {
                 array.optJSONObject(index)?.let(::recordFromJson)
             }
         }.getOrDefault(emptyList())
+    }
+
+    private fun retainActiveAndRecentFinished(records: List<Record>): List<Record> {
+        var finished = 0
+        return records.filter { record ->
+            if (record.status == Status.Downloading || record.status == Status.Paused) {
+                true
+            } else {
+                finished++ < MAX_FINISHED_RECORDS
+            }
+        }
     }
 
     private fun toJson(): JSONArray = JSONArray().apply {
