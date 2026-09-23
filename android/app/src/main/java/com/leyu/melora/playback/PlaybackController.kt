@@ -138,7 +138,6 @@ object PlaybackController {
     private var artworkJob: Job? = null
     private var artworkUid: String? = null
     private val refreshAttempted = mutableSetOf<String>()
-    private var lastTransitionIndex = -1
     // 最近一次已加载详情/歌词的曲目，publish 时据此检测曲目变化
     private var detailUid: String? = null
     private var consecutiveErrors = 0
@@ -218,6 +217,8 @@ object PlaybackController {
             changed = { saveQueue(force = true); publish() },
             reportError = { _state.value = _state.value.copy(message = it) },
         )
+        // 以当前控制器为边界维护上一首身份，避免旧 MediaController 的索引泄漏到新控制器。
+        var previousMediaId = player.currentMediaItem?.mediaId
         player.addListener(
             object : Player.Listener {
                 override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -227,18 +228,17 @@ object PlaybackController {
                     if (urlPrefetchUid != mediaItem?.mediaId) urlPrefetchJob?.cancel()
                     refreshAttempted.clear()
                     confirmedAudio = null
+                    val currentMediaId = mediaItem?.mediaId
                     if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO &&
-                        MeloraSettings.autoClearPlayed.value
+                        MeloraSettings.autoClearPlayed.value &&
+                        previousMediaId != null && previousMediaId != currentMediaId
                     ) {
-                        val active = controller
-                        val previous = lastTransitionIndex
-                        if (active != null && previous in 0 until active.mediaItemCount &&
-                            active.currentMediaItemIndex > previous
-                        ) {
-                            active.removeMediaItem(previous)
+                        val previousIndex = (0 until player.mediaItemCount).firstOrNull { index ->
+                            player.getMediaItemAt(index).mediaId == previousMediaId
                         }
+                        if (previousIndex != null) player.removeMediaItem(previousIndex)
                     }
-                    lastTransitionIndex = controller?.currentMediaItemIndex ?: -1
+                    previousMediaId = currentMediaId
                     publish()
                     saveQueue()
                 }
@@ -260,6 +260,7 @@ object PlaybackController {
                     updateRecentPlayback(player)
                     if (player.playbackState == Player.STATE_READY) consecutiveErrors = 0
                     val timelineChanged = events.contains(Player.EVENT_TIMELINE_CHANGED)
+                    if (timelineChanged) previousMediaId = player.currentMediaItem?.mediaId
                     if (timelineChanged || events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED)) {
                         // 删除最后一首/外部清空也同步落盘，不能等下一次点歌时复活旧队列。
                         saveQueue(force = timelineChanged && player.mediaItemCount == 0)

@@ -164,6 +164,99 @@ class PlaybackQueueAppendInstrumentedTest {
         }
     }
 
+    @Test fun autoClearRemovesPreviousTrackByIdentityAfterRemovingEarlierQueueItem() =
+        withPlayer(listen = true) { player, controller ->
+            val previousAutoClear = main {
+                MeloraSettings.autoClearPlayed.value.also { MeloraSettings.autoClearPlayed.value = true }
+            }
+            try {
+                val audioUri = main { player.getMediaItemAt(0).localConfiguration!!.uri }
+                main {
+                    TrackRegistry.register(track("c"))
+                    controller.addMediaItem(
+                        MediaItem.Builder().setMediaId("c").setUri(audioUri).build(),
+                    )
+                }
+                await { uids(player) == listOf("a", "b", "c") }
+
+                // 先手动切到 B，保留前置 A；随后删除 A，使 B 的下标从 1 变为 0。
+                main { PlaybackController.jumpTo(1) }
+                await { player.currentMediaItem?.mediaId == "b" && player.playbackState == Player.STATE_READY }
+                main { controller.pause() }
+                await { !player.playWhenReady }
+                main { PlaybackController.removeFromQueue(0) }
+                await { uids(player) == listOf("b", "c") && player.currentMediaItem?.mediaId == "b" }
+
+                // 静音 WAV 为 60 秒，跳到尾部触发真实 AUTO 切歌；B 必须按 UID 被移除。
+                main {
+                    controller.seekTo(59_000L)
+                    controller.play()
+                }
+                await {
+                    player.currentMediaItem?.mediaId == "c" &&
+                        uids(player) == listOf("c")
+                }
+            } finally {
+                main { MeloraSettings.autoClearPlayed.value = previousAutoClear }
+            }
+        }
+
+    @Test fun autoClearDoesNotRemoveSameTrackOnRepeatOne() =
+        withPlayer(listen = true) { player, controller ->
+            val previousAutoClear = main {
+                MeloraSettings.autoClearPlayed.value.also { MeloraSettings.autoClearPlayed.value = true }
+            }
+            try {
+                main {
+                    controller.repeatMode = Player.REPEAT_MODE_ONE
+                    controller.seekTo(59_000L)
+                    controller.play()
+                }
+                await {
+                    player.currentMediaItem?.mediaId == "a" &&
+                        player.currentPosition < 2_000L &&
+                        player.playbackState == Player.STATE_READY
+                }
+                main {
+                    assertEquals(listOf("a", "b"), uids(player))
+                    assertEquals("a", controller.currentMediaItem?.mediaId)
+                }
+            } finally {
+                main { MeloraSettings.autoClearPlayed.value = previousAutoClear }
+            }
+        }
+
+    @Test fun autoClearRemovesLastTrackWhenRepeatAllWrapsToFirst() =
+        withPlayer(listen = true) { player, controller ->
+            val previousAutoClear = main {
+                MeloraSettings.autoClearPlayed.value.also { MeloraSettings.autoClearPlayed.value = true }
+            }
+            try {
+                // 手动切到末项 B，避免前置 A 的清理逻辑参与本场景。
+                main { PlaybackController.jumpTo(1) }
+                await { player.currentMediaItem?.mediaId == "b" && player.playbackState == Player.STATE_READY }
+                main { controller.pause() }
+                await { !player.playWhenReady }
+
+                main {
+                    controller.repeatMode = Player.REPEAT_MODE_ALL
+                    controller.seekTo(59_000L)
+                    controller.play()
+                }
+                await {
+                    player.currentMediaItem?.mediaId == "a" &&
+                        player.currentPosition < 2_000L &&
+                        uids(player) == listOf("a")
+                }
+                main {
+                    assertEquals(listOf("a"), uids(player))
+                    assertEquals("a", controller.currentMediaItem?.mediaId)
+                }
+            } finally {
+                main { MeloraSettings.autoClearPlayed.value = previousAutoClear }
+            }
+        }
+
     private fun withPlayer(empty: Boolean = false, listen: Boolean = false, test: (ExoPlayer, MediaController) -> Unit) {
         val audio = silentWav()
         val player = main { ExoPlayer.Builder(context).build().apply { volume = 0f } }
