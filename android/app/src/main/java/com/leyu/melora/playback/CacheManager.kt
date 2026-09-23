@@ -4,6 +4,8 @@ import android.content.Context
 import coil3.SingletonImageLoader
 import com.leyu.melora.playback.local.LOCAL_COVER_CACHE_DIR
 import com.leyu.melora.playback.local.LocalTagReader
+import com.leyu.melora.playback.sdk.OnlineCache
+import com.leyu.melora.playback.sdk.SNAPSHOT_DIRECTORY
 import com.leyu.melora.playback.sdk.SourceResolver
 import java.io.File
 import java.util.Locale
@@ -107,11 +109,12 @@ object CacheManager {
         clearAudio(context)
         clearLyrics(context)
         withContext(Dispatchers.IO) {
+            OnlineCache.clearDisk(context)
             SourceResolver.clearCache()
             Downloader.clearTemporaryFiles(File(context.cacheDir, Downloader.TEMP_DIRECTORY))
             // 托管目录只能交给自己的清理入口，不能再次递归删除缓存索引或下载中间文件。
             val managedDirectories = setOf(
-                IMAGE_DIR, LOCAL_COVER_CACHE_DIR, AUDIO_DIR, LYRIC_DIR, Downloader.TEMP_DIRECTORY,
+                IMAGE_DIR, LOCAL_COVER_CACHE_DIR, AUDIO_DIR, LYRIC_DIR, Downloader.TEMP_DIRECTORY, SNAPSHOT_DIRECTORY,
             )
             context.cacheDir.listFiles()
                 ?.filterNot { it.name in managedDirectories }

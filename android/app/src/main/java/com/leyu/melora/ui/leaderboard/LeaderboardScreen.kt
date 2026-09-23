@@ -200,6 +200,12 @@ fun LeaderboardScreen(
     FastScrollToTopEffect(scrollToTopRequest, listState)
 
     LaunchedEffect(platform.id, retryKey) {
+        if (retryKey == 0 && boards.isEmpty()) {
+            OnlineCache.hydrateBoardList(context, boardsKey)?.let {
+                boards = it
+                loading = false
+            }
+        }
         val fresh = OnlineCache.get<List<BoardItem>>(boardsKey, cacheTtl)
         if (fresh != null && retryKey == 0) {
             boards = fresh
@@ -210,10 +216,26 @@ fun LeaderboardScreen(
         val hasContent = boards.isNotEmpty()
         if (!hasContent) loading = true
         error = null
+        val requestToken = requireNotNull(OnlineCache.capturePageSnapshot(boardsKey))
         runCatchingCancellable { OnlineRepository.boards(context, platform.id, background = hasContent) }
             .onSuccess {
+                val writtenAtMs = if (it.isNotEmpty()) {
+                    OnlineCache.putPageIfCurrent(requestToken, boardsKey, it)
+                } else {
+                    if (OnlineCache.isPageSnapshotCurrent(requestToken, boardsKey)) 0L else null
+                }
+                if (writtenAtMs == null) return@onSuccess
                 boards = it
-                if (it.isNotEmpty()) OnlineCache.put(boardsKey, it)
+                loading = false
+                if (writtenAtMs > 0L) {
+                    OnlineCache.persistBoardList(
+                        context,
+                        boardsKey,
+                        it,
+                        requestToken,
+                        writtenAtMs,
+                    )
+                }
             }
             .onFailure { if (boards.isEmpty()) error = it.message ?: "榜单加载失败" }
         loading = false
@@ -243,10 +265,25 @@ fun LeaderboardScreen(
                     if (!refreshing) {
                         refreshing = true
                         scope.launch {
+                            val requestToken = requireNotNull(OnlineCache.capturePageSnapshot(boardsKey))
                             runCatchingCancellable { OnlineRepository.boards(context, platform.id) }
                                 .onSuccess {
+                                    val writtenAtMs = if (it.isNotEmpty()) {
+                                        OnlineCache.putPageIfCurrent(requestToken, boardsKey, it)
+                                    } else {
+                                        if (OnlineCache.isPageSnapshotCurrent(requestToken, boardsKey)) 0L else null
+                                    }
+                                    if (writtenAtMs == null) return@onSuccess
                                     boards = it
-                                    if (it.isNotEmpty()) OnlineCache.put(boardsKey, it)
+                                    if (writtenAtMs > 0L) {
+                                        OnlineCache.persistBoardList(
+                                            context,
+                                            boardsKey,
+                                            it,
+                                            requestToken,
+                                            writtenAtMs,
+                                        )
+                                    }
                                     error = null
                                 }
                                 .onFailure { PlaybackController.postMessage(context, it.message ?: "榜单同步失败") }

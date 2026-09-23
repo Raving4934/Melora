@@ -63,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlaybackController
+import com.leyu.melora.playback.sdk.CachedPlaylistPage
 import com.leyu.melora.playback.sdk.OnlineCache
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.sdk.OnlinePlaylist
@@ -132,35 +133,60 @@ fun PlaylistsScreen(
     FastScrollToTopEffect(scrollToTopRequest, listState)
     var refreshing by remember(pageKey) { mutableStateOf(false) }
     var loadingMore by remember(pageKey) { mutableStateOf(false) }
-    // 秒开优先：切平台/分类先拿已有缓存渲染，过期由后台静默刷新，不再整页闪骨架
-    var playlists by remember(pageKey) {
-        mutableStateOf(OnlineCache.peek<List<OnlinePlaylist>>(pageKey).orEmpty())
-    }
-    var page by remember(pageKey) { mutableIntStateOf(1) }
-    var hasMore by remember(pageKey) { mutableStateOf(playlists.size >= 30) }
+    // 秒开优先：内存页先渲染；冷启动按当前页懒读磁盘，过期快照展示后后台静默刷新。
+    val initialPage = remember(pageKey) { OnlineCache.peek<CachedPlaylistPage>(pageKey) }
+    var playlists by remember(pageKey) { mutableStateOf(initialPage?.list.orEmpty()) }
+    var page by remember(pageKey) { mutableIntStateOf(initialPage?.page ?: 1) }
+    var hasMore by remember(pageKey) { mutableStateOf(initialPage?.hasMore ?: false) }
     var loading by remember(pageKey) { mutableStateOf(playlists.isEmpty()) }
     var error by remember(pageKey) { mutableStateOf<String?>(null) }
     var retryKey by remember(pageKey) { mutableIntStateOf(0) }
 
+    fun showPage(snapshot: CachedPlaylistPage) {
+        playlists = snapshot.list
+        page = snapshot.page
+        hasMore = snapshot.hasMore
+        loading = false
+    }
+
     LaunchedEffect(pageKey, retryKey) {
-        val fresh = OnlineCache.get<List<OnlinePlaylist>>(pageKey, PAGE_CACHE_TTL)
+        if (retryKey == 0 && playlists.isEmpty()) {
+            OnlineCache.hydratePlaylistFirstPage(context, pageKey)?.let(::showPage)
+        }
+        val fresh = OnlineCache.get<CachedPlaylistPage>(pageKey, PAGE_CACHE_TTL)
         if (fresh != null && retryKey == 0) {
-            playlists = fresh
-            page = 1
-            hasMore = fresh.size >= 30
-            loading = false
+            showPage(fresh)
             error = null
             return@LaunchedEffect
         }
         val hasContent = playlists.isNotEmpty()
         if (!hasContent) loading = true
         error = null
+        val requestToken = requireNotNull(OnlineCache.capturePageSnapshot(pageKey))
         runCatchingCancellable { OnlineRepository.playlists(context, selectedPlatform.id, sortId, selectedTagId, 1) }
             .onSuccess {
-                playlists = it.list
-                page = 1
-                hasMore = it.list.size >= 30
-                if (it.list.isNotEmpty()) OnlineCache.put(pageKey, it.list)
+                val firstPage = CachedPlaylistPage(
+                    list = it.list,
+                    page = 1,
+                    hasMore = it.list.size >= 30,
+                    total = it.total,
+                )
+                val writtenAtMs = if (it.list.isNotEmpty()) {
+                    OnlineCache.putPageIfCurrent(requestToken, pageKey, firstPage)
+                } else {
+                    if (OnlineCache.isPageSnapshotCurrent(requestToken, pageKey)) 0L else null
+                }
+                if (writtenAtMs == null) return@onSuccess
+                showPage(firstPage)
+                if (writtenAtMs > 0L) {
+                    OnlineCache.persistPlaylistFirstPage(
+                        context,
+                        pageKey,
+                        firstPage,
+                        requestToken,
+                        writtenAtMs,
+                    )
+                }
             }
             .onFailure { if (playlists.isEmpty()) error = it.message ?: "歌单加载失败" }
         loading = false
@@ -169,13 +195,24 @@ fun PlaylistsScreen(
     fun loadMore() {
         if (loadingMore || !hasMore) return
         loadingMore = true
+        val nextPage = page + 1
         scope.launch {
-            runCatchingCancellable { OnlineRepository.playlists(context, selectedPlatform.id, sortId, selectedTagId, page + 1) }
+            val requestToken = requireNotNull(OnlineCache.capturePageSnapshot(pageKey))
+            runCatchingCancellable {
+                OnlineRepository.playlists(context, selectedPlatform.id, sortId, selectedTagId, nextPage)
+            }
                 .onSuccess {
-                    playlists = (playlists + it.list).distinctBy { item -> "${item.source}_${item.id}" }
-                    page += 1
-                    hasMore = it.list.size >= 30
-                    OnlineCache.put(pageKey, playlists)
+                    val merged = (playlists + it.list).distinctBy { item -> "${item.source}_${item.id}" }
+                    val nextSnapshot = CachedPlaylistPage(
+                        list = merged,
+                        page = nextPage,
+                        hasMore = it.list.size >= 30,
+                        total = it.total.takeIf { total -> total > 0 } ?: 0,
+                    )
+                    if (!OnlineCache.isPageSnapshotCurrent(requestToken, pageKey)) return@onSuccess
+                    OnlineCache.putPageIfCurrent(requestToken, pageKey, nextSnapshot) ?: return@onSuccess
+                    showPage(nextSnapshot)
+                    // 多页聚合只留内存；磁盘入口只接受明确的 page=1 快照。
                 }
             loadingMore = false
         }
@@ -204,12 +241,31 @@ fun PlaylistsScreen(
             if (!refreshing) {
                 refreshing = true
                 scope.launch {
+                    val requestToken = requireNotNull(OnlineCache.capturePageSnapshot(pageKey))
                     runCatchingCancellable { OnlineRepository.playlists(context, selectedPlatform.id, sortId, selectedTagId, 1) }
                         .onSuccess {
-                            playlists = it.list
-                            page = 1
-                            hasMore = it.list.size >= 30
-                            if (it.list.isNotEmpty()) OnlineCache.put(pageKey, it.list)
+                            val firstPage = CachedPlaylistPage(
+                                list = it.list,
+                                page = 1,
+                                hasMore = it.list.size >= 30,
+                                total = it.total,
+                            )
+                            val writtenAtMs = if (it.list.isNotEmpty()) {
+                                OnlineCache.putPageIfCurrent(requestToken, pageKey, firstPage)
+                            } else {
+                                if (OnlineCache.isPageSnapshotCurrent(requestToken, pageKey)) 0L else null
+                            }
+                            if (writtenAtMs == null) return@onSuccess
+                            showPage(firstPage)
+                            if (writtenAtMs > 0L) {
+                                OnlineCache.persistPlaylistFirstPage(
+                                    context,
+                                    pageKey,
+                                    firstPage,
+                                    requestToken,
+                                    writtenAtMs,
+                                )
+                            }
                             error = null
                         }
                         .onFailure { PlaybackController.postMessage(context, it.message ?: "歌单同步失败") }

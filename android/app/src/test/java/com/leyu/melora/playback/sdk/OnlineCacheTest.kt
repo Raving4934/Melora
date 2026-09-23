@@ -1,5 +1,9 @@
 package com.leyu.melora.playback.sdk
 
+import android.content.Context
+import android.content.ContextWrapper
+import java.io.File
+import java.nio.file.Files
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
@@ -11,8 +15,20 @@ import org.junit.Before
 import org.junit.Test
 
 class OnlineCacheTest {
-    @Before fun reset() = OnlineCache.clear()
-    @After fun cleanup() = OnlineCache.clear()
+    private lateinit var snapshotRoot: File
+    private lateinit var snapshotContext: Context
+
+    @Before fun reset() {
+        OnlineCache.clear()
+        snapshotRoot = Files.createTempDirectory("melora-online-cache-").toFile()
+        snapshotContext = SnapshotContext(snapshotRoot)
+    }
+
+    @After fun cleanup() {
+        OnlineCache.clear()
+        runBlocking { OnlineCache.clearDisk(snapshotContext) }
+        snapshotRoot.deleteRecursively()
+    }
 
     @Test fun ttlMissRetainsSnapshotForImmediatePlayback() {
         val queue = listOf("old")
@@ -80,6 +96,136 @@ class OnlineCacheTest {
         assertEquals(2, restoredBook.page)
         assertEquals(1, restoredBook.total)
         assertFalse(restoredBook.hasMore)
+    }
+
+    @Test fun boardListDiskSnapshotRestoresWithoutRefreshingItsSavedAt() = runBlocking {
+        val key = "boards.kw.disk"
+        val boards = listOf(BoardItem("1", "热歌榜", "bang-1", "https://img/1"))
+        val savedAtMs = System.currentTimeMillis() - OnlineCache.CATALOG_TTL_MS * 2
+
+        assertTrue(
+            OnlineCache.persistBoardList(
+                snapshotContext,
+                key,
+                boards,
+                snapshotToken(key),
+                savedAtMs,
+            ),
+        )
+        OnlineCache.clear(key)
+
+        assertEquals(boards, OnlineCache.hydrateBoardList(snapshotContext, key))
+        assertEquals(boards, OnlineCache.peek<List<BoardItem>>(key))
+        assertNull(OnlineCache.get<List<BoardItem>>(key, OnlineCache.CATALOG_TTL_MS))
+    }
+
+    @Test fun playlistDiskSnapshotRestoresOnlyFirstPageMetadata() = runBlocking {
+        val key = "playlists.kw.hot.all"
+        val firstPage = CachedPlaylistPage(
+            list = listOf(playlist("p1"), playlist("p2")),
+            page = 1,
+            hasMore = true,
+            total = 60,
+        )
+
+        assertTrue(
+            OnlineCache.persistPlaylistFirstPage(
+                snapshotContext,
+                key,
+                firstPage,
+                snapshotToken(key),
+            ),
+        )
+        OnlineCache.clear(key)
+
+        val restored = checkNotNull(OnlineCache.hydratePlaylistFirstPage(snapshotContext, key))
+        assertEquals(1, restored.page)
+        assertTrue(restored.hasMore)
+        assertEquals(60, restored.total)
+        assertEquals(listOf("p1", "p2"), restored.list.map(OnlinePlaylist::id))
+    }
+
+    @Test fun multiPagePlaylistSnapshotIsRejectedInsteadOfBecomingFirstPage() = runBlocking {
+        val key = "playlists.kw.hot.multi"
+        val merged = CachedPlaylistPage(
+            list = listOf(playlist("p1"), playlist("p2")),
+            page = 2,
+            hasMore = true,
+            total = 60,
+        )
+
+        assertFalse(
+            OnlineCache.persistPlaylistFirstPage(
+                snapshotContext,
+                key,
+                merged,
+                snapshotToken(key),
+            ),
+        )
+        assertNull(OnlineCache.hydratePlaylistFirstPage(snapshotContext, key))
+    }
+
+    @Test fun corruptedDiskSnapshotFallsBackToNetwork() = runBlocking {
+        val key = "boards.kg.disk"
+        assertTrue(
+            OnlineCache.persistBoardList(
+                snapshotContext,
+                key,
+                listOf(BoardItem("1", "榜单", "bang-1")),
+                snapshotToken(key),
+            ),
+        )
+        OnlineCache.clear(key)
+        val snapshotFile = checkNotNull(snapshotRoot.resolve(SNAPSHOT_DIRECTORY).listFiles()?.single())
+        snapshotFile.writeText("not-json")
+
+        assertNull(OnlineCache.hydrateBoardList(snapshotContext, key))
+        assertFalse(snapshotFile.exists())
+    }
+
+    @Test fun clearBlocksLatePageResponseFromMemoryAndDisk() = runBlocking {
+        val key = "boards.kw.clear-race"
+        val token = checkNotNull(OnlineCache.capturePageSnapshot(key))
+        val response = CompletableDeferred<List<BoardItem>>()
+        val oldRequest = async {
+            val boards = response.await()
+            val writtenAtMs = OnlineCache.putPageIfCurrent(token, key, boards)
+            val saved = OnlineCache.persistBoardList(
+                snapshotContext,
+                key,
+                boards,
+                token,
+                System.currentTimeMillis(),
+            )
+            writtenAtMs to saved
+        }
+
+        OnlineCache.clearDisk(snapshotContext)
+        response.complete(listOf(BoardItem("old", "旧榜单", "old-bangid")))
+
+        val (writtenAtMs, saved) = oldRequest.await()
+        assertNull(writtenAtMs)
+        assertFalse(saved)
+        assertNull(OnlineCache.peek<List<BoardItem>>(key))
+        assertFalse(snapshotRoot.resolve(SNAPSHOT_DIRECTORY).exists())
+    }
+
+    @Test fun clearDiskRemovesSnapshotsWithoutLeavingOldFiles() = runBlocking {
+        val key = "boards.wy.disk"
+        assertTrue(
+            OnlineCache.persistBoardList(
+                snapshotContext,
+                key,
+                listOf(BoardItem("1", "榜单", "bang-1")),
+                snapshotToken(key),
+            ),
+        )
+
+        OnlineCache.clear()
+        OnlineCache.clearDisk(snapshotContext)
+
+        assertFalse(snapshotRoot.resolve("online-cache-v1").exists())
+        assertNull(OnlineCache.hydrateBoardList(snapshotContext, key))
     }
 
     @Test fun staleRefreshIsSingleFlightAndDoesNotMutatePlayingSnapshot() = runBlocking {
@@ -169,4 +315,23 @@ class OnlineCacheTest {
         assertEquals(listOf("fresh"), OnlineCache.refresh("resolver:matches:pending", 1000) { listOf("fresh") })
     }
 
+}
+
+
+private fun snapshotToken(key: String): PageSnapshotToken =
+    requireNotNull(OnlineCache.capturePageSnapshot(key))
+
+
+private fun playlist(id: String): OnlinePlaylist = OnlinePlaylist(
+    org.json.JSONObject()
+        .put("id", id)
+        .put("name", "歌单 $id")
+        .put("source", "kw")
+        .put("author", "作者")
+        .put("play_count", "100")
+)
+
+private class SnapshotContext(private val root: File) : ContextWrapper(null) {
+    override fun getCacheDir(): File = root
+    override fun getApplicationContext(): Context = this
 }
