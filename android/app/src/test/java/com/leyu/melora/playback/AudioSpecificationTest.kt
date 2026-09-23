@@ -1,9 +1,12 @@
 package com.leyu.melora.playback
 
+import androidx.media3.common.C
+import androidx.media3.common.Format
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class AudioSpecificationTest {
     @Test
     fun sourceRequestCannotOverrideActualDecodedFormat() {
@@ -59,4 +62,57 @@ class AudioSpecificationTest {
         assertEquals("256K", AudioSpecification("audio/mpeg", 44_100, 256_000).qualityBadge)
         assertEquals("128K", AudioSpecification("audio/mpeg", 44_100, 128_000).qualityBadge)
     }
+
+    @Test
+    fun formatMappingUsesAverageBitrateInsteadOfPeakBitrate() {
+        val spec = AudioSpecification.fromFormat(format("audio/mp4a-latm", averageBitrate = 96_434, peakBitrate = 165_032))
+
+        assertEquals(96_434, spec.bitrate)
+        assertEquals("96K", spec.qualityBadge)
+        assertEquals("aac96k", spec.verifiedQuality)
+    }
+
+    @Test
+    fun formatMappingKeepsBitrateUnknownWhenOnlyPeakIsKnown() {
+        val spec = AudioSpecification.fromFormat(format("audio/mp4a-latm", peakBitrate = 165_032))
+
+        assertEquals(-1, spec.bitrate)
+        assertNull(spec.qualityBadge)
+        assertNull(spec.verifiedQuality)
+    }
+
+    @Test
+    fun formatMappingPreservesConstant128And320Bitrates() {
+        val low = AudioSpecification.fromFormat(format("audio/mp4a-latm", averageBitrate = 128_000, peakBitrate = 128_000))
+        val high = AudioSpecification.fromFormat(format("audio/mp4a-latm", averageBitrate = 320_000, peakBitrate = 320_000))
+
+        assertEquals(128_000, low.bitrate)
+        assertEquals("128K", low.qualityBadge)
+        assertEquals(320_000, high.bitrate)
+        assertEquals("HQ", high.qualityBadge)
+    }
+
+    @Test
+    fun formatMappingPreservesBitDepthForHrBadge() {
+        val spec = AudioSpecification.fromFormat(
+            format("audio/flac", peakBitrate = 165_032, pcmEncoding = C.ENCODING_PCM_24BIT),
+        )
+
+        assertEquals(-1, spec.bitrate)
+        assertEquals(24, spec.bitDepth)
+        assertEquals("HR", spec.qualityBadge)
+    }
+
+    private fun format(
+        mimeType: String,
+        averageBitrate: Int = Format.NO_VALUE,
+        peakBitrate: Int = Format.NO_VALUE,
+        pcmEncoding: Int = Format.NO_VALUE,
+    ): Format = Format.Builder()
+        .setSampleMimeType(mimeType)
+        .setSampleRate(44_100)
+        .setAverageBitrate(averageBitrate)
+        .setPeakBitrate(peakBitrate)
+        .setPcmEncoding(pcmEncoding)
+        .build()
 }

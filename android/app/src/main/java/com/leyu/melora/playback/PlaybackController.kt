@@ -282,15 +282,7 @@ object PlaybackController {
         val group = player.currentTracks.groups.firstOrNull { it.type == C.TRACK_TYPE_AUDIO && it.isSelected }
             ?: return null
         val index = (0 until group.length).firstOrNull(group::isTrackSelected) ?: return null
-        val format = group.getTrackFormat(index)
-        val bitDepth = when (format.pcmEncoding) {
-            C.ENCODING_PCM_8BIT -> 8
-            C.ENCODING_PCM_16BIT, C.ENCODING_PCM_16BIT_BIG_ENDIAN -> 16
-            C.ENCODING_PCM_24BIT, C.ENCODING_PCM_24BIT_BIG_ENDIAN -> 24
-            C.ENCODING_PCM_32BIT, C.ENCODING_PCM_32BIT_BIG_ENDIAN -> 32
-            else -> -1
-        }
-        return AudioSpecification(format.sampleMimeType, format.sampleRate, format.bitrate, bitDepth)
+        return AudioSpecification.fromFormat(group.getTrackFormat(index))
     }
 
     /** onEvents位于Media3状态批处理之后，避免切歌回调中把上一首格式写到新资源。 */

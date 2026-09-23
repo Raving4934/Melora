@@ -1,5 +1,7 @@
 package com.leyu.melora.playback
 
+import androidx.media3.common.C
+import androidx.media3.common.Format
 import com.leyu.melora.playback.sdk.OnlineSong
 import java.util.Locale
 import org.json.JSONObject
@@ -93,7 +95,7 @@ data class PlayerLyric(
     val source: String,
 )
 
-/** 来自Media3选中输入音轨，而不是用户设置、目录能力或音源请求参数。 */
+/** 来自Media3选中输入音轨，而不是用户设置、目录能力或音源请求参数；bitrate是平均码率，未知为-1。 */
 data class AudioSpecification(val mimeType: String?, val sampleRate: Int, val bitrate: Int, val bitDepth: Int = -1) {
     private val normalizedMimeType: String? get() = mimeType?.trim()?.lowercase(Locale.ROOT)
 
@@ -125,6 +127,19 @@ data class AudioSpecification(val mimeType: String?, val sampleRate: Int, val bi
     }
 
     companion object {
+        /** 将当前选中音轨的Media3格式映射为实测规格；不使用Format.bitrate的峰值优先语义。 */
+        @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+        fun fromFormat(format: Format): AudioSpecification {
+            val bitDepth = when (format.pcmEncoding) {
+                C.ENCODING_PCM_8BIT -> 8
+                C.ENCODING_PCM_16BIT, C.ENCODING_PCM_16BIT_BIG_ENDIAN -> 16
+                C.ENCODING_PCM_24BIT, C.ENCODING_PCM_24BIT_BIG_ENDIAN -> 24
+                C.ENCODING_PCM_32BIT, C.ENCODING_PCM_32BIT_BIG_ENDIAN -> 32
+                else -> -1
+            }
+            return AudioSpecification(format.sampleMimeType, format.sampleRate, format.averageBitrate, bitDepth)
+        }
+
         /**
          * 将本地索引的容器/扩展名映射为与播放页相同的实测规格模型。
          * 扩展名只用于识别本地索引中 MediaStore 未提供的容器，不用于猜测采样率或位深。
