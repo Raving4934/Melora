@@ -201,6 +201,43 @@ class LocalSongDeletionTest {
         assertEquals(listOf(media), result.failed)
     }
 
+    @Test
+    fun largeMediaStoreSelectionUsesBoundedRequestsUntilAllAreConfirmed() {
+        val targets = (1..4_001).map { target("$it", "content://media/external/audio/media/$it") }
+        val operations = FakeOperations(supportsSystemDeleteRequest = true, mediaStoreTargets = targets.toSet())
+        val deletion = LocalSongDeletion(operations)
+
+        val first = deletion.start(targets) as LocalDeletionStep.Awaiting
+        assertEquals(targets.take(2_000), first.request.targets)
+        val second = deletion.onAuthorizationResult(true) as LocalDeletionStep.Awaiting
+        assertEquals(targets.subList(2_000, 4_000), second.request.targets)
+        val third = deletion.onAuthorizationResult(true) as LocalDeletionStep.Awaiting
+        assertEquals(targets.takeLast(1), third.request.targets)
+        val finished = deletion.onAuthorizationResult(true) as LocalDeletionStep.Finished
+
+        assertEquals(targets, finished.result.deleted)
+        assertTrue(finished.result.failed.isEmpty())
+        assertEquals(listOf(2_000, 2_000, 1), operations.systemRequests.map { it.size })
+        assertFalse(deletion.isBusy)
+    }
+
+    @Test
+    fun cancellingSecondMediaStoreBatchKeepsUnconfirmedAndDirectFiles() {
+        val media = (1..4_001).map { target("$it", "content://media/external/audio/media/$it") }
+        val direct = target("direct")
+        val operations = FakeOperations(supportsSystemDeleteRequest = true, mediaStoreTargets = media.toSet())
+        val deletion = LocalSongDeletion(operations)
+        deletion.start(media + direct)
+        deletion.onAuthorizationResult(true)
+        val result = (deletion.onAuthorizationResult(false) as LocalDeletionStep.Finished).result
+
+        assertEquals(media.take(2_000), result.deleted)
+        assertEquals(media.drop(2_000) + direct, result.failed)
+        assertTrue(result.cancelled)
+        assertTrue(operations.deleteCalls.isEmpty())
+        assertEquals(2, operations.systemRequests.size)
+    }
+
     private class FakeOperations(
         override val supportsSystemDeleteRequest: Boolean = false,
         private val mediaStoreTargets: Set<LocalDeletionTarget> = emptySet(),
@@ -209,6 +246,7 @@ class LocalSongDeletionTest {
         private val systemRequest: String? = "system-request",
     ) : LocalDeletionOperations<String> {
         val deleteCalls = mutableListOf<LocalDeletionTarget>()
+        val systemRequests = mutableListOf<List<LocalDeletionTarget>>()
         override fun isMediaStore(target: LocalDeletionTarget): Boolean = target in mediaStoreTargets
 
         override fun delete(target: LocalDeletionTarget): LocalDeletionAttempt<String> {
@@ -220,7 +258,10 @@ class LocalSongDeletionTest {
             return outcomes[target] ?: LocalDeletionAttempt.Failed
         }
 
-        override fun createSystemDeleteRequest(targets: List<LocalDeletionTarget>): String? = systemRequest
+        override fun createSystemDeleteRequest(targets: List<LocalDeletionTarget>): String? {
+            systemRequests += targets
+            return if (targets.size > 2_000) null else systemRequest
+        }
     }
 
     private fun target(id: String, uri: String = "file:///music/$id.mp3") = LocalDeletionTarget(id, uri)

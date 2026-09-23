@@ -125,7 +125,8 @@ internal class LocalSongDeletion<Request>(
     private fun advanceLocked(): LocalDeletionStep<Request> {
         while (remaining.isNotEmpty()) {
             if (operations.supportsSystemDeleteRequest && operations.isMediaStore(remaining.first())) {
-                val batch = remaining.filter(operations::isMediaStore)
+                // Android 16+ 限制每次系统授权最多 2000 个 URI；逐批确认，取消时保留未处理项。
+                val batch = remaining.asSequence().filter(operations::isMediaStore).take(2_000).toList()
                 remaining.removeAll(batch.toSet())
                 val request = operations.createSystemDeleteRequest(batch)
                 if (request == null) {
