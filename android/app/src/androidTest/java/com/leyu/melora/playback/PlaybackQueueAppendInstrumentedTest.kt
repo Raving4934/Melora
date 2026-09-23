@@ -1,5 +1,8 @@
 package com.leyu.melora.playback
 
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.SharedPreferences
 import android.net.Uri
 import android.os.SystemClock
 import androidx.media3.common.MediaItem
@@ -10,11 +13,17 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.MediaSession
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.google.common.util.concurrent.Futures
+import com.leyu.melora.playback.sdk.OnlineCache
+import com.leyu.melora.playback.sdk.OnlineSong
+import com.leyu.melora.playback.sdk.SourceResolver
 import java.io.File
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
@@ -257,6 +266,111 @@ class PlaybackQueueAppendInstrumentedTest {
             }
         }
 
+    @Test fun coldAndCachedCardsWithoutSourcesBothKeepExistingPlayback() = withPlayer { player, controller ->
+        val noSources = withoutSources()
+        main { field("controllerFuture").set(PlaybackController, Futures.immediateFuture(controller)) }
+        for (cached in listOf(false, true)) {
+            val key = "queue-test.source-check.$cached"
+            val song = OnlineSong(JSONObject().put("source", "kw").put("songmid", "queue-test-${System.nanoTime()}"))
+            OnlineCache.clear(key)
+            if (cached) OnlineCache.put(key, listOf(song))
+            try {
+                main {
+                    PlaybackController.consumeMessage()
+                    PlaybackController.requestQueue(noSources, key, key, { it: List<OnlineSong> -> it }) { listOf(song) }
+                }
+                await { PlaybackController.state.value.message == SourceResolver.NO_SOURCE_MESSAGE }
+                main {
+                    assertEquals(listOf("a", "b"), uids(player))
+                    assertEquals("a", player.currentMediaItem?.mediaId)
+                    assertFalse(player.playWhenReady)
+                    assertTrue(player.currentPosition in 11_800L..12_200L)
+                    assertNull(PlaybackController.state.value.pendingQueueId)
+                }
+            } finally {
+                OnlineCache.clear(key)
+            }
+        }
+    }
+
+    @Test fun newerSelectionCancelsWaitingDirectoryBeforeOfflinePreflight() = withPlayer { player, controller ->
+        val noSources = withoutSources()
+        val key = "queue-test.pending-directory"
+        val started = CompletableDeferred<Unit>()
+        val response = CompletableDeferred<List<OnlineSong>>()
+        val song = OnlineSong(JSONObject().put("source", "kw").put("songmid", "new-selection-${System.nanoTime()}"))
+        try {
+            main {
+                field("controllerFuture").set(PlaybackController, Futures.immediateFuture(controller))
+                PlaybackController.requestQueue(noSources, key, key, { it: List<OnlineSong> -> it }) {
+                    started.complete(Unit)
+                    response.await()
+                }
+            }
+            await { started.isCompleted }
+            main {
+                val oldJob = field("queueLoadJob").get(PlaybackController) as Job
+                PlaybackController.playTrack(noSources, UiTrack.fromOnline(song))
+                assertTrue("选择新曲目时立即取消旧目录等待", oldJob.isCancelled)
+                assertNull(PlaybackController.state.value.pendingQueueId)
+            }
+            response.complete(listOf(song))
+            await { PlaybackController.state.value.message == SourceResolver.NO_SOURCE_MESSAGE }
+            main {
+                assertEquals(listOf("a", "b"), uids(player))
+                assertEquals("a", player.currentMediaItem?.mediaId)
+                assertFalse(player.playWhenReady)
+            }
+        } finally {
+            response.cancel()
+            OnlineCache.clear(key)
+        }
+    }
+
+    @Test fun coldDirectoryDoesNotStartServiceAndClearCancelsWaiting() = withPlayer(empty = true) { _, _ ->
+        val key = "queue-test.cold-start"
+        val started = CompletableDeferred<Unit>()
+        val response = CompletableDeferred<List<OnlineSong>>()
+        val noServiceContext = object : ContextWrapper(context) {
+            override fun getApplicationContext(): Context = error("目录未返回，不应启动播放服务")
+        }
+        try {
+            main {
+                field("controllerFuture").set(PlaybackController, null)
+                field("controller").set(PlaybackController, null)
+                PlaybackController.requestQueue(noServiceContext, key, key, { it: List<OnlineSong> -> it }) {
+                    started.complete(Unit)
+                    response.await()
+                }
+            }
+            await { started.isCompleted }
+            main {
+                assertNull(field("controllerFuture").get(PlaybackController))
+                assertNull(field("controller").get(PlaybackController))
+                assertEquals(key, PlaybackController.state.value.pendingQueueId)
+                val job = field("queueLoadJob").get(PlaybackController) as Job
+                PlaybackController.clearQueue()
+                assertTrue(job.isCancelled)
+            }
+            response.complete(emptyList())
+            instrumentation.waitForIdleSync()
+            main {
+                assertNull(PlaybackController.state.value.pendingQueueId)
+                assertNull(PlaybackController.state.value.message)
+                assertTrue(PlaybackController.state.value.queue.isEmpty())
+            }
+        } finally {
+            response.cancel()
+            OnlineCache.clear(key)
+        }
+    }
+
+    private fun withoutSources(): Context = object : ContextWrapper(context) {
+        override fun getApplicationContext(): Context = this
+        override fun getSharedPreferences(name: String, mode: Int): SharedPreferences =
+            super.getSharedPreferences(if (name == "lx-sources") "queue-test-empty-sources" else name, mode)
+    }.also { it.getSharedPreferences("lx-sources", 0).edit().clear().commit() }
+
     private fun withPlayer(empty: Boolean = false, listen: Boolean = false, test: (ExoPlayer, MediaController) -> Unit) {
         val audio = silentWav()
         val player = main { ExoPlayer.Builder(context).build().apply { volume = 0f } }
@@ -266,7 +380,7 @@ class PlaybackQueueAppendInstrumentedTest {
                 .setListener(field("controllerListener").get(PlaybackController) as MediaController.Listener)
                 .buildAsync()
         }.get(5, TimeUnit.SECONDS)
-        val fields = listOf("controller", "controllerFuture", "bookQueue", "appContext", "lastQueueFingerprint", "detailUid", "currentQueueId").associateWith(::field)
+        val fields = listOf("controller", "controllerFuture", "bookQueue", "appContext", "lastQueueFingerprint", "detailUid", "currentQueueId", "playbackPreflight", "queueLoadJob", "pendingPlayback").associateWith(::field)
         val previous = main { fields.mapValues { it.value.get(PlaybackController) } }
         @Suppress("UNCHECKED_CAST")
         val state = field("_state").get(PlaybackController) as MutableStateFlow<PlayerUiState>
@@ -296,6 +410,8 @@ class PlaybackQueueAppendInstrumentedTest {
             test(player, controller)
         } finally {
             main {
+                (field("playbackPreflight").get(PlaybackController) as? Job)?.cancel()
+                (field("queueLoadJob").get(PlaybackController) as? Job)?.cancel()
                 fields.forEach { (name, field) -> field.set(PlaybackController, previous[name]) }
                 state.value = previousState
                 controller.release(); session.release(); player.release()

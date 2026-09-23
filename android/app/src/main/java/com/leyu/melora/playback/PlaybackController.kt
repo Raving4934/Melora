@@ -682,25 +682,29 @@ object PlaybackController {
             return
         }
         if (_state.value.pendingQueueId == queueId) return
-        beginPlayback(context, null)
-        _state.value = _state.value.copy(pendingQueueId = queueId)
+        // 目录未返回前只登记意图，不启动服务或恢复旧队列自动播放。
+        cancelPendingPlayback()
+        _state.value = _state.value.copy(pendingQueueId = queueId, message = null)
         // 先登记任务身份，再启动，避免同步缓存完成或旧请求取消回调抢占新请求。
         queueLoadJob = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 val tracks = songs(OnlineCache.refresh(cacheKey, OnlineCache.CATALOG_TTL_MS, load)).map(UiTrack::fromOnline)
                 check(tracks.isNotEmpty()) { "暂无可播放内容" }
-                if (queueLoadJob === coroutineContext[Job]) playQueueNow(tracks, 0, queueId)
-            } catch (cancelled: CancellationException) {
                 if (queueLoadJob === coroutineContext[Job]) {
-                    _state.value = _state.value.copy(pendingQueueId = null)
+                    queueLoadJob = null
+                    // 冷/热目录都必须经过同一个本地资源与音源检查入口。
+                    playQueue(context, tracks, 0, queueId)
                 }
+            } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (error: Throwable) {
+            } catch (error: Exception) {
                 if (queueLoadJob === coroutineContext[Job]) {
-                    _state.value = _state.value.copy(
-                        pendingQueueId = null,
-                        message = error.message ?: "播放失败",
-                    )
+                    _state.value = _state.value.copy(message = error.message ?: "播放失败")
+                }
+            } finally {
+                if (queueLoadJob === coroutineContext[Job]) {
+                    queueLoadJob = null
+                    _state.value = _state.value.copy(pendingQueueId = null)
                 }
             }
         }
@@ -770,8 +774,8 @@ object PlaybackController {
 
     /** 无源只拦截新网络解析；离线资源先检查，失败时不改队列、不打断当前音乐。 */
     private fun requestPlayback(context: Context, track: UiTrack, container: UserLibrary.PlayContainer?, play: () -> Unit) {
-        playbackPreflight?.cancel()
-        playbackPreflight = null
+        // 新点歌立即撤销旧目录请求；不能等离线缓存检查结束后才取消，导致旧结果抢播。
+        cancelPendingPlayback()
         if (controller?.currentMediaItem?.mediaId == track.uid ||
             com.leyu.melora.playback.sdk.LxScriptPool.hasEnabledScripts(context) ||
             LocalMediaStore.matchTrack(track) != null || DownloadCenter.saved(track.uid) != null) {
