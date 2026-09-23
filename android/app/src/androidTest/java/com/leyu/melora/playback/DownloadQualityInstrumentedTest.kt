@@ -175,6 +175,21 @@ class DownloadQualityInstrumentedTest {
             0, 0, folder = file.parent.orEmpty(), bitDepth = audio.spec.bitDepth)
     }
 
+    @Test fun audioCleanupWorksBeforeEvictorAttachmentCompletes() = runBlocking {
+        seed("flac", "fixture-16.flac")
+        val owner = AudioCacheStore.javaClass
+        val shared = owner.getDeclaredField("cache").apply { isAccessible = true }.get(AudioCacheStore) as SimpleCache
+        assertTrue(shared.cacheSpace > 0)
+        val evictor = owner.getDeclaredField("evictor").apply { isAccessible = true }.get(AudioCacheStore) as DynamicCacheEvictor
+        // 重现异步attach尚未赋值的窗口；实际文件和SimpleCache索引均已存在。
+        evictor.javaClass.getDeclaredField("cache").apply { isAccessible = true }.set(evictor, null)
+        AudioCacheStore.clearAll(context)
+        assertEquals(0L, shared.cacheSpace)
+        // SimpleCache允许保留只有元数据的别名key；应验证音频span而非索引key数量。
+        assertTrue(shared.keys.all { shared.getCachedSpans(it).isEmpty() })
+        assertEquals(0L, evictor.trackedBytes())
+    }
+
     @Test fun unrecognizedPrefixDoesNotFabricateAudioQuality() {
         val stream = java.io.ByteArrayInputStream(ByteArray(128 * 1024 + 17))
         val probe = probeDownloadUpgrade(stream)

@@ -76,3 +76,33 @@ class CacheManagerTest {
     }
 
 }
+
+class CacheCleanupResultTest {
+    @org.junit.Test fun partialFailureStillAttemptsOtherGroupsAndReportsFailure() = kotlinx.coroutines.runBlocking {
+        val calls = mutableListOf<String>()
+        try {
+            clearCacheGroups(
+                "封面" to { calls += "封面"; throw java.io.IOException("只读目录") },
+                "歌词" to { calls += "歌词" },
+                "音频" to { calls += "音频"; throw java.io.IOException("磁盘错误") },
+            )
+            org.junit.Assert.fail("不应报告全部成功")
+        } catch (error: java.io.IOException) {
+            org.junit.Assert.assertTrue(error.message!!.contains("封面：只读目录"))
+            org.junit.Assert.assertTrue(error.message!!.contains("音频：磁盘错误"))
+        }
+        org.junit.Assert.assertEquals(listOf("封面", "歌词", "音频"), calls)
+    }
+
+    @org.junit.Test fun cancellationIsNotConvertedToCleanupFailure() = kotlinx.coroutines.runBlocking {
+        var called = false
+        try {
+            clearCacheGroups(
+                "取消" to { throw kotlinx.coroutines.CancellationException("cancel") },
+                "后续" to { called = true },
+            )
+            org.junit.Assert.fail("取消丢失")
+        } catch (_: kotlinx.coroutines.CancellationException) { }
+        org.junit.Assert.assertFalse(called)
+    }
+}

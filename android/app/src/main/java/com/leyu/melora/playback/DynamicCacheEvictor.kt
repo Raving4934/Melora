@@ -5,6 +5,7 @@ import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheEvictor
 import androidx.media3.datasource.cache.CacheSpan
 import java.util.LinkedHashMap
+import java.io.IOException
 
 /** 可在运行时读取容量设置的按资源 LRU 淘汰器。 */
 @androidx.annotation.OptIn(UnstableApi::class)
@@ -66,12 +67,12 @@ class DynamicCacheEvictor(private val maxBytesProvider: () -> Long) : CacheEvict
     }
 
     /** 清空全部缓存内容（播放服务运行中安全清理）。 */
-    fun clearAll() {
-        val target = synchronized(this) { cache } ?: return
+    fun clearAll(target: Cache) {
         withCacheLock(target) {
-            target.keys.toList().forEach { key -> runCatching { target.removeResource(key) } }
-            sizes.clear()
-            currentBytes = 0L
+            val failed = target.keys.toList().filter { key -> runCatching { target.removeResource(key) }.isFailure }
+            // 部分删除失败后按真实缓存重建账本，不能把仍存在的数据报成0字节。
+            refreshFromCacheLocked(target)
+            if (failed.isNotEmpty()) throw IOException("${failed.size} 项音频缓存无法删除，请重试")
         }
     }
 
@@ -115,10 +116,14 @@ class DynamicCacheEvictor(private val maxBytesProvider: () -> Long) : CacheEvict
     private fun trimLocked(cache: Cache) {
         val max = maxBytesProvider().coerceAtLeast(MIN_BYTES)
         while (currentBytes > max && sizes.isNotEmpty()) {
-            val eldest = sizes.entries.first()
-            sizes.remove(eldest.key)
-            currentBytes = (currentBytes - eldest.value).coerceAtLeast(0L)
-            runCatching { cache.removeResource(eldest.key) }
+            val key = sizes.keys.first()
+            val before = currentBytes
+            val removed = runCatching { cache.removeResource(key) }.isSuccess
+            // 淘汰失败不能阻断正常播放，也不能丢弃失败资源的大小账本或陷入死循环。
+            if (!removed || currentBytes >= before) {
+                refreshFromCacheLocked(cache)
+                break
+            }
         }
     }
 

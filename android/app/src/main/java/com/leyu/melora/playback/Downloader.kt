@@ -78,7 +78,10 @@ object Downloader {
 
     /** 与提交任务使用同一把锁，避免“一键清空”删除正在写入/尚待导出的临时音频。 */
     internal fun clearTemporaryFiles(directory: File): Boolean = synchronized(taskLock) {
-        if (tasks.values.any { !it.task.isCompleted }) false else directory.deleteRecursively()
+        if (tasks.values.any { !it.task.isCompleted }) false else {
+            if (directory.exists() && !directory.deleteRecursively()) throw IOException("下载临时文件无法清理")
+            true
+        }
     }
 
     /** 下载归应用级作用域所有；关闭操作面板或离开页面只停止等待，不会中断实际任务。 */

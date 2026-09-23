@@ -228,7 +228,7 @@ object AudioCacheStore {
     /** 等待后台补齐完全退出后安全清空共享缓存。 */
     suspend fun clearAll(context: Context) {
         val appContext = context.applicationContext
-        obtainCache(appContext)
+        val sharedCache = obtainCache(appContext)
         val jobs = synchronized(prefetchLock) {
             listOfNotNull(prefetchJob).also {
                 prefetchJob?.cancel()
@@ -237,7 +237,8 @@ object AudioCacheStore {
             }
         }
         jobs.joinAll()
-        evictor?.clearAll()
+        // 直接传已取得的实例，不依赖异步attach是否已完成。
+        checkNotNull(evictor).clearAll(sharedCache)
     }
 
     /** 播放解析后的真实 URL 与物理 key。 */

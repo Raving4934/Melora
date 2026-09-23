@@ -7,9 +7,12 @@ import androidx.core.net.toUri
 import android.os.Build
 import java.io.BufferedInputStream
 import java.io.File
+import java.io.IOException
 import java.io.InputStream
 import java.nio.ByteBuffer
-import java.util.concurrent.ConcurrentHashMap
+import java.util.LinkedHashMap
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 /** 本地音频文件标签读取：基础元数据、内嵌封面（缓存为本地文件）与内嵌歌词。 */
 internal const val LOCAL_COVER_CACHE_DIR = "local_covers"
@@ -28,7 +31,15 @@ object LocalTagReader {
         val mimeType: String? = null,
     )
 
-    private val coverCache = ConcurrentHashMap<String, String>()
+    private const val MAX_MEMORY_COVERS = 256
+    private const val MAX_DISK_COVERS = 512
+    private const val MAX_DISK_COVER_BYTES = 64L * 1024L * 1024L
+    private val coverLock = ReentrantLock()
+    private val coverCache = object : LinkedHashMap<String, String>(MAX_MEMORY_COVERS + 1, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean =
+            size > MAX_MEMORY_COVERS
+    }
+    private var coverGeneration = 0L
 
     fun read(context: Context, uri: String): Tag? = runCatching {
         LocalMediaIoCoordinator.withRead(context, uri.toUri()) {
@@ -76,17 +87,32 @@ object LocalTagReader {
     /** 内嵌封面：解出后落到 cacheDir/local_covers，返回 file:// 地址供 Coil 渲染。 */
     fun coverUri(context: Context, song: LocalSong): String? {
         val key = coverCacheKey(song)
-        coverCache[key]?.takeIf(::isUsableCoverUri)?.let { return it }
-        coverCache.remove(key)
         val cached = File(coverDir(context), "$key.img")
-        if (cached.exists() && cached.length() > 0) {
-            return cached.let(Uri::fromFile).toString().also { coverCache[key] = it }
+        val generation = coverLock.withLock {
+            coverCache[key]?.let { value ->
+                if (isUsableCoverUri(value)) return value
+                coverCache.remove(key)
+            }
+            if (cached.isFile && cached.length() > 0L) {
+                return Uri.fromFile(cached).toString().also { coverCache[key] = it }
+            }
+            coverGeneration
         }
+
+        // 读取媒体可能较慢，不能阻塞清理与其它缓存提交。
         val bytes = embeddedPicture(context, song.uri) ?: return null
-        return runCatching {
-            cached.writeBytes(bytes)
-            cached.let(Uri::fromFile).toString().also { coverCache[key] = it }
-        }.getOrNull()
+        return commitCover(context, song, key, generation, bytes)
+    }
+
+    private fun commitCover(
+        context: Context,
+        song: LocalSong,
+        key: String,
+        generation: Long,
+        bytes: ByteArray,
+    ): String? = coverLock.withLock {
+        if (generation != coverGeneration) return@withLock null
+        writeCoverLocked(context, song, key, bytes, removePreviousVersions = false)
     }
 
 
@@ -102,15 +128,10 @@ object LocalTagReader {
 
     fun cacheCover(context: Context, song: LocalSong, bytes: ByteArray): String? {
         if (bytes.isEmpty()) return null
-        return runCatching {
-            val key = coverCacheKey(song)
-            val dir = coverDir(context)
-            dir.listFiles { file -> file.name.startsWith("${safeId(song.id)}-") && file.name != "$key.img" }
-                ?.forEach { it.delete() }
-            val cached = File(dir, "$key.img")
-            cached.writeBytes(bytes)
-            cached.let(Uri::fromFile).toString().also { coverCache[key] = it }
-        }.getOrNull()
+        val key = coverCacheKey(song)
+        return coverLock.withLock {
+            writeCoverLocked(context, song, key, bytes, removePreviousVersions = true)
+        }
     }
 
     private fun coverCacheKey(song: LocalSong): String = "${safeId(song.id)}-${song.modifiedAt}"
@@ -118,14 +139,74 @@ object LocalTagReader {
     private fun safeId(value: String): String = value.replace(Regex("[^A-Za-z0-9_.-]"), "_")
 
     fun clearCoverCache(context: Context) {
-        coverCache.clear()
-        val directory = File(context.cacheDir, LOCAL_COVER_CACHE_DIR)
-        runCatching { directory.deleteRecursively() }
-        LocalMediaStore.invalidateCachedCovers(directory)
+        val directory = coverDir(context)
+        coverLock.withLock {
+            coverGeneration++
+            coverCache.clear()
+            var failure: Throwable? = null
+            try {
+                if (directory.exists() && (!directory.deleteRecursively() || directory.exists())) {
+                    throw IOException("本地封面缓存目录无法删除：${directory.absolutePath}")
+                }
+            } catch (error: Throwable) {
+                failure = error
+            }
+
+            // 删除失败也必须清除索引里的失效 file://，否则下次仍会持久化旧地址。
+            try {
+                LocalMediaStore.invalidateCachedCovers(directory)
+            } catch (error: Throwable) {
+                failure = failure?.also { it.addSuppressed(error) } ?: error
+            }
+            failure?.let { throw it }
+        }
+    }
+
+    private fun writeCoverLocked(
+        context: Context,
+        song: LocalSong,
+        key: String,
+        bytes: ByteArray,
+        removePreviousVersions: Boolean,
+    ): String? = runCatching {
+        val dir = coverDir(context)
+        if (!dir.isDirectory && !dir.mkdirs() && !dir.isDirectory) {
+            throw IOException("无法创建本地封面缓存目录：${dir.absolutePath}")
+        }
+        if (removePreviousVersions) {
+            dir.listFiles { file -> file.name.startsWith("${safeId(song.id)}-") && file.name != "$key.img" }
+                ?.forEach { it.delete() }
+        }
+        val cached = File(dir, "$key.img")
+        cached.writeBytes(bytes)
+        val uri = Uri.fromFile(cached).toString()
+        coverCache[key] = uri
+        trimDiskCacheLocked(dir, cached)
+        uri
+    }.getOrNull()
+
+    private fun trimDiskCacheLocked(dir: File, keep: File) {
+        // 只枚举封面缓存目录，不扫描本地音频索引或媒体库。
+        val files = dir.listFiles { file -> file.isFile && file.extension == "img" }
+            ?.sortedBy(File::lastModified)
+            ?: return
+        var totalBytes = files.sumOf(File::length)
+        var count = files.size
+        if (count <= MAX_DISK_COVERS && totalBytes <= MAX_DISK_COVER_BYTES) return
+        for (file in files) {
+            if (count <= MAX_DISK_COVERS && totalBytes <= MAX_DISK_COVER_BYTES) break
+            if (file == keep) continue
+            val size = file.length()
+            if (file.delete()) {
+                count--
+                totalBytes -= size
+                coverCache.remove(file.name.removeSuffix(".img"))
+            }
+        }
     }
 
     private fun coverDir(context: Context): File =
-        File(context.cacheDir, LOCAL_COVER_CACHE_DIR).apply { if (!exists()) mkdirs() }
+        File(context.cacheDir, LOCAL_COVER_CACHE_DIR)
 
     private fun MediaMetadataRetriever.string(key: Int): String =
         extractMetadata(key)?.trim().orEmpty()

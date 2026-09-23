@@ -1,7 +1,7 @@
 package com.leyu.melora.playback
 
 import android.content.Context
-import android.net.Uri
+import androidx.core.net.toUri
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import com.leyu.melora.playback.local.LocalMediaStore
@@ -38,7 +38,7 @@ object LyricRepository {
             val version = local?.let {
                 var modified = it.modifiedAt
                 var size = it.sizeBytes
-                val uri = Uri.parse(it.uri)
+                val uri = it.uri.toUri()
                 if (file != null) { modified = file.lastModified(); size = file.length() }
                 else if (uri.scheme == "content") {
                     val columns = if (uri.authority == MediaStore.AUTHORITY)
@@ -94,9 +94,11 @@ internal class LyricCacheStore(
     private val lock = Any()
     private val entries = LinkedHashMap<String, Entry>(16, .75f, true)
     private var memoryBytes = 0L
+    @Volatile private var epoch = 0L
     private val flights = SingleFlight<String, Result>(CoroutineScope(SupervisorJob() + Dispatchers.IO), lock)
 
-    fun generation(): Long = flights.currentGeneration()
+    // 调用方可在切换IO线程前取代次，不争用磁盘提交锁。
+    fun generation(): Long = epoch
 
     suspend fun load(directory: File, uid: String, version: String = "", generation: Long = generation(),
                      fetch: suspend () -> PlayerLyric?): PlayerLyric? {
@@ -132,7 +134,7 @@ internal class LyricCacheStore(
     }
 
     fun clear(directory: File) = synchronized(lock) {
-        flights.fence()
+        epoch = flights.fence()
         entries.clear()
         memoryBytes = 0
         if (directory.exists() && !directory.deleteRecursively()) throw IOException("部分歌词缓存无法删除，请重试")

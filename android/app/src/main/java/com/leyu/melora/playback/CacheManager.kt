@@ -4,10 +4,13 @@ import android.content.Context
 import coil3.SingletonImageLoader
 import com.leyu.melora.playback.local.LOCAL_COVER_CACHE_DIR
 import com.leyu.melora.playback.local.LocalTagReader
+import com.leyu.melora.playback.sdk.CoverLoader
 import com.leyu.melora.playback.sdk.OnlineCache
 import com.leyu.melora.playback.sdk.SNAPSHOT_DIRECTORY
 import com.leyu.melora.playback.sdk.SourceResolver
 import java.io.File
+import java.io.IOException
+import kotlinx.coroutines.CancellationException
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -83,12 +86,13 @@ object CacheManager {
     /** 封面/图片缓存：Coil 内存 + 磁盘。 */
     suspend fun clearImages(context: Context) = withContext(Dispatchers.IO) {
         invalidateCachedStats()
-        runCatching { SingletonImageLoader.get(context).memoryCache?.clear() }
-        runCatching { SingletonImageLoader.get(context).diskCache?.clear() }
-        LocalTagReader.clearCoverCache(context)
-        if (!PlaybackService.isRunning) {
-            runCatching { File(context.cacheDir, IMAGE_DIR).deleteRecursively() }
-        }
+        CoverLoader.clear()
+        val loader = SingletonImageLoader.get(context)
+        clearCacheGroups(
+            "图片内存" to { loader.memoryCache?.clear(); Unit },
+            "图片磁盘" to { loader.diskCache?.clear(); Unit },
+            "本地封面" to { LocalTagReader.clearCoverCache(context) },
+        )
     }
 
     /** 音频缓存：始终通过共享缓存实例清空，禁止运行时直接删除其目录。 */
@@ -105,21 +109,27 @@ object CacheManager {
 
     suspend fun clearAll(context: Context) {
         invalidateCachedStats()
-        clearImages(context)
-        clearAudio(context)
-        clearLyrics(context)
-        withContext(Dispatchers.IO) {
-            OnlineCache.clearDisk(context)
-            SourceResolver.clearCache()
-            Downloader.clearTemporaryFiles(File(context.cacheDir, Downloader.TEMP_DIRECTORY))
-            // 托管目录只能交给自己的清理入口，不能再次递归删除缓存索引或下载中间文件。
-            val managedDirectories = setOf(
-                IMAGE_DIR, LOCAL_COVER_CACHE_DIR, AUDIO_DIR, LYRIC_DIR, Downloader.TEMP_DIRECTORY, SNAPSHOT_DIRECTORY,
-            )
-            context.cacheDir.listFiles()
-                ?.filterNot { it.name in managedDirectories }
-                ?.forEach { runCatching { it.deleteRecursively() } }
-        }
+        clearCacheGroups(
+            "封面" to { clearImages(context) },
+            "音频" to { clearAudio(context) },
+            "歌词" to { clearLyrics(context) },
+            "页面" to { OnlineCache.clearDisk(context) },
+            "其他" to { clearOther(context) },
+        )
+    }
+
+    private suspend fun clearOther(context: Context) = withContext(Dispatchers.IO) {
+        SourceResolver.clearCache()
+        // 下载中的临时文件由下载器保留；无任务时删除失败必须如实上报。
+        Downloader.clearTemporaryFiles(File(context.cacheDir, Downloader.TEMP_DIRECTORY))
+        val managedDirectories = setOf(
+            IMAGE_DIR, LOCAL_COVER_CACHE_DIR, AUDIO_DIR, LYRIC_DIR, Downloader.TEMP_DIRECTORY, SNAPSHOT_DIRECTORY,
+        )
+        val other = (context.cacheDir.listFiles() ?: throw IOException("无法读取缓存目录"))
+            .filterNot { it.name in managedDirectories }
+        clearCacheGroups(*other.map { file -> file.name to suspend {
+            if (file.exists() && !file.deleteRecursively()) throw IOException("缓存文件无法删除")
+        } }.toTypedArray())
     }
 
     private fun directorySize(dir: File): Long =
@@ -127,4 +137,15 @@ object CacheManager {
 
     private fun fileSize(file: File): Long =
         if (file.isDirectory) directorySize(file) else file.length()
+}
+
+/** 各组独立清理，部分失败不跳过其余组，也不把失败吞成“全部完成”。 */
+internal suspend fun clearCacheGroups(vararg groups: Pair<String, suspend () -> Unit>) {
+    val failures = mutableListOf<String>()
+    for ((name, clear) in groups) {
+        try { clear() }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (error: Exception) { failures += "$name：${error.message ?: error.javaClass.simpleName}" }
+    }
+    if (failures.isNotEmpty()) throw IOException("部分缓存未清除（${failures.joinToString("；")}）")
 }

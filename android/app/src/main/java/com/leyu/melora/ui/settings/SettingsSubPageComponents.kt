@@ -640,7 +640,8 @@ internal fun OtherSettingsSubPage(onBack: () -> Unit) {
                     CacheManager.stats(context)
                 }.onSuccess {
                     cacheStats = it
-                    PlaybackController.postMessage(context, "${label}清理完成")
+                    PlaybackController.postMessage(context, if (label == "所有缓存")
+                        "已清理可释放缓存，进行中的下载不受影响" else "${label}清理完成")
                 }.onFailure {
                     val message = "清理${label}失败：${it.message ?: it.javaClass.simpleName}"
                     cacheError = message
