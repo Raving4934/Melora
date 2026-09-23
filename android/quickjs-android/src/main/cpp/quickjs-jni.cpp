@@ -272,11 +272,16 @@ int GetArrayLength(JSContext *ctx, JSValue this_obj) {
     return JS_VALUE_GET_INT(lenValue);
 }
 
-
 extern "C"
 JNIEXPORT jlong JNICALL
 Java_com_quickjs_QuickJSNativeImpl__1createRuntime(JNIEnv *env, jclass clazz) {
     JSRuntime *runtime = JS_NewRuntime();
+    if (runtime == nullptr) {
+        jclass exceptionClass = env->FindClass("java/lang/OutOfMemoryError");
+        if (exceptionClass == nullptr) return 0;
+        env->ThrowNew(exceptionClass, "Unable to allocate QuickJS runtime");
+        return 0;
+    }
     initES6Module(runtime);
     return reinterpret_cast<jlong>(runtime);
 }
@@ -284,7 +289,19 @@ extern "C"
 JNIEXPORT jlong JNICALL
 Java_com_quickjs_QuickJSNativeImpl__1createContext(JNIEnv *env, jclass clazz, jlong runtime_ptr) {
     auto *runtime = reinterpret_cast<JSRuntime *>(runtime_ptr);
+    if (runtime == nullptr) {
+        jclass exceptionClass = env->FindClass("java/lang/IllegalStateException");
+        if (exceptionClass == nullptr) return 0;
+        env->ThrowNew(exceptionClass, "QuickJS runtime is not available");
+        return 0;
+    }
     auto *ctx = JS_NewContext(runtime);
+    if (ctx == nullptr) {
+        jclass exceptionClass = env->FindClass("java/lang/OutOfMemoryError");
+        if (exceptionClass == nullptr) return 0;
+        env->ThrowNew(exceptionClass, "Unable to allocate QuickJS context");
+        return 0;
+    }
     return reinterpret_cast<jlong>(ctx);
 }extern "C"
 JNIEXPORT void JNICALL

@@ -1,6 +1,5 @@
 package com.quickjs;
 
-import android.os.Handler;
 import android.os.HandlerThread;
 import android.util.Log;
 
@@ -10,6 +9,8 @@ import java.io.Closeable;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
 
 public class QuickJS implements Closeable {
     volatile boolean released;
@@ -33,32 +34,84 @@ public class QuickJS implements Closeable {
     private static int sId = 0;
 
     public static QuickJS createRuntimeWithEventQueue() {
-        Object[] objects = new Object[2];
-        HandlerThread handlerThread = new HandlerThread("QuickJS-" + (sId++));
-        handlerThread.start();
-        new Handler(handlerThread.getLooper()).post(() -> {
-            objects[0] = new QuickJS(QuickJSNativeImpl._createRuntime(), handlerThread);
-            synchronized (objects) {
-                objects[1] = true;
-                objects.notify();
+        RuntimeThread thread = new RuntimeThread("QuickJS-" + (sId++));
+        thread.start();
+        return awaitRuntime(thread.creation, thread);
+    }
+
+    /** 初始化直接在已准备好的Looper上执行，不在调用线程等待HandlerThread.getLooper。 */
+    private static final class RuntimeThread extends HandlerThread {
+        final FutureTask<QuickJS> creation = new FutureTask<>(() -> {
+            QuickJSNativeImpl nativeImpl = new QuickJSNativeImpl();
+            long runtimePtr = QuickJSNativeImpl._createRuntime();
+            try {
+                return new QuickJS(runtimePtr, this);
+            } catch (RuntimeException | Error error) {
+                try {
+                    nativeImpl._releaseRuntime(runtimePtr);
+                } catch (Throwable cleanupError) {
+                    if (cleanupError != error) error.addSuppressed(cleanupError);
+                }
+                throw error;
             }
         });
-        synchronized (objects) {
-            try {
-                if (objects[1] == null) {
-                    objects.wait();
+
+        RuntimeThread(String name) { super(name); }
+        @Override protected void onLooperPrepared() { creation.run(); }
+    }
+
+    private static QuickJS awaitRuntime(FutureTask<QuickJS> creation, HandlerThread handlerThread) {
+        boolean interrupted = false;
+        try {
+            while (true) {
+                try {
+                    return creation.get();
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                } catch (ExecutionException e) {
+                    stopAndJoin(handlerThread);
+                    throw propagate(e.getCause());
                 }
+            }
+        } finally {
+            if (interrupted) Thread.currentThread().interrupt();
+        }
+    }
+
+    private static void stopAndJoin(HandlerThread handlerThread) {
+        handlerThread.quitSafely();
+        boolean interrupted = false;
+        while (handlerThread.isAlive()) {
+            try {
+                handlerThread.join();
             } catch (InterruptedException e) {
-                e.printStackTrace();
+                interrupted = true;
             }
         }
-        return (QuickJS) objects[0];
+        if (interrupted) Thread.currentThread().interrupt();
     }
 
+    private static RuntimeException propagate(Throwable error) {
+        if (error instanceof RuntimeException) return (RuntimeException) error;
+        if (error instanceof Error) throw (Error) error;
+        return new IllegalStateException("Unable to initialize QuickJS runtime", error);
+    }
 
     public JSContext createContext() {
-        return new JSContext(this, getNative()._createContext(runtimePtr));
+        long contextPtr = getNative()._createContext(runtimePtr);
+        if (contextPtr == 0) throw new IllegalStateException("Unable to create QuickJS context");
+        try {
+            return new JSContext(this, contextPtr);
+        } catch (RuntimeException | Error error) {
+            try {
+                getNative()._releaseContext(contextPtr);
+            } catch (Throwable cleanupError) {
+                if (cleanupError != error) error.addSuppressed(cleanupError);
+            }
+            throw error;
+        }
     }
+
 
     public void close() {
         quickJSNative.postVoid(() -> {

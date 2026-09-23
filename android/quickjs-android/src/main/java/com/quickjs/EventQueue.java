@@ -7,6 +7,9 @@ import android.util.Log;
 
 import androidx.annotation.NonNull;
 
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
+
 class EventQueue implements QuickJSNative {
     private final QuickJS quickJS;
     private final QuickJSNative quickJSNative;
@@ -39,39 +42,38 @@ class EventQueue implements QuickJSNative {
             Log.e("QuickJS", "QuickJS is released");
             return null;
         }
-        if (Thread.currentThread() == thread) {
-            return event.run();
-        }
+        if (Thread.currentThread() == thread) return event.run();
         if (handler == null) {
-            this.threadChecker.checkThread();
+            threadChecker.checkThread();
             return event.run();
         }
-        Object[] result = new Object[2];
-        RuntimeException[] errors = new RuntimeException[1];
-        handler.post(() -> {
-            try {
-                if (!quickJS.isReleased()) result[0] = event.run();
-            } catch (RuntimeException e) {
-                errors[0] = e;
-            }
-            synchronized (result) {
-                result[1] = true;
-                result.notifyAll();
-            }
-        });
-        synchronized (result) {
-            try {
-                if (result[1] == null) {
-                    result.wait();
+
+        FutureTask<T> task = new FutureTask<>(() -> quickJS.isReleased() ? null : event.run());
+        if (!handler.post(task)) throw new IllegalStateException("QuickJS event queue is not accepting work");
+        return await(task);
+    }
+
+    private <T> T await(FutureTask<T> task) {
+        boolean interrupted = false;
+        try {
+            while (true) {
+                try {
+                    return task.get();
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                } catch (ExecutionException e) {
+                    throw propagate(e.getCause());
                 }
-            } catch (InterruptedException e) {
-                e.printStackTrace();
             }
+        } finally {
+            if (interrupted) Thread.currentThread().interrupt();
         }
-        if (errors[0] != null) {
-            throw errors[0];
-        }
-        return (T) result[0];
+    }
+
+    private RuntimeException propagate(Throwable error) {
+        if (error instanceof RuntimeException) return (RuntimeException) error;
+        if (error instanceof Error) throw (Error) error;
+        return new IllegalStateException("QuickJS event failed", error);
     }
 
     void postVoid(Runnable event) {
@@ -88,42 +90,22 @@ class EventQueue implements QuickJSNative {
             return;
         }
         if (handler == null) {
-            this.threadChecker.checkThread();
+            threadChecker.checkThread();
             event.run();
             return;
         }
-        Object[] result = new Object[2];
-        RuntimeException[] errors = new RuntimeException[1];
-        handler.post(() -> {
-            try {
-                if (!quickJS.isReleased()) {
-                    event.run();
-                }
-            } catch (RuntimeException e) {
-                errors[0] = e;
-            }
-            if (block) {
-                synchronized (result) {
-                    result[1] = true;
-                    result.notifyAll();
-                }
-            }
+
+        FutureTask<Void> task = new FutureTask<>(() -> {
+            if (!quickJS.isReleased()) event.run();
+            return null;
         });
-        if (block) {
-            synchronized (result) {
-                try {
-                    if (result[1] == null) {
-                        result.wait();
-                    }
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-            }
-            if (errors[0] != null) {
-                throw errors[0];
-            }
+        if (!handler.post(task)) {
+            if (block) throw new IllegalStateException("QuickJS event queue is not accepting work");
+            return;
         }
+        if (block) await(task);
     }
+
 
 
     @Override

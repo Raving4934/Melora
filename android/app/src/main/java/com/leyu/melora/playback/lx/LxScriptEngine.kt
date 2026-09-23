@@ -14,32 +14,44 @@ import kotlinx.coroutines.coroutineScope
 
 // 每个实例对应一个音源脚本的沙箱上下文；所有调用串行执行，Promise 由原生任务泵驱动。
 class LxScriptEngine(private val context: Context) : Closeable {
-    private val quickJs: QuickJS = QuickJS.createRuntimeWithEventQueue()
-    private val jsContext: JSContext = quickJs.createContext()
+    private val quickJs: QuickJS
+    private val jsContext: JSContext
     private val runtimePtr: Long
     private val contextPtr: Long
     private val host = LxHost()
 
     init {
-        val shim = context.assets.open("lx-shim.js").use { it.readBytes().decodeToString() }
-        val native = JSObject(jsContext)
-        native.registerJavaMethod(JavaCallback { _, args -> host.http(args.getString(0)) }, "http")
-        native.registerJavaMethod(JavaCallback { _, args -> host.hash(args.getString(0), args.getString(1)) }, "hash")
-        native.registerJavaMethod(JavaCallback { _, args -> host.zlibInflate(args.getString(0)) }, "zlibInflate")
-        native.registerJavaMethod(JavaCallback { _, args -> host.zlibDeflate(args.getString(0)) }, "zlibDeflate")
-        native.registerJavaMethod(JavaCallback { _, args -> host.randomBase64(args.getInteger(0)) }, "randomBase64")
-        native.registerJavaMethod(JavaCallback { _, args ->
-            host.aes(args.getString(0), args.getString(1), args.getString(2), args.getString(3), args.getString(4))
-        }, "aes")
-        native.registerJavaMethod(JavaCallback { _, args -> host.log(args.getString(0)) }, "log")
-        native.registerJavaMethod(JavaCallback { _, args ->
-            val padding = if (args.length() > 2) args.getString(2) else "RSA/ECB/NoPadding"
-            host.rsaEncrypt(args.getString(0), args.getString(1), padding)
-        }, "rsaEncrypt")
-        jsContext.set("__lxNative", native)
-        jsContext.executeVoidScript(shim, "lx-shim.js")
-        runtimePtr = readLong(quickJs, "runtimePtr")
-        contextPtr = readLong(jsContext, "contextPtr")
+        val runtime = QuickJS.createRuntimeWithEventQueue()
+        try {
+            quickJs = runtime
+            jsContext = runtime.createContext()
+            val shim = context.assets.open("lx-shim.js").use { it.readBytes().decodeToString() }
+            val native = JSObject(jsContext)
+            native.registerJavaMethod(JavaCallback { _, args -> host.http(args.getString(0)) }, "http")
+            native.registerJavaMethod(JavaCallback { _, args -> host.hash(args.getString(0), args.getString(1)) }, "hash")
+            native.registerJavaMethod(JavaCallback { _, args -> host.zlibInflate(args.getString(0)) }, "zlibInflate")
+            native.registerJavaMethod(JavaCallback { _, args -> host.zlibDeflate(args.getString(0)) }, "zlibDeflate")
+            native.registerJavaMethod(JavaCallback { _, args -> host.randomBase64(args.getInteger(0)) }, "randomBase64")
+            native.registerJavaMethod(JavaCallback { _, args ->
+                host.aes(args.getString(0), args.getString(1), args.getString(2), args.getString(3), args.getString(4))
+            }, "aes")
+            native.registerJavaMethod(JavaCallback { _, args -> host.log(args.getString(0)) }, "log")
+            native.registerJavaMethod(JavaCallback { _, args ->
+                val padding = if (args.length() > 2) args.getString(2) else "RSA/ECB/NoPadding"
+                host.rsaEncrypt(args.getString(0), args.getString(1), padding)
+            }, "rsaEncrypt")
+            jsContext.set("__lxNative", native)
+            jsContext.executeVoidScript(shim, "lx-shim.js")
+            runtimePtr = readLong(quickJs, "runtimePtr")
+            contextPtr = readLong(jsContext, "contextPtr")
+        } catch (failure: Throwable) {
+            try {
+                runtime.close()
+            } catch (cleanupError: Throwable) {
+                if (cleanupError !== failure) failure.addSuppressed(cleanupError)
+            }
+            throw failure
+        }
     }
 
     fun load(code: String, fileName: String) {

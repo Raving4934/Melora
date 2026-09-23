@@ -2122,7 +2122,6 @@ JSContext *JS_NewContextRaw(JSRuntime *rt)
     if (!ctx)
         return NULL;
     ctx->header.ref_count = 1;
-    add_gc_object(rt, &ctx->header, JS_GC_OBJ_TYPE_JS_CONTEXT);
 
     ctx->class_proto = js_malloc_rt(rt, sizeof(ctx->class_proto[0]) *
                                     rt->class_count);
@@ -2130,6 +2129,8 @@ JSContext *JS_NewContextRaw(JSRuntime *rt)
         js_free_rt(rt, ctx);
         return NULL;
     }
+    /* Register only after fallible allocation: the failure path frees ctx. */
+    add_gc_object(rt, &ctx->header, JS_GC_OBJ_TYPE_JS_CONTEXT);
     ctx->rt = rt;
     list_add_tail(&ctx->link, &rt->context_list);
 #ifdef CONFIG_BIGNUM

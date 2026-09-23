@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import static org.junit.Assert.*;
@@ -12,6 +13,43 @@ import static org.junit.Assert.*;
 /** 仅合成JS对象，不加载用户脚本/设置，也不访问网络。 */
 @RunWith(AndroidJUnit4.class)
 public class QuickJsLifecycleInstrumentedTest {
+    @Test(timeout = 5000)
+    public void queuedErrorsReachTheCallerWithoutKillingTheWorker() {
+        try (QuickJS runtime = QuickJS.createRuntimeWithEventQueue(); JSContext context = runtime.createContext()) {
+            Error expected = new OutOfMemoryError("synthetic callback failure");
+            try {
+                runtime.quickJSNative.postVoid(() -> { throw expected; });
+                fail("queued Error must reach its caller");
+            } catch (Error actual) {
+                assertSame(expected, actual);
+            }
+            assertEquals(42, context.executeIntegerScript("6 * 7", "after-error.js"));
+            runtime.postEventQueue(() -> { throw expected; });
+            assertEquals(42, context.executeIntegerScript("6 * 7", "after-async-error.js"));
+        }
+    }
+
+    @Test(timeout = 10000)
+    public void interruptedCallerWaitsForNativeCompletionAndRetainsItsInterrupt() throws Exception {
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread caller = new Thread(() -> {
+            Thread.currentThread().interrupt();
+            try (QuickJS runtime = QuickJS.createRuntimeWithEventQueue(); JSContext context = runtime.createContext()) {
+                assertTrue(Thread.currentThread().isInterrupted());
+                assertEquals(42, context.executeIntegerScript("6 * 7", "interrupted-caller.js"));
+                assertTrue(Thread.currentThread().isInterrupted());
+            } catch (Throwable error) {
+                failure.set(error);
+            } finally {
+                Thread.interrupted();
+            }
+        });
+        caller.start();
+        caller.join(5000);
+        assertFalse("native result must not leave its caller waiting forever", caller.isAlive());
+        assertNull(failure.get());
+    }
+
     private int tracked(JSContext context) throws Exception {
         java.lang.reflect.Field field = JSContext.class.getDeclaredField("refs");
         field.setAccessible(true);
