@@ -1,6 +1,8 @@
 package com.leyu.melora.ui.my
 
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.animation.core.animate
@@ -2435,10 +2437,11 @@ private fun PlaylistEditSheet(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PlaylistMoreSheet(
+internal fun PlaylistMoreSheet(
     playlist: UserLibrary.UserPlaylist,
     onDismiss: () -> Unit,
     onPlayAll: () -> Unit,
+    onAddToQueue: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -2463,7 +2466,7 @@ private fun PlaylistMoreSheet(
             }
         },
     ) {
-        Column(modifier = Modifier.padding(bottom = 28.dp)) {
+        Column(modifier = Modifier.verticalScroll(rememberScrollState()).padding(bottom = 28.dp)) {
             // 头部卡片：48dp 歌单封面/图集 + 歌单名与歌曲数量
             Row(
                 modifier = Modifier
@@ -2533,6 +2536,13 @@ private fun PlaylistMoreSheet(
                         label = "播放全部",
                         subtitle = "立即开始播放歌单内全部歌曲",
                         onClick = { onDismiss(); onPlayAll() },
+                    )
+                    SheetAction(
+                        icon = Icons.AutoMirrored.Outlined.PlaylistAdd,
+                        tint = BrandBlue,
+                        label = "添加全部歌曲到播放队列",
+                        subtitle = "追加到队列末尾，不打断当前播放",
+                        onClick = { onDismiss(); onAddToQueue() },
                     )
                 }
                 SheetAction(
@@ -2745,6 +2755,7 @@ private fun UserPlaylistsPage(
                     PlaybackController.playQueue(context, target.songs.toUiTracks(), 0)
                 }
             },
+            onAddToQueue = { PlaybackController.addToQueue(context, target.songs.toUiTracks()) },
             onRename = { onRename(target) },
             onDelete = { onDelete(target) },
         )
@@ -2884,6 +2895,7 @@ private fun UserPlaylistDetail(
                     PlaybackController.playQueue(context, songs.toUiTracks(), 0)
                 }
             },
+            onAddToQueue = { PlaybackController.addToQueue(context, songs.toUiTracks()) },
             onRename = { onRename(current) },
             onDelete = {
                 onDelete(current)

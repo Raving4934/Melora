@@ -831,16 +831,30 @@ object PlaybackController {
         appContext?.let(::checkLocalQueue)
     }
 
-    fun addToQueue(context: Context, track: UiTrack) {
+    /** 批量追加只修改队尾，不解析音源、不打断当前播放；同一UID只加入一次。 */
+    fun addToQueue(context: Context, tracks: List<UiTrack>) {
         appContext = context.applicationContext
-        val player = controller ?: return
-        bookQueue?.stop()
-        TrackRegistry.register(track)
-        if ((0 until player.mediaItemCount).none { player.getMediaItemAt(it).mediaId == track.uid }) {
-            player.addMediaItem(buildItem(track))
+        if (tracks.isEmpty()) {
+            _state.value = _state.value.copy(message = "没有可加入的歌曲")
+            return
         }
+        val player = controller
+        if (player == null) {
+            _state.value = _state.value.copy(message = "播放服务尚未就绪，请稍后重试")
+            return
+        }
+        restoreQueue(player, autoPlay = false)
+        val queued = (0 until player.mediaItemCount).mapTo(hashSetOf()) { player.getMediaItemAt(it).mediaId }
+        val additions = tracks.filter { queued.add(it.uid) }
+        if (additions.isEmpty()) {
+            _state.value = _state.value.copy(message = "歌曲已在播放队列中")
+            return
+        }
+        bookQueue?.stop()
+        TrackRegistry.registerAll(additions)
+        player.addMediaItems(additions.map(::buildItem))
         saveQueue(force = true)
-        _state.value = _state.value.copy(message = "已加入播放队列")
+        _state.value = _state.value.copy(message = "已加入播放队列 ${additions.size} 首")
         publish()
     }
 

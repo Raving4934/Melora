@@ -167,8 +167,7 @@ internal fun SongBatchActionsBar(
                 }
                 BatchAction(Icons.AutoMirrored.Outlined.PlaylistAdd, "添加到歌单", enabled) { addToPlaylist = selected }
                 BatchAction(Icons.AutoMirrored.Rounded.QueueMusic, "加入播放队列", enabled) {
-                    selected.forEach { PlaybackController.addToQueue(context, UiTrack.fromOnline(it)) }
-                    PlaybackController.postMessage(context, "已加入播放队列 ${selected.size} 首")
+                    PlaybackController.addToQueue(context, selected.map(UiTrack::fromOnline))
                     selection.finish()
                 }
                 BatchAction(Icons.Outlined.Download, "下载", enabled) {
