@@ -9,12 +9,14 @@ import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.longClick
@@ -31,6 +33,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.leyu.melora.playback.LyricLine
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlayerCoverStyle
+import com.leyu.melora.playback.ThemeMode
 import com.leyu.melora.playback.PlayerUiState
 import com.leyu.melora.playback.UiTrack
 import com.leyu.melora.ui.theme.SystemBarsAppearance
@@ -47,10 +50,20 @@ class ImmersivePlayerInstrumentedTest {
     private val immersive = mutableStateOf(false)
     private lateinit var view: View
 
-    private fun showPlayer(motionEnabled: Boolean = false, compact: Boolean = false, landscape: Boolean = false) {
+    private fun showPlayer(
+        motionEnabled: Boolean = false,
+        compact: Boolean = false,
+        landscape: Boolean = false,
+        observeCoverStyle: Boolean = false,
+    ) {
         val position = mutableLongStateOf(2_000)
         val lines = listOf(LyricLine(0, "慢慢听见海风"), LyricLine(5_000, "灯火落在远方"))
         compose.setContent {
+            val coverStyle = if (observeCoverStyle) {
+                MeloraSettings.playerCoverStyle.collectAsState().value
+            } else {
+                PlayerCoverStyle.Default
+            }
             view = LocalView.current
             SystemBarsAppearance(darkStatusIcons = false, forceHideStatusBar = immersive.value)
             PlayerAppearanceProvider(dark = true) {
@@ -61,7 +74,7 @@ class ImmersivePlayerInstrumentedTest {
                     lyricFrame = rememberLyricFrame(lines, position), lyricLines = lines,
                     onOpenQueue = {}, queuePagerState = rememberPagerState { 2 },
                     onArtworkPositioned = {}, artworkAlpha = { 1f },
-                    coverStyle = PlayerCoverStyle.Default, artworkRotation = { 0f },
+                    coverStyle = coverStyle, artworkRotation = { 0f },
                     onPageVisualChanged = { _, _, _ -> },
                     modifier = when {
                         landscape -> Modifier.requiredSize(720.dp, 360.dp)
@@ -74,10 +87,11 @@ class ImmersivePlayerInstrumentedTest {
     }
 
     @Test
-    fun longPressExpandsContentAndBackRestoresNormalPlayer() {
+    fun longPressCoverPickerEntersImmersionAndBackRestoresNormalPlayer() {
         showPlayer()
         val normal = compose.onNodeWithTag("player-pages").fetchSemanticsNode().boundsInRoot
         compose.onNodeWithTag("player-artwork").performTouchInput { longClick() }
+        compose.onNodeWithTag("player-cover-immersive").performClick()
         compose.runOnIdle { assertTrue(immersive.value) }
         val enlarged = compose.onNodeWithTag("player-pages").fetchSemanticsNode().boundsInRoot
         assertTrue("隐藏栏位应释放给正文", enlarged.height > normal.height + 100f)
@@ -86,6 +100,88 @@ class ImmersivePlayerInstrumentedTest {
         Espresso.pressBack()
         compose.runOnIdle { assertFalse(immersive.value) }
         assertEquals(normal.height, compose.onNodeWithTag("player-pages").fetchSemanticsNode().boundsInRoot.height, 1f)
+    }
+
+    @Test
+    fun selectingCoverFromLongPressPersistsAndReopensSelectedWithoutEnteringImmersion() {
+        val original = MeloraSettings.playerCoverStyle.value
+        val selectedStyle = PlayerCoverStyle.entries.first { it != original }
+        val selectedTag = "player-cover-${selectedStyle.storageValue}"
+        try {
+            showPlayer(observeCoverStyle = true)
+            compose.onNodeWithTag("player-artwork").performTouchInput { longClick() }
+            compose.onNodeWithTag("player-cover-picker").assertIsDisplayed()
+            compose.runOnIdle { assertFalse(immersive.value) }
+            compose.onNodeWithTag(selectedTag).performClick()
+            compose.runOnIdle {
+                assertEquals(selectedStyle, MeloraSettings.playerCoverStyle.value)
+                assertFalse(immersive.value)
+            }
+            compose.onNodeWithTag("player-cover-picker").assertDoesNotExist()
+            compose.onNodeWithTag("player-artwork").assertIsDisplayed()
+            compose.onNodeWithTag("player-transport").assertIsDisplayed()
+
+            compose.onNodeWithTag("player-artwork").performTouchInput { longClick() }
+            compose.onNodeWithTag("player-cover-picker").assertIsDisplayed()
+            compose.onNodeWithTag(selectedTag).assertIsSelected()
+            compose.runOnIdle { assertFalse(immersive.value) }
+        } finally {
+            MeloraSettings.updatePlayerCoverStyle(original)
+        }
+    }
+
+    @Test
+    fun selectingThemeUsesHostSetterKeepsPickerAndReopensWithThemeSelected() {
+        val originalThemeMode = MeloraSettings.playerThemeMode.value
+        val originalCoverStyle = MeloraSettings.playerCoverStyle.value
+        val selectedThemeMode = ThemeMode.entries.first { it != originalThemeMode }
+        val themeTag = "player-cover-theme-${selectedThemeMode.storageValue}"
+        val coverTag = "player-cover-${originalCoverStyle.storageValue}"
+        try {
+            showPlayer(observeCoverStyle = true)
+            compose.onNodeWithTag("player-artwork").performTouchInput { longClick() }
+            compose.onNodeWithTag("player-cover-picker").assertIsDisplayed()
+            compose.onNodeWithTag(coverTag).assertIsSelected()
+
+            compose.onNodeWithTag(themeTag).performClick()
+            compose.runOnIdle {
+                assertEquals(selectedThemeMode, MeloraSettings.playerThemeMode.value)
+                assertEquals(originalCoverStyle, MeloraSettings.playerCoverStyle.value)
+                assertFalse(immersive.value)
+            }
+            compose.onNodeWithTag("player-cover-picker").assertIsDisplayed()
+            compose.onNodeWithTag(themeTag).assertIsSelected()
+            compose.onNodeWithTag(coverTag).assertIsSelected()
+
+            compose.onNodeWithTag("player-cover-cancel").performClick()
+            compose.onNodeWithTag("player-cover-picker").assertDoesNotExist()
+            compose.onNodeWithTag("player-artwork").performTouchInput { longClick() }
+            compose.onNodeWithTag("player-cover-picker").assertIsDisplayed()
+            compose.onNodeWithTag(themeTag).assertIsSelected()
+            compose.onNodeWithTag(coverTag).assertIsSelected()
+            compose.runOnIdle { assertFalse(immersive.value) }
+        } finally {
+            MeloraSettings.updatePlayerThemeMode(originalThemeMode)
+        }
+    }
+
+    @Test
+    fun choosingCoverWhileImmersedDoesNotExitImmersion() {
+        val original = MeloraSettings.playerCoverStyle.value
+        try {
+            showPlayer()
+            compose.runOnIdle { immersive.value = true }
+            compose.onNodeWithTag("player-artwork").performTouchInput { longClick() }
+            compose.onNodeWithTag("player-cover-vinyl").performClick()
+            compose.runOnIdle {
+                assertEquals(PlayerCoverStyle.Vinyl, MeloraSettings.playerCoverStyle.value)
+                assertTrue(immersive.value)
+            }
+            compose.onNodeWithTag("player-cover-picker").assertDoesNotExist()
+            compose.onNodeWithTag("player-transport").assertDoesNotExist()
+        } finally {
+            MeloraSettings.updatePlayerCoverStyle(original)
+        }
     }
 
     @Test

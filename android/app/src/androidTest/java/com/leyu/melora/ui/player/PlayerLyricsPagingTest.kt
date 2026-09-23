@@ -71,6 +71,7 @@ class PlayerLyricsPagingTest {
         compose.waitForIdle()
         if (immersive) {
             compose.onNodeWithTag("player-artwork").performTouchInput { longClick() }
+            compose.onNodeWithTag("player-cover-immersive").performClick()
             compose.runOnIdle { assertTrue(immersiveState.value) }
             compose.onNodeWithTag("player-heading").assertDoesNotExist()
             compose.onNodeWithTag("player-transport").assertDoesNotExist()

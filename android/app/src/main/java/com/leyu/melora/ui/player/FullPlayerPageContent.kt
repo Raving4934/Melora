@@ -276,6 +276,8 @@ internal fun FullPlayerPageContent(
     var showTimerSettings by remember { mutableStateOf(false) }
     var showMoreActions by remember { mutableStateOf(false) }
     var showAudioEffects by remember { mutableStateOf(false) }
+    var showCoverPicker by remember { mutableStateOf(false) }
+    LaunchedEffect(isVisible, isCollapsed) { if (!isVisible || isCollapsed) showCoverPicker = false }
     // 专辑/歌手聚合页（从音频信息页点击进入）
     var openedCollection by remember(isCollapsed) { mutableStateOf<SongsCollection?>(null) }
 
@@ -440,8 +442,8 @@ internal fun FullPlayerPageContent(
                                 openedCollection = artistCollection(track, artist)
                             },
                         )
-                        1 -> VinylCoverPage(
-                            state = state, immersive = immersive, immersion = immersion,
+                        1 -> PlayerCoverPage(
+                            state = state, onOpenCoverPicker = { showCoverPicker = true }, immersive = immersive, immersion = immersion,
                             onImmersiveChange = onImmersiveChange,
                             isVisible = isVisible && coverPagerState.currentPage == 1,
                             track = track,
@@ -615,6 +617,17 @@ internal fun FullPlayerPageContent(
                 }
             }
         }
+    }
+
+    if (showCoverPicker) {
+        val playerThemeMode by MeloraSettings.playerThemeMode.collectAsStateWithLifecycle()
+        PlayerCoverPicker(
+            selected = coverStyle, track = track, immersive = immersive, motionEnabled = motionEnabled,
+            themeMode = playerThemeMode, onThemeModeChange = MeloraSettings::updatePlayerThemeMode,
+            onSelect = { style -> MeloraSettings.updatePlayerCoverStyle(style); showCoverPicker = false },
+            onToggleImmersive = { showCoverPicker = false; onImmersiveChange(!immersive) },
+            onDismiss = { showCoverPicker = false },
+        )
     }
 
     // 1. 定时与倍速设置底部抽屉
@@ -1175,8 +1188,9 @@ internal fun playerCoverSideDp(width: Float, height: Float, lyricAreaHeight: Flo
 
 // 播放页 Page 1：默认封面歌词对齐左边沿，圆形/黑胶歌词居中。
 @Composable
-private fun VinylCoverPage(
+private fun PlayerCoverPage(
     state: PlayerUiState,
+    onOpenCoverPicker: () -> Unit,
     immersive: Boolean,
     immersion: androidx.compose.runtime.State<Float>,
     onImmersiveChange: (Boolean) -> Unit,
@@ -1242,8 +1256,8 @@ private fun VinylCoverPage(
                             }
                             .combinedClickable(
                                 interactionSource = remember { MutableInteractionSource() }, indication = null,
-                                onLongClickLabel = if (immersive) "退出沉浸播放" else "进入沉浸播放",
-                                onLongClick = { onImmersiveChange(!immersive) },
+                                onLongClickLabel = "选择封面类型",
+                                onLongClick = onOpenCoverPicker,
                                 onClick = { if (immersive) interact() },
                             ),
                         cornerRadius = 18, retryOnError = retryArtwork, smoothChanges = true,

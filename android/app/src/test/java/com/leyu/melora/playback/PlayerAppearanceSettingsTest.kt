@@ -105,6 +105,18 @@ class PlayerAppearanceSettingsTest {
         )
     }
 
+    @Test
+    fun obsoleteExperimentalUiFieldsDoNotAffectExistingCoverAndColorSettings() = withAppearanceSettings {
+        val imported = JSONObject().put("playerVisualTheme", "archive")
+            .put("playerCoverStyle", "circle").put("playerThemeMode", "dark")
+        val prepared = BackupSettings.prepare(imported, emptySet(), emptySet()).first
+        assertFalse(prepared.has("playerVisualTheme"))
+        BackupSettings.apply(prepared)
+        assertEquals(PlayerCoverStyle.Circle, MeloraSettings.playerCoverStyle.value)
+        assertEquals(ThemeMode.Dark, MeloraSettings.playerThemeMode.value)
+        assertFalse(BackupSettings.collect().has("playerVisualTheme"))
+    }
+
     private fun assertAppearance(
         hideStatusBar: Boolean,
         blurTopBar: Boolean,

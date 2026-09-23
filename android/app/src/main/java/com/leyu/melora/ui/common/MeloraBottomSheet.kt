@@ -38,6 +38,7 @@ internal fun MeloraBottomSheet(
     containerColor: Color,
     tonalElevation: Dp = 0.dp,
     shape: Shape = BottomSheetDefaults.ExpandedShape,
+    scrimColor: Color = BottomSheetDefaults.ScrimColor,
     dragHandle: @Composable (() -> Unit)? = { BottomSheetDefaults.DragHandle() },
     content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -46,6 +47,7 @@ internal fun MeloraBottomSheet(
         onDismissRequest = onDismissRequest,
         sheetState = sheetState,
         containerColor = containerColor,
+        scrimColor = scrimColor,
         tonalElevation = tonalElevation,
         shape = shape,
         dragHandle = dragHandle,
