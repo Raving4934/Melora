@@ -2,6 +2,40 @@
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-09-23
+
+### 安卓客户端
+
+【听书体验】
+- 最近收听卡片支持从上次进度继续播放，不再重新从头开始。
+- 直接点播任意章节后，按本书顺序继续播放，并自动补充后续章节，无需先点击“播放全部”再查找章节。
+- 听书的“参与创作的艺术家”改为展示作者／主播的整部作品，点击作品进入章节列表，不再混杂不同书籍的单集节目。
+- 听书目录返回重入时保留已加载内容与分页位置，改善长篇章节和作者作品的连续浏览体验。
+
+【播放与本地音乐】
+- 删除本地歌曲后，同步清理当前队列、保存的队列和待播放请求，避免重启后已删除的歌曲再次出现。
+- 删除非当前歌曲不打断播放；删除当前歌曲后接续剩余歌曲，原本暂停则保持暂停，单曲循环也可正常接续。
+- 批量删除只清理成功删除的文件；保留同名的其他音质文件及在线歌曲，文件权限或存储暂时不可用时不贸然清空队列。
+
+【交互与配置】
+- 全屏播放页打开的专辑／艺术家详情不再触发下拉收起，避免与列表滚动冲突；顶部返回和系统返回照常使用。
+- 目录数据通道改为自动选择与失败回退，移除手动切换选项，无需再选择 App／网页通道。
+
+### 提交追溯（安卓版）
+
+> 仅发布 Android 0.1.3；Web / NAS、FPK 与 Docker 维持 0.1.1。完整提交区间：[android-v0.1.2...android-v0.1.3][Android 0.1.3]。
+
+- 听书续播、章节顺序与分页连播：[`a40dfa1`](https://github.com/Raving4934/Melora/commit/a40dfa1f211649345af1eec2d72e12b5454a4ca0)。
+- 目录数据通道自动选择：[`3853953`](https://github.com/Raving4934/Melora/commit/3853953c0ca176e2a4042b280489fec580ffcc04)。
+- 作者／主播作品目录与听书目录分页恢复：[`332d2f1`](https://github.com/Raving4934/Melora/commit/332d2f10d20fd967a972c4f13ef676abddb7dfbc)。
+- 本地文件删除与播放队列同步：[`e296346`](https://github.com/Raving4934/Melora/commit/e296346018e80eb9adbc2ec41304b37a6008f805)。
+- 播放器详情页滚动手势修复：[`6682568`](https://github.com/Raving4934/Melora/commit/6682568c54afe121d25ea4e733280a1ab97dfe9c)。
+
+### 安卓安装包
+
+- [下载 Android 0.1.3 APK（arm64-v8a）](https://github.com/Raving4934/Melora/releases/download/android-v0.1.3/melora-android-v0.1.3-arm64-v8a.apk)
+- 适用于 Android 8.0 及以上的 ARM64 设备；正式签名保持不变，可直接覆盖安装。
+
 ## [0.1.2] - 2026-09-21
 
 ### 安卓客户端
@@ -105,9 +139,11 @@
 
 **Docker 镜像：** `ghcr.io/raving4934/melora:0.1.0`（支持 `linux/amd64`、`linux/arm64`）。
 
-[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.2...HEAD
-[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.2...HEAD
+[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.3...HEAD
+[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.3...HEAD
 [Web Unreleased]: https://github.com/Raving4934/Melora/compare/v0.1.1...HEAD
+[0.1.3]: https://github.com/Raving4934/Melora/compare/android-v0.1.2...android-v0.1.3
+[Android 0.1.3]: https://github.com/Raving4934/Melora/compare/android-v0.1.2...android-v0.1.3
 [0.1.2]: https://github.com/Raving4934/Melora/compare/android-v0.1.1...android-v0.1.2
 [Android 0.1.2]: https://github.com/Raving4934/Melora/compare/android-v0.1.1...android-v0.1.2
 [0.1.1]: https://github.com/Raving4934/Melora/compare/v0.1.0...v0.1.1

@@ -6,7 +6,7 @@
 
 自托管音乐流媒体服务与独立 Android 本地音乐播放器
 
-[![Android](https://img.shields.io/badge/Android-v0.1.2-3567e8?style=flat-square)](https://github.com/Raving4934/Melora/releases/tag/android-v0.1.2)
+[![Android](https://img.shields.io/badge/Android-v0.1.3-3567e8?style=flat-square)](https://github.com/Raving4934/Melora/releases/tag/android-v0.1.3)
 [![Web / NAS](https://img.shields.io/badge/Web%20%2F%20NAS-v0.1.1-3567e8?style=flat-square)](https://github.com/Raving4934/Melora/releases/tag/v0.1.1)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=flat-square&logo=android&logoColor=white)](https://github.com/Raving4934/Melora/releases)
 [![Platform](https://img.shields.io/badge/Platform-Android%20%7C%20Web%20%7C%20Docker%20%7C%20fnOS-blue?style=flat-square)](packaging/fpk)
@@ -84,8 +84,8 @@
 4. **演示模式说明**：
    - 演示模式需显式配置环境变量 `MELORA_DEMO_MODE=1` 开启，未配置音源不会自动切换为演示模式。
 5. **发布通道与升级说明**：
-   - Android 与 Web/NAS 使用独立版本标签；当前 Android 基准为 `android-v0.1.2`，Web/NAS 基准为 `v0.1.1`；
-   - Android 正式签名保持不变，`versionCode` 已升至 `7`。可直接覆盖安装新版 APK，无需卸载或清空数据。
+   - Android 与 Web/NAS 使用独立版本标签；当前 Android 基准为 `android-v0.1.3`，Web/NAS 基准为 `v0.1.1`；
+   - Android 正式签名保持不变，`versionCode` 已升至 `10`。可直接覆盖安装新版 APK，无需卸载或清空数据。
 
 ---
 
@@ -93,7 +93,7 @@
 
 ### 📱 Android 客户端
 
-1. **下载安装**：前往 [GitHub Releases](https://github.com/Raving4934/Melora/releases) 下载 `melora-android-v0.1.2-arm64-v8a.apk` 并安装。
+1. **下载安装**：前往 [GitHub Releases](https://github.com/Raving4934/Melora/releases) 下载 `melora-android-v0.1.3-arm64-v8a.apk` 并安装。
 2. **播放本地音乐**：打开应用进入“本地歌曲”，授予存储权限或点击“扫描媒体库”，即可直接离线播放。
 3. **导入音源扩展**：如需在线功能，可在 **设置 → 自定义源** 中导入兼容 LX 规范的 `.js` 脚本。
 
