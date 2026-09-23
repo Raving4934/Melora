@@ -67,12 +67,16 @@ class DesktopLyricService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if ((application as? com.leyu.melora.MeloraApplication)?.finishBlockedServiceStart(this, startId) == true) {
+            return START_NOT_STICKY
+        }
         if (intent?.action == ACTION_REFRESH && lyricView != null) applyVisualSettings()
         return START_STICKY
     }
 
     override fun onCreate() {
         super.onCreate()
+        if ((application as? com.leyu.melora.MeloraApplication)?.restoreFailure != null) return
         if (!Settings.canDrawOverlays(this)) {
             stopSelf()
             return

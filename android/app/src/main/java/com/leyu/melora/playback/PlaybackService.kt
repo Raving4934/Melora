@@ -57,6 +57,7 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
+        if ((application as? com.leyu.melora.MeloraApplication)?.restoreFailure != null) return
         // 播放与下载共享唯一音频缓存，避免同一首歌重复联网与缓存目录多实例冲突。
         isRunning = true
         val cacheDataSourceFactory = AudioCacheStore.playbackDataSourceFactory(this)
@@ -245,6 +246,13 @@ class PlaybackService : MediaSessionService() {
                     .build(),
             ),
         )
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if ((application as? com.leyu.melora.MeloraApplication)?.finishBlockedServiceStart(this, startId) == true) {
+            return START_NOT_STICKY
+        }
+        return super.onStartCommand(intent, flags, startId)
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession

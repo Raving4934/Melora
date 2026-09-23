@@ -1,6 +1,7 @@
 package com.leyu.melora
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -10,6 +11,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import com.leyu.melora.playback.BackupRestoreTransaction
 import com.leyu.melora.playback.local.LocalTagFiller
 import com.leyu.melora.playback.lx.LxInspector
 import com.leyu.melora.playback.lx.LxScriptStore
@@ -19,6 +21,7 @@ import com.leyu.melora.ui.theme.MeloraTheme
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
+    private var recoveryDialog: AlertDialog? = null
     private var launchedLocalTagAuthorizationId: Long? = null
     private val localTagWriteLauncher = registerForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult(),
@@ -34,10 +37,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         requestHighRefreshRate()
         observeLocalTagWriteAuthorization()
-        val initialTab = intent?.getStringExtra("tab")?.toIntOrNull()
-            ?: com.leyu.melora.playback.MeloraSettings.lastTab.value
+        val app = application as MeloraApplication
+        app.restoreFailure?.let { showStartupRecovery(it) }
         lifecycleScope.launch {
-            (application as MeloraApplication).awaitStartup()
+            app.awaitStartup()
+            val initialTab = intent?.getStringExtra("tab")?.toIntOrNull()
+                ?: com.leyu.melora.playback.MeloraSettings.lastTab.value
             setContent {
                 MeloraTheme {
                     // 全局关闭系统"整屏拉伸"（橡皮筋）：纵向/横向滚动都到边即停，手感统一
@@ -52,6 +57,35 @@ class MainActivity : ComponentActivity() {
             }
             runDebugActions()
         }
+    }
+
+    private fun showStartupRecovery(error: Exception) {
+        recoveryDialog?.dismiss()
+        val app = application as MeloraApplication
+        recoveryDialog = AlertDialog.Builder(this)
+            .setTitle("上次恢复未完成")
+            .setMessage("恢复材料损坏或暂时无法读取，尚未载入应用数据。请勿清除应用数据。\n\n" +
+                "可释放存储空间后重试；也可保留恢复快照，使用当前数据继续（内容可能不完整）。\n\n" +
+                (error.message ?: error.javaClass.simpleName))
+            .setCancelable(false)
+            .setPositiveButton("重试恢复") { _, _ ->
+                if (!app.continueStartup()) showStartupRecovery(requireNotNull(app.restoreFailure))
+            }
+            .setNeutralButton("保留并继续") { _, _ ->
+                try {
+                    BackupRestoreTransaction.retain(this)
+                    if (!app.continueStartup()) showStartupRecovery(requireNotNull(app.restoreFailure))
+                } catch (failure: Exception) {
+                    showStartupRecovery(failure)
+                }
+            }
+            .setNegativeButton("退出") { _, _ -> finish() }
+            .show()
+    }
+
+    override fun onDestroy() {
+        recoveryDialog?.dismiss()
+        super.onDestroy()
     }
 
     override fun onResume() {

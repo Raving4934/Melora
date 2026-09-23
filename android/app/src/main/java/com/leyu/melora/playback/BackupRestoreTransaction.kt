@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.leyu.melora.playback.lx.LxScriptStore
 import java.io.File
+import java.util.UUID
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -69,7 +70,17 @@ internal object BackupRestoreTransaction {
         }
     }
 
+    /** 仅在用户明确选择继续时保留整个现场；原子改名，不删除、不覆盖现有数据。 */
+    fun retain(context: Context): File = synchronized(BackupStateLock.monitor) {
+        val journal = directory(context)
+        val retained = File(context.filesDir, "backup-restore-retained-${UUID.randomUUID()}")
+        check(journal.isDirectory && journal.renameTo(retained)) { "无法保留恢复快照，请释放存储空间后重试" }
+        retained
+    }
+
     private fun rollback(context: Context, journal: File) {
+        // 必须一次解析全部偏好，再动用户库/音源。后一个偏好损坏也不能造成半回滚。
+        val preferences = decodePreferences(journal)
         libraryFiles.forEach { name ->
             val saved = File(journal, name)
             val target = File(context.filesDir, name)
@@ -79,10 +90,16 @@ internal object BackupRestoreTransaction {
         check(!sourceDir.exists() || sourceDir.deleteRecursively()) { "无法回滚音源目录" }
         val sources = File(journal, "sources")
         if (sources.exists()) copyTree(sources, sourceDir)
+        preferences.forEach { (name, values) ->
+            context.getSharedPreferences(name, Context.MODE_PRIVATE).replaceValues(values, clear = true)
+        }
+    }
+
+    private fun decodePreferences(journal: File): Map<String, Map<String, Any>> {
         val preferences = JSONObject(File(journal, "preferences.json").inputStream().use { it.readBackupText() })
-        preferenceNames.forEach { name ->
+        return preferenceNames.associateWith { name ->
             val saved = preferences.getJSONObject(name)
-            val values = saved.keys().asSequence().associateWith { key ->
+            saved.keys().asSequence().associateWith { key ->
                 val field = saved.getJSONArray(key)
                 when (field.getString(0)) {
                     "boolean" -> field.getBoolean(1)
@@ -94,7 +111,6 @@ internal object BackupRestoreTransaction {
                     else -> error("无效恢复日志")
                 }
             }
-            context.getSharedPreferences(name, Context.MODE_PRIVATE).replaceValues(values, clear = true)
         }
     }
 

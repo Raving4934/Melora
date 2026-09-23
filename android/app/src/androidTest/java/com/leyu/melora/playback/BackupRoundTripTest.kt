@@ -201,6 +201,98 @@ class BackupRoundTripTest {
     }
 
     @Test
+    fun malformedRecoveryJsonNeverChangesLiveDataOnRepeatedAttempts() = assertBlockedRecovery { journal ->
+        File(journal, "preferences.json").writeText("{broken-json")
+    }
+
+    @Test
+    fun missingRecoveryPreferencesNeverChangesLiveData() = assertBlockedRecovery { journal ->
+        assertTrue(File(journal, "preferences.json").delete())
+    }
+
+    @Test
+    fun malformedSecondPreferenceIsRejectedBeforeAnyRollbackWrite() = assertBlockedRecovery { journal ->
+        val file = File(journal, "preferences.json")
+        val preferences = JSONObject(file.readText())
+        preferences.getJSONObject(LxScriptStore.PREFS).put("broken", JSONArray().put("unknown-type").put(1))
+        file.writeText(preferences.toString())
+    }
+
+    @Test
+    fun committedJournalDoesNotNeedAnIntactRollbackSnapshot() {
+        seedExistingData()
+        val before = diskSnapshot()
+        BackupRestoreTransaction.prepare(context)
+        val journal = File(context.filesDir, "backup-restore")
+        File(journal, "preferences.json").writeText("broken")
+        File(journal, "committed").writeText("1")
+        BackupManager.recoverInterruptedRestore(context)
+        assertEquals(before, diskSnapshot())
+    }
+
+    @Test
+    fun repairedJournalCanRetryOriginalRollbackWithoutLosingTheSnapshot() {
+        seedExistingData()
+        val before = diskSnapshot()
+        BackupRestoreTransaction.prepare(context)
+        val preferences = File(context.filesDir, "backup-restore/preferences.json")
+        val original = preferences.readBytes()
+        preferences.writeText("broken")
+        MeloraSettings.updateShowExit(false)
+        UserLibrary.replaceFromBackup(library("partial").toString())
+        assertTrue(runCatching { BackupManager.recoverInterruptedRestore(context) }.isFailure)
+        preferences.writeBytes(original)
+        BackupManager.recoverInterruptedRestore(context)
+        assertEquals(before, diskSnapshot())
+        BackupManager.recoverInterruptedRestore(context)
+        assertEquals(before, diskSnapshot())
+    }
+
+    @Test
+    fun explicitRetentionKeepsEveryJournalByteAndAllowsFutureRestore() {
+        seedExistingData()
+        BackupRestoreTransaction.prepare(context)
+        val journal = File(context.filesDir, "backup-restore")
+        File(journal, "preferences.json").writeText("{broken-json")
+        UserLibrary.replaceFromBackup(library("current").toString())
+        val retainedBytes = journal.walkTopDown().filter(File::isFile)
+            .associate { it.relativeTo(journal).path to it.readBytes().toList() }
+        val retained = BackupRestoreTransaction.retain(context)
+        assertFalse(journal.exists())
+        assertEquals(retainedBytes, retained.walkTopDown().filter(File::isFile)
+            .associate { it.relativeTo(retained).path to it.readBytes().toList() })
+        BackupManager.recoverInterruptedRestore(context)
+        assertEquals("current", UserLibrary.favorites.value.single().name)
+        BackupRestoreTransaction.run(context, {}) { MeloraSettings.updateShowExit(false) }
+        assertFalse(MeloraSettings.showExitButton.value)
+        assertEquals(retainedBytes, retained.walkTopDown().filter(File::isFile)
+            .associate { it.relativeTo(retained).path to it.readBytes().toList() })
+    }
+
+    private fun assertBlockedRecovery(corrupt: (File) -> Unit) {
+        seedExistingData()
+        BackupRestoreTransaction.prepare(context)
+        // 让当前状态与原始快照不同，才能发现回滚是否在校验失败前就覆盖了数据。
+        MeloraSettings.updateShowExit(false)
+        UserLibrary.replaceFromBackup(library("current").toString())
+        LxScriptStore(context).import("current.js", "// keep current source")
+        val journal = File(context.filesDir, "backup-restore")
+        corrupt(journal)
+        val before = diskSnapshot()
+        try {
+            repeat(2) {
+                assertTrue(runCatching { BackupManager.recoverInterruptedRestore(context) }.isFailure)
+                assertEquals(before, diskSnapshot())
+                assertFalse(MeloraSettings.showExitButton.value)
+                assertEquals("current", UserLibrary.favorites.value.single().name)
+            }
+        } finally {
+            // 只清理测试沙箱，避免故意损坏的日志影响下一个用例的@Before。
+            journal.deleteRecursively()
+        }
+    }
+
+    @Test
     fun unknownFieldsAreIgnoredAndOtherSettingsStillRestore() = runBlocking<Unit> {
         val uri = document("legacy.json")
         File(uri.path!!).writeText(JSONObject().put("settings", JSONObject()
