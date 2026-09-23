@@ -110,9 +110,10 @@ class MeloraDataSourceFactory(context: Context, base: DataSource.Factory) : Data
         // 纯本地曲目由 ID 明确指定，不能因同名/同 UID 下载记录或网络解析跨版本。
         if (track.source == LocalSong.SOURCE) {
             val local = LocalMediaStore.matchTrack(track)
+            val localUri = local?.uri ?: track.raw?.optString("localUri")?.takeIf(String::isNotBlank)
                 ?: throw FileNotFoundException("本地文件不存在或索引已失效")
-            TrackRegistry.notifyResolved(uid, local.playbackQuality, "localmedia", localFile = local)
-            return@ResolvingDataSource dataSpec.buildUpon().setUri(local.uri.toUri()).setKey(null).build()
+            TrackRegistry.notifyResolved(uid, local?.playbackQuality ?: "local", "localmedia", localFile = local)
+            return@ResolvingDataSource dataSpec.buildUpon().setUri(localUri.toUri()).setKey(null).build()
         }
 
         val savedDownload = DownloadCenter.saved(uid)

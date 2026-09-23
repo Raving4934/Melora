@@ -77,7 +77,7 @@ class PlaybackQueuePersistenceTest {
             for (end in listOf(owner::clearQueue, owner::stop)) {
                 val pending = Job()
                 jobField.set(owner, pending)
-                actionField.set(owner, { error("cancelled connection must never start playback") })
+                actionField.set(owner, PendingPlaybackSelection(listOf(track("pending")), insertSingle = true))
                 state.value = previous.copy(pendingQueueId = "same-queue")
                 end()
                 end() // 重复停止/清空必须幂等。

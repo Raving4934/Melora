@@ -427,7 +427,7 @@ object Downloader {
                 if (record.savedUri != null || DownloadCenter.saved(record.id) == record) {
                     DownloadCenter.clearSaved(record.id, "本地文件已删除", expectedUri = record.savedUri)
                 }
-                LocalMediaStore.findByUri(uri.toString())?.let { LocalMediaStore.removeIds(setOf(it.id)) }
+                PlaybackController.onLocalFilesDeleted(context, emptySet(), setOf(uri.toString())).join()
                 "已从本地删除：${record.fileName ?: record.name}"
             }
         }

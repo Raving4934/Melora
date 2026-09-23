@@ -2,6 +2,13 @@ package com.leyu.melora.playback
 
 import android.content.ComponentName
 import android.content.Context
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
+import android.provider.MediaStore
+import com.leyu.melora.playback.local.LocalSong
+import com.leyu.melora.playback.local.LocalFilePresence
+import com.leyu.melora.playback.local.localFilePresence
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.edit
@@ -33,11 +40,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.IOException
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -53,13 +62,16 @@ object PlaybackController {
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var controller: MediaController? = null
     private var appContext: Context? = null
-    private var pendingPlayback: (() -> Unit)? = null
+    private var pendingPlayback: PendingPlaybackSelection? = null
     private var playbackPreflight: Job? = null
     private var urlPrefetchJob: Job? = null
     private var urlPrefetchUid: String? = null
     private var confirmedAudio: Pair<String, String>? = null
     private var registryListenersAttached = false
     private var positionJob: Job? = null
+    private var localQueueCheck: Job? = null
+    private var localQueueObserver: ContentObserver? = null
+    private var editingQueue = false
     private val recentPlaybackTracker = RecentPlaybackTracker()
     private val rebufferRecovery = RebufferRecovery()
     private var recoveryJob: Job? = null
@@ -123,6 +135,15 @@ object PlaybackController {
         if (controllerFuture != null) return
         val application = context.applicationContext
         appContext = application
+        if (localQueueObserver == null) {
+            val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+                override fun onChange(selfChange: Boolean) { checkLocalQueue(application) }
+            }
+            runCatching {
+                application.contentResolver.registerContentObserver(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, true, observer)
+                localQueueObserver = observer
+            }
+        }
         if (!registryListenersAttached) {
             TrackRegistry.onResolved { scope.launch { publish() } }
             TrackRegistry.onArtwork { _, _ -> scope.launch { publish() } }
@@ -139,12 +160,14 @@ object PlaybackController {
                         attach(it)
                         val pending = pendingPlayback
                         pendingPlayback = null
-                        if (pending == null) {
-                            restoreQueue(it)
-                        } else {
-                            pending()
+                        when {
+                            pending == null -> restoreQueue(it)
+                            pending.tracks.isEmpty() -> restoreQueue(it, autoPlay = false)
+                            pending.insertSingle -> playTrackNow(pending.tracks.single())
+                            else -> playQueueNow(pending.tracks, pending.index, pending.queueId)
                         }
                         publish()
+                        checkLocalQueue(application)
                     }
                     .onFailure { error ->
                         controllerFuture = null
@@ -475,60 +498,93 @@ object PlaybackController {
     private fun handlePlayerError(error: PlaybackException) {
         interruptRecovery()
         val player = controller ?: return
-        // 已暂停时仍可能收到在途读取的错误；不能因重试/跳曲覆盖用户刚发出的暂停。
-        if (!player.playWhenReady) {
-            _state.value = _state.value.copy(message = "加载失败，点击播放重试")
-            return
-        }
-        val snapshot = _state.value
-        val track = snapshot.current ?: return
-        var retryLocalFallback = false
-        if (!track.isOnline || TrackRegistry.isLocalResource(track.uid)) {
-            // 本地媒体索引可能过期（文件被移动/删除）：清理条目后回退网络解析；纯本地曲目直接提示
-            val staleLocal = LocalMediaStore.matchTrack(track)
-            val canFallback = track.isOnline &&
-                track.source != com.leyu.melora.playback.local.LocalSong.SOURCE &&
-                staleLocal != null &&
-                DownloadCenter.saved(track.uid) == null
-            if (!canFallback) {
-                controller?.pause()
-                _state.value = _state.value.copy(
-                    message = if (staleLocal != null) "本地文件无法播放，请检查文件是否仍然存在" else "本地文件无法播放，请检查文件和下载目录权限",
-                )
-                return
+        val expectedUid = player.currentMediaItem?.mediaId
+        val generation = recoveryGeneration
+        scope.launch {
+            val failedTrack = expectedUid?.let(TrackRegistry::get)
+            val uri = failedTrack?.let(::localResourceUri)
+            val context = appContext
+            if (uri != null && context != null) {
+                when (withContext(Dispatchers.IO) { localFilePresence(context, uri, failedTrack?.raw?.optString("localFolder")) }) {
+                    LocalFilePresence.Missing -> {
+                        val ids = if (failedTrack?.source == LocalSong.SOURCE) setOf(failedTrack.uid.removePrefix("${LocalSong.SOURCE}_")) else emptySet()
+                        onLocalFilesDeleted(context, ids, setOf(uri)).join()
+                        return@launch
+                    }
+                    LocalFilePresence.Unknown -> {
+                        if (failedTrack?.isOnline != true || failedTrack.source == LocalSong.SOURCE) {
+                            if (player.currentMediaItem?.mediaId == expectedUid && generation == recoveryGeneration) {
+                                player.pause()
+                                _state.value = _state.value.copy(message = "本地文件暂时无法访问，请检查文件或目录权限")
+                            }
+                            return@launch
+                        }
+                        // 在线条目的本地副本不可访问，继续原有网络回退，不把它当成文件删除。
+                    }
+                    LocalFilePresence.Present -> Unit
+                }
             }
-            LocalMediaStore.removeIds(setOf(staleLocal.id))
-            retryLocalFallback = true
-            TrackRegistry.clearResolved(track.uid)
+            if (player.currentMediaItem?.mediaId != expectedUid || generation != recoveryGeneration) return@launch
+            // 已暂停时仍可能收到在途读取的错误；不能因重试/跳曲覆盖用户刚发出的暂停。
+            if (!player.playWhenReady) {
+                _state.value = _state.value.copy(message = "加载失败，点击播放重试")
+                return@launch
+            }
+            val snapshot = _state.value
+            val track = snapshot.current ?: return@launch
+            var retryLocalFallback = false
+            if (!track.isOnline || TrackRegistry.isLocalResource(track.uid)) {
+                // 本地媒体索引可能过期（文件被移动/删除）：清理条目后回退网络解析；纯本地曲目直接提示
+                val staleLocal = LocalMediaStore.matchTrack(track)
+                val canFallback = track.isOnline &&
+                    track.source != com.leyu.melora.playback.local.LocalSong.SOURCE &&
+                    staleLocal != null &&
+                    DownloadCenter.saved(track.uid) == null
+                if (!canFallback) {
+                    controller?.pause()
+                    _state.value = _state.value.copy(
+                        message = if (staleLocal != null) "本地文件无法播放，请检查文件是否仍然存在" else "本地文件无法播放，请检查文件和下载目录权限",
+                    )
+                    return@launch
+                }
+                LocalMediaStore.removeIds(setOf(staleLocal.id))
+                retryLocalFallback = true
+                TrackRegistry.clearResolved(track.uid)
+            }
+            consecutiveErrors++
+            if (consecutiveErrors >= 3) {
+                controller?.pause()
+                _state.value = _state.value.copy(message = "多个播放链接解析失败，已停止播放")
+                consecutiveErrors = 0
+                return@launch
+            }
+            val failed = TrackRegistry.resolved(track.uid)?.resourceId
+            if ((failed != null || retryLocalFallback) && refreshAttempted.add(track.uid)) {
+                if (failed != null) SourceResolver.rejectResource(track.uid, failed)
+                TrackRegistry.clearResolved(track.uid)
+                _state.value = snapshot.copy(message = "播放链接失效，正在尝试其它可用资源…")
+                // 让唯一DataSource入口重解析，不再先手工解析一次再prepare第二次。
+                player.prepare() // prepare保留当前播放意图，无需强行play。
+                return@launch
+            }
+            val reason = when {
+                error.errorCodeName.contains("TIMEOUT", ignoreCase = true) -> "网络连接超时"
+                error.errorCodeName.contains("NETWORK", ignoreCase = true) -> "网络连接失败"
+                error.errorCodeName.contains("IO", ignoreCase = true) -> "音源无法访问"
+                error.errorCodeName.contains("PARSING", ignoreCase = true) || error.errorCodeName.contains("DECODER", ignoreCase = true) -> "音频解码失败"
+                else -> "音源不可用"
+            }
+            _state.value = _state.value.copy(message = "播放失败（$reason），已尝试跳过")
+            next()
         }
-        consecutiveErrors++
-        if (consecutiveErrors >= 3) {
-            controller?.pause()
-            _state.value = _state.value.copy(message = "多个播放链接解析失败，已停止播放")
-            consecutiveErrors = 0
-            return
-        }
-        val failed = TrackRegistry.resolved(track.uid)?.resourceId
-        if ((failed != null || retryLocalFallback) && refreshAttempted.add(track.uid)) {
-            if (failed != null) SourceResolver.rejectResource(track.uid, failed)
-            TrackRegistry.clearResolved(track.uid)
-            _state.value = snapshot.copy(message = "播放链接失效，正在尝试其它可用资源…")
-            // 让唯一DataSource入口重解析，不再先手工解析一次再prepare第二次。
-            player.prepare() // prepare保留当前播放意图，无需强行play。
-            return
-        }
-        val reason = when {
-            error.errorCodeName.contains("TIMEOUT", ignoreCase = true) -> "网络连接超时"
-            error.errorCodeName.contains("NETWORK", ignoreCase = true) -> "网络连接失败"
-            error.errorCodeName.contains("IO", ignoreCase = true) -> "音源无法访问"
-            error.errorCodeName.contains("PARSING", ignoreCase = true) || error.errorCodeName.contains("DECODER", ignoreCase = true) -> "音频解码失败"
-            else -> "音源不可用"
-        }
-        _state.value = _state.value.copy(message = "播放失败（$reason），已尝试跳过")
-        next()
     }
 
     private fun buildItem(track: UiTrack): MediaItem {
+        if (track.source == LocalSong.SOURCE) {
+            LocalMediaStore.matchTrack(track)?.let { local ->
+                TrackRegistry.register(track.copy(raw = JSONObject(track.raw?.toString() ?: "{}").put("localUri", local.uri).put("localFolder", local.folder)))
+            }
+        }
         val metadata = MediaMetadata.Builder()
             .setTitle(track.title)
             .setArtist(track.artist)
@@ -553,7 +609,7 @@ object PlaybackController {
         if (tracks.isEmpty()) return
         val player = controller
         if (player == null) {
-            pendingPlayback = { playQueueNow(tracks, startIndex, queueId) }
+            pendingPlayback = PendingPlaybackSelection(tracks, startIndex, queueId)
             _state.value = _state.value.copy(pendingQueueId = queueId)
             return
         }
@@ -572,6 +628,7 @@ object PlaybackController {
         player.prepareAndPlay()
         saveQueue(force = true)
         publish()
+        appContext?.let(::checkLocalQueue)
     }
 
     /** 单曲/整队列共享预热入口，保留本地优先与解析 single-flight。 */
@@ -747,7 +804,7 @@ object PlaybackController {
         interruptRecovery()
         val player = controller
         if (player == null) {
-            pendingPlayback = { playTrackNow(track) }
+            pendingPlayback = PendingPlaybackSelection(listOf(track), insertSingle = true)
             return
         }
         // 冷启动直接点歌曲也保留上次队列，但不能先触发旧歌自动播放/解析。
@@ -771,6 +828,7 @@ object PlaybackController {
         player.prepareAndPlay()
         saveQueue(force = true)
         publish()
+        appContext?.let(::checkLocalQueue)
     }
 
     fun addToQueue(context: Context, track: UiTrack) {
@@ -796,6 +854,100 @@ object PlaybackController {
         saveQueue(force = true)
         _state.value = _state.value.copy(message = "已设为下一首播放")
         publish()
+    }
+
+    /** 删除确认后的唯一收尾入口；不启动播放服务，冷态队列也同步清理。 */
+    fun onLocalFilesDeleted(context: Context, ids: Set<String>, uris: Set<String>): Job = scope.launch {
+        if (ids.isEmpty() && uris.isEmpty()) return@launch
+        appContext = context.applicationContext
+        val deleted = withContext(Dispatchers.IO) {
+            val aliasIds = uris.mapNotNull { LocalMediaStore.findByUri(it)?.id }.toSet()
+            val references = LocalMediaStore.songs.value.filter { it.id in ids || it.id in aliasIds || it.uri in uris }
+            val files = DeletedLocalFiles(ids + aliasIds + references.map { it.id }, uris + references.map { it.uri })
+            try {
+                LocalMediaStore.removeIds(files.ids)
+            } catch (error: IOException) {
+                // 文件已经物理删除，资料落盘失败不能阻断队列收尾或使应用崩溃。
+                Log.e(TAG, "删除后的本地歌曲资料保存失败", error)
+            }
+            DownloadCenter.records.value.filter { it.hasSavedResource && it.savedUri in files.uris }.distinctBy { it.savedUri }.forEach {
+                DownloadCenter.clearSaved(it.id, "本地文件已删除", expectedUri = it.savedUri)
+            }
+            files
+        }
+        pendingPlayback = pendingPlayback?.without(deleted)
+        if (pendingPlayback?.tracks?.isEmpty() == true) _state.value = _state.value.copy(pendingQueueId = null)
+        queuePrefs()?.let { pruneSavedLocalQueue(it, deleted) }
+        lastQueueFingerprint = null
+        val player = controller ?: return@launch
+        val current = player.currentMediaItem?.mediaId?.let(TrackRegistry::get)
+        val restartOnline = current != null && current.source != LocalSong.SOURCE &&
+            localResourceUri(current) in deleted.uris
+        if (current?.let(deleted::matches) == true || restartOnline) interruptRecovery()
+        editingQueue = true
+        try {
+            // 只清本地解析结果，不清其它歌曲的网络地址缓存。
+            for (index in 0 until player.mediaItemCount) {
+                val uid = player.getMediaItemAt(index).mediaId
+                val resolution = TrackRegistry.resolved(uid)
+                if (resolution?.localFile?.id in deleted.ids || resolution?.localFile?.uri in deleted.uris ||
+                    resolution?.downloadUri in deleted.uris) TrackRegistry.clearResolved(uid)
+            }
+            player.removeDeletedLocalItems(deleted)
+            if (player.mediaItemCount == 0) {
+                currentQueueId = null
+                _lyric.value = null
+            } else if (restartOnline && player.currentMediaItem?.mediaId == current?.uid) {
+                val position = player.currentPosition.coerceAtLeast(0L)
+                val index = player.currentMediaItemIndex
+                player.stop()
+                player.seekTo(index, position)
+                // 暂停时只失效旧读取，等用户恢复再解析；不替用户按播放键。
+                if (player.playWhenReady) player.prepare()
+            } else if (player.playWhenReady && player.playbackState == Player.STATE_IDLE) {
+                player.prepare()
+            }
+        } finally { editingQueue = false }
+        saveQueue(force = true)
+        publish()
+    }
+
+    /** 只核验队列引用的文件。媒体库通知/前台恢复触发，IO异步且合并，不扫描全库。 */
+    fun checkLocalQueue(context: Context): Job {
+        localQueueCheck?.cancel()
+        return scope.launch {
+            delay(250)
+            val player = controller
+            val tracks = if (player != null && player.mediaItemCount > 0) {
+                (0 until player.mediaItemCount).mapNotNull { TrackRegistry.get(player.getMediaItemAt(it).mediaId) }
+            } else {
+                val prefs = context.getSharedPreferences(PREFS_QUEUE, Context.MODE_PRIVATE)
+                val array = runCatching { JSONArray(prefs.getString(KEY_QUEUE, null) ?: "[]") }.getOrNull() ?: JSONArray()
+                (0 until array.length()).mapNotNull { array.optJSONObject(it)?.let(::trackFromJson) }
+            }
+            val resources = tracks.mapNotNull { track -> localResourceUri(track)?.let { track to it } }
+            if (resources.isEmpty()) return@launch
+            val missing = withContext(Dispatchers.IO) {
+                resources.distinctBy { it.second }.filter { (owner, uri) ->
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    val folder = owner.raw?.optString("localFolder")?.takeIf(String::isNotBlank)
+                        ?: TrackRegistry.resolved(owner.uid)?.localFile?.folder
+                    localFilePresence(context.applicationContext, uri, folder) == LocalFilePresence.Missing
+                }.mapTo(hashSetOf()) { it.second }
+            }
+            if (missing.isNotEmpty()) {
+                val ids = resources.filter { it.second in missing && it.first.source == LocalSong.SOURCE }
+                    .mapTo(hashSetOf()) { it.first.uid.removePrefix("${LocalSong.SOURCE}_") }
+                onLocalFilesDeleted(context, ids, missing).join()
+            }
+        }.also { localQueueCheck = it }
+    }
+
+    private fun localResourceUri(track: UiTrack): String? = when {
+        track.source == LocalSong.SOURCE -> LocalMediaStore.matchTrack(track)?.uri
+            ?: track.raw?.optString("localUri")?.takeIf(String::isNotBlank)
+        !track.isOnline && (track.uid.startsWith("file:") || track.uid.startsWith("content:")) -> track.uid
+        else -> TrackRegistry.resolved(track.uid)?.let { it.localFile?.uri ?: it.downloadUri }
     }
 
     fun removeFromQueue(index: Int) {
@@ -914,6 +1066,8 @@ object PlaybackController {
     fun stop() = endPlayback(stopEngine = true)
 
     private fun endPlayback(stopEngine: Boolean) {
+        localQueueCheck?.cancel()
+        localQueueCheck = null
         interruptRecovery()
         cancelPendingPlayback()
         AudioCacheStore.cancelPrefetch()
@@ -1010,10 +1164,14 @@ object PlaybackController {
 
     /** 持久化当前队列（超长队列只保存当前位置附近的窗口），供冷启动恢复 mini 播放条。 */
     private fun saveQueue(force: Boolean = false) {
+        if (editingQueue) return
         val player = controller ?: return
         val prefs = queuePrefs() ?: return
         val count = player.mediaItemCount
-        if (count == 0) return
+        if (count == 0) {
+            if (force) clearSavedQueue()
+            return
+        }
         val index = player.currentMediaItemIndex.coerceAtLeast(0)
         val all = (0 until count).mapNotNull { i -> TrackRegistry.get(player.getMediaItemAt(i).mediaId) }
         if (all.size != count) return

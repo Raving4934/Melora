@@ -94,6 +94,7 @@ object LocalMediaScanner {
                     currentCoroutineContext().ensureActive()
                     // 提交时在 LocalMediaStore 锁内合并 baseline/scanned/current，冲突不重做 IO。
                     LocalMediaStore.commitScanned(baseline, scanned)
+                    com.leyu.melora.playback.PlaybackController.checkLocalQueue(appContext)
                     ScanResult(LocalMediaStore.count, failedSources)
                 }
             }

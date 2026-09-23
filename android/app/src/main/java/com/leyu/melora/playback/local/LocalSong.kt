@@ -61,6 +61,8 @@ data class LocalSong(
     fun toOnlineSong(): OnlineSong = OnlineSong(JSONObject().apply {
         put("source", SOURCE)
         put("songmid", id)
+        put("localUri", uri)
+        put("localFolder", folder)
         put("name", title)
         put("singer", artist)
         put("albumName", album)

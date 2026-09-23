@@ -156,12 +156,11 @@ internal fun LocalSongsPage(
     var refreshing by remember { mutableStateOf(false) }
     val deletion = remember(context) { LocalSongDeletion(AndroidLocalDeletionOperations(context)) }
 
-    fun finishDeletion(result: LocalDeletionResult) {
+    suspend fun finishDeletion(result: LocalDeletionResult) {
         if (result.deletedIds.isNotEmpty()) {
-            val deletedUris = result.deleted.mapTo(hashSetOf()) { it.uri }
-            val deletedIds = LocalMediaStore.songs.value.filter { it.uri in deletedUris }
-                .mapTo(result.deletedIds.toMutableSet()) { it.id }
-            LocalMediaStore.removeIds(deletedIds)
+            PlaybackController.onLocalFilesDeleted(
+                context, result.deletedIds, result.deleted.mapTo(hashSetOf()) { it.uri },
+            ).join()
         }
         deleting = false
         if (!result.cancelled) selection.finish()
@@ -175,7 +174,7 @@ internal fun LocalSongsPage(
         PlaybackController.postMessage(context, message)
     }
 
-    fun handleDeletionStep(step: LocalDeletionStep<IntentSenderRequest>) {
+    suspend fun handleDeletionStep(step: LocalDeletionStep<IntentSenderRequest>) {
         when (step) {
             is LocalDeletionStep.Awaiting -> pendingDeleteRequest = step.request.request
             is LocalDeletionStep.Finished -> finishDeletion(step.result)

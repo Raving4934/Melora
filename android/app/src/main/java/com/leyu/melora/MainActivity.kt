@@ -54,6 +54,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        lifecycleScope.launch {
+            (application as MeloraApplication).awaitStartup()
+            com.leyu.melora.playback.PlaybackController.checkLocalQueue(this@MainActivity)
+        }
+    }
+
     private fun observeLocalTagWriteAuthorization() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
