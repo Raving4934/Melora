@@ -250,17 +250,80 @@ class OnlineCacheTest {
         assertEquals(listOf("new"), OnlineCache.get<List<String>>("songs", Long.MAX_VALUE))
     }
 
+    @Test fun unobservedDefaultRefreshContinuesAndCachesItsResult() = runBlocking {
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val request = async {
+            OnlineCache.refresh<List<String>>("background-refresh", 1_000) {
+                started.complete(Unit)
+                release.await()
+                listOf("cached-after-cancel")
+            }
+        }
+        withTimeout(2_000) { started.await() }
+        val pending = requireNotNull(OnlineCache.pendingRefresh<List<String>>("background-refresh"))
+
+        request.cancelAndJoin()
+        assertTrue("default refresh should remain alive without waiters", pending.isActive)
+        release.complete(Unit)
+
+        assertEquals(listOf("cached-after-cancel"), pending.await())
+        assertEquals(listOf("cached-after-cancel"), OnlineCache.peek<List<String>>("background-refresh"))
+    }
+
     @Test fun cancellingOneWaiterDoesNotCancelSharedRefresh() = runBlocking {
         val started = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
-        val first = async { OnlineCache.refresh("songs", 1000) { started.complete(Unit); release.await(); listOf("new") } }
+        val first = async {
+            OnlineCache.refresh("songs", 1000, cancelWhenUnobserved = true) {
+                started.complete(Unit)
+                release.await()
+                listOf("new")
+            }
+        }
         started.await()
         val second = async(start = CoroutineStart.UNDISPATCHED) {
-            OnlineCache.refresh<List<String>>("songs", 1000) { error("duplicate request") }
+            OnlineCache.refresh<List<String>>("songs", 1000, cancelWhenUnobserved = true) {
+                error("duplicate request")
+            }
         }
         first.cancelAndJoin()
         release.complete(Unit)
         assertEquals(listOf("new"), second.await())
+    }
+
+    @Test fun cancellingLastOptedInWaiterRetiresRefreshAndAllowsRetry() = runBlocking {
+        val key = "resolver:matches:cancel-retry"
+        val started = CompletableDeferred<Unit>()
+        val loaderCancelled = CompletableDeferred<Unit>()
+        val never = CompletableDeferred<Unit>()
+        var searchCalls = 0
+
+        val abandoned = async(start = CoroutineStart.UNDISPATCHED) {
+            OnlineCache.refresh<List<String>>(key, 1_000, cancelWhenUnobserved = true) {
+                searchCalls++
+                started.complete(Unit)
+                try {
+                    never.await()
+                    listOf("retired")
+                } finally {
+                    loaderCancelled.complete(Unit)
+                }
+            }
+        }
+        withTimeout(2_000) { started.await() }
+        assertNotNull(OnlineCache.pendingRefresh<List<String>>(key))
+
+        abandoned.cancelAndJoin()
+        withTimeout(2_000) { loaderCancelled.await() }
+        assertNull(OnlineCache.pendingRefresh<List<String>>(key))
+
+        val recovered = OnlineCache.refresh<List<String>>(key, 1_000, cancelWhenUnobserved = true) {
+            searchCalls++
+            listOf("recovered")
+        }
+        assertEquals(listOf("recovered"), recovered)
+        assertEquals(2, searchCalls)
     }
 
     @Test fun forcedRefreshIsKeyScopedAndRetiredSameKeyResultCannotOverwriteReplacement() = runBlocking {

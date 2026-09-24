@@ -11,11 +11,11 @@ import java.security.MessageDigest
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -36,8 +36,8 @@ object OnlineCache {
 
     private val lock = Any()
     private val store = LinkedHashMap<String, Entry>(32, 0.75f, true)
-    private val refreshing = mutableMapOf<String, Deferred<Any>>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val refreshing = SingleFlight<String, Any>(scope, lock)
 
     /** 只覆盖本切片的两个页面族，不为其它 namespace 提供持久化通道。 */
     private var boardSnapshotGeneration = 0L
@@ -142,46 +142,45 @@ object OnlineCache {
 
     /** 在派生刷新任务调度前捕获在途请求；即使它随后完成，也可复用同一次结果。 */
     @Suppress("UNCHECKED_CAST")
-    internal fun <T : Any> pendingRefresh(key: String): Deferred<T>? = synchronized(lock) {
-        refreshing[key] as Deferred<T>?
-    }
+    internal fun <T : Any> pendingRefresh(key: String): Deferred<T>? = refreshing.pending(key) as Deferred<T>?
 
-    /** 同 key 网络请求合并。单个等待者取消不影响其他等待者；强刷仅替换同key，旧请求不能回填。 */
+    /**
+     * 同 key 网络请求合并。默认允许无人等待的刷新继续回填缓存；按需可在最后一个等待者离开时取消。
+     * 强刷保留旧读取者，但撤销旧flight的回填资格；失败、空结果和clear均不污染缓存。
+     */
     @Suppress("UNCHECKED_CAST")
-    suspend fun <T : Any> refresh(key: String, ttlMs: Long, force: Boolean = false, load: suspend () -> T): T {
-        val request = synchronized(lock) {
-            if (!force) get<T>(key, ttlMs)?.let { return it }
-            // 匹配缓存也被播放解析共享：强刷只撤销旧任务的回填资格，不取消已有读取者。
-            else refreshing.remove(key)
-            refreshing[key] ?: run {
-                val previous = store[key]
-                lateinit var task: Deferred<Any>
-                task = scope.async(start = CoroutineStart.LAZY) {
-                    try {
-                        val value = load()
-                        synchronized(lock) {
-                            if (refreshing[key] === task && store[key] === previous &&
-                                (value !is Collection<*> || value.isNotEmpty())
-                            ) put(key, value)
-                        }
-                        value
-                    } finally {
-                        synchronized(lock) { if (refreshing[key] === task) refreshing.remove(key) }
-                    }
+    suspend fun <T : Any> refresh(
+        key: String,
+        ttlMs: Long,
+        force: Boolean = false,
+        cancelWhenUnobserved: Boolean = false,
+        load: suspend () -> T,
+    ): T {
+        var previous: Entry? = null
+        return refreshing.run(
+            key = key,
+            restart = force,
+            cancelReplaced = false,
+            cancelWhenUnobserved = cancelWhenUnobserved,
+            cacheHit = { previous = store[key]; if (force) null else get<T>(key, ttlMs) },
+        ) {
+            val value = load()
+            val task = currentCoroutineContext()[Job]
+            synchronized(lock) {
+                if (refreshing.pending(key) === task && store[key] === previous &&
+                    (value !is Collection<*> || value.isNotEmpty())) {
+                    put(key, value)
                 }
-                refreshing[key] = task
-                task
             }
-        }
-        return request.await() as T
+            value
+        } as T
     }
 
     /** 可按命名空间失效；解析器清理不会连带清空本切片的页面目录缓存。 */
     fun clear(prefix: String = "") = synchronized(lock) {
         invalidatePageSnapshotsLocked(prefix)
         store.keys.removeAll { it.startsWith(prefix) }
-        val keys = refreshing.keys.filter { it.startsWith(prefix) }
-        keys.mapNotNull { refreshing.remove(it) }.forEach { it.cancel() }
+        refreshing.cancelWhere { it.startsWith(prefix) }
     }
 
     private fun trimMemoryLocked() {

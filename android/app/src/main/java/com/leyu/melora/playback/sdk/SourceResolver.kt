@@ -485,9 +485,9 @@ object SourceResolver {
         val key = matchingCacheKey(song, targetSource, cacheNamespace, generation)
         val result = try {
             attempt {
-                // 等待已有慢请求也受本次预算限制；单飞任务自身有独立上限，取消等待不泄漏网络请求。
+                // 保留每个等待者的独立预算；最后一个等待者超时/取消时撤销旧flight，避免重试合并到空结果。
                 withTimeoutOrNull(timeoutMs) {
-                    OnlineCache.refresh(key, ALT_TTL_MS, force = force) {
+                    OnlineCache.refresh(key, ALT_TTL_MS, force = force, cancelWhenUnobserved = true) {
                         withTimeoutOrNull(timeoutMs) {
                             search("${song.name} ${song.singer}".trim()).mapNotNull { candidate ->
                                 if (candidate.source != targetSource) return@mapNotNull null
@@ -671,10 +671,16 @@ internal class SingleFlight<K : Any, V : Any>(
     private val lock: Any = Any(),
 ) {
     private var generation = 0L
-    private class Pending<V>(val task: Deferred<V>, var waiters: Int = 0)
+    private class Pending<V>(
+        val task: Deferred<V>,
+        val cancelWhenUnobserved: Boolean,
+        var waiters: Int = 0,
+    )
     private val requests = mutableMapOf<K, Pending<V>>()
 
     fun currentGeneration(): Long = synchronized(lock) { generation }
+
+    internal fun pending(key: K): Deferred<V>? = synchronized(lock) { requests[key]?.task }
 
     /** 原子失效并主动取消旧代次；普通waiter取消只在无人等待时撤销真正的解析。 */
     fun fence(): Long {
@@ -686,22 +692,50 @@ internal class SingleFlight<K : Any, V : Any>(
         return nextGeneration
     }
 
-    /** restart仅替换同key；使用方提交结果前仍需在同一锁内检查任务取消或全局代次。 */
-    suspend fun run(key: K, generation: Long = currentGeneration(), restart: Boolean = false, block: suspend () -> V): V {
+    /** 按key撤销请求而不推进全局代次，供命名空间缓存清理使用。 */
+    fun cancelWhere(predicate: (K) -> Boolean) {
+        val retired = synchronized(lock) {
+            requests.keys.filter(predicate).mapNotNull { requests.remove(it)?.task }
+        }
+        retired.forEach { it.cancel() }
+    }
+
+    /**
+     * 单key共享任务。默认末等待者离开时取消；缓存刷新可选择后台继续。
+     * restart可选择只撤销旧任务的提交资格、保留旧等待者，供强刷保持既有返回语义。
+     */
+    suspend fun run(
+        key: K,
+        generation: Long = currentGeneration(),
+        restart: Boolean = false,
+        cancelReplaced: Boolean = true,
+        cancelWhenUnobserved: Boolean = true,
+        cacheHit: (() -> V?)? = null,
+        block: suspend () -> V,
+    ): V {
         val pending = synchronized(lock) {
             if (generation != this.generation) throw FlightFencedException()
-            if (restart) requests.remove(key)?.task?.cancel(FlightFencedException())
-            (requests[key] ?: Pending(scope.async(start = CoroutineStart.LAZY) { block() }).also { next ->
+            cacheHit?.invoke()?.let { return it }
+            if (restart) requests.remove(key)?.let { old ->
+                if (cancelReplaced) old.task.cancel(FlightFencedException())
+            }
+            (requests[key] ?: run {
+                lateinit var next: Pending<V>
+                val task = scope.async(start = CoroutineStart.LAZY) { block() }
+                next = Pending(task, cancelWhenUnobserved)
                 requests[key] = next
-                next.task.invokeOnCompletion {
+                task.invokeOnCompletion {
                     synchronized(lock) { if (requests[key] === next) requests.remove(key) }
                 }
+                next
             }).also { it.waiters++; it.task.start() }
         }
-        return try { pending.task.await() } finally {
+        return try {
+            pending.task.await()
+        } finally {
             synchronized(lock) {
                 pending.waiters--
-                if (pending.waiters == 0 && requests[key] === pending) {
+                if (pending.waiters == 0 && pending.cancelWhenUnobserved && requests[key] === pending) {
                     requests.remove(key)
                     pending.task.cancel()
                 }

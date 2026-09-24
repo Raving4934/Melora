@@ -13,6 +13,7 @@ import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -390,6 +391,43 @@ class SourceResolverMatchingTest {
 
         assertEquals(listOf("shared"), second.await().map { it.songmid })
         assertEquals(1, searchCalls.get())
+    }
+
+    @Test
+    fun findMatchedSongsCanRetryAfterItsOnlyWaiterIsCancelled() = runBlocking {
+        val original = song(source = "wy", songmid = "cancelled-original")
+        val candidate = song(source = "kg", songmid = "after-cancel")
+        val started = CompletableDeferred<Unit>()
+        val searchCancelled = CompletableDeferred<Unit>()
+        val never = CompletableDeferred<Unit>()
+        val searchCalls = AtomicInteger()
+        val cacheKey = SourceResolver.matchingCacheKey(original, "kg")
+
+        val abandoned = async(start = CoroutineStart.UNDISPATCHED) {
+            SourceResolver.findMatchedSongs(original, "kg", timeoutMs = 5_000) {
+                searchCalls.incrementAndGet()
+                started.complete(Unit)
+                try {
+                    never.await()
+                    listOf(candidate)
+                } finally {
+                    searchCancelled.complete(Unit)
+                }
+            }
+        }
+        withTimeout(2_000) { started.await() }
+        assertNotNull(OnlineCache.pendingRefresh<List<OnlineSong>>(cacheKey))
+
+        abandoned.cancelAndJoin()
+        withTimeout(2_000) { searchCancelled.await() }
+        assertNull(OnlineCache.pendingRefresh<List<OnlineSong>>(cacheKey))
+
+        val recovered = SourceResolver.findMatchedSongs(original, "kg", timeoutMs = 1_000) {
+            searchCalls.incrementAndGet()
+            listOf(candidate)
+        }
+        assertEquals(listOf("after-cancel"), recovered.map { it.songmid })
+        assertEquals(2, searchCalls.get())
     }
 
     @Test
