@@ -8,7 +8,26 @@ import { httpFetch } from '../../request'
 import { formatPlayTime, sizeFormate, dateFormat, formatPlayCount } from '../../index'
 import musicDetailApi from './musicDetail'
 import { eapiRequest } from './utils/index'
-import { formatSingerName } from '../utils'
+import { formatSingerName, parseMusicUrl } from '../utils'
+
+const queryId = query => /(?:^|&)id=(\d+)(?:&|$)/.exec(query)?.[1] || null
+
+const parsePlaylistId = value => {
+  const url = parseMusicUrl(value)
+  if (!url || (url.hostname !== 'music.163.com' && !url.hostname.endsWith('.music.163.com'))) return null
+
+  const queryAt = url.hash.indexOf('?')
+  const routes = [
+    [url.pathname, url.query],
+    [queryAt < 0 ? url.hash : url.hash.slice(0, queryAt), queryAt < 0 ? '' : url.hash.slice(queryAt + 1)],
+  ]
+  for (const [route, query] of routes) {
+    const pathId = /(?:^|\/)playlist\/(\d+)(?:\/[^?#]*)?$/.exec(route)?.[1]
+    if (pathId) return pathId
+    if (/(?:^|\/)playlist\/?$/.test(route) && queryId(query)) return queryId(query)
+  }
+  return null
+}
 
 export default {
   limit_list: 30,
@@ -27,11 +46,6 @@ export default {
     //   id: 'new',
     // },
   ],
-  regExps: {
-    listDetailLink: /^.+(?:\?|&)id=(\d+)(?:&.*$|#.*$|$)/,
-    listDetailLink2: /^.+\/playlist\/(\d+)(?:[/?#].*|$)/,
-  },
-
   async handleParseId(link, retryNum = 0) {
     if (retryNum > 2) throw new Error('link try max num')
 
@@ -39,11 +53,8 @@ export default {
     const { url, statusCode } = await requestObj_listDetailLink
     // console.log(headers)
     if (statusCode > 400) return this.handleParseId(link, ++retryNum)
-    if (!/\/playlist(?:[/?#]|$)/.test(url)) throw new Error('分享链接不是网易云歌单')
-    const id = this.regExps.listDetailLink.test(url)
-      ? url.replace(this.regExps.listDetailLink, '$1')
-      : url.replace(this.regExps.listDetailLink2, '$1')
-    if (!/^\d+$/.test(id)) throw new Error('无法识别网易云歌单链接')
+    const id = parsePlaylistId(url)
+    if (!id) throw new Error('分享链接不是网易云歌单')
     return id
   },
 
@@ -55,14 +66,7 @@ export default {
       cookie = `MUSIC_U=${token}`
     }
     if ((/[?&:/]/.test(id))) {
-      if (this.regExps.listDetailLink.test(id)) {
-        id = id.replace(this.regExps.listDetailLink, '$1')
-      } else if (this.regExps.listDetailLink2.test(id)) {
-        id = id.replace(this.regExps.listDetailLink2, '$1')
-      } else {
-        id = await this.handleParseId(id)
-      }
-      // console.log(id)
+      id = parsePlaylistId(id) || await this.handleParseId(id)
     }
     return { id, cookie }
   },

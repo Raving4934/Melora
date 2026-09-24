@@ -40,3 +40,11 @@ export const formatSingerName = (singers, nameKey = 'name', join = '、') => {
   }
   return decodeName(String(singers ?? ''))
 }
+
+/** 分享URL的共同语法边界；平台归属和歌单路由由各平台在同一解析入口判定。 */
+export const parseMusicUrl = value => {
+  const match = /^(https?):\/\/([a-z0-9.-]+)(?::(\d+))?([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/i.exec(String(value))
+  if (!match) return null
+  if (match[3] && match[3] !== (match[1].toLowerCase() === 'http' ? '80' : '443')) return null
+  return { hostname: match[2].toLowerCase(), pathname: match[4] || '/', query: match[5] || '', hash: match[6] || '' }
+}

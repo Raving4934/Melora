@@ -6736,6 +6736,12 @@
     }
     return decodeName(String(singers ?? ""));
   };
+  var parseMusicUrl = (value) => {
+    const match = /^(https?):\/\/([a-z0-9.-]+)(?::(\d+))?([^?#]*)(?:\?([^#]*))?(?:#(.*))?$/i.exec(String(value));
+    if (!match) return null;
+    if (match[3] && match[3] !== (match[1].toLowerCase() === "http" ? "80" : "443")) return null;
+    return { hostname: match[2].toLowerCase(), pathname: match[4] || "/", query: match[5] || "", hash: match[6] || "" };
+  };
 
   // compat/native-crypto.js
   var import_buffer5 = __toESM(require_buffer());
@@ -7161,7 +7167,7 @@ ${lrcs}`;
       mInfo: /level:(\w+),bitrate:(\d+),format:(\w+),size:([\w.]+)/,
       // http://www.kuwo.cn/playlist_detail/2886046289
       // https://m.kuwo.cn/h5app/playlist/2736267853?t=qqfriend
-      listDetailLink: /^.+\/playlist(?:_detail)?\/(\d+)(?:\?.*|&.*$|#.*$|$)/
+      listDetailLink: /^.+\/playlist(?:_detail)?\/(\d+)\/?(?:\?.*|&.*$|#.*$|$)/
     },
     tagsUrl: "http://wapi.kuwo.cn/api/pc/classify/playlist/getTagList?cmd=rcm_keyword_playlist&user=0&prod=kwplayer_pc_9.0.5.0&vipver=9.0.5.0&source=kwplayer_pc_9.0.5.0&loginUid=0&loginSid=0&appUid=76039576",
     hotTagUrl: "http://wapi.kuwo.cn/api/pc/classify/playlist/getRcmTagList?loginUid=0&loginSid=0&appUid=76039576",
@@ -12471,6 +12477,25 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
       }
     });
   });
+  var embeddedPlaylistInfo = (html) => {
+    const match = /(?:^|[\n>])\s*(?:var|let|const)\s+(?:specialInfo|phpParam)\s*=\s*(?=\{)/.exec(html);
+    if (!match) return null;
+    const start = match.index + match[0].length;
+    let depth = 0;
+    let quoted = false;
+    let escaped = false;
+    for (let i = start; i < html.length; i++) {
+      const char = html[i];
+      if (quoted) {
+        if (escaped) escaped = false;
+        else if (char === "\\") escaped = true;
+        else if (char === '"') quoted = false;
+      } else if (char === '"') quoted = true;
+      else if (char === "{") depth++;
+      else if (char === "}" && --depth === 0) return JSON.parse(html.slice(start, i + 1));
+    }
+    throw new Error("酷狗歌单页面信息不完整");
+  };
   var songList_default2 = {
     listDetailLimit: 1e4,
     currentTagInfo: {
@@ -12505,10 +12530,6 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
       }
     ],
     cache: /* @__PURE__ */ new Map(),
-    regExps: {
-      // https://www.kugou.com/yy/special/single/1067062.html
-      listDetailLink: /^.+\/(\d+)\.html(?:\?.*|&.*$|#.*$|$)/
-    },
     filterSpecialDetail(rawList) {
       const ids = /* @__PURE__ */ new Set();
       const qualityNames = { 2: "128k", 4: "320k", 5: "flac", 6: "flac24bit" };
@@ -12933,8 +12954,8 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
           "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1"
         }
       });
-      let result = body.match(/var\sphpParam\s=\s({.+?});/);
-      if (result) result = JSON.parse(result[1]);
+      const result = typeof body === "string" ? embeddedPlaylistInfo(body) : null;
+      if (!result) throw new Error("未获取到可公开访问的酷狗歌单信息");
       this.cache.set(chain, result);
       return result;
     },
@@ -13005,74 +13026,75 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
       let result = await this.getMusicInfos(info.info);
       return result;
     },
-    async getUserListDetail(link, page, retryNum = 0) {
-      if (retryNum > 3) return Promise.reject(new Error("link try max num"));
-      if (link.includes("#")) link = link.replace(/#.*$/, "");
-      if (link.includes("global_collection_id")) return this.getUserListDetail2(link.replace(/^.*?global_collection_id=(\w+)(?:&.*$|#.*$|$)/, "$1"), page);
-      if (link.includes("gcid_")) {
-        let gcid = link.match(/gcid_\w+/)?.[0];
-        if (gcid) {
-          const global_collection_id = await this.decodeGcid(gcid);
-          if (global_collection_id) return this.getUserListDetail2(global_collection_id, page);
-        }
-      }
-      if (link.includes("chain=")) return this.getUserListDetail3(link.replace(/^.*?chain=(\w+)(?:&.*$|#.*$|$)/, "$1"), page);
-      if (link.includes(".html")) {
-        if (link.includes("zlist.html")) {
+    async getUserListDetail(link, page = 1) {
+      const visited = /* @__PURE__ */ new Set();
+      let pendingResponse;
+      for (let hop = 0; hop < 5; hop++) {
+        link = link.replace(/&amp;/g, "&").replace(/#.*$/, "");
+        if (visited.has(link)) throw new Error("酷狗分享链接发生循环跳转");
+        visited.add(link);
+        const url = parseMusicUrl(link);
+        if (!url || url.hostname !== "kugou.com" && !url.hostname.endsWith(".kugou.com")) throw new Error("分享链接未指向酷狗歌单");
+        const host = url.hostname;
+        const path = url.pathname;
+        const query = (key) => {
+          const value = new RegExp(`(?:^|&)${key}=([^&#]*)`).exec(url.query)?.[1];
+          return value ? decodeURIComponent(value) : null;
+        };
+        const detail = /\/special\/single\/([\w-]+)\.html$/i.exec(path)?.[1];
+        const share = /\/share\/([\w-]+)\.html$/i.exec(path)?.[1];
+        const legacy = /\/zlist(?:\.html|\/list)$/.test(path);
+        const short = /^t\d*\.kugou\.com$/.test(host) && /^\/[\w-]+\/?$/.test(path);
+        const playlistPage = detail || /^\/songlist\//.test(path) || /^\/share(?:\/|$)/.test(path) || path === "/schain/transfer" || legacy;
+        if (!playlistPage && !short || /(?:song|album)\.html$/i.test(path)) throw new Error("分享链接不是酷狗歌单");
+        const globalId = query("global_collection_id") || /\/(collection_[\w-]+)\.html$/.exec(path)?.[1];
+        if (globalId && /^[\w-]+$/.test(globalId)) return this.getUserListDetail2(globalId, page);
+        if (detail && /^\d+$/.test(detail) && query("encryp") !== "1") return this.getListDetailBySpecialId(detail, page);
+        const gcid = /\/songlist\/(gcid_[\w-]+)/i.exec(path)?.[1];
+        if (gcid) return this.getUserListDetail2(await this.decodeGcid(gcid), page);
+        const chain = query("chain") || (/^\/share(?:\/index\.php)?\/?$/.test(path) ? query("id") : null) || (share && share !== "zlist" && share !== "index" ? share : null);
+        if (chain && /^[\w-]+$/.test(chain)) return this.getUserListDetail3(chain, page);
+        if (legacy && path.endsWith("zlist.html")) {
           link = link.replace(/^(.*)zlist\.html/, "https://m3ws.kugou.com/zlist/list");
-          if (link.includes("pagesize")) {
-            link = link.replace("pagesize=30", "pagesize=" + this.listDetailLimit).replace("page=1", "page=" + page);
-          } else {
-            link += `&pagesize=${this.listDetailLimit}&page=${page}`;
+          pendingResponse = null;
+          continue;
+        }
+        const response = pendingResponse || await httpFetch(link, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1",
+            Referer: link
           }
-        } else if (!link.includes("song.html")) return this.getUserListDetail3(link.replace(/.+\/(\w+).html(?:\?.*|&.*$|#.*$|$)/, "$1"), page);
-      }
-      const requestObj_listDetailLink = httpFetch(link, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 9_1 like Mac OS X) AppleWebKit/601.1.46 (KHTML, like Gecko) Version/9.0 Mobile/13B143 Safari/601.1",
-          Referer: link
+        });
+        pendingResponse = null;
+        if (response.statusCode < 200 || response.statusCode >= 400) throw new Error("酷狗分享链接暂时无法访问");
+        const destination = (response.url || link).replace(/#.*$/, "");
+        if (destination !== link) {
+          link = destination;
+          pendingResponse = response;
+          continue;
         }
-      });
-      const { url: location, statusCode, body } = await requestObj_listDetailLink;
-      if (statusCode > 400) return this.getUserListDetail(link, page, ++retryNum);
-      if (location.split("?")[0] != link.split("?")[0]) {
-        if (location.includes("global_collection_id")) return this.getUserListDetail2(location.replace(/^.*?global_collection_id=(\w+)(?:&.*$|#.*$|$)/, "$1"), page);
-        if (location.includes("gcid_")) {
-          let gcid = location.match(/gcid_\w+/)?.[0];
-          if (gcid) {
-            const global_collection_id = await this.decodeGcid(gcid);
-            if (global_collection_id) return this.getUserListDetail2(global_collection_id, page);
+        if (typeof response.body === "string") {
+          const info = embeddedPlaylistInfo(response.body);
+          if (info?.global_collection_id && /^[\w-]+$/.test(info.global_collection_id)) {
+            return this.getUserListDetail2(info.global_collection_id, page);
           }
+          if (info?.encode_gcid && /^gcid_[\w-]+$/.test(info.encode_gcid)) {
+            return this.getUserListDetail2(await this.decodeGcid(info.encode_gcid), page);
+          }
+          if (detail && /^\d+$/.test(String(info?.id))) return this.getListDetailBySpecialId(String(info.id), page);
+        } else if (legacy && response.body?.errcode === 0 && response.body.info?.["0"]) {
+          return this.getUserListDetailByLink(response.body, link, page);
         }
-        if (location.includes("chain=")) return this.getUserListDetail3(location.replace(/^.*?chain=(\w+)(?:&.*$|#.*$|$)/, "$1"), page);
-        if (location.includes(".html")) {
-          if (location.includes("zlist.html")) {
-            let link2 = location.replace(/^(.*)zlist\.html/, "https://m3ws.kugou.com/zlist/list");
-            if (link2.includes("pagesize")) {
-              link2 = link2.replace("pagesize=30", "pagesize=" + this.listDetailLimit).replace("page=1", "page=" + page);
-            } else {
-              link2 += `&pagesize=${this.listDetailLimit}&page=${page}`;
-            }
-            return this.getUserListDetail(link2, page, ++retryNum);
-          } else return this.getUserListDetail3(location.replace(/.+\/(\w+).html(?:\?.*|&.*$|#.*$|$)/, "$1"), page);
-        }
+        throw new Error("未获取到可公开访问的酷狗歌单信息");
       }
-      if (typeof body == "string") return this.getUserListDetail2(body.replace(/^[\s\S]+?"global_collection_id":"(\w+)"[\s\S]+?$/, "$1"), page);
-      if (body.errcode !== 0) return this.getUserListDetail(link, page, ++retryNum);
-      return this.getUserListDetailByLink(body, link, page);
+      throw new Error("酷狗分享链接跳转过多");
     },
-    async getListDetail(id, page) {
-      id = id.toString();
-      if (id.includes("special/single/")) {
-        id = id.replace(this.regExps.listDetailLink, "$1");
-      } else if (/https?:/.test(id)) {
-        return this.getUserListDetail(id.replace(/^.*?http/, "http"), page);
-      } else if (/^\d+$/.test(id)) {
-        return this.getUserListDetailByCode(id, page);
-      } else if (id.startsWith("id_")) {
-        id = id.replace("id_", "");
-      }
-      return this.getListDetailBySpecialId(id, page);
+    async getListDetail(id, page = 1) {
+      id = String(id);
+      if (/^https?:\/\//i.test(id)) return this.getUserListDetail(id, page);
+      if (/^\d+$/.test(id)) return this.getUserListDetailByCode(id, page);
+      if (/^id_\d+$/.test(id)) return this.getListDetailBySpecialId(id.slice(3), page);
+      throw new Error("无法识别酷狗歌单链接或编号");
     },
     filterData(rawList) {
       return rawList.map((item) => {
@@ -13958,6 +13980,7 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
   };
 
   // src/musicSdk/tx/songList.js
+  var queryId = (query) => /(?:^|&)id=(\d+)(?:&|$)/.exec(query)?.[1] || null;
   var songList_default3 = {
     limit_list: 36,
     limit_song: 1e5,
@@ -13976,11 +13999,7 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
     ],
     regExps: {
       hotTagHtml: /class="c_bg_link js_tag_item" data-id="\w+">.+?<\/a>/g,
-      hotTag: /data-id="(\w+)">(.+?)<\/a>/,
-      // https://y.qq.com/n/yqq/playlist/7217720898.html
-      // https://i.y.qq.com/n2/m/share/details/taoge.html?platform=11&appshare=android_qq&appversion=9050006&id=7217720898&ADTAG=qfshare
-      listDetailLink: /\/playlist\/(\d+)/,
-      listDetailLink2: /id=(\d+)/
+      hotTag: /data-id="(\w+)">(.+?)<\/a>/
     },
     tagsUrl: "https://u.y.qq.com/cgi-bin/musicu.fcg?loginUin=0&hostUin=0&format=json&inCharset=utf-8&outCharset=utf-8&notice=0&platform=wk_v15.json&needNewCode=0&data=%7B%22tags%22%3A%7B%22method%22%3A%22get_all_categories%22%2C%22param%22%3A%7B%22qq%22%3A%22%22%7D%2C%22module%22%3A%22playlist.PlaylistAllCategoriesServer%22%7D%7D",
     hotTagUrl: "https://c.y.qq.com/node/pc/wk_v15/category_playlist.html",
@@ -14119,12 +14138,31 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
       return url;
     },
     async getListId(id) {
-      if (/[?&:/]/.test(id)) {
-        const playlistId = (value) => this.regExps.listDetailLink.exec(value) || (/\/share\/details\/taoge\.html[?#]/.test(value) ? this.regExps.listDetailLink2.exec(value) : null);
-        let result = playlistId(id);
-        if (!result) result = playlistId(await this.handleParseId(id));
-        if (!result) throw new Error("无法识别QQ音乐歌单链接");
-        id = result[1];
+      if (!/^[0-9]+$/.test(String(id))) {
+        const parsePlaylistId3 = (value) => {
+          const url = parseMusicUrl(value);
+          if (!url || url.hostname !== "y.qq.com" && !url.hostname.endsWith(".y.qq.com")) return null;
+          const pathId = /(?:^|\/)playlist\/(\d+)(?:\.html)?\/?$/.exec(url.pathname)?.[1];
+          if (pathId) return pathId;
+          if ([
+            "/n2/m/share/details/taoge.html",
+            "/n/m/share/details/taoge.html",
+            "/share/details/taoge.html",
+            "/taoge.html",
+            "/n/m/detail/taoge/index.html",
+            "/n3/other/pages/details/playlist.html",
+            "/musicmac/v6/playlist/detail.html"
+          ].includes(url.pathname)) return queryId(url.query);
+          return null;
+        };
+        let playlistId = parsePlaylistId3(id);
+        if (!playlistId) {
+          const url = parseMusicUrl(id);
+          if (!/^c[^.]*\.y\.qq\.com$/.test(url?.hostname || "")) throw new Error("无法识别QQ音乐歌单链接");
+          playlistId = parsePlaylistId3(await this.handleParseId(id));
+        }
+        if (!playlistId) throw new Error("无法识别QQ音乐歌单链接");
+        id = playlistId;
       }
       return id;
     },
@@ -15965,6 +16003,22 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
   };
 
   // src/musicSdk/wy/songList.js
+  var queryId2 = (query) => /(?:^|&)id=(\d+)(?:&|$)/.exec(query)?.[1] || null;
+  var parsePlaylistId = (value) => {
+    const url = parseMusicUrl(value);
+    if (!url || url.hostname !== "music.163.com" && !url.hostname.endsWith(".music.163.com")) return null;
+    const queryAt = url.hash.indexOf("?");
+    const routes = [
+      [url.pathname, url.query],
+      [queryAt < 0 ? url.hash : url.hash.slice(0, queryAt), queryAt < 0 ? "" : url.hash.slice(queryAt + 1)]
+    ];
+    for (const [route, query] of routes) {
+      const pathId = /(?:^|\/)playlist\/(\d+)(?:\/[^?#]*)?$/.exec(route)?.[1];
+      if (pathId) return pathId;
+      if (/(?:^|\/)playlist\/?$/.test(route) && queryId2(query)) return queryId2(query);
+    }
+    return null;
+  };
   var songList_default4 = {
     limit_list: 30,
     limit_song: 1e5,
@@ -15982,18 +16036,13 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
       //   id: 'new',
       // },
     ],
-    regExps: {
-      listDetailLink: /^.+(?:\?|&)id=(\d+)(?:&.*$|#.*$|$)/,
-      listDetailLink2: /^.+\/playlist\/(\d+)(?:[/?#].*|$)/
-    },
     async handleParseId(link, retryNum = 0) {
       if (retryNum > 2) throw new Error("link try max num");
       const requestObj_listDetailLink = httpFetch(link);
       const { url, statusCode } = await requestObj_listDetailLink;
       if (statusCode > 400) return this.handleParseId(link, ++retryNum);
-      if (!/\/playlist(?:[/?#]|$)/.test(url)) throw new Error("分享链接不是网易云歌单");
-      const id = this.regExps.listDetailLink.test(url) ? url.replace(this.regExps.listDetailLink, "$1") : url.replace(this.regExps.listDetailLink2, "$1");
-      if (!/^\d+$/.test(id)) throw new Error("无法识别网易云歌单链接");
+      const id = parsePlaylistId(url);
+      if (!id) throw new Error("分享链接不是网易云歌单");
       return id;
     },
     async getListId(id) {
@@ -16004,13 +16053,7 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
         cookie = `MUSIC_U=${token}`;
       }
       if (/[?&:/]/.test(id)) {
-        if (this.regExps.listDetailLink.test(id)) {
-          id = id.replace(this.regExps.listDetailLink, "$1");
-        } else if (this.regExps.listDetailLink2.test(id)) {
-          id = id.replace(this.regExps.listDetailLink2, "$1");
-        } else {
-          id = await this.handleParseId(id);
-        }
+        id = parsePlaylistId(id) || await this.handleParseId(id);
       }
       return { id, cookie };
     },
@@ -17121,12 +17164,26 @@ ${result.lyric}`;
   };
 
   // src/musicSdk/mg/songList.js
+  var queryId3 = (query, key) => new RegExp(`(?:^|&)${key}=(\\d+)(?:&|$)`).exec(query)?.[1] || null;
+  var parsePlaylistId2 = (value) => {
+    const url = parseMusicUrl(value);
+    if (!url || url.hostname !== "music.migu.cn" && !url.hostname.endsWith(".music.migu.cn") && url.hostname !== "h5.nf.migu.cn") return null;
+    const pathId = /(?:^|\/)music\/playlist\/(\d+)\/?$/.exec(url.pathname)?.[1];
+    if (pathId) return pathId;
+    if (url.pathname.endsWith("/playlist/index.html")) return queryId3(url.query, "id");
+    const queryAt = url.hash.indexOf("?");
+    const hashPath = queryAt < 0 ? url.hash : url.hash.slice(0, queryAt);
+    if (/^#?\/?playlist\/?$/.test(hashPath)) {
+      return queryId3(queryAt < 0 ? "" : url.hash.slice(queryAt + 1), "playlistId");
+    }
+    return null;
+  };
   var songList_default5 = {
     limit_list: 30,
     limit_song: 30,
     successCode: "000000",
     cachedDetailInfo: {},
-    cachedUrl: {},
+    resolvedPlaylistIds: /* @__PURE__ */ new Map(),
     sortList: [
       {
         name: "推荐",
@@ -17143,9 +17200,7 @@ ${result.lyric}`;
     ],
     regExps: {
       list: /<li><div class="thumb">.+?<\/li>/g,
-      listInfo: /.+data-original="(.+?)".*data-id="(\d+)".*<div class="song-list-name"><a\s.*?>(.+?)<\/a>.+<i class="iconfont cf-bofangliang"><\/i>(.+?)<\/div>/,
-      // https://music.migu.cn/v3/music/playlist/161044573?page=1
-      listDetailLink: /^.+\/playlist\/(\d+)(?:\?.*|&.*$|#.*$|$)/
+      listInfo: /.+data-original="(.+?)".*data-id="(\d+)".*<div class="song-list-name"><a\s.*?>(.+?)<\/a>.+<i class="iconfont cf-bofangliang"><\/i>(.+?)<\/div>/
     },
     tagsUrl: "https://app.c.nf.migu.cn/pc/v1.0/template/musiclistplaza-taglist/release",
     // tagsUrl: 'https://app.c.nf.migu.cn/MIGUM3.0/v1.0/template/musiclistplaza-taglist/release',
@@ -17204,31 +17259,42 @@ ${result.lyric}`;
         return cachedDetailInfo;
       });
     },
-    async getDetailUrl(link, page, retryNum = 0) {
-      if (retryNum > 3) return Promise.reject(new Error("link try max num"));
-      const requestObj_listDetailLink = httpFetch(link, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 9_1 like Mac OS X) AppleWebKit/601.1.46 (KHTML, like Gecko) Version/9.0 Mobile/13B143 Safari/601.1",
-          Referer: link
+    async getDetailUrl(link, page) {
+      let current = link;
+      const visited = /* @__PURE__ */ new Set([current]);
+      for (let hop = 0; hop < 5; hop++) {
+        let response;
+        for (let retry = 0; retry <= 3; retry++) {
+          response = await httpFetch(current, {
+            headers: {
+              "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 9_1 like Mac OS X) AppleWebKit/601.1.46 (KHTML, like Gecko) Version/9.0 Mobile/13B143 Safari/601.1",
+              Referer: current
+            }
+          });
+          if (response.statusCode <= 400) break;
+          if (retry === 3) throw new Error("link try max num");
         }
-      });
-      const { url: location, statusCode } = await requestObj_listDetailLink;
-      if (statusCode > 400) return this.getDetailUrl(link, page, ++retryNum);
-      if (location.split("?")[0] != link.split("?")[0]) {
-        this.cachedUrl[link] = location;
-        return this.getListDetail(location, page);
+        const { url: location } = response;
+        const playlistId = parsePlaylistId2(location);
+        if (playlistId) {
+          if (this.resolvedPlaylistIds.size >= 64) this.resolvedPlaylistIds.delete(this.resolvedPlaylistIds.keys().next().value);
+          this.resolvedPlaylistIds.set(link, playlistId);
+          return this.getListDetail(playlistId, page);
+        }
+        const target = parseMusicUrl(location);
+        if (target?.hostname !== "c.migu.cn" || location === current || visited.has(location)) {
+          throw new Error("分享链接不是咪咕歌单");
+        }
+        visited.add(location);
+        current = location;
       }
-      return Promise.reject(new Error("link get failed"));
+      throw new Error("咪咕短链跳转次数超限");
     },
     getListDetail(id, page, retryNum = 0) {
-      if (this.regExps.listDetailLink.test(id)) {
-        id = id.replace(this.regExps.listDetailLink, "$1");
-      } else if (/\/playlist[/?]/.test(id)) {
-        id = /(?:playlistId|id)=(\d+)/.exec(id)?.[1];
-        if (!id) throw new Error("list detail id parse failed");
-      } else if (/[?&:/]/.test(id)) {
-        const url = this.cachedUrl[id];
-        return url ? this.getListDetail(url, page) : this.getDetailUrl(id, page);
+      const inputId = String(id);
+      if (!/^\d+$/.test(inputId)) {
+        id = parsePlaylistId2(inputId) || this.resolvedPlaylistIds.get(inputId);
+        if (!id) return this.getDetailUrl(inputId, page);
       }
       return Promise.all([
         this.getListDetailList(id, page, retryNum),
@@ -17333,11 +17399,7 @@ ${result.lyric}`;
       return this.getTag();
     },
     getDetailPageUrl(id) {
-      if (/playlist\/index\.html\?/.test(id)) {
-        id = id.replace(/.*(?:\?|&)id=(\d+)(?:&.*|$)/, "$1");
-      } else if (this.regExps.listDetailLink.test(id)) {
-        id = id.replace(this.regExps.listDetailLink, "$1");
-      }
+      id = parsePlaylistId2(String(id)) || id;
       return `https://music.migu.cn/v3/music/playlist/${id}`;
     },
     filterSongListResult(raw) {

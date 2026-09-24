@@ -2,6 +2,7 @@ import { httpFetch } from '../../request'
 import { decodeName, formatPlayTime, sizeFormate, dateFormat, formatPlayCount } from '../../index'
 import infSign from './vendors/infSign.min.cjs'
 import { signatureParams } from './util'
+import { parseMusicUrl } from '../utils'
 
 const handleSignature = (id, page, limit) => new Promise((resolve, reject) => {
   infSign({ appid: 1058, type: 0, module: 'playlist', page, pagesize: limit, specialid: id }, null, {
@@ -12,6 +13,25 @@ const handleSignature = (id, page, limit) => new Promise((resolve, reject) => {
     },
   })
 })
+
+// 只读取网页内平台声明的 JSON 元数据，不执行分享页脚本。
+const embeddedPlaylistInfo = html => {
+  const match = /(?:^|[\n>])\s*(?:var|let|const)\s+(?:specialInfo|phpParam)\s*=\s*(?=\{)/.exec(html)
+  if (!match) return null
+  const start = match.index + match[0].length
+  let depth = 0; let quoted = false; let escaped = false
+  for (let i = start; i < html.length; i++) {
+    const char = html[i]
+    if (quoted) {
+      if (escaped) escaped = false
+      else if (char === '\\') escaped = true
+      else if (char === '"') quoted = false
+    } else if (char === '"') quoted = true
+    else if (char === '{') depth++
+    else if (char === '}' && --depth === 0) return JSON.parse(html.slice(start, i + 1))
+  }
+  throw new Error('酷狗歌单页面信息不完整')
+}
 
 export default {
   listDetailLimit: 10000,
@@ -47,10 +67,6 @@ export default {
     },
   ],
   cache: new Map(),
-  regExps: {
-    // https://www.kugou.com/yy/special/single/1067062.html
-    listDetailLink: /^.+\/(\d+)\.html(?:\?.*|&.*$|#.*$|$)/,
-  },
   filterSpecialDetail(rawList) {
     const ids = new Set()
     const qualityNames = { 2: '128k', 4: '320k', 5: 'flac', 6: 'flac24bit' }
@@ -507,8 +523,8 @@ export default {
         'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1',
       },
     })
-    let result = body.match(/var\sphpParam\s=\s({.+?});/)
-    if (result) result = JSON.parse(result[1])
+    const result = typeof body === 'string' ? embeddedPlaylistInfo(body) : null
+    if (!result) throw new Error('未获取到可公开访问的酷狗歌单信息')
     this.cache.set(chain, result)
     return result
   },
@@ -588,83 +604,78 @@ export default {
     return result
   },
 
-  async getUserListDetail(link, page, retryNum = 0) {
-    if (retryNum > 3) return Promise.reject(new Error('link try max num'))
-    if (link.includes('#')) link = link.replace(/#.*$/, '')
-    if (link.includes('global_collection_id')) return this.getUserListDetail2(link.replace(/^.*?global_collection_id=(\w+)(?:&.*$|#.*$|$)/, '$1'), page)
-    if (link.includes('gcid_')) {
-      let gcid = link.match(/gcid_\w+/)?.[0]
-      if (gcid) {
-        const global_collection_id = await this.decodeGcid(gcid)
-        if (global_collection_id) return this.getUserListDetail2(global_collection_id, page)
+  async getUserListDetail(link, page = 1) {
+    const visited = new Set()
+    let pendingResponse
+    for (let hop = 0; hop < 5; hop++) {
+      link = link.replace(/&amp;/g, '&').replace(/#.*$/, '')
+      if (visited.has(link)) throw new Error('酷狗分享链接发生循环跳转')
+      visited.add(link)
+      const url = parseMusicUrl(link)
+      if (!url || (url.hostname !== 'kugou.com' && !url.hostname.endsWith('.kugou.com'))) throw new Error('分享链接未指向酷狗歌单')
+      const host = url.hostname
+      const path = url.pathname
+      const query = key => {
+        const value = new RegExp(`(?:^|&)${key}=([^&#]*)`).exec(url.query)?.[1]
+        return value ? decodeURIComponent(value) : null
       }
-    }
-    if (link.includes('chain=')) return this.getUserListDetail3(link.replace(/^.*?chain=(\w+)(?:&.*$|#.*$|$)/, '$1'), page)
-    if (link.includes('.html')) {
-      if (link.includes('zlist.html')) {
-        link = link.replace(/^(.*)zlist\.html/, 'https://m3ws.kugou.com/zlist/list')
-        if (link.includes('pagesize')) {
-          link = link.replace('pagesize=30', 'pagesize=' + this.listDetailLimit).replace('page=1', 'page=' + page)
-        } else {
-          link += `&pagesize=${this.listDetailLimit}&page=${page}`
-        }
-      } else if (!link.includes('song.html')) return this.getUserListDetail3(link.replace(/.+\/(\w+).html(?:\?.*|&.*$|#.*$|$)/, '$1'), page)
-    }
+      const detail = /\/special\/single\/([\w-]+)\.html$/i.exec(path)?.[1]
+      const share = /\/share\/([\w-]+)\.html$/i.exec(path)?.[1]
+      const legacy = /\/zlist(?:\.html|\/list)$/.test(path)
+      const short = /^t\d*\.kugou\.com$/.test(host) && /^\/[\w-]+\/?$/.test(path)
+      const playlistPage = detail || /^\/songlist\//.test(path) || /^\/share(?:\/|$)/.test(path) || path === '/schain/transfer' || legacy
+      if ((!playlistPage && !short) || /(?:song|album)\.html$/i.test(path)) throw new Error('分享链接不是酷狗歌单')
 
-    const requestObj_listDetailLink = httpFetch(link, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 9_1 like Mac OS X) AppleWebKit/601.1.46 (KHTML, like Gecko) Version/9.0 Mobile/13B143 Safari/601.1',
-        Referer: link,
-      },
-    })
-    const { url: location, statusCode, body } = await requestObj_listDetailLink
-    // console.log(body, location)
-    if (statusCode > 400) return this.getUserListDetail(link, page, ++retryNum)
-    if (location.split('?')[0] != link.split('?')[0]) {
-      // console.log(location)
-      if (location.includes('global_collection_id')) return this.getUserListDetail2(location.replace(/^.*?global_collection_id=(\w+)(?:&.*$|#.*$|$)/, '$1'), page)
-      if (location.includes('gcid_')) {
-        let gcid = location.match(/gcid_\w+/)?.[0]
-        if (gcid) {
-          const global_collection_id = await this.decodeGcid(gcid)
-          if (global_collection_id) return this.getUserListDetail2(global_collection_id, page)
+      const globalId = query('global_collection_id') || /\/(collection_[\w-]+)\.html$/.exec(path)?.[1]
+      if (globalId && /^[\w-]+$/.test(globalId)) return this.getUserListDetail2(globalId, page)
+      if (detail && /^\d+$/.test(detail) && query('encryp') !== '1') return this.getListDetailBySpecialId(detail, page)
+      const gcid = /\/songlist\/(gcid_[\w-]+)/i.exec(path)?.[1]
+      if (gcid) return this.getUserListDetail2(await this.decodeGcid(gcid), page)
+      const chain = query('chain') || (/^\/share(?:\/index\.php)?\/?$/.test(path) ? query('id') : null) || (share && share !== 'zlist' && share !== 'index' ? share : null)
+      if (chain && /^[\w-]+$/.test(chain)) return this.getUserListDetail3(chain, page)
+
+      if (legacy && path.endsWith('zlist.html')) {
+        link = link.replace(/^(.*)zlist\.html/, 'https://m3ws.kugou.com/zlist/list')
+        pendingResponse = null
+        continue
+      }
+      const response = pendingResponse || await httpFetch(link, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1',
+          Referer: link,
+        },
+      })
+      pendingResponse = null
+      if (response.statusCode < 200 || response.statusCode >= 400) throw new Error('酷狗分享链接暂时无法访问')
+      const destination = (response.url || link).replace(/#.*$/, '')
+      if (destination !== link) {
+        link = destination
+        pendingResponse = response
+        continue
+      }
+      if (typeof response.body === 'string') {
+        const info = embeddedPlaylistInfo(response.body)
+        if (info?.global_collection_id && /^[\w-]+$/.test(info.global_collection_id)) {
+          return this.getUserListDetail2(info.global_collection_id, page)
         }
+        if (info?.encode_gcid && /^gcid_[\w-]+$/.test(info.encode_gcid)) {
+          return this.getUserListDetail2(await this.decodeGcid(info.encode_gcid), page)
+        }
+        if (detail && /^\d+$/.test(String(info?.id))) return this.getListDetailBySpecialId(String(info.id), page)
+      } else if (legacy && response.body?.errcode === 0 && response.body.info?.['0']) {
+        return this.getUserListDetailByLink(response.body, link, page)
       }
-      if (location.includes('chain=')) return this.getUserListDetail3(location.replace(/^.*?chain=(\w+)(?:&.*$|#.*$|$)/, '$1'), page)
-      if (location.includes('.html')) {
-        if (location.includes('zlist.html')) {
-          let link = location.replace(/^(.*)zlist\.html/, 'https://m3ws.kugou.com/zlist/list')
-          if (link.includes('pagesize')) {
-            link = link.replace('pagesize=30', 'pagesize=' + this.listDetailLimit).replace('page=1', 'page=' + page)
-          } else {
-            link += `&pagesize=${this.listDetailLimit}&page=${page}`
-          }
-          return this.getUserListDetail(link, page, ++retryNum)
-        } else return this.getUserListDetail3(location.replace(/.+\/(\w+).html(?:\?.*|&.*$|#.*$|$)/, '$1'), page)
-      }
-      // console.log('location', location)
-      // return this.getUserListDetail(link, page, ++retryNum)
+      throw new Error('未获取到可公开访问的酷狗歌单信息')
     }
-    if (typeof body == 'string') return this.getUserListDetail2(body.replace(/^[\s\S]+?"global_collection_id":"(\w+)"[\s\S]+?$/, '$1'), page)
-    if (body.errcode !== 0) return this.getUserListDetail(link, page, ++retryNum)
-    return this.getUserListDetailByLink(body, link, page)
+    throw new Error('酷狗分享链接跳转过多')
   },
 
-  async getListDetail(id, page) { // 获取歌曲列表内的音乐
-    id = id.toString()
-    if (id.includes('special/single/')) {
-      id = id.replace(this.regExps.listDetailLink, '$1')
-    } else if (/https?:/.test(id)) {
-      // fix https://www.kugou.com/songlist/xxx/?uid=xxx&chl=qq_client&cover=http%3A%2F%2Fimge.kugou.com%xxx.jpg&iszlist=1
-      return this.getUserListDetail(id.replace(/^.*?http/, 'http'), page)
-    } else if (/^\d+$/.test(id)) {
-      return this.getUserListDetailByCode(id, page)
-    } else if (id.startsWith('id_')) {
-      id = id.replace('id_', '')
-    }
-    // if ((/[?&:/]/.test(id))) id = id.replace(this.regExps.listDetailLink, '$1')
-
-    return this.getListDetailBySpecialId(id, page)
+  async getListDetail(id, page = 1) {
+    id = String(id)
+    if (/^https?:\/\//i.test(id)) return this.getUserListDetail(id, page)
+    if (/^\d+$/.test(id)) return this.getUserListDetailByCode(id, page)
+    if (/^id_\d+$/.test(id)) return this.getListDetailBySpecialId(id.slice(3), page)
+    throw new Error('无法识别酷狗歌单链接或编号')
   },
   filterData(rawList) {
     // console.log(rawList)

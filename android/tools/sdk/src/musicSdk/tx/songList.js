@@ -1,6 +1,8 @@
 import { httpFetch } from '../../request'
 import { decodeName, formatPlayTime, sizeFormate, dateFormat, formatPlayCount } from '../../index'
-import { formatSingerName } from '../utils'
+import { formatSingerName, parseMusicUrl } from '../utils'
+
+const queryId = query => /(?:^|&)id=(\d+)(?:&|$)/.exec(query)?.[1] || null
 
 export default {
   limit_list: 36,
@@ -21,11 +23,6 @@ export default {
   regExps: {
     hotTagHtml: /class="c_bg_link js_tag_item" data-id="\w+">.+?<\/a>/g,
     hotTag: /data-id="(\w+)">(.+?)<\/a>/,
-
-    // https://y.qq.com/n/yqq/playlist/7217720898.html
-    // https://i.y.qq.com/n2/m/share/details/taoge.html?platform=11&appshare=android_qq&appversion=9050006&id=7217720898&ADTAG=qfshare
-    listDetailLink: /\/playlist\/(\d+)/,
-    listDetailLink2: /id=(\d+)/,
   },
   tagsUrl: 'https://u.y.qq.com/cgi-bin/musicu.fcg?loginUin=0&hostUin=0&format=json&inCharset=utf-8&outCharset=utf-8&notice=0&platform=wk_v15.json&needNewCode=0&data=%7B%22tags%22%3A%7B%22method%22%3A%22get_all_categories%22%2C%22param%22%3A%7B%22qq%22%3A%22%22%7D%2C%22module%22%3A%22playlist.PlaylistAllCategoriesServer%22%7D%7D',
   hotTagUrl: 'https://c.y.qq.com/node/pc/wk_v15/category_playlist.html',
@@ -174,14 +171,31 @@ export default {
   },
 
   async getListId(id) {
-    if ((/[?&:/]/.test(id))) {
-      const playlistId = value => this.regExps.listDetailLink.exec(value) ||
-        (/\/share\/details\/taoge\.html[?#]/.test(value) ? this.regExps.listDetailLink2.exec(value) : null)
-      let result = playlistId(id)
-      if (!result) result = playlistId(await this.handleParseId(id))
-      if (!result) throw new Error('无法识别QQ音乐歌单链接')
-      id = result[1]
-      // console.log(id)
+    if (!/^[0-9]+$/.test(String(id))) {
+      const parsePlaylistId = value => {
+        const url = parseMusicUrl(value)
+        if (!url || (url.hostname !== 'y.qq.com' && !url.hostname.endsWith('.y.qq.com'))) return null
+        const pathId = /(?:^|\/)playlist\/(\d+)(?:\.html)?\/?$/.exec(url.pathname)?.[1]
+        if (pathId) return pathId
+        if ([
+          '/n2/m/share/details/taoge.html',
+          '/n/m/share/details/taoge.html',
+          '/share/details/taoge.html',
+          '/taoge.html',
+          '/n/m/detail/taoge/index.html',
+          '/n3/other/pages/details/playlist.html',
+          '/musicmac/v6/playlist/detail.html',
+        ].includes(url.pathname)) return queryId(url.query)
+        return null
+      }
+      let playlistId = parsePlaylistId(id)
+      if (!playlistId) {
+        const url = parseMusicUrl(id)
+        if (!/^c[^.]*\.y\.qq\.com$/.test(url?.hostname || '')) throw new Error('无法识别QQ音乐歌单链接')
+        playlistId = parsePlaylistId(await this.handleParseId(id))
+      }
+      if (!playlistId) throw new Error('无法识别QQ音乐歌单链接')
+      id = playlistId
     }
     return id
   },

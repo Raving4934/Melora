@@ -15,16 +15,8 @@ data class PlaylistImportLink(val source: String, val value: String) {
         }
 
     companion object {
-        private val linkPattern = Regex("(?i)https?://[^\\s<>\"'“”‘’、，。；！？）》】]+")
+        private val linkPattern = Regex("(?i)(?<!javascript:)https?://[^\\s<>\"'“”‘’、，。；！？）》】]+")
         private val id = "\\d+"
-
-        private val hosts = mapOf(
-            "kw" to setOf("kuwo.cn", "www.kuwo.cn", "m.kuwo.cn", "h5.kuwo.cn", "h5app.kuwo.cn"),
-            "kg" to setOf("kugou.com", "www.kugou.com", "m.kugou.com", "t.kugou.com", "t1.kugou.com", "m3ws.kugou.com"),
-            "tx" to setOf("y.qq.com", "i.y.qq.com", "c.y.qq.com"),
-            "wy" to setOf("music.163.com", "y.music.163.com", "163cn.tv"),
-            "mg" to setOf("music.migu.cn", "m.music.migu.cn", "h5.nf.migu.cn", "c.migu.cn"),
-        )
 
         fun parse(text: String): PlaylistImportLink {
             val links = linkPattern.findAll(text)
@@ -45,63 +37,127 @@ data class PlaylistImportLink(val source: String, val value: String) {
             if (uri.port != -1 && uri.port != if (scheme == "http") 80 else 443) return null
 
             val host = uri.host?.lowercase(Locale.ROOT) ?: return null
-            val source = hosts.entries.firstOrNull { host in it.value }?.key ?: return null
+            val source = sourceForHost(host) ?: return null
             val path = uri.rawPath.orEmpty()
-            val target = buildString {
-                append(path)
-                uri.rawQuery?.let { append('?').append(it) }
-                uri.rawFragment?.let { append('#').append(it) }
-            }
             val isPlaylist = when (source) {
-                "kw" -> isKuwoPlaylist(path, target)
-                "kg" -> isKugouPlaylist(path, target) || isKugouShortLink(host, path)
-                "tx" -> isTencentPlaylist(path, target) || isTencentShortLink(host, path)
-                "wy" -> isNeteasePlaylist(path, target) || isNeteaseShortLink(host, path)
-                "mg" -> isMiguPlaylist(path, target) || isMiguShortLink(host, path)
+                "kw" -> isKuwoPlaylist(path, uri)
+                "kg" -> isKugouPlaylist(host, path, uri)
+                "tx" -> isTencentPlaylist(path, uri) || isTencentShortLink(host, path, uri)
+                "wy" -> isNeteasePlaylist(path, uri) || isNeteaseShortLink(host, path)
+                "mg" -> isMiguPlaylist(host, path, uri) || isMiguShortLink(host, path)
                 else -> false
             }
             return if (isPlaylist) PlaylistImportLink(source, value) else null
         }
 
-        private fun isKuwoPlaylist(path: String, target: String): Boolean =
-            Regex("/playlist(?:_detail)?/$id(?:[/?#]|$)", RegexOption.IGNORE_CASE).containsMatchIn(target) ||
-                (path.endsWith("/bodian/collection.html", ignoreCase = true) &&
-                    Regex("(?:^|[?&])playlistId=$id(?:&|$)", RegexOption.IGNORE_CASE).containsMatchIn(target))
+        private fun sourceForHost(host: String): String? = when {
+            isHostInFamily(host, "kuwo.cn") -> "kw"
+            isHostInFamily(host, "kugou.com") -> "kg"
+            isHostInFamily(host, "y.qq.com") -> "tx"
+            isHostInFamily(host, "music.163.com") || host == "163cn.tv" -> "wy"
+            isHostInFamily(host, "music.migu.cn") || host == "h5.nf.migu.cn" || host == "c.migu.cn" -> "mg"
+            else -> null
+        }
 
-        private fun isKugouPlaylist(path: String, target: String): Boolean =
-            path.matches(Regex("/share/[A-Za-z0-9_-]{8,}\\.html", RegexOption.IGNORE_CASE)) ||
-            Regex("/(?:songlist|special/single)/[^/?#]+(?:/|\\.html|[?#]|$)", RegexOption.IGNORE_CASE).containsMatchIn(target) ||
-                (path.contains("/share", ignoreCase = true) &&
-                    Regex("(?:^|[?&])(?:chain|id|global_collection_id)=[A-Za-z0-9_-]+", RegexOption.IGNORE_CASE).containsMatchIn(target))
+        private fun isHostInFamily(host: String, domain: String): Boolean =
+            host == domain || host.endsWith(".$domain")
 
-        private fun isTencentPlaylist(path: String, target: String): Boolean =
-            Regex("/playlist/$id(?:\\.html)?(?:[/?#]|$)", RegexOption.IGNORE_CASE).containsMatchIn(target) ||
-                (path.contains("/share/details/taoge.html", ignoreCase = true) &&
-                    Regex("(?:^|[?&])id=$id(?:&|$)", RegexOption.IGNORE_CASE).containsMatchIn(target))
+        private fun isKuwoPlaylist(path: String, uri: URI): Boolean =
+            Regex("^/(?:(?:new)?h5app/)?playlist(?:_detail)?/$id/?$", RegexOption.IGNORE_CASE)
+                .matches(path) ||
+                (Regex("^/(?:m/)?bodian/collection\\.html$", RegexOption.IGNORE_CASE).matches(path) && hasNumericParam(uri, "playlistId"))
 
-        private fun isNeteasePlaylist(path: String, target: String): Boolean =
-            Regex("/playlist(?:/$id(?:/[^/?#]+)?)?(?:[/?#]|$)", RegexOption.IGNORE_CASE).containsMatchIn(target) &&
-                Regex("(?:[?&#]|^)id=$id(?:&|$)", RegexOption.IGNORE_CASE).containsMatchIn(target) ||
-                Regex("/playlist/$id(?:[/?#]|$)", RegexOption.IGNORE_CASE).containsMatchIn(target)
+        private fun isKugouPlaylist(host: String, path: String, uri: URI): Boolean {
+            if (Regex("^t\\d*\\.kugou\\.com$", RegexOption.IGNORE_CASE).matches(host) &&
+                Regex("^/[A-Za-z0-9_-]{5,64}/?$").matches(path)
+            ) return true
+            if (host == "pc.service.kugou.com" &&
+                Regex("^/(?:yueku/v\\d+/)?special/single/[A-Za-z0-9_-]+\\.html$", RegexOption.IGNORE_CASE).matches(path)
+            ) return true
 
-        private fun isMiguPlaylist(path: String, target: String): Boolean =
-            Regex("/v[35]/music/playlist/$id(?:[/?#]|$)", RegexOption.IGNORE_CASE).containsMatchIn(target) ||
-                (path.endsWith("/playlist/index.html", ignoreCase = true) &&
-                    Regex("(?:^|[?&])id=$id(?:&|$)", RegexOption.IGNORE_CASE).containsMatchIn(target)) ||
-                (target.contains("#/playlist", ignoreCase = true) &&
-                    Regex("(?:[?&#]|^)playlistId=$id(?:&|$)", RegexOption.IGNORE_CASE).containsMatchIn(target))
+            if (Regex("^/songlist/gcid_[A-Za-z0-9_-]+(?:\\.html)?/?$", RegexOption.IGNORE_CASE).matches(path)) return true
 
-        private fun isKugouShortLink(host: String, path: String): Boolean =
-            host in setOf("t.kugou.com", "t1.kugou.com") && path.matches(Regex("/[A-Za-z0-9_-]{5,40}/?"))
+            val special = Regex("^/yy/special/single/([A-Za-z0-9_-]+)\\.html$", RegexOption.IGNORE_CASE)
+                .matchEntire(path)?.groupValues?.get(1)
+            if (special != null) {
+                if (special.matches(Regex(id))) return true
+                if (special.matches(Regex("collection_[A-Za-z0-9_-]+", RegexOption.IGNORE_CASE))) return true
+                if (hasParam(uri, "encryp", "1")) return true
+            }
 
-        private fun isTencentShortLink(host: String, path: String): Boolean =
-            host == "c.y.qq.com" && path.equals("/base/fcgi-bin/u", ignoreCase = true)
+            if (Regex("^/(?:yy/special/single|songlist)/collection_[A-Za-z0-9_-]+\\.html$", RegexOption.IGNORE_CASE)
+                    .matches(path)
+            ) return true
+
+            if (Regex("^/share/[A-Za-z0-9_-]{8,}\\.html$", RegexOption.IGNORE_CASE).matches(path)) return true
+
+            val chainSharePath = path.equals("/share", ignoreCase = true) ||
+                path.equals("/share/", ignoreCase = true) ||
+                path.equals("/share/index.php", ignoreCase = true) ||
+                path.equals("/schain/transfer", ignoreCase = true)
+            return chainSharePath && (listOf("chain", "global_collection_id")
+                .any { hasParam(uri, it, "[A-Za-z0-9_-]+") } ||
+                (path.startsWith("/share", ignoreCase = true) && hasParam(uri, "id", "[A-Za-z0-9_-]+")))
+        }
+
+        private fun isTencentPlaylist(path: String, uri: URI): Boolean {
+            if (Regex("^/(?:n/(?:yqq|ryqq(?:_v2)?)/)?playlist/$id(?:\\.html)?/?$", RegexOption.IGNORE_CASE).matches(path)) return true
+
+            val idSharePath = path.equals("/n/m/detail/taoge/index.html", ignoreCase = true) ||
+                path.equals("/n3/other/pages/details/playlist.html", ignoreCase = true) ||
+                path.equals("/musicmac/v6/playlist/detail.html", ignoreCase = true) ||
+                path.equals("/n2/m/share/details/taoge.html", ignoreCase = true) ||
+                path.equals("/n/m/share/details/taoge.html", ignoreCase = true) ||
+                path.equals("/share/details/taoge.html", ignoreCase = true) ||
+                path.equals("/taoge.html", ignoreCase = true)
+            return idSharePath && hasNumericParam(uri, "id")
+        }
+
+        private fun isNeteasePlaylist(path: String, uri: URI): Boolean {
+            if (Regex("^/playlist/$id(?:/[^/?#]+)?/?$", RegexOption.IGNORE_CASE).matches(path)) return true
+            if ((path.equals("/playlist", ignoreCase = true) || path.equals("/m/playlist", ignoreCase = true)) &&
+                hasNumericParam(uri, "id")
+            ) return true
+
+            val fragment = uri.rawFragment.orEmpty()
+            if (Regex("^/?playlist/$id(?:/[^?#]*)?(?:[?#].*)?$", RegexOption.IGNORE_CASE).matches(fragment)) return true
+            return Regex("^/?playlist(?:[/?]|$)", RegexOption.IGNORE_CASE).containsMatchIn(fragment) &&
+                hasNumericParam(uri, "id")
+        }
+
+        private fun isMiguPlaylist(host: String, path: String, uri: URI): Boolean {
+            if (Regex("^/v[35]/music/playlist/$id/?$", RegexOption.IGNORE_CASE).matches(path)) return true
+            if (Regex("^/app/v\\d+/p/share/playlist/index\\.html$", RegexOption.IGNORE_CASE).matches(path) &&
+                hasNumericParam(uri, "id")
+            ) return true
+
+            val fragment = uri.rawFragment.orEmpty()
+            return isHostInFamily(host, "music.migu.cn") &&
+                Regex("^/?playlist(?:[/?]|$)", RegexOption.IGNORE_CASE).containsMatchIn(fragment) &&
+                hasNumericParam(uri, "playlistId")
+        }
+
+        private fun isTencentShortLink(host: String, path: String, uri: URI): Boolean =
+            Regex("^c[^.]*\\.y\\.qq\\.com$", RegexOption.IGNORE_CASE).matches(host) &&
+            path.equals("/base/fcgi-bin/u", ignoreCase = true) && !uri.rawQuery.isNullOrEmpty()
 
         private fun isNeteaseShortLink(host: String, path: String): Boolean =
             host == "163cn.tv" && path.matches(Regex("/[A-Za-z0-9_-]{4,32}/?"))
 
         private fun isMiguShortLink(host: String, path: String): Boolean =
             host == "c.migu.cn" && path.matches(Regex("/[A-Za-z0-9_-]{4,16}/?"))
+
+        private fun hasNumericParam(uri: URI, name: String): Boolean = hasParam(uri, name, id)
+
+        private fun hasParam(uri: URI, name: String, valuePattern: String): Boolean {
+            val pattern = Regex(
+                "(?:^|[?&#])${Regex.escape(name)}=$valuePattern(?:[&#]|$)",
+                RegexOption.IGNORE_CASE,
+            )
+            return sequenceOf(uri.rawQuery, uri.rawFragment)
+                .filterNotNull()
+                .any { pattern.containsMatchIn(it) }
+        }
 
         private fun trimTrailingPunctuation(raw: String): String {
             var value = raw
