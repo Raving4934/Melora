@@ -15,9 +15,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -173,17 +176,18 @@ internal fun LyricsSourceSheet(track: UiTrack, onDismiss: () -> Unit) {
 /** 固定两行歌曲信息和一行状态，不展示歌词首行，加载完成也不推挤下方控件。 */
 @Composable
 internal fun LyricsCandidateSummary(track: UiTrack, candidate: PlayerLyric?, loading: Boolean) {
-    val colors = LocalPlayerColors.current
-    val title = candidate?.title ?: track.title
-    val artist = candidate?.artist ?: track.artist
+    val fixedLineStyle = LocalTextStyle.current.copy(platformStyle = PlatformTextStyle(includeFontPadding = false))
+    val titleStyle = fixedLineStyle.copy(fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.Medium)
+    // 使用相同排版器测量两行，不能把合计 sp 当高度（大字号是非线性缩放）。
+    val titleHeight = with(LocalDensity.current) { rememberTextMeasurer().measure("国Ag\n国Ag", titleStyle).size.height.toDp() }
     Column(Modifier.fillMaxWidth().testTag("lyrics-source-candidate"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(listOf(title, artist).filter { it.isNotBlank() }.joinToString(" · "), color = colors.textPrimary,
-            fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.Medium,
-            minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(listOf(candidate?.title ?: track.title, candidate?.artist ?: track.artist).filter(String::isNotBlank).joinToString(" · "),
+            style = titleStyle, color = LocalPlayerColors.current.textPrimary, modifier = Modifier.height(titleHeight),
+            maxLines = 2, overflow = TextOverflow.Ellipsis)
         Text(when {
             loading -> "正在查找匹配歌词…"
             candidate == null -> "暂未找到匹配，保留原有歌词"
             else -> "${sourceAliasDisplay(candidate.source, platformLabel(candidate.source))} · ${if (candidate.lines.any { it.words.isNotEmpty() }) "逐字歌词" else "普通歌词"}"
-        }, color = colors.textSecondary, fontSize = 12.sp, lineHeight = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }, style = fixedLineStyle.copy(color = LocalPlayerColors.current.textSecondary, fontSize = 12.sp, lineHeight = 18.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }

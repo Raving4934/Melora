@@ -10,8 +10,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
@@ -25,8 +27,12 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.swipeRight
 import androidx.core.view.ViewCompat
@@ -53,6 +59,19 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class ImmersivePlayerInstrumentedTest {
     @get:Rule val compose = createComposeRule()
+
+    private fun awaitDisplayed(tag: String) {
+        compose.waitUntil(5_000) {
+            runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess
+        }
+    }
+
+    private fun textLayout(text: String, substring: Boolean = false): TextLayoutResult {
+        val layouts = mutableListOf<TextLayoutResult>()
+        compose.onNodeWithText(text, substring = substring, useUnmergedTree = true)
+            .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        return layouts.single()
+    }
     private val immersive = mutableStateOf(false)
     private lateinit var view: View
 
@@ -120,7 +139,7 @@ class ImmersivePlayerInstrumentedTest {
         try {
             showPlayer(observeCoverStyle = true)
             compose.onNodeWithTag("player-artwork").performTouchInput { longClick() }
-            compose.onNodeWithTag("player-cover-picker").assertIsDisplayed()
+            awaitDisplayed("player-cover-picker")
             compose.runOnIdle { assertFalse(immersive.value) }
             compose.onNodeWithTag(selectedTag).performClick()
             compose.runOnIdle {
@@ -132,7 +151,7 @@ class ImmersivePlayerInstrumentedTest {
             compose.onNodeWithTag("player-transport").assertIsDisplayed()
 
             compose.onNodeWithTag("player-artwork").performTouchInput { longClick() }
-            compose.onNodeWithTag("player-cover-picker").assertIsDisplayed()
+            awaitDisplayed("player-cover-picker")
             compose.onNodeWithTag(selectedTag).assertIsSelected()
             compose.runOnIdle { assertFalse(immersive.value) }
         } finally {
@@ -150,7 +169,7 @@ class ImmersivePlayerInstrumentedTest {
         try {
             showPlayer(observeCoverStyle = true)
             compose.onNodeWithTag("player-artwork").performTouchInput { longClick() }
-            compose.onNodeWithTag("player-cover-picker").assertIsDisplayed()
+            awaitDisplayed("player-cover-picker")
             compose.onNodeWithTag(coverTag).assertIsSelected()
 
             compose.onNodeWithTag(themeTag).performClick()
@@ -159,14 +178,14 @@ class ImmersivePlayerInstrumentedTest {
                 assertEquals(originalCoverStyle, MeloraSettings.playerCoverStyle.value)
                 assertFalse(immersive.value)
             }
-            compose.onNodeWithTag("player-cover-picker").assertIsDisplayed()
+            awaitDisplayed("player-cover-picker")
             compose.onNodeWithTag(themeTag).assertIsSelected()
             compose.onNodeWithTag(coverTag).assertIsSelected()
 
             compose.onNodeWithTag("player-cover-cancel").performClick()
             compose.onNodeWithTag("player-cover-picker").assertDoesNotExist()
             compose.onNodeWithTag("player-artwork").performTouchInput { longClick() }
-            compose.onNodeWithTag("player-cover-picker").assertIsDisplayed()
+            awaitDisplayed("player-cover-picker")
             compose.onNodeWithTag(themeTag).assertIsSelected()
             compose.onNodeWithTag(coverTag).assertIsSelected()
             compose.runOnIdle { assertFalse(immersive.value) }
@@ -325,10 +344,13 @@ class ImmersivePlayerInstrumentedTest {
                 }
             }
         }
-        for (label in listOf("上一首", "播放", "下一首", "退出沉浸播放")) {
-            compose.onNodeWithContentDescription(label).performTouchInput { click(center) }
+        val controls = listOf(
+            "上一首" to "previous", "播放" to "toggle", "下一首" to "next", "退出沉浸播放" to "exit",
+        )
+        controls.forEachIndexed { index, (label, _) ->
+            compose.onNodeWithContentDescription(label).assertIsDisplayed().performTouchInput { click(center) }
+            compose.runOnIdle { assertEquals(controls.take(index + 1).map { it.second }, actions) }
         }
-        assertEquals(listOf("previous", "toggle", "next", "exit"), actions)
     }
 
     @Test fun desktopLyricShortcutTogglesWithoutChangingToolbarGeometry() {
@@ -410,15 +432,20 @@ class ImmersivePlayerInstrumentedTest {
         compose.runOnIdle { assertFalse(immersive.value) }
     }
 
-    @Test fun lyricCandidateSummaryHasOneIdentityAndStableLoadingAndLongTitleHeight() {
+    @Test fun lyricCandidateSummaryHasOneIdentityAndStableTextMetricsAtLargeFontScale() {
         val track = UiTrack("summary", "晚风与海", "测试歌手", "专辑")
         val candidate = mutableStateOf<PlayerLyric?>(null)
         val loading = mutableStateOf(true)
+        val fontScale = mutableStateOf(1f)
+        val longTitle = "很长的歌曲名称".repeat(12)
         val match = PlayerLyric(track.uid, track.title, track.artist,
             listOf(LyricLine(0, "不应重复显示的歌词署名", words = listOf(LyricWord("不应重复显示的歌词署名", 0, 1000)))), "kw")
         compose.setContent {
-            Box(Modifier.requiredSize(280.dp, 120.dp)) {
-                PlayerAppearanceProvider(dark = false) { LyricsCandidateSummary(track, candidate.value, loading.value) }
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale.value)) {
+                Box(Modifier.requiredSize(280.dp, 120.dp)) {
+                    PlayerAppearanceProvider(dark = false) { LyricsCandidateSummary(track, candidate.value, loading.value) }
+                }
             }
         }
         val height = compose.onNodeWithTag("lyrics-source-candidate").fetchSemanticsNode().boundsInRoot.height
@@ -428,11 +455,44 @@ class ImmersivePlayerInstrumentedTest {
         compose.onNodeWithText("不应重复显示的歌词署名").assertDoesNotExist()
         compose.onNodeWithText("逐字歌词", substring = true).assertIsDisplayed()
         assertEquals(height, compose.onNodeWithTag("lyrics-source-candidate").fetchSemanticsNode().boundsInRoot.height, 1f)
-        compose.runOnIdle { candidate.value = match.copy(title = "很长的歌曲名称".repeat(12)) }
+
+        compose.runOnIdle { candidate.value = match.copy(title = longTitle) }
+        compose.waitForIdle()
         assertEquals(height, compose.onNodeWithTag("lyrics-source-candidate").fetchSemanticsNode().boundsInRoot.height, 1f)
+        val titleLayout = textLayout(longTitle, substring = true)
+        assertEquals("long title must use the full two-line budget", 2, titleLayout.lineCount)
+        assertTrue("long title should ellipsize instead of clipping the second line", titleLayout.isLineEllipsized(1))
+        compose.onNodeWithText("逐字歌词", substring = true).assertIsDisplayed()
+
+        compose.runOnIdle { fontScale.value = 1.6f }
+        compose.waitForIdle()
+        val largeTitle = textLayout(longTitle, substring = true)
+        assertEquals("large-font title must retain two lines: size=${largeTitle.size} input=${largeTitle.layoutInput.style} density=${largeTitle.layoutInput.density} constraints=${largeTitle.layoutInput.constraints} lineHeight=${largeTitle.getLineBottom(0)} bounds=${compose.onNodeWithText(longTitle, substring = true).fetchSemanticsNode().boundsInRoot}", 2, largeTitle.lineCount)
+        val largeFontHeight = compose.onNodeWithTag("lyrics-source-candidate").fetchSemanticsNode().boundsInRoot.height
+        val longTitleBounds = compose.onNodeWithText(longTitle, substring = true).fetchSemanticsNode().boundsInRoot
+        val status = compose.onNodeWithText("逐字歌词", substring = true).assertIsDisplayed()
+        val statusBounds = status.fetchSemanticsNode().boundsInRoot
+        val summaryBounds = compose.onNodeWithTag("lyrics-source-candidate").fetchSemanticsNode().boundsInRoot
+        assertTrue("status row must follow the full two-line title", statusBounds.top >= longTitleBounds.bottom)
+        assertTrue("status row must fit inside the summary", statusBounds.bottom <= summaryBounds.bottom + 1f)
+        val statusLayout = textLayout("逐字歌词", substring = true)
+        assertFalse("status row must not be vertically clipped", statusLayout.didOverflowHeight)
+        assertFalse("normal source status should not ellipsize", statusLayout.isLineEllipsized(0))
+        // Compose 的整像素测量可能比字形浮点宽度少一个舍入像素。
+        assertTrue("status glyphs must fit the measured row", statusLayout.getLineRight(0) <= statusLayout.size.width + 1f)
+
         compose.runOnIdle { candidate.value = null }
+        compose.waitForIdle()
         compose.onNodeWithText("暂未找到匹配，保留原有歌词").assertIsDisplayed()
-        assertEquals(height, compose.onNodeWithTag("lyrics-source-candidate").fetchSemanticsNode().boundsInRoot.height, 1f)
+        assertEquals(largeFontHeight, compose.onNodeWithTag("lyrics-source-candidate").fetchSemanticsNode().boundsInRoot.height, 1f)
+        val emptyStatusBounds = compose.onNodeWithText("暂未找到匹配，保留原有歌词").fetchSemanticsNode().boundsInRoot
+        val emptySummaryBounds = compose.onNodeWithTag("lyrics-source-candidate").fetchSemanticsNode().boundsInRoot
+        assertTrue("large-font status text must remain inside the summary", emptyStatusBounds.bottom <= emptySummaryBounds.bottom + 1f)
+        val emptyLayout = textLayout("暂未找到匹配，保留原有歌词")
+        assertEquals(1, emptyLayout.lineCount)
+        assertFalse("large-font status must not be vertically clipped", emptyLayout.didOverflowHeight)
+        assertTrue("narrow status must fit or use its explicit ellipsis contract",
+            emptyLayout.isLineEllipsized(0) || emptyLayout.getLineRight(0) <= emptyLayout.size.width + 1f)
     }
 
     @Test fun backgroundWordEnrichmentDoesNotRecreateTheLyricsViewport() {
