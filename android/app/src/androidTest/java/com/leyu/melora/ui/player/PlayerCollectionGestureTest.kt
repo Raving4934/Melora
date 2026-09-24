@@ -45,6 +45,7 @@ class PlayerCollectionGestureTest {
         compose.onNodeWithContentDescription("查看专辑歌曲").performClick()
         assertDetailKeepsItsPositionDuringScroll()
         compose.onNodeWithContentDescription("返回").performClick()
+        compose.waitForIdle()
         compose.onNodeWithText("出自专辑").assertIsDisplayed()
         assertNormalPlayerCanStillCollapse()
     }
@@ -54,6 +55,7 @@ class PlayerCollectionGestureTest {
         compose.onNodeWithContentDescription("查看歌手歌曲").performClick()
         assertDetailKeepsItsPositionDuringScroll()
         Espresso.pressBack()
+        compose.waitForIdle()
         compose.onNodeWithText("参与创作的艺术家").assertIsDisplayed()
         assertNormalPlayerCanStillCollapse()
     }
@@ -81,10 +83,13 @@ class PlayerCollectionGestureTest {
         }
         compose.onAllNodesWithText("测试章节1", substring = true).onLast().performClick()
         compose.onNodeWithTag("player-pages").performTouchInput { swipeRight() }
+        compose.waitForIdle()
         compose.onNodeWithText("出自专辑").assertIsDisplayed()
     }
 
     private fun assertDetailKeepsItsPositionDuringScroll() {
+        // DetailPageHost 入场完成后再检查工具栏，避免采样进场动画的中间态。
+        compose.waitForIdle()
         val back = compose.onNodeWithContentDescription("返回").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
         compose.onRoot().performTouchInput { swipeUp() }
         repeat(4) {

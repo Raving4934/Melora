@@ -178,8 +178,9 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
                 override suspend fun onPreFling(available: Velocity): Velocity =
                     if (offset() > 0.5f && offset() < travel) settle(available.y) else Velocity.Zero
 
+                // 只接续播放器实际发生的位移；详情页遗留的惯性不能在返回后突然收起播放器。
                 override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity =
-                    if (canCollapse() && (offset() > 0.5f || available.y > velocityThreshold)) settle(available.y)
+                    if (canCollapse() && offset() > 0.5f) settle(available.y)
                     else Velocity.Zero
             }
         }
