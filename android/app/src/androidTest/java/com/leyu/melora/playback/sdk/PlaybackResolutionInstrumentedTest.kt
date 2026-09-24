@@ -224,7 +224,7 @@ class PlaybackResolutionInstrumentedTest {
         assertTrue(cache.getCachedSpans(next.key).isEmpty())
         SourceResolver.rejectResource(song.uid, original.resourceId)
         val lookup = AudioCacheStore.javaClass.declaredMethods.single { it.name == "preferredResource" }.apply { isAccessible = true }
-        assertNull(lookup.invoke(AudioCacheStore, context, song.uid, "128k", true))
+        assertNull(lookup.invoke(AudioCacheStore, context, song.uid, "128k", true, emptySet<String>()))
     }
 
     @Test fun lateScriptPromiseCannotMasqueradeAsNextQualityResponse() {

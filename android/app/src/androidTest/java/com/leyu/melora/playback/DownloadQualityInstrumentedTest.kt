@@ -39,7 +39,6 @@ class DownloadQualityInstrumentedTest {
     private val tree get() = DocumentsContract.buildTreeDocumentUri("${instrumentation.context.packageName}.download-fixture", "root")
     private val song = OnlineSong(JSONObject().put("source", "kw").put("songmid", "download-quality-test")
         .put("name", "Fixture").put("singer", "Test Artist").put("albumName", "Fixture Album").put("interval", "00:01"))
-    private var ownsCache = false
 
     @Before fun setup() {
         val flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
@@ -69,7 +68,8 @@ class DownloadQualityInstrumentedTest {
         DownloadCenter.remove(song.uid)
         LocalMediaStore.clear()
         SourceResolver.clearCache()
-        if (ownsCache) {
+        // 解析失败也可能创建缓存；删除夹具目录前必须释放，不能只看是否 seed 过。
+        run {
             val field = AudioCacheStore.javaClass.getDeclaredField("cache").apply { isAccessible = true }
             (field.get(AudioCacheStore) as? SimpleCache)?.release()
             field.set(AudioCacheStore, null)
@@ -84,7 +84,6 @@ class DownloadQualityInstrumentedTest {
         val payload = payloadOverride ?: instrumentation.context.assets.open("audio/$file").use { it.readBytes() }
         val resource = AudioCacheStore.registerResolved(context, song.uid, requested,
             SourceResolver.Resolved("https://example.test/$requested/$file", reported, song, false, "lx:download-test:$requested:$file"))
-        ownsCache = true
         val cache = AudioCacheStore.javaClass.getDeclaredField("cache").apply { isAccessible = true }.get(AudioCacheStore) as SimpleCache
         val hole = cache.startReadWrite(resource.key, 0, payload.size.toLong())
         try {

@@ -50,6 +50,28 @@ import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
+internal const val MAX_DOWNLOAD_TRANSFER_RESOURCES = 3
+/** 首次 HTTP 传输失败后启动的墙钟重试窗口，覆盖后续解析及传输；不限制首次下载或正在进行中的传输。 */
+internal const val DOWNLOAD_RETRY_WINDOW_MS = 20_000L
+
+internal fun shouldRetryDownloadTransfer(
+    autoSwitch: Boolean,
+    networkAvailable: Boolean,
+    attemptedResources: Int,
+    remainingRetryWindowMs: Long,
+): Boolean = autoSwitch && networkAvailable &&
+    attemptedResources < MAX_DOWNLOAD_TRANSFER_RESOURCES && remainingRetryWindowMs > 0L
+
+internal fun findDownloadHttpTransferFailure(failure: Throwable): DownloadHttpTransferFailure? {
+    val visited = mutableSetOf<Throwable>()
+    var current: Throwable? = failure
+    while (current != null && visited.add(current)) {
+        if (current is DownloadHttpTransferFailure) return current
+        current = current.cause
+    }
+    return null
+}
+
 /** 下载器：解析直链后流式写入系统媒体库或用户选择的 SAF 目录，支持跳过同名、嵌入封面/歌词。 */
 object Downloader {
     internal const val TEMP_DIRECTORY = "download_tmp"
@@ -296,6 +318,7 @@ object Downloader {
 
     private data class Target(val name: String, val uri: Uri, val size: Long, val modifiedAt: Long)
     private data class VerifiedTarget(val target: Target, val audio: DownloadAudio)
+    private data class DownloadTransfer(val temporaryFile: File, val input: CachedAudioInput)
 
     private suspend fun downloadToTarget(
         context: Context,
@@ -346,41 +369,13 @@ object Downloader {
             }
         }
         val tempDir = File(context.cacheDir, TEMP_DIRECTORY).apply { mkdirs() }
-        val temp = File.createTempFile("melora-", ".part", tempDir)
+        val transfer = downloadAudioTransfer(
+            context, song, recordId, request, token, upgradeBaseline, tempDir, baseName, notificationId,
+        ) ?: return "当前可用音源暂无更优音质版本"
+        val temp = transfer.temporaryFile
+        val input = transfer.input
         try {
-            val (input, prefix) = openDownloadInput(context, song, request, upgradeBaseline, recordId, token)
-                ?: return "当前可用音源暂无更优音质版本"
-            val coroutine = currentCoroutineContext()
-            input.stream.use { stream ->
-                ensureCurrent(recordId, token)
-                if (upgradeBaseline != null) updateCurrent(recordId, token) {
-                    tasks.getValue(recordId).recordStarted = true
-                    DownloadCenter.start(recordId, song, "已确认更高音质，开始下载…", request.upgradeFrom)
-                }
-                updateCurrent(recordId, token) {
-                    DownloadNotifications.progress(context, notificationId, baseName, null)
-                }
-                temp.outputStream().use { output ->
-                    copyWithProgress(
-                        input = if (prefix.isEmpty()) stream else SequenceInputStream(ByteArrayInputStream(prefix), stream),
-                        output = output,
-                        totalBytes = input.contentLength,
-                        checkActive = {
-                            coroutine.ensureActive()
-                            ensureCurrent(recordId, token)
-                        },
-                    ) { percent ->
-                        updateCurrent(recordId, token) {
-                            DownloadNotifications.progress(context, notificationId, baseName, percent)
-                            DownloadCenter.progress(recordId, percent)
-                        }
-                    }
-                }
-            }
             ensureCurrent(recordId, token)
-            check(temp.length() > 0 && (input.contentLength == null || input.contentLength <= 0 || temp.length() == input.contentLength)) {
-                "音频下载不完整，原文件未修改"
-            }
             val audio = inspectDownloadAudio(context, Uri.fromFile(temp)) ?: error("下载内容不是可识别的音频，原文件未修改")
             check(audio.durationMs > 0 && (song.intervalSeconds <= 0 || audio.durationMs >= song.intervalSeconds * 650L)) {
                 "下载音频时长异常，可能是试听片段；原文件未修改"
@@ -449,6 +444,101 @@ object Downloader {
         } finally { runCatching { temp.delete() } }
     }
 
+    /** 每个资源独立落入临时文件；仅 HTTP upstream open/read 故障可排除资源并尝试换源。 */
+    private suspend fun downloadAudioTransfer(
+        context: Context,
+        song: OnlineSong,
+        recordId: String,
+        request: DownloadRequest,
+        token: Long,
+        baseline: AudioSpecification?,
+        tempDir: File,
+        baseName: String,
+        notificationId: Int,
+    ): DownloadTransfer? {
+        val excludedResources = linkedSetOf<String>()
+        var retryDeadlineNanos: Long? = null
+        while (true) {
+            ensureCurrent(recordId, token)
+            val temp = File.createTempFile("melora-", ".part", tempDir)
+            var input: CachedAudioInput? = null
+            var keepTemporaryFile = false
+            try {
+                val opened = openDownloadInput(
+                    context, song, request, baseline, recordId, token,
+                    excludedResources, retryDeadlineNanos,
+                ) ?: return null
+                val (downloadInput, prefix) = opened
+                input = downloadInput
+                val coroutine = currentCoroutineContext()
+                downloadInput.stream.use { stream ->
+                    ensureCurrent(recordId, token)
+                    if (baseline != null) updateCurrent(recordId, token) {
+                        tasks.getValue(recordId).recordStarted = true
+                        DownloadCenter.start(recordId, song, "已确认更高音质，开始下载…", request.upgradeFrom)
+                    }
+                    updateCurrent(recordId, token) {
+                        DownloadNotifications.progress(context, notificationId, baseName, null)
+                    }
+                    temp.outputStream().use { output ->
+                        copyWithProgress(
+                            input = if (prefix.isEmpty()) stream else SequenceInputStream(ByteArrayInputStream(prefix), stream),
+                            output = output,
+                            totalBytes = downloadInput.contentLength,
+                            checkActive = {
+                                coroutine.ensureActive()
+                                ensureCurrent(recordId, token)
+                            },
+                        ) { percent ->
+                            updateCurrent(recordId, token) {
+                                DownloadNotifications.progress(context, notificationId, baseName, percent)
+                                DownloadCenter.progress(recordId, percent)
+                            }
+                        }
+                    }
+                }
+                ensureCurrent(recordId, token)
+                check(temp.length() > 0 &&
+                    (downloadInput.contentLength == null || downloadInput.contentLength <= 0 || temp.length() == downloadInput.contentLength)) {
+                    "音频下载不完整，原文件未修改"
+                }
+                keepTemporaryFile = true
+                return DownloadTransfer(temp, downloadInput)
+            } catch (failure: Throwable) {
+                val transferFailure = findDownloadHttpTransferFailure(failure) ?: throw failure
+                currentCoroutineContext().ensureActive()
+                ensureCurrent(recordId, token)
+                val now = System.nanoTime()
+                val deadline = retryDeadlineNanos ?: (now + TimeUnit.MILLISECONDS.toNanos(DOWNLOAD_RETRY_WINDOW_MS))
+                    .also { retryDeadlineNanos = it }
+                val remaining = TimeUnit.NANOSECONDS.toMillis(deadline - now).coerceAtLeast(0L)
+                val isNewResource = transferFailure.resourceId !in excludedResources
+                val attemptedResources = excludedResources.size + if (isNewResource) 1 else 0
+                if (!isNewResource || !shouldRetryDownloadTransfer(
+                        request.autoSwitch,
+                        NetworkState.isConnected(context),
+                        attemptedResources,
+                        remaining,
+                    )) {
+                    throw failure
+                }
+                excludedResources += transferFailure.resourceId
+                updateCurrent(recordId, token) {
+                    // 升级尚在探测阶段时，不能把旧的已完成记录进度改成0或提前显示下载通知。
+                    if (tasks.getValue(recordId).recordStarted) {
+                        DownloadCenter.progress(recordId, 0)
+                        DownloadNotifications.progress(context, notificationId, baseName, null)
+                    }
+                }
+            } finally {
+                if (!keepTemporaryFile) {
+                    runCatching { input?.stream?.close() }
+                    runCatching { temp.delete() }
+                }
+            }
+        }
+    }
+
     /** 一次查询当前下载目录的文件名/统计信息，不递归扫描本地库，不反复listFiles。 */
     private fun downloadTargets(context: Context, path: String, baseName: String): List<Target> {
         fun matches(name: String) = matchesCurrentDownloadFileName(name, baseName)
@@ -513,10 +603,19 @@ object Downloader {
     /** 只读有界前缀；命中后复用同一条流与已读字节，不二次解析或重新下载。 */
     private suspend fun openDownloadInput(
         context: Context, song: OnlineSong, request: DownloadRequest, baseline: AudioSpecification?,
-        recordId: String, token: Long,
+        recordId: String, token: Long, excludedResources: Set<String>, resolveDeadlineNanos: Long?,
     ): Pair<CachedAudioInput, ByteArray>? {
-        repeat(if (baseline == null) 1 else 3) {
-            val input = AudioCacheStore.openForDownload(context, song, request.quality, request.autoSwitch)
+        repeat(minOf(if (baseline == null) 1 else 3, MAX_DOWNLOAD_TRANSFER_RESOURCES - excludedResources.size)) {
+            val resolveTimeoutMs = resolveDeadlineNanos?.let { deadline ->
+                val remaining = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime())
+                check(remaining > 0L) { "自动换源解析超时，已停止重试" }
+                remaining
+            }
+            val input = AudioCacheStore.openForDownload(
+                context, song, request.quality, request.autoSwitch,
+                excludedResources = excludedResources,
+                resolveTimeoutMs = resolveTimeoutMs,
+            )
             try {
                 ensureCurrent(recordId, token)
                 if (baseline == null) return input to byteArrayOf()

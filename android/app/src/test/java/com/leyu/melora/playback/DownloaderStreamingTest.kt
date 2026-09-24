@@ -7,6 +7,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayInputStream
@@ -72,6 +74,25 @@ class DownloaderStreamingTest {
         } finally {
             directory.deleteRecursively()
         }
+    }
+
+    @Test
+    fun automaticTransferRetryRequiresNetworkAndStopsAfterThreeDistinctResources() {
+        assertTrue(shouldRetryDownloadTransfer(true, true, 1, 1))
+        assertTrue(shouldRetryDownloadTransfer(true, true, 2, 1))
+        assertFalse(shouldRetryDownloadTransfer(true, true, 3, 1))
+        assertFalse(shouldRetryDownloadTransfer(false, true, 1, 1))
+        assertFalse(shouldRetryDownloadTransfer(true, false, 1, 1))
+        assertFalse(shouldRetryDownloadTransfer(true, true, 1, 0))
+    }
+
+    @Test
+    fun onlyExplicitlyTaggedHttpFailuresAreEligibleForResourceRetry() {
+        val transport = DownloadHttpTransferFailure("lx:fixture:resource-a", IOException("connection reset"))
+        val wrapped = IOException("cache source open failed", transport)
+
+        assertSame(transport, findDownloadHttpTransferFailure(wrapped))
+        assertNull(findDownloadHttpTransferFailure(IOException("destination permission denied")))
     }
 
     @Test

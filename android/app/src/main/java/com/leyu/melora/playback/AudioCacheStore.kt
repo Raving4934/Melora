@@ -21,6 +21,7 @@ import androidx.media3.database.StandaloneDatabaseProvider
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.sdk.SourceResolver
 import java.io.File
+import java.io.IOException
 import java.io.InputStream
 import java.net.URLEncoder
 import kotlinx.coroutines.CancellationException
@@ -32,6 +33,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.withTimeoutOrNull
 
 internal const val AUDIO_TRANSFER_BUFFER_BYTES = 64 * 1024
 
@@ -90,20 +92,32 @@ object AudioCacheStore {
         song: OnlineSong,
         preferredQuality: String,
         allowSwitch: Boolean,
+        excludedResources: Set<String> = emptySet(),
+        resolveTimeoutMs: Long? = null,
     ): CachedAudioInput {
         val appContext = context.applicationContext
         val online = NetworkState.isConnected(appContext) && com.leyu.melora.playback.sdk.LxScriptPool.hasEnabledScripts(appContext)
-        preferredResource(appContext, song.uid, preferredQuality, online)
+        preferredResource(appContext, song.uid, preferredQuality, online, excludedResources)
             ?.takeIf { !online || SourceResolver.sameQualityTier(preferredQuality, it.actualQuality) }
             ?.let { resource -> openComplete(appContext, resource)?.let { return it } }
 
-        val resolved = SourceResolver.resolve(
-            context = appContext,
-            song = song,
-            preferredQuality = preferredQuality,
-            allowSwitch = allowSwitch,
-            purpose = SourceResolver.Purpose.DOWNLOAD,
-        )
+        val resolve = suspend {
+            SourceResolver.resolve(
+                context = appContext,
+                song = song,
+                preferredQuality = preferredQuality,
+                allowSwitch = allowSwitch,
+                purpose = SourceResolver.Purpose.DOWNLOAD,
+                excludedResources = excludedResources,
+            )
+        }
+        val resolved = if (resolveTimeoutMs == null) {
+            resolve()
+        } else {
+            require(resolveTimeoutMs > 0L)
+            withTimeoutOrNull(resolveTimeoutMs) { resolve() }
+                ?: throw IllegalStateException("自动换源解析超时，已停止重试")
+        }
         val resource = registerResolved(appContext, song.uid, preferredQuality, resolved)
         return openComplete(appContext, resource)
             ?: openReadThrough(appContext, resource)
@@ -281,6 +295,7 @@ object AudioCacheStore {
         uid: String,
         preferredQuality: String,
         online: Boolean,
+        excludedResources: Set<String> = emptySet(),
     ): AudioCacheResource? {
         val sharedCache = obtainCache(context)
         val keys = sharedCache.keys.filter { it.startsWith("melora://audio/$uid?") }
@@ -294,6 +309,7 @@ object AudioCacheStore {
         for (key in (listOfNotNull(alias) + keys).distinct()) {
             val metadata = sharedCache.getContentMetadata(key)
             val resourceId = audioResourceId(key)
+            if (resourceId != null && resourceId in excludedResources) continue
             if (SourceResolver.isRejected(uid, resourceId)) continue
             val actualQuality = SourceResolver.observedQuality(resourceId) ?: metadata.string(META_ACTUAL_QUALITY) ?: continue
             val sourceIdentity = metadata.string(META_SOURCE_IDENTITY) ?: continue
@@ -353,7 +369,7 @@ object AudioCacheStore {
             .setKey(resource.key)
             .setFlags(DataSpec.FLAG_ALLOW_CACHE_FRAGMENTATION)
             .build()
-        return readThroughFactory(sharedCache, mediaUpstreamFactory(context))
+        return readThroughFactory(sharedCache, mediaUpstreamFactory(context, tagDownloadFailures = true))
             .createDataSource()
             .openAsInput(dataSpec, resource, completeCacheHit = false)
     }
@@ -443,7 +459,10 @@ object AudioCacheStore {
         .setUpstreamDataSourceFactory(upstream)
         .setFlags(cacheDataSourceFlags(blockOnCache))
 
-    private fun mediaUpstreamFactory(context: Context): DataSource.Factory {
+    private fun mediaUpstreamFactory(
+        context: Context,
+        tagDownloadFailures: Boolean = false,
+    ): DataSource.Factory {
         val http = DefaultHttpDataSource.Factory()
             .setUserAgent(USER_AGENT)
             .setConnectTimeoutMs(15_000)
@@ -453,14 +472,28 @@ object AudioCacheStore {
         return DefaultDataSource.Factory(context, DataSource.Factory {
             val upstream = http.createDataSource()
             object : DataSource by upstream {
+                private var resourceId: String? = null
+
                 override fun open(dataSpec: DataSpec): Long {
                     if (!com.leyu.melora.playback.sdk.LxScriptPool.hasEnabledScripts(context)) {
                         throw java.io.IOException(SourceResolver.NO_SOURCE_MESSAGE)
                     }
-                    if (audioResourceId(dataSpec.key.orEmpty())?.startsWith("lx:") != true) {
+                    val id = audioResourceId(dataSpec.key.orEmpty())
+                    if (id == null || !id.startsWith("lx:")) {
                         throw java.io.IOException("缓存资源已失效，请重新播放以通过当前音源解析")
                     }
-                    return upstream.open(dataSpec)
+                    resourceId = id
+                    if (!tagDownloadFailures) return upstream.open(dataSpec)
+                    return try { upstream.open(dataSpec) }
+                    catch (failure: IOException) { throw DownloadHttpTransferFailure(id, failure) }
+                }
+
+                override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                    if (!tagDownloadFailures) return upstream.read(buffer, offset, length)
+                    return try { upstream.read(buffer, offset, length) }
+                    catch (failure: IOException) {
+                        throw DownloadHttpTransferFailure(requireNotNull(resourceId), failure)
+                    }
                 }
             }
         })
@@ -534,6 +567,12 @@ internal data class CachedAudioInput(
     val contentLength: Long?,
     val completeCacheHit: Boolean,
 )
+
+/** 仅包裹 HTTP upstream 的 open/read IOException；缓存 sink 与目标存储故障不会获得此标记。 */
+internal class DownloadHttpTransferFailure(
+    val resourceId: String,
+    cause: IOException,
+) : IOException(cause.message ?: "HTTP 音频传输失败", cause)
 
 @androidx.annotation.OptIn(UnstableApi::class)
 private class OpenedDataSourceInputStream(private val dataSource: DataSource) : InputStream() {
