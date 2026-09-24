@@ -36,6 +36,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -2268,66 +2269,26 @@ private fun PlaylistEditSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = MeloraAppearance.canvas,
-        dragHandle = {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp, bottom = 4.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(width = 36.dp, height = 4.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(MeloraAppearance.divider),
-                )
-            }
-        },
+        dragHandle = { PlaylistSheetHandle() },
     ) {
         Column(
             modifier = Modifier
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 28.dp)
-                .imePadding(),
+                .fillMaxWidth()
+                .heightIn(max = 520.dp)
+                .verticalScroll(rememberScrollState())
+                .imePadding()
+                .padding(start = 20.dp, end = 20.dp, bottom = 24.dp),
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(top = 4.dp, bottom = 14.dp),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(42.dp)
-                        .clip(CircleShape)
-                        .background(MeloraAppearance.tintBlue),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = if (isRename) Icons.Outlined.Edit else Icons.AutoMirrored.Rounded.QueueMusic,
-                        contentDescription = null,
-                        tint = BrandBlue,
-                        modifier = Modifier.size(22.dp),
-                    )
-                }
-                Spacer(Modifier.width(12.dp))
-                Column {
-                    Text(
-                        text = if (isRename) "重命名歌单" else "新建歌单",
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = TextMain,
-                    )
-                    Text(
-                        text = if (isRename) "输入新的歌单标题" else "为你的好音乐找个归宿",
-                        fontSize = 12.sp,
-                        color = TextSub,
-                        modifier = Modifier.padding(top = 2.dp),
-                    )
-                }
-            }
+            PlaylistSheetHeader(
+                icon = if (isRename) Icons.Outlined.Edit else Icons.AutoMirrored.Rounded.QueueMusic,
+                title = if (isRename) "重命名歌单" else "新建歌单",
+                subtitle = if (isRename) "输入新的歌单标题" else "为喜欢的音乐留一个位置",
+            )
+            Spacer(Modifier.height(16.dp))
 
             // 精致圆角输入胶囊框
             Surface(
-                shape = RoundedCornerShape(18.dp),
+                shape = RoundedCornerShape(16.dp),
                 color = MeloraAppearance.card,
                 border = MeloraAppearance.chipBorder,
                 modifier = Modifier
@@ -2384,14 +2345,6 @@ private fun PlaylistEditSheet(
                 }
             }
 
-            if (!isRename && onImport != null) {
-                TextButton(onClick = onImport, modifier = Modifier.align(Alignment.End)) {
-                    Icon(Icons.Outlined.Link, null, tint = BrandBlue, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("从链接导入歌单", color = BrandBlue, fontSize = 13.sp)
-                }
-            }
-
             // 快捷灵感推荐标签（仅新建时展示）
             if (!isRename) {
                 Spacer(Modifier.height(14.dp))
@@ -2420,45 +2373,22 @@ private fun PlaylistEditSheet(
                 }
             }
 
-            Spacer(Modifier.height(20.dp))
-
-            // 底部操作按钮
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Surface(
-                    onClick = onDismiss,
-                    shape = RoundedCornerShape(22.dp),
-                    color = MeloraAppearance.softFill,
-                    border = MeloraAppearance.chipBorder,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(44.dp),
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text("取消", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = TextSub)
-                    }
-                }
-                Surface(
-                    onClick = submit,
-                    enabled = canSubmit,
-                    shape = RoundedCornerShape(22.dp),
-                    color = if (canSubmit) BrandBlue else BrandBlue.copy(alpha = 0.35f),
-                    modifier = Modifier
-                        .weight(1.3f)
-                        .height(44.dp),
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            text = if (isRename) "保存修改" else "立即创建",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color.White,
-                        )
-                    }
+            if (!isRename && onImport != null) {
+                TextButton(onClick = onImport, modifier = Modifier.align(Alignment.End).padding(top = 4.dp)) {
+                    Icon(Icons.Outlined.Link, null, tint = BrandBlue, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("从链接导入歌单", color = BrandBlue, fontSize = 13.sp)
                 }
             }
+
+            Spacer(Modifier.height(20.dp))
+
+            PlaylistSheetActions(
+                onDismiss = onDismiss,
+                onConfirm = submit,
+                confirmText = if (isRename) "保存修改" else "立即创建",
+                confirmEnabled = canSubmit,
+            )
         }
     }
 }
