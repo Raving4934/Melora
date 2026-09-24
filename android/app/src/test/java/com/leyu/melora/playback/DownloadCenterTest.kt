@@ -279,9 +279,9 @@ class DownloadCenterTest {
             assertNull(DownloadCenter.saved(song.uid))
             DownloadCenter.done(song.uid, "done", "test.flac", audioSpec = spec)
             val uri = "content://media/external_primary/audio/media/42"
-            DownloadCenter.rememberSavedUri(song.uid, uri, spec)
+            DownloadCenter.rememberSavedResource(DownloadCenter.saved(song.uid)!!, uri, spec)
             val saved = DownloadCenter.saved(song.uid)!!
-            DownloadCenter.rememberSavedUri(song.uid, uri)
+            DownloadCenter.rememberSavedResource(DownloadCenter.saved(song.uid)!!, uri)
             assertEquals(saved, DownloadCenter.saved(song.uid))
             assertEquals(uri, saved.savedUri)
             DownloadCenter.start(song, "retry")
@@ -297,7 +297,7 @@ class DownloadCenterTest {
             assertEquals(uri, failed.savedUri)
             assertEquals(spec, failed.audioSpec)
 
-            DownloadCenter.rememberSavedUri(song.uid, "content://media/other")
+            DownloadCenter.rememberSavedResource(DownloadCenter.saved(song.uid)!!, "content://media/other")
             assertEquals("content://media/other", DownloadCenter.saved(song.uid)?.savedUri)
             DownloadCenter.clearSaved(song.uid, "deleted")
             assertNull(DownloadCenter.saved(song.uid))
@@ -309,6 +309,45 @@ class DownloadCenterTest {
         } finally {
             DownloadCenter.remove(song.uid)
         }
+    }
+
+    @Test
+    fun staleResourceBackfillCannotOverwriteAnUpgradeOrReplacement() {
+        val song = OnlineSong(songJson(null).put("songmid", "stale-backfill"))
+        val high = AudioSpecification("audio/flac", 96000, -1, 24)
+        try {
+            for (replacement in listOf("upgrade", "clear", "remove")) {
+                DownloadCenter.start(song, "test")
+                DownloadCenter.done(song.uid, "old", "old.mp3", "content://media/old")
+                val observed = DownloadCenter.saved(song.uid)!!
+                if (replacement == "clear") DownloadCenter.clearSaved(song.uid)
+                if (replacement == "remove") DownloadCenter.remove(song.uid)
+                DownloadCenter.start(song, "replacement")
+                DownloadCenter.done(song.uid, "new", "new.flac", "content://media/new", high)
+                val expected = DownloadCenter.saved(song.uid)
+                DownloadCenter.rememberSavedResource(observed, "content://media/recovered-old", AudioSpecification("audio/mpeg", 44100, 128000))
+                assertEquals(expected, DownloadCenter.saved(song.uid))
+            }
+        } finally { DownloadCenter.remove(song.uid) }
+    }
+
+    @Test
+    fun resourceBackfillSurvivesProgressAndRepeatedSubmissionIsIdempotent() {
+        val song = OnlineSong(songJson(null).put("songmid", "progress-backfill"))
+        try {
+            DownloadCenter.start(song, "test")
+            DownloadCenter.done(song.uid, "old", "old.mp3")
+            val observed = DownloadCenter.saved(song.uid)!!
+            DownloadCenter.start(song, "upgrade")
+            DownloadCenter.progress(song.uid, 40)
+            DownloadCenter.rememberSavedResource(observed, "content://media/recovered", AudioSpecification("audio/mpeg", 44100, 128000))
+            val saved = DownloadCenter.saved(song.uid)!!
+            assertEquals(40, saved.percent)
+            assertEquals(DownloadCenter.Status.Downloading, saved.status)
+            assertEquals("content://media/recovered", saved.savedUri)
+            DownloadCenter.rememberSavedResource(observed, "content://media/recovered", saved.audioSpec)
+            assertEquals(saved, DownloadCenter.saved(song.uid))
+        } finally { DownloadCenter.remove(song.uid) }
     }
 
     @Test
@@ -335,7 +374,7 @@ class DownloadCenterTest {
     }
 
     @Test
-    fun rememberAudioSpecificationOnlyUpdatesMatchingSavedUri() {
+    fun metadataBackfillOnlyUpdatesMatchingSavedResource() {
         val song = OnlineSong(songJson(null).put("songmid", "remember-spec"))
         val uri = "content://media/external_primary/audio/media/remember"
         val spec = AudioSpecification("audio/mpeg", 44_100, 320_000)
@@ -343,10 +382,10 @@ class DownloadCenterTest {
             DownloadCenter.start(song, "test")
             DownloadCenter.done(song.uid, "done", "test.mp3", uri)
 
-            DownloadCenter.rememberAudioSpecification(song.uid, "content://media/other", spec)
+            DownloadCenter.rememberSavedResource(DownloadCenter.saved(song.uid)!!.copy(savedUri = "content://media/other"), uri, spec)
             assertNull(DownloadCenter.records.value.first { it.id == song.uid }.audioSpec)
 
-            DownloadCenter.rememberAudioSpecification(song.uid, uri, spec)
+            DownloadCenter.rememberSavedResource(DownloadCenter.saved(song.uid)!!, uri, spec)
             assertEquals(spec, DownloadCenter.records.value.first { it.id == song.uid }.audioSpec)
         } finally {
             DownloadCenter.remove(song.uid)
@@ -388,9 +427,9 @@ class DownloadCenterTest {
         try {
             DownloadCenter.start(song, "test")
             DownloadCenter.done(song.uid, "old", "old.flac", "content://media/old", high)
-            DownloadCenter.rememberSavedUri(song.uid, "content://media/new")
+            DownloadCenter.rememberSavedResource(DownloadCenter.saved(song.uid)!!, "content://media/new")
             assertNull(DownloadCenter.saved(song.uid)?.audioSpec)
-            DownloadCenter.rememberAudioSpecification(song.uid, "content://media/new", high)
+            DownloadCenter.rememberSavedResource(DownloadCenter.saved(song.uid)!!, "content://media/new", high)
             DownloadCenter.clearSaved(song.uid, expectedUri = "content://media/old")
             assertEquals("content://media/new", DownloadCenter.saved(song.uid)?.savedUri)
             assertEquals(high, DownloadCenter.saved(song.uid)?.audioSpec)

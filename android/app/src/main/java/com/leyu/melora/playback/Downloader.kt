@@ -621,7 +621,7 @@ object Downloader {
         val measured = inspectDownloadAudio(context, found) ?: return null
         // 旧地址失效后，同名不再足以证明是原歌曲；绝不把另一首文件接到旧记录上。
         if (!measured.matches(identity, trustedIdentity = false)) return null
-        DownloadCenter.rememberSavedUri(uid, found.toString(), measured.spec)
+        DownloadCenter.rememberSavedResource(record, found.toString(), measured.spec)
         return found
     }
 

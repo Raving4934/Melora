@@ -297,7 +297,9 @@ object PlaybackController {
             resolution?.localFile?.let { LocalMediaStore.recordAudioSpecification(it, audioSpec) }
             resolution?.downloadUri?.let { uri ->
                 // 旧下载记录按本次真正打开的URI补齐，下载换新文件后旧音轨不能回写到新记录。
-                scope.launch(Dispatchers.IO) { DownloadCenter.rememberAudioSpecification(uid, uri, audioSpec) }
+                DownloadCenter.saved(uid)?.takeIf { it.savedUri == uri }?.let { saved ->
+                    scope.launch(Dispatchers.IO) { DownloadCenter.rememberSavedResource(saved, uri, audioSpec) }
+                }
             }
             return
         }
@@ -532,14 +534,14 @@ object PlaybackController {
             val uri = failedTrack?.let(::localResourceUri)
             val context = appContext
             if (uri != null && context != null) {
-                when (withContext(Dispatchers.IO) { localFilePresence(context, uri, failedTrack?.raw?.optString("localFolder")) }) {
+                when (withContext(Dispatchers.IO) { localFilePresence(context, uri, failedTrack.raw?.optString("localFolder")) }) {
                     LocalFilePresence.Missing -> {
-                        val ids = if (failedTrack?.source == LocalSong.SOURCE) setOf(failedTrack.uid.removePrefix("${LocalSong.SOURCE}_")) else emptySet()
+                        val ids = if (failedTrack.source == LocalSong.SOURCE) setOf(failedTrack.uid.removePrefix("${LocalSong.SOURCE}_")) else emptySet()
                         onLocalFilesDeleted(context, ids, setOf(uri)).join()
                         return@launch
                     }
                     LocalFilePresence.Unknown -> {
-                        if (failedTrack?.isOnline != true || failedTrack.source == LocalSong.SOURCE) {
+                        if (!failedTrack.isOnline || failedTrack.source == LocalSong.SOURCE) {
                             if (player.currentMediaItem?.mediaId == expectedUid && generation == recoveryGeneration) {
                                 player.pause()
                                 _state.value = _state.value.copy(message = "本地文件暂时无法访问，请检查文件或目录权限")
@@ -950,7 +952,7 @@ object PlaybackController {
             if (player.mediaItemCount == 0) {
                 currentQueueId = null
                 _lyric.value = null
-            } else if (restartOnline && player.currentMediaItem?.mediaId == current?.uid) {
+            } else if (restartOnline && player.currentMediaItem?.mediaId == current.uid) {
                 val position = player.currentPosition.coerceAtLeast(0L)
                 val index = player.currentMediaItemIndex
                 player.stop()

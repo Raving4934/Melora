@@ -90,28 +90,14 @@ object DownloadCenter {
         it.id == id && it.hasSavedResource && hasResourceAddress(it.fileName, it.savedUri)
     }
 
-    /** 旧记录首次成功定位后补齐地址；后续修改下载目录仍可读取原文件。 */
-    fun rememberSavedUri(id: String, uri: String, spec: AudioSpecification? = null) = update(persist = true) { list ->
-        list.map {
-            if (it.id == id && it.hasSavedResource) it.copy(savedUri = uri,
-                audioSpec = spec ?: it.audioSpec.takeIf { _ -> it.savedUri == uri })
-            else it
-        }
-    }
-
-    /** 只为当前仍保存同一 URI 的资源补齐实际音质规格，避免旧地址被复用时串写规格。 */
-    fun rememberAudioSpecification(id: String, uri: String, spec: AudioSpecification) = update(persist = true) { list ->
-        list.map {
-            if (
-                it.id == id &&
-                it.hasSavedResource &&
-                it.savedUri == uri &&
-                hasResourceAddress(it.fileName, it.savedUri)
-            ) {
-                it.copy(audioSpec = spec)
-            } else {
-                it
-            }
+    /** 地址恢复与实测规格共用条件提交；同一资源的任务进度变化不影响回填。 */
+    fun rememberSavedResource(expected: Record, uri: String, spec: AudioSpecification? = null) = update(persist = true) { list ->
+        list.map { current ->
+            if (current.id == expected.id && current.hasSavedResource &&
+                sameResourceAddress(current.fileName, current.savedUri, expected.fileName, expected.savedUri) &&
+                current.audioSpec == expected.audioSpec
+            ) current.copy(savedUri = uri, audioSpec = spec ?: current.audioSpec.takeIf { current.savedUri == uri })
+            else current
         }
     }
 
