@@ -1,5 +1,7 @@
 package com.leyu.melora.ui.my
 
+import com.leyu.melora.ui.awaitStable
+
 import android.content.Context
 import android.graphics.Bitmap
 import java.io.File
@@ -66,9 +68,7 @@ class PlaylistImportSheetTest {
         if (autoRead) {
             compose.waitForIdle()
             compose.onNodeWithTag("playlist-import-submit").assertIsEnabled().performScrollTo()
-            compose.waitUntil(5_000) {
-                runCatching { compose.onNodeWithTag("playlist-import-submit").assertIsDisplayed() }.isSuccess
-            }
+            compose.awaitStable("playlist-import-submit")
             compose.onNodeWithTag("playlist-import-submit").performClick()
         }
     }

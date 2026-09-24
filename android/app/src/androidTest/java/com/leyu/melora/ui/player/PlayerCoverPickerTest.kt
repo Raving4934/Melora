@@ -1,5 +1,7 @@
 package com.leyu.melora.ui.player
 
+import com.leyu.melora.ui.awaitStable
+
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -13,6 +15,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeLeft
@@ -66,6 +69,7 @@ class PlayerCoverPickerTest {
         compose.onNodeWithTag("player-cover-circle").assertIsSelected()
         compose.onNodeWithTag("player-cover-vinyl").assertIsNotSelected()
         options.forEach { (style, tag) ->
+            compose.awaitStable(tag)
             compose.onNodeWithTag(tag).assertIsDisplayed().performClick()
             compose.runOnIdle {
                 assertEquals(style, selected.value)
@@ -77,14 +81,14 @@ class PlayerCoverPickerTest {
             compose.onNodeWithTag("player-cover-picker").assertIsDisplayed()
         }
         compose.runOnIdle { assertEquals(options.map { it.first }, selections.toList()) }
-        compose.onNodeWithTag("player-cover-immersive").performClick()
+        compose.onNodeWithTag("player-cover-immersive").performScrollTo().also { compose.awaitStable(it) }.performClick()
         compose.runOnIdle {
             assertEquals(3, selections.size)
             assertEquals(1, immersiveCount.intValue)
             assertEquals(0, dismissCount.intValue)
         }
         compose.onNodeWithTag("player-cover-picker").assertIsDisplayed()
-        compose.onNodeWithTag("player-cover-cancel").performClick()
+        compose.onNodeWithTag("player-cover-cancel").performScrollTo().also { compose.awaitStable(it) }.performClick()
         compose.runOnIdle {
             assertEquals(3, selections.size)
             assertEquals(1, immersiveCount.intValue)
@@ -130,9 +134,7 @@ class PlayerCoverPickerTest {
             ThemeMode.Light to "player-cover-theme-light",
             ThemeMode.Dark to "player-cover-theme-dark",
         )
-        compose.waitUntil(5_000) {
-            runCatching { compose.onNodeWithTag("player-cover-theme-auto").assertIsDisplayed() }.isSuccess
-        }
+        compose.awaitStable("player-cover-theme-auto")
         options.forEach { (_, tag) -> compose.onNodeWithTag(tag).assertIsDisplayed() }
         compose.onNodeWithTag("player-cover-theme-auto").assertIsSelected()
         compose.onNodeWithTag("player-cover-theme-light").assertIsNotSelected()
@@ -307,6 +309,7 @@ class PlayerCoverPickerTest {
         }
         compose.onNodeWithTag("player-cover-default").assertIsSelected()
 
+        compose.awaitStable("player-cover-vinyl")
         compose.onNodeWithTag("player-cover-vinyl").performClick()
         compose.runOnIdle {
             assertEquals(PlayerCoverStyle.Vinyl, selected.value)

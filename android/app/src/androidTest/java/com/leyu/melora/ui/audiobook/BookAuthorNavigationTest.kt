@@ -1,5 +1,7 @@
 package com.leyu.melora.ui.audiobook
 
+import com.leyu.melora.ui.awaitStable
+
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.requiredSize
@@ -60,11 +62,11 @@ class BookAuthorNavigationTest {
         saveProof("author-portrait")
         val card = compose.onNodeWithText("测试长篇作品").fetchSemanticsNode().boundsInRoot
         compose.onNodeWithText("测试长篇作品").performClick()
-        compose.waitForIdle()
+        compose.awaitStable(compose.onNodeWithText("测试章节100"))
         compose.onNodeWithText("测试章节100").assertIsDisplayed()
         compose.onNodeWithText("播放全部").assertIsDisplayed()
         compose.onNodeWithContentDescription("返回").performClick()
-        compose.waitForIdle()
+        compose.awaitStable(compose.onNodeWithText("测试长篇作品"))
         compose.onNodeWithText("听书作品").assertIsDisplayed()
         compose.onNodeWithText("测试章节100").assertDoesNotExist()
         assertEquals(card, compose.onNodeWithText("测试长篇作品").fetchSemanticsNode().boundsInRoot)
@@ -115,5 +117,6 @@ class BookAuthorNavigationTest {
                 }
             }
         }
+        compose.awaitStable(compose.onNodeWithText("测试长篇作品"))
     }
 }

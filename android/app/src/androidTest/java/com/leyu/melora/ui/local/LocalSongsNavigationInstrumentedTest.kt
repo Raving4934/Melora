@@ -1,5 +1,7 @@
 package com.leyu.melora.ui.local
 
+import com.leyu.melora.ui.awaitStable
+
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
@@ -76,10 +78,13 @@ class LocalSongsNavigationInstrumentedTest {
         showPage()
         val sorted = sortLocalSongs(songs.value, field.value, true)
         val starts = localSongSectionStarts(sorted, field.value)
+        compose.awaitStable("local-song-index")
         for (label in listOf("M", "A", "T", "0", "#")) {
+            val expected = starts.getValue(label)
             compose.onNodeWithContentDescription("跳转到 $label").performClick()
+            // requestScrollToItem 在下一次测量生效，不把主线程空闲等同于测量已完成。
+            compose.waitUntil(5_000) { list.layoutInfo.visibleItemsInfo.any { it.index == expected } }
             compose.runOnIdle {
-                val expected = starts.getValue(label)
                 assertTrue("$label 首项应可见", list.layoutInfo.visibleItemsInfo.any { it.index == expected })
                 assertEquals(setOf("local:kept"), selection.selectedUids)
                 assertTrue(selection.active)
@@ -104,9 +109,9 @@ class LocalSongsNavigationInstrumentedTest {
     @Test
     fun moreButtonKeepsItsPositionAndReceivesTouchesBesideTheRail() {
         showPage()
-        compose.waitForIdle()
-        compose.onNodeWithTag("local-song-index").assertIsDisplayed()
-        val more = compose.onAllNodesWithContentDescription("更多")[3].assertIsDisplayed()
+        compose.awaitStable("local-song-index")
+        val more = compose.onAllNodesWithContentDescription("更多")[3]
+        compose.awaitStable(more)
         val originalCenter = more.fetchSemanticsNode().boundsInRoot.center.x
         val rail = compose.onNodeWithTag("local-song-index").fetchSemanticsNode().boundsInRoot
         assertTrue("更多图标中心不能落入字母触摸区: center=$originalCenter rail=$rail", originalCenter < rail.left)

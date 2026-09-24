@@ -1,5 +1,7 @@
 package com.leyu.melora.ui.player
 
+import com.leyu.melora.ui.awaitStable
+
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
@@ -20,6 +22,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.compose.ui.window.DialogWindowProvider
@@ -108,8 +111,8 @@ class PlayerCoverPickerSystemBarsTest {
 
             // Opening keeps the configured visibility in the separate sheet window.
             compose.onNodeWithTag("open-player-cover-picker").performClick()
-            compose.onNodeWithTag("player-cover-picker").assertIsDisplayed()
             awaitVisibility(::dialogWindow, hidden = policy.expectedHidden)
+            compose.awaitStable("player-cover-picker")
 
             // Selecting a cover style closes the picker in the real player; record the dialog state
             // in the selection callback, then verify the Activity window is restored unchanged.
@@ -124,10 +127,9 @@ class PlayerCoverPickerSystemBarsTest {
 
             // Reopen and use the explicit cancel action to cover the other close path.
             compose.onNodeWithTag("open-player-cover-picker").performClick()
-            compose.waitForIdle()
-            compose.onNodeWithTag("player-cover-picker").assertIsDisplayed()
             awaitVisibility(::dialogWindow, hidden = policy.expectedHidden)
-            compose.onNodeWithText("取消").performClick()
+            compose.awaitStable("player-cover-picker")
+            compose.onNodeWithText("取消").performScrollTo().also { compose.awaitStable(it) }.performClick()
             compose.runOnIdle {
                 assertEquals(!policy.expectedHidden, dismissalWindowStatusVisible)
             }

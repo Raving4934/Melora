@@ -1,5 +1,7 @@
 package com.leyu.melora.ui.player
 
+import com.leyu.melora.ui.awaitStable
+
 import android.view.View
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -60,11 +62,7 @@ import org.junit.runner.RunWith
 class ImmersivePlayerInstrumentedTest {
     @get:Rule val compose = createComposeRule()
 
-    private fun awaitDisplayed(tag: String) {
-        compose.waitUntil(5_000) {
-            runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess
-        }
-    }
+
 
     private fun textLayout(text: String, substring: Boolean = false): TextLayoutResult {
         val layouts = mutableListOf<TextLayoutResult>()
@@ -120,7 +118,7 @@ class ImmersivePlayerInstrumentedTest {
         showPlayer()
         val normal = compose.onNodeWithTag("player-pages").fetchSemanticsNode().boundsInRoot
         compose.onNodeWithTag("player-artwork").performTouchInput { longClick() }
-        compose.onNodeWithTag("player-cover-immersive").performClick()
+        compose.onNodeWithTag("player-cover-immersive").performScrollTo().also { compose.awaitStable(it) }.performClick()
         compose.runOnIdle { assertTrue(immersive.value) }
         val enlarged = compose.onNodeWithTag("player-pages").fetchSemanticsNode().boundsInRoot
         assertTrue("隐藏栏位应释放给正文", enlarged.height > normal.height + 100f)
@@ -139,7 +137,7 @@ class ImmersivePlayerInstrumentedTest {
         try {
             showPlayer(observeCoverStyle = true)
             compose.onNodeWithTag("player-artwork").performTouchInput { longClick() }
-            awaitDisplayed("player-cover-picker")
+            compose.awaitStable("player-cover-picker")
             compose.runOnIdle { assertFalse(immersive.value) }
             compose.onNodeWithTag(selectedTag).performClick()
             compose.runOnIdle {
@@ -151,7 +149,7 @@ class ImmersivePlayerInstrumentedTest {
             compose.onNodeWithTag("player-transport").assertIsDisplayed()
 
             compose.onNodeWithTag("player-artwork").performTouchInput { longClick() }
-            awaitDisplayed("player-cover-picker")
+            compose.awaitStable("player-cover-picker")
             compose.onNodeWithTag(selectedTag).assertIsSelected()
             compose.runOnIdle { assertFalse(immersive.value) }
         } finally {
@@ -169,7 +167,7 @@ class ImmersivePlayerInstrumentedTest {
         try {
             showPlayer(observeCoverStyle = true)
             compose.onNodeWithTag("player-artwork").performTouchInput { longClick() }
-            awaitDisplayed("player-cover-picker")
+            compose.awaitStable("player-cover-picker")
             compose.onNodeWithTag(coverTag).assertIsSelected()
 
             compose.onNodeWithTag(themeTag).performClick()
@@ -178,14 +176,14 @@ class ImmersivePlayerInstrumentedTest {
                 assertEquals(originalCoverStyle, MeloraSettings.playerCoverStyle.value)
                 assertFalse(immersive.value)
             }
-            awaitDisplayed("player-cover-picker")
+            compose.awaitStable("player-cover-picker")
             compose.onNodeWithTag(themeTag).assertIsSelected()
             compose.onNodeWithTag(coverTag).assertIsSelected()
 
-            compose.onNodeWithTag("player-cover-cancel").performClick()
+            compose.onNodeWithTag("player-cover-cancel").performScrollTo().also { compose.awaitStable(it) }.performClick()
             compose.onNodeWithTag("player-cover-picker").assertDoesNotExist()
             compose.onNodeWithTag("player-artwork").performTouchInput { longClick() }
-            awaitDisplayed("player-cover-picker")
+            compose.awaitStable("player-cover-picker")
             compose.onNodeWithTag(themeTag).assertIsSelected()
             compose.onNodeWithTag(coverTag).assertIsSelected()
             compose.runOnIdle { assertFalse(immersive.value) }

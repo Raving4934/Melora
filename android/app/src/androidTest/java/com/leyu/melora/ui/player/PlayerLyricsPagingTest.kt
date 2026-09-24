@@ -1,5 +1,7 @@
 package com.leyu.melora.ui.player
 
+import com.leyu.melora.ui.awaitStable
+
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.pager.rememberPagerState
@@ -20,6 +22,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipe
 import androidx.compose.ui.test.swipeRight
@@ -72,8 +75,8 @@ class PlayerLyricsPagingTest {
         compose.waitForIdle()
         if (immersive) {
             compose.onNodeWithTag("player-artwork").performTouchInput { longClick() }
-            compose.waitUntil(5_000) { runCatching { compose.onNodeWithTag("player-cover-immersive").assertIsDisplayed() }.isSuccess }
-            compose.onNodeWithTag("player-cover-immersive").performClick()
+            compose.awaitStable("player-cover-immersive")
+            compose.onNodeWithTag("player-cover-immersive").performScrollTo().also { compose.awaitStable(it) }.performClick()
             compose.waitUntil(5_000) { immersiveState.value }
             compose.runOnIdle { assertTrue(immersiveState.value) }
             compose.onNodeWithTag("player-heading").assertDoesNotExist()

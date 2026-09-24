@@ -1,5 +1,7 @@
 package com.leyu.melora.ui.common
 
+import com.leyu.melora.ui.awaitStable
+
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
@@ -65,6 +67,7 @@ class RecommendationSongsPageTest {
             if (calls.incrementAndGet() == 1) error("暂时无法加载推荐")
             rows
         }
+        compose.awaitStable(compose.onNodeWithText("点击重试"))
         compose.onNodeWithText("点击重试").assertIsDisplayed().performClick()
         assertLastSongWithoutPagination()
         assertEquals(2, calls.get())
@@ -73,6 +76,7 @@ class RecommendationSongsPageTest {
     @Test fun emptyRecommendationHasNoLoadMoreAction() {
         val calls = AtomicInteger()
         show { calls.incrementAndGet(); emptyList() }
+        compose.awaitStable(compose.onNodeWithText("暂无歌曲"))
         compose.onNodeWithText("暂无歌曲").assertIsDisplayed()
         compose.onAllNodesWithText("上滑加载更多").assertCountEquals(0)
         assertEquals(1, calls.get())
