@@ -2239,7 +2239,7 @@ private fun DownloadRecordSheet(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PlaylistEditSheet(
+internal fun PlaylistEditSheet(
     initialName: String = "",
     isRename: Boolean = false,
     onImport: (() -> Unit)? = null,
@@ -2283,6 +2283,7 @@ private fun PlaylistEditSheet(
                 icon = if (isRename) Icons.Outlined.Edit else Icons.AutoMirrored.Rounded.QueueMusic,
                 title = if (isRename) "重命名歌单" else "新建歌单",
                 subtitle = if (isRename) "输入新的歌单标题" else "为喜欢的音乐留一个位置",
+                onImportClick = onImport.takeUnless { isRename },
             )
             Spacer(Modifier.height(16.dp))
 
@@ -2370,14 +2371,6 @@ private fun PlaylistEditSheet(
                             )
                         }
                     }
-                }
-            }
-
-            if (!isRename && onImport != null) {
-                TextButton(onClick = onImport, modifier = Modifier.align(Alignment.End).padding(top = 4.dp)) {
-                    Icon(Icons.Outlined.Link, null, tint = BrandBlue, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("从链接导入歌单", color = BrandBlue, fontSize = 13.sp)
                 }
             }
 

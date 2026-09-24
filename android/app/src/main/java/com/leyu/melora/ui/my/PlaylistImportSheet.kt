@@ -4,6 +4,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.os.SystemClock
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,6 +24,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -259,14 +261,34 @@ internal fun PlaylistSheetHandle() {
 }
 
 @Composable
-internal fun PlaylistSheetHeader(icon: ImageVector, title: String, subtitle: String) {
+internal fun PlaylistSheetHeader(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    onImportClick: (() -> Unit)? = null,
+) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(MeloraAppearance.tintBlue), Alignment.Center) {
             Icon(icon, null, tint = BrandBlue, modifier = Modifier.size(22.dp))
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(title, fontSize = 17.sp, fontWeight = FontWeight.Medium, color = TextMain)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(title, fontSize = 17.sp, fontWeight = FontWeight.Medium, color = TextMain,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                if (onImportClick != null) {
+                    Spacer(Modifier.width(8.dp))
+                    Row(
+                        modifier = Modifier.heightIn(min = 32.dp)
+                            .clickable(role = Role.Button, onClick = onImportClick),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Outlined.Link, null, tint = BrandBlue, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("从链接导入", fontSize = 13.sp, lineHeight = 18.sp, color = BrandBlue, maxLines = 1)
+                    }
+                }
+            }
             Text(subtitle, fontSize = 12.sp, lineHeight = 18.sp, color = TextSub, modifier = Modifier.padding(top = 2.dp))
         }
     }
