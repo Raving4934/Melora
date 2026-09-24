@@ -52,6 +52,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -83,6 +84,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -209,6 +211,7 @@ fun MyLibraryScreen(
     var detail by remember { mutableStateOf<LibraryDetail?>(null) }
     var moreSong by remember { mutableStateOf<OnlineSong?>(null) }
     var showCreateSheet by remember { mutableStateOf(false) }
+    var showImportSheet by remember { mutableStateOf(false) }
     var playlistToRename by remember { mutableStateOf<UserLibrary.UserPlaylist?>(null) }
     var playlistToDelete by remember { mutableStateOf<UserLibrary.UserPlaylist?>(null) }
 
@@ -252,10 +255,21 @@ fun MyLibraryScreen(
     if (showCreateSheet) {
         PlaylistEditSheet(
             isRename = false,
+            onImport = { showCreateSheet = false; showImportSheet = true },
             onDismiss = { showCreateSheet = false },
             onConfirm = { name ->
                 UserLibrary.createPlaylist(name)
                 PlaybackController.postMessage(context, "已创建歌单「$name」")
+            },
+        )
+    }
+
+    if (showImportSheet) {
+        PlaylistImportSheet(
+            onDismiss = { showImportSheet = false },
+            onImported = { playlist ->
+                showImportSheet = false
+                PlaybackController.postMessage(context, "已导入「${playlist.name}」· ${playlist.songs.size} 首")
             },
         )
     }
@@ -358,6 +372,7 @@ fun MyLibraryScreen(
                     onBack = { page = null },
                     onOpen = { detail = LibraryDetail.UserPlaylist(it) },
                     onCreate = { showCreateSheet = true },
+                    onImport = { showImportSheet = true },
                     onRename = { playlistToRename = it },
                     onDelete = { playlistToDelete = it },
                 )
@@ -2226,6 +2241,7 @@ private fun DownloadRecordSheet(
 private fun PlaylistEditSheet(
     initialName: String = "",
     isRename: Boolean = false,
+    onImport: (() -> Unit)? = null,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
 ) {
@@ -2365,6 +2381,14 @@ private fun PlaylistEditSheet(
                             )
                         }
                     }
+                }
+            }
+
+            if (!isRename && onImport != null) {
+                TextButton(onClick = onImport, modifier = Modifier.align(Alignment.End)) {
+                    Icon(Icons.Outlined.Link, null, tint = BrandBlue, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("从链接导入歌单", color = BrandBlue, fontSize = 13.sp)
                 }
             }
 
@@ -2677,6 +2701,7 @@ private fun UserPlaylistsPage(
     onBack: () -> Unit,
     onOpen: (UserLibrary.UserPlaylist) -> Unit,
     onCreate: () -> Unit,
+    onImport: () -> Unit,
     onRename: (UserLibrary.UserPlaylist) -> Unit,
     onDelete: (UserLibrary.UserPlaylist) -> Unit,
 ) {
@@ -2691,6 +2716,9 @@ private fun UserPlaylistsPage(
         onTitleClick = scrollToTop,
         expectedTopBarHeight = 64.dp,
         actions = {
+            IconButton(onClick = onImport) {
+                Icon(Icons.Outlined.Link, contentDescription = "导入歌单", tint = BrandBlue)
+            }
             IconButton(onClick = onCreate) {
                 Icon(Icons.Outlined.Add, contentDescription = "新建歌单", tint = BrandBlue)
             }
@@ -2698,7 +2726,7 @@ private fun UserPlaylistsPage(
     ) {
         if (playlists.isEmpty()) {
             EmptyState(
-                "还没有自建歌单\n点右上角 + 新建",
+                "还没有自建歌单\n可从右上角新建或导入",
                 Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current),
             )
         } else {

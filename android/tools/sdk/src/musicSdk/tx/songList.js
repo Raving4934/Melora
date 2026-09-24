@@ -175,23 +175,21 @@ export default {
 
   async getListId(id) {
     if ((/[?&:/]/.test(id))) {
-      if (!this.regExps.listDetailLink.test(id)) {
-        id = await this.handleParseId(id)
-      }
-      let result = this.regExps.listDetailLink.exec(id)
-      if (!result) {
-        result = this.regExps.listDetailLink2.exec(id)
-        if (!result) throw new Error('failed')
-      }
+      const playlistId = value => this.regExps.listDetailLink.exec(value) ||
+        (/\/share\/details\/taoge\.html[?#]/.test(value) ? this.regExps.listDetailLink2.exec(value) : null)
+      let result = playlistId(id)
+      if (!result) result = playlistId(await this.handleParseId(id))
+      if (!result) throw new Error('无法识别QQ音乐歌单链接')
       id = result[1]
       // console.log(id)
     }
     return id
   },
-  // 获取歌曲列表内的音乐
-  async getListDetail2(id, tryNum = 0) {
+  // 歌单详情主接口用于完整元数据；新接口按页返回歌曲和服务端总数。
+  async getListDetail2(id, page = 1, tryNum = 0) {
     if (tryNum > 2) return Promise.reject(new Error('try max num'))
 
+    const limit = 100
     const requestObj_listDetail = httpFetch('https://u.y.qq.com/cgi-bin/musicu.fcg', {
       method: 'post',
       headers: {
@@ -217,8 +215,8 @@ export default {
             userinfo: 1,
             tag: 1,
             orderlist: 1,
-            song_begin: 0,
-            song_num: this.limit_song,
+            song_begin: (page - 1) * limit,
+            song_num: limit,
             onlysonglist: 0,
             enc_host_uin: '',
           },
@@ -226,17 +224,20 @@ export default {
       },
     })
     const { body } = await requestObj_listDetail
-    // console.log(body)
-    if (body.code !== this.successCode) return this.getListDetail2(id, ++tryNum)
-    if (body.req_1.code !== this.successCode) throw new Error('failed')
+    if (body.code !== this.successCode) return this.getListDetail2(id, page, tryNum + 1)
+    if (body.req_1?.code !== this.successCode) throw new Error('failed')
 
     const result = body.req_1.data
-    const dirinfo = result.dirinfo
+    const dirinfo = result.dirinfo || {}
+    const rawList = Array.isArray(result.songlist) ? result.songlist : []
+    const total = Number(result.total_song_num) || 0
     return {
-      list: this.filterListDetail(result.songlist),
-      page: 1,
-      limit: this.limit_song,
-      total: result.total_song_num,
+      list: this.filterListDetail(rawList),
+      rawCount: rawList.length,
+      page,
+      limit,
+      total,
+      allPage: total ? Math.ceil(total / limit) : 0,
       source: 'tx',
       info: {
         name: dirinfo.title,
@@ -248,32 +249,40 @@ export default {
     }
   },
   // 获取歌曲列表内的音乐
-  async getListDetail(id, tryNum = 0) {
+  async getListDetail(id, page = 1, tryNum = 0) {
     if (tryNum > 2) return Promise.reject(new Error('try max num'))
 
     id = await this.getListId(id)
+    if (page > 1) return this.getListDetail2(id, page)
 
-    const requestObj_listDetail = httpFetch(this.getListDetailUrl(id), {
+    const { body } = await httpFetch(this.getListDetailUrl(id), {
       headers: {
         Origin: 'https://y.qq.com',
         Referer: `https://y.qq.com/n/yqq/playsquare/${id}.html`,
       },
     })
-    const { body } = await requestObj_listDetail
+    if (body.code !== this.successCode) return this.getListDetail(id, page, tryNum + 1)
+    if (body.subcode !== this.successCode || !Array.isArray(body.cdlist) || !body.cdlist[0]) {
+      return this.getListDetail2(id, page)
+    }
 
-    if (body.code !== this.successCode) return this.getListDetail(id, ++tryNum)
-    if (body.subcode !== this.successCode || !body.cdlist) return this.getListDetail2(id)
     const cdlist = body.cdlist[0]
+    const rawList = Array.isArray(cdlist.songlist) ? cdlist.songlist : []
+    const total = Number(cdlist.songnum ?? cdlist.total_song_num)
+    // 旧接口只在显式总数与整份返回列表相等时使用；截断或无总数时统一走可分页接口。
+    if (!Number.isInteger(total) || total !== rawList.length) return this.getListDetail2(id, page)
     return {
-      list: this.filterListDetail(cdlist.songlist),
+      list: this.filterListDetail(rawList),
+      rawCount: rawList.length,
       page: 1,
-      limit: cdlist.songlist.length + 1,
-      total: cdlist.songlist.length,
+      limit: rawList.length,
+      total,
+      allPage: 1,
       source: 'tx',
       info: {
         name: cdlist.dissname,
         img: cdlist.logo,
-        desc: decodeName(cdlist.desc).replace(/<br>/g, '\n'),
+        desc: decodeName(cdlist.desc ?? '').replace(/<br>/g, '\n'),
         author: cdlist.nickname,
         play_count: formatPlayCount(cdlist.visitnum),
       },

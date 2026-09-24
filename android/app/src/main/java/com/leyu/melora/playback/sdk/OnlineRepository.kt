@@ -125,9 +125,9 @@ object OnlineRepository {
         return playlistPage(data)
     }
 
-    suspend fun playlistSongs(context: Context, source: String, id: String, page: Int = 1): SongPage {
+    suspend fun playlistSongs(context: Context, source: String, id: String, page: Int = 1, background: Boolean = false): SongPage {
         val data = MusicSdkEngine.call(context, "playlistSongs", source, JSONObject()
-            .put("id", id).put("page", page))
+            .put("id", id).put("page", page), background = background)
         return songPage(data)
     }
 
@@ -169,6 +169,10 @@ object OnlineRepository {
             total = data.optInt("total"),
             page = data.optInt("page", 1),
             allPage = data.optInt("allPage"),
+            playlistName = data.optString("playlistName").takeIf { it.isNotBlank() && it != "null" },
+            playlistCover = data.optString("playlistCover").takeIf { it.isNotBlank() && it != "null" },
+            pageSize = data.optInt("limit", 30).coerceAtLeast(1),
+            rawCount = data.optInt("rawCount", data.optJSONArray("list")?.length() ?: 0).coerceAtLeast(list.size),
         )
     }
 

@@ -124,6 +124,11 @@ data class SongPage(
     val allPage: Int,
     /** 合并快照的终态；单页网络响应为 null，按平台元数据推导。 */
     val snapshotHasMore: Boolean? = null,
+    /** 歌单导入保留目录信息与原始页计数，避免过滤不可用歌曲后误报完整。 */
+    val playlistName: String? = null,
+    val playlistCover: String? = null,
+    val pageSize: Int = 30,
+    val rawCount: Int = list.size,
 ) {
     /** 优先使用已保存的合并快照状态；未知总数时才以当前页满页推断。 */
     fun hasMore(loadedCount: Int = list.size): Boolean = snapshotHasMore ?: inferredSongPageHasMore(

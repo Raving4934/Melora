@@ -29,7 +29,7 @@ export default {
   ],
   regExps: {
     listDetailLink: /^.+(?:\?|&)id=(\d+)(?:&.*$|#.*$|$)/,
-    listDetailLink2: /^.+\/playlist\/(\d+)\/\d+\/.+$/,
+    listDetailLink2: /^.+\/playlist\/(\d+)(?:[/?#].*|$)/,
   },
 
   async handleParseId(link, retryNum = 0) {
@@ -39,9 +39,12 @@ export default {
     const { url, statusCode } = await requestObj_listDetailLink
     // console.log(headers)
     if (statusCode > 400) return this.handleParseId(link, ++retryNum)
-    return this.regExps.listDetailLink.test(url)
+    if (!/\/playlist(?:[/?#]|$)/.test(url)) throw new Error('分享链接不是网易云歌单')
+    const id = this.regExps.listDetailLink.test(url)
       ? url.replace(this.regExps.listDetailLink, '$1')
       : url.replace(this.regExps.listDetailLink2, '$1')
+    if (!/^\d+$/.test(id)) throw new Error('无法识别网易云歌单链接')
+    return id
   },
 
   async getListId(id) {
@@ -63,13 +66,13 @@ export default {
     }
     return { id, cookie }
   },
-  async getListDetail(rawId, page, tryNum = 0) { // 获取歌曲列表内的音乐
+  async getListDetail(rawId, page = 1, tryNum = 0) { // 获取歌单内一页歌曲
     if (tryNum > 2) return Promise.reject(new Error('try max num'))
 
     const { id, cookie } = await this.getListId(rawId)
     if (cookie) this.cookie = cookie
 
-    const requestObj_listDetail = httpFetch('https://music.163.com/api/linux/forward', {
+    const requestObj = httpFetch('https://music.163.com/api/linux/forward', {
       method: 'post',
       headers: {
         'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.90 Safari/537.36',
@@ -87,32 +90,46 @@ export default {
         },
       }),
     })
-    const { statusCode, body } = await requestObj_listDetail
-    if (statusCode !== 200 || body.code !== this.successCode) return this.getListDetail(id, page, ++tryNum)
-    let limit = 1000
-    let rangeStart = (page - 1) * limit
-    // console.log(body)
+    const { statusCode, body } = await requestObj
+    if (statusCode !== 200 || body.code !== this.successCode) return this.getListDetail(id, page, tryNum + 1)
+
+    const trackIds = Array.isArray(body.playlist?.trackIds) ? body.playlist.trackIds : []
+    const total = trackIds.length
+    const limit = 1000
+    const start = (page - 1) * limit
+    const selectedIds = trackIds.slice(start, start + limit)
+    const tracks = Array.isArray(body.playlist?.tracks) ? body.playlist.tracks : []
+    const privileges = Array.isArray(body.privileges) ? body.privileges : []
     let list
-    if (body.playlist.trackIds.length == body.privileges.length) {
-      list = this.filterListDetail(body)
+    let rawCount
+
+    if (selectedIds.length === 0) {
+      list = []
+      rawCount = 0
+    } else if (tracks.length === total && privileges.length === total) {
+      const selectedTracks = tracks.slice(start, start + limit)
+      const selectedPrivileges = privileges.slice(start, start + limit)
+      list = this.filterListDetail({ playlist: { tracks: selectedTracks }, privileges: selectedPrivileges })
+      rawCount = selectedTracks.length
     } else {
       try {
-        list = (await musicDetailApi.getList(body.playlist.trackIds.slice(rangeStart, limit * page).map(trackId => trackId.id))).list
+        const detail = await musicDetailApi.getList(selectedIds.map(trackId => trackId.id))
+        list = detail.list
+        rawCount = detail.rawCount
       } catch (err) {
         console.log(err)
-        if (err.message == 'try max num') {
-          throw err
-        } else {
-          return this.getListDetail(id, page, ++tryNum)
-        }
+        if (err.message == 'try max num') throw err
+        return this.getListDetail(id, page, tryNum + 1)
       }
     }
-    // console.log(list)
+
     return {
       list,
+      rawCount,
       page,
       limit,
-      total: body.playlist.trackIds.length,
+      total,
+      allPage: total ? Math.ceil(total / limit) : 0,
       source: 'wy',
       info: {
         play_count: formatPlayCount(body.playlist.playCount),

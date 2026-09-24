@@ -202,14 +202,18 @@ async function dispatch(action, source, params = {}) {
     }
     case 'playlistSongs': {
       const result = await platform.songList.getListDetail(params.id, params.page || 1)
+      const rawList = Array.isArray(result.list) ? result.list : []
       return {
         kind: 'songs',
         source,
-        list: normalizeSongs(result.list, source),
+        list: normalizeSongs(rawList, source),
         total: result.total ?? 0,
         allPage: result.allPage ?? 0,
         limit: result.limit ?? 30,
         page: params.page || 1,
+        playlistName: result.info?.name ?? null,
+        playlistCover: result.info?.img ?? null,
+        rawCount: Number.isInteger(result.rawCount) && result.rawCount >= 0 ? result.rawCount : rawList.length,
       }
     }
     case 'lyric': {

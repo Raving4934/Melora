@@ -7303,12 +7303,17 @@ ${lrcs}`;
       if (tryNum > 2) return Promise.reject(new Error("try max num"));
       const requestObj = httpFetch(this.getListDetailUrl(id, page));
       return requestObj.then(({ body }) => {
-        if (body.result !== "ok") return this.getListDetail(id, page, ++tryNum);
+        if (body.result !== "ok") return this.getListDetail(id, page, tryNum + 1);
+        const rawList = Array.isArray(body.musiclist) ? body.musiclist : [];
+        const limit = Number(body.rn) || this.limit_song;
+        const total = Number(body.total) || 0;
         return {
-          list: this.filterListDetail(body.musiclist),
+          list: this.filterListDetail(rawList),
+          rawCount: rawList.length,
           page,
-          limit: body.rn,
-          total: body.total,
+          limit,
+          total,
+          allPage: total ? Math.ceil(total / limit) : 0,
           source: "kw",
           info: {
             name: body.title,
@@ -7320,24 +7325,29 @@ ${lrcs}`;
         };
       });
     },
-    getListDetailDigest5Info(id, tryNum = 0) {
+    getListDetailDigest5Info(id, page, tryNum = 0) {
       if (tryNum > 2) return Promise.reject(new Error("try max num"));
       const requestObj = httpFetch(`http://qukudata.kuwo.cn/q.k?op=query&cont=ninfo&node=${id}&pn=0&rn=1&fmt=json&src=mbox&level=2`);
       return requestObj.then(({ statusCode, body }) => {
-        if (statusCode != 200 || !body.child) return this.getListDetail(id, ++tryNum);
+        if (statusCode != 200 || !body.child) return this.getListDetailDigest5Info(id, page, tryNum + 1);
         return body.child.length ? body.child[0].sourceid : null;
       });
     },
     getListDetailDigest5Music(id, page, tryNum = 0) {
       if (tryNum > 2) return Promise.reject(new Error("try max num"));
-      const requestObj = httpFetch(`http://nplserver.kuwo.cn/pl.svc?op=getlistinfo&pid=${id}&pn=${page - 1}}&rn=${this.limit_song}&encode=utf-8&keyset=pl2012&identity=kuwo&pcmp4=1`);
+      const requestObj = httpFetch(`http://nplserver.kuwo.cn/pl.svc?op=getlistinfo&pid=${id}&pn=${page - 1}&rn=${this.limit_song}&encode=utf-8&keyset=pl2012&identity=kuwo&pcmp4=1`);
       return requestObj.then(({ body }) => {
-        if (body.result !== "ok") return this.getListDetail(id, page, ++tryNum);
+        if (body.result !== "ok") return this.getListDetailDigest5Music(id, page, tryNum + 1);
+        const rawList = Array.isArray(body.musiclist) ? body.musiclist : [];
+        const limit = Number(body.rn) || this.limit_song;
+        const total = Number(body.total) || 0;
         return {
-          list: this.filterListDetail(body.musiclist),
+          list: this.filterListDetail(rawList),
+          rawCount: rawList.length,
           page,
-          limit: body.rn,
-          total: body.total,
+          limit,
+          total,
+          allPage: total ? Math.ceil(total / limit) : 0,
           source: "kw",
           info: {
             name: body.title,
@@ -7349,8 +7359,8 @@ ${lrcs}`;
         };
       });
     },
-    async getListDetailDigest5(id, page, retryNum) {
-      const detailId = await this.getListDetailDigest5Info(id, retryNum);
+    async getListDetailDigest5(id, page, retryNum = 0) {
+      const detailId = await this.getListDetailDigest5Info(id, page, retryNum);
       return this.getListDetailDigest5Music(detailId, page, retryNum);
     },
     filterBDListDetail(rawList) {
@@ -7454,11 +7464,16 @@ ${lrcs}`;
         return this.getListDetailMusicListByBDList(id, source, page, ++tryNum);
       });
       if (listData.code !== 200) return Promise.reject(new Error("failed"));
+      const rawList = Array.isArray(listData.data.list) ? listData.data.list : [];
+      const limit = Number(listData.data.pageSize) || this.limit_song;
+      const total = Number(listData.data.total) || 0;
       return {
-        list: this.filterBDListDetail(listData.data.list),
+        list: this.filterBDListDetail(rawList),
+        rawCount: rawList.length,
         page,
-        limit: listData.data.pageSize,
-        total: listData.data.total,
+        limit,
+        total,
+        allPage: total ? Math.ceil(total / limit) : 0,
         source: "kw"
       };
     },
@@ -12565,13 +12580,22 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
         if (statusCode !== 200 || body?.status !== 1 || body?.error_code !== 0 || !Array.isArray(body.data?.info)) {
           throw new Error("invalid Kugou playlist response");
         }
-        const list = this.filterSpecialDetail(body.data.info);
+        const rawList = body.data.info;
+        const list = this.filterSpecialDetail(rawList);
+        const total = Number(body.data.count) || 0;
+        const pageSize = Number(body.data.pagesize) || limit;
         return {
           list,
+          rawCount: rawList.length,
           page: Number(body.data.page) || page,
-          limit: Number(body.data.pagesize) || limit,
-          total: Number(body.data.count) || list.length,
-          source: "kg"
+          limit: pageSize,
+          total,
+          allPage: total ? Math.ceil(total / pageSize) : 0,
+          source: "kg",
+          info: {
+            name: body.data.specialname || body.data.name,
+            img: body.data.imgurl || body.data.pic
+          }
         };
       } catch (error) {
         if (retryNum < 1) return this.getListDetailBySpecialId(id, page, retryNum + 1);
@@ -12724,7 +12748,7 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
         ).then(([...datas]) => datas.flat())
       );
     },
-    async getUserListDetailByCode(id) {
+    async getUserListDetailByCode(id, page = 1) {
       const songInfo = await this.createHttp("http://t.kugou.com/command/", {
         method: "POST",
         headers: {
@@ -12738,12 +12762,12 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
       let info = songInfo.info;
       switch (info.type) {
         case 2:
-          if (!info.global_collection_id) return this.getListDetailBySpecialId(info.id);
+          if (!info.global_collection_id) return this.getListDetailBySpecialId(info.id, page);
           break;
         default:
           break;
       }
-      if (info.global_collection_id) return this.getUserListDetail2(info.global_collection_id);
+      if (info.global_collection_id) return this.getUserListDetail2(info.global_collection_id, page);
       if (info.userid != null) {
         songList = await this.createHttp("http://www2.kugou.kugou.com/apps/kucodeAndShare/app/", {
           method: "POST",
@@ -12778,15 +12802,19 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
         }
       });
       if (!songInfo.list) {
-        if (songInfo.global_collection_id) return this.getUserListDetail2(songInfo.global_collection_id);
+        if (songInfo.global_collection_id) return this.getUserListDetail2(songInfo.global_collection_id, page);
         else return this.getUserListDetail4(songInfo, chain, page).catch(() => this.getUserListDetail5(chain));
       }
-      let list = await this.getMusicInfos(songInfo.list);
+      const rawList = Array.isArray(songInfo.list) ? songInfo.list : [];
+      const list = await this.getMusicInfos(rawList);
+      const total = Number(songInfo.total ?? songInfo.info?.count ?? songInfo.count) || 0;
       return {
         list,
-        page: 1,
+        rawCount: rawList.length,
+        page,
         limit: this.listDetailLimit,
-        total: list.length,
+        total,
+        allPage: total ? Math.ceil(total / this.listDetailLimit) : 0,
         source: "kg",
         info: {
           name: songInfo.info.name,
@@ -12826,60 +12854,35 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
       });
       return result.list[0].global_collection_id;
     },
-    async getUserListDetailByLink({ info }, link) {
-      let listInfo = info["0"];
-      let total = listInfo.count;
-      let tasks = [];
-      let page = 0;
-      while (total) {
-        const limit = total > 90 ? 90 : total;
-        total -= limit;
-        page += 1;
-        tasks.push(this.createHttp(link.replace(/pagesize=\d+/, "pagesize=" + limit).replace(/page=\d+/, "page=" + page), {
-          headers: {
-            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 9_1 like Mac OS X) AppleWebKit/601.1.46 (KHTML, like Gecko) Version/9.0 Mobile/13B143 Safari/601.1",
-            Referer: link
-          }
-        }).then((data) => data.list.info));
-      }
-      let result = await Promise.all(tasks).then(([...datas]) => datas.flat());
-      result = await this.getMusicInfos(result);
+    async getUserListDetailByLink({ info }, link, page = 1) {
+      const listInfo = info["0"];
+      const limit = 90;
+      const total = Number(listInfo.count) || 0;
+      const setQuery = (url2, key, value) => new RegExp(`${key}=\\d+`).test(url2) ? url2.replace(new RegExp(`${key}=\\d+`), `${key}=${value}`) : `${url2}${url2.includes("?") ? "&" : "?"}${key}=${value}`;
+      const url = setQuery(setQuery(link, "pagesize", limit), "page", page);
+      const data = await this.createHttp(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 9_1 like Mac OS X) AppleWebKit/601.1.46 (KHTML, like Gecko) Version/9.0 Mobile/13B143 Safari/601.1",
+          Referer: link
+        }
+      });
+      const rawList = data.list.info || [];
       return {
-        list: result,
+        list: await this.getMusicInfos(rawList),
+        rawCount: rawList.length,
         page,
-        limit: this.listDetailLimit,
-        total: result.length,
+        limit,
+        total,
+        allPage: total ? Math.ceil(total / limit) : 0,
         source: "kg",
         info: {
           name: listInfo.name,
           img: listInfo.pic && listInfo.pic.replace("{size}", 240),
-          // desc: body.result.info.list_desc,
           author: listInfo.list_create_username
-          // play_count: formatPlayCount(listInfo.count),
         }
       };
     },
-    createGetListDetail2Task(id, total) {
-      let tasks = [];
-      let page = 0;
-      while (total) {
-        const limit = total > 300 ? 300 : total;
-        total -= limit;
-        page += 1;
-        const params = "appid=1058&global_specialid=" + id + "&specialid=0&plat=0&version=8000&page=" + page + "&pagesize=" + limit + "&srcappid=2919&clientver=20000&clienttime=1586163263991&mid=1586163263991&uuid=1586163263991&dfid=-";
-        tasks.push(this.createHttp(`https://mobiles.kugou.com/api/v5/special/song_v2?${params}&signature=${signatureParams(params, "web")}`, {
-          headers: {
-            mid: "1586163263991",
-            Referer: "https://m3ws.kugou.com/share/index.php",
-            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 11_0 like Mac OS X) AppleWebKit/604.1.38 (KHTML, like Gecko) Version/11.0 Mobile/15A372 Safari/604.1",
-            dfid: "-",
-            clienttime: "1586163263991"
-          }
-        }).then((data) => data.info));
-      }
-      return Promise.all(tasks).then(([...datas]) => datas.flat());
-    },
-    async getUserListDetail2(global_collection_id) {
+    async getUserListDetail2(global_collection_id, page = 1) {
       let id = global_collection_id;
       if (id.length > 1e3) throw new Error("get list error");
       const params = "appid=1058&specialid=0&global_specialid=" + id + "&format=jsonp&srcappid=2919&clientver=20000&clienttime=1586163242519&mid=1586163242519&uuid=1586163242519&dfid=-";
@@ -12892,13 +12895,27 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
           clienttime: "1586163242519"
         }
       });
-      const songInfo = await this.createGetListDetail2Task(id, info.songcount);
-      let list = await this.getMusicInfos(songInfo);
+      const limit = 300;
+      const pageParams = "appid=1058&global_specialid=" + id + "&specialid=0&plat=0&version=8000&page=" + page + "&pagesize=" + limit + "&srcappid=2919&clientver=20000&clienttime=1586163263991&mid=1586163263991&uuid=1586163263991&dfid=-";
+      const response = await this.createHttp(`https://mobiles.kugou.com/api/v5/special/song_v2?${pageParams}&signature=${signatureParams(pageParams, "web")}`, {
+        headers: {
+          mid: "1586163263991",
+          Referer: "https://m3ws.kugou.com/share/index.php",
+          "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 11_0 like Mac OS X) AppleWebKit/604.1.38 (KHTML, like Gecko) Version/11.0 Mobile/15A372 Safari/604.1",
+          dfid: "-",
+          clienttime: "1586163263991"
+        }
+      });
+      const songInfo = response.info || [];
+      const list = await this.getMusicInfos(songInfo);
+      const total = Number(info.songcount) || 0;
       return {
         list,
-        page: 1,
-        limit: this.listDetailLimit,
-        total: list.length,
+        rawCount: songInfo.length,
+        page,
+        limit,
+        total,
+        allPage: total ? Math.ceil(total / limit) : 0,
         source: "kg",
         info: {
           name: info.specialname,
@@ -12945,7 +12962,7 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
         list: list || [],
         page,
         limit,
-        total: list.length ?? 0,
+        total: Number(listInfo.songcount ?? listInfo.count) || 0,
         source: "kg",
         info: {
           name: listInfo.specialname,
@@ -12965,7 +12982,7 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
         list: list || [],
         page: 1,
         limit: this.listDetailLimit,
-        total: list.length ?? 0,
+        total: Number(listInfo.songcount ?? listInfo.count) || 0,
         source: "kg",
         info: {
           name: listInfo.specialname,
@@ -12991,12 +13008,12 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
     async getUserListDetail(link, page, retryNum = 0) {
       if (retryNum > 3) return Promise.reject(new Error("link try max num"));
       if (link.includes("#")) link = link.replace(/#.*$/, "");
-      if (link.includes("global_collection_id")) return this.getUserListDetail2(link.replace(/^.*?global_collection_id=(\w+)(?:&.*$|#.*$|$)/, "$1"));
+      if (link.includes("global_collection_id")) return this.getUserListDetail2(link.replace(/^.*?global_collection_id=(\w+)(?:&.*$|#.*$|$)/, "$1"), page);
       if (link.includes("gcid_")) {
         let gcid = link.match(/gcid_\w+/)?.[0];
         if (gcid) {
           const global_collection_id = await this.decodeGcid(gcid);
-          if (global_collection_id) return this.getUserListDetail2(global_collection_id);
+          if (global_collection_id) return this.getUserListDetail2(global_collection_id, page);
         }
       }
       if (link.includes("chain=")) return this.getUserListDetail3(link.replace(/^.*?chain=(\w+)(?:&.*$|#.*$|$)/, "$1"), page);
@@ -13019,12 +13036,12 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
       const { url: location, statusCode, body } = await requestObj_listDetailLink;
       if (statusCode > 400) return this.getUserListDetail(link, page, ++retryNum);
       if (location.split("?")[0] != link.split("?")[0]) {
-        if (location.includes("global_collection_id")) return this.getUserListDetail2(location.replace(/^.*?global_collection_id=(\w+)(?:&.*$|#.*$|$)/, "$1"));
+        if (location.includes("global_collection_id")) return this.getUserListDetail2(location.replace(/^.*?global_collection_id=(\w+)(?:&.*$|#.*$|$)/, "$1"), page);
         if (location.includes("gcid_")) {
-          let gcid = link.match(/gcid_\w+/)?.[0];
+          let gcid = location.match(/gcid_\w+/)?.[0];
           if (gcid) {
             const global_collection_id = await this.decodeGcid(gcid);
-            if (global_collection_id) return this.getUserListDetail2(global_collection_id);
+            if (global_collection_id) return this.getUserListDetail2(global_collection_id, page);
           }
         }
         if (location.includes("chain=")) return this.getUserListDetail3(location.replace(/^.*?chain=(\w+)(?:&.*$|#.*$|$)/, "$1"), page);
@@ -13040,9 +13057,9 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
           } else return this.getUserListDetail3(location.replace(/.+\/(\w+).html(?:\?.*|&.*$|#.*$|$)/, "$1"), page);
         }
       }
-      if (typeof body == "string") return this.getUserListDetail2(body.replace(/^[\s\S]+?"global_collection_id":"(\w+)"[\s\S]+?$/, "$1"));
+      if (typeof body == "string") return this.getUserListDetail2(body.replace(/^[\s\S]+?"global_collection_id":"(\w+)"[\s\S]+?$/, "$1"), page);
       if (body.errcode !== 0) return this.getUserListDetail(link, page, ++retryNum);
-      return this.getUserListDetailByLink(body, link);
+      return this.getUserListDetailByLink(body, link, page);
     },
     async getListDetail(id, page) {
       id = id.toString();
@@ -13051,7 +13068,7 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
       } else if (/https?:/.test(id)) {
         return this.getUserListDetail(id.replace(/^.*?http/, "http"), page);
       } else if (/^\d+$/.test(id)) {
-        return this.getUserListDetailByCode(id);
+        return this.getUserListDetailByCode(id, page);
       } else if (id.startsWith("id_")) {
         id = id.replace("id_", "");
       }
@@ -14103,21 +14120,18 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
     },
     async getListId(id) {
       if (/[?&:/]/.test(id)) {
-        if (!this.regExps.listDetailLink.test(id)) {
-          id = await this.handleParseId(id);
-        }
-        let result = this.regExps.listDetailLink.exec(id);
-        if (!result) {
-          result = this.regExps.listDetailLink2.exec(id);
-          if (!result) throw new Error("failed");
-        }
+        const playlistId = (value) => this.regExps.listDetailLink.exec(value) || (/\/share\/details\/taoge\.html[?#]/.test(value) ? this.regExps.listDetailLink2.exec(value) : null);
+        let result = playlistId(id);
+        if (!result) result = playlistId(await this.handleParseId(id));
+        if (!result) throw new Error("无法识别QQ音乐歌单链接");
         id = result[1];
       }
       return id;
     },
-    // 获取歌曲列表内的音乐
-    async getListDetail2(id, tryNum = 0) {
+    // 歌单详情主接口用于完整元数据；新接口按页返回歌曲和服务端总数。
+    async getListDetail2(id, page = 1, tryNum = 0) {
       if (tryNum > 2) return Promise.reject(new Error("try max num"));
+      const limit = 100;
       const requestObj_listDetail = httpFetch("https://u.y.qq.com/cgi-bin/musicu.fcg", {
         method: "post",
         headers: {
@@ -14143,8 +14157,8 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
               userinfo: 1,
               tag: 1,
               orderlist: 1,
-              song_begin: 0,
-              song_num: this.limit_song,
+              song_begin: (page - 1) * limit,
+              song_num: limit,
               onlysonglist: 0,
               enc_host_uin: ""
             }
@@ -14152,15 +14166,19 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
         }
       });
       const { body } = await requestObj_listDetail;
-      if (body.code !== this.successCode) return this.getListDetail2(id, ++tryNum);
-      if (body.req_1.code !== this.successCode) throw new Error("failed");
+      if (body.code !== this.successCode) return this.getListDetail2(id, page, tryNum + 1);
+      if (body.req_1?.code !== this.successCode) throw new Error("failed");
       const result = body.req_1.data;
-      const dirinfo = result.dirinfo;
+      const dirinfo = result.dirinfo || {};
+      const rawList = Array.isArray(result.songlist) ? result.songlist : [];
+      const total = Number(result.total_song_num) || 0;
       return {
-        list: this.filterListDetail(result.songlist),
-        page: 1,
-        limit: this.limit_song,
-        total: result.total_song_num,
+        list: this.filterListDetail(rawList),
+        rawCount: rawList.length,
+        page,
+        limit,
+        total,
+        allPage: total ? Math.ceil(total / limit) : 0,
         source: "tx",
         info: {
           name: dirinfo.title,
@@ -14172,29 +14190,36 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
       };
     },
     // 获取歌曲列表内的音乐
-    async getListDetail(id, tryNum = 0) {
+    async getListDetail(id, page = 1, tryNum = 0) {
       if (tryNum > 2) return Promise.reject(new Error("try max num"));
       id = await this.getListId(id);
-      const requestObj_listDetail = httpFetch(this.getListDetailUrl(id), {
+      if (page > 1) return this.getListDetail2(id, page);
+      const { body } = await httpFetch(this.getListDetailUrl(id), {
         headers: {
           Origin: "https://y.qq.com",
           Referer: `https://y.qq.com/n/yqq/playsquare/${id}.html`
         }
       });
-      const { body } = await requestObj_listDetail;
-      if (body.code !== this.successCode) return this.getListDetail(id, ++tryNum);
-      if (body.subcode !== this.successCode || !body.cdlist) return this.getListDetail2(id);
+      if (body.code !== this.successCode) return this.getListDetail(id, page, tryNum + 1);
+      if (body.subcode !== this.successCode || !Array.isArray(body.cdlist) || !body.cdlist[0]) {
+        return this.getListDetail2(id, page);
+      }
       const cdlist = body.cdlist[0];
+      const rawList = Array.isArray(cdlist.songlist) ? cdlist.songlist : [];
+      const total = Number(cdlist.songnum ?? cdlist.total_song_num);
+      if (!Number.isInteger(total) || total !== rawList.length) return this.getListDetail2(id, page);
       return {
-        list: this.filterListDetail(cdlist.songlist),
+        list: this.filterListDetail(rawList),
+        rawCount: rawList.length,
         page: 1,
-        limit: cdlist.songlist.length + 1,
-        total: cdlist.songlist.length,
+        limit: rawList.length,
+        total,
+        allPage: 1,
         source: "tx",
         info: {
           name: cdlist.dissname,
           img: cdlist.logo,
-          desc: decodeName(cdlist.desc).replace(/<br>/g, "\n"),
+          desc: decodeName(cdlist.desc ?? "").replace(/<br>/g, "\n"),
           author: cdlist.nickname,
           play_count: formatPlayCount(cdlist.visitnum)
         }
@@ -15934,7 +15959,8 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
       });
       const { body, statusCode } = await requestObj;
       if (statusCode != 200 || body.code !== 200) throw new Error("获取歌曲详情失败");
-      return { source: "wy", list: this.filterList(body) };
+      const rawCount = Array.isArray(body.songs) ? body.songs.length : 0;
+      return { source: "wy", list: this.filterList(body), rawCount };
     }
   };
 
@@ -15958,14 +15984,17 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
     ],
     regExps: {
       listDetailLink: /^.+(?:\?|&)id=(\d+)(?:&.*$|#.*$|$)/,
-      listDetailLink2: /^.+\/playlist\/(\d+)\/\d+\/.+$/
+      listDetailLink2: /^.+\/playlist\/(\d+)(?:[/?#].*|$)/
     },
     async handleParseId(link, retryNum = 0) {
       if (retryNum > 2) throw new Error("link try max num");
       const requestObj_listDetailLink = httpFetch(link);
       const { url, statusCode } = await requestObj_listDetailLink;
       if (statusCode > 400) return this.handleParseId(link, ++retryNum);
-      return this.regExps.listDetailLink.test(url) ? url.replace(this.regExps.listDetailLink, "$1") : url.replace(this.regExps.listDetailLink2, "$1");
+      if (!/\/playlist(?:[/?#]|$)/.test(url)) throw new Error("分享链接不是网易云歌单");
+      const id = this.regExps.listDetailLink.test(url) ? url.replace(this.regExps.listDetailLink, "$1") : url.replace(this.regExps.listDetailLink2, "$1");
+      if (!/^\d+$/.test(id)) throw new Error("无法识别网易云歌单链接");
+      return id;
     },
     async getListId(id) {
       let cookie;
@@ -15985,11 +16014,11 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
       }
       return { id, cookie };
     },
-    async getListDetail(rawId, page, tryNum = 0) {
+    async getListDetail(rawId, page = 1, tryNum = 0) {
       if (tryNum > 2) return Promise.reject(new Error("try max num"));
       const { id, cookie } = await this.getListId(rawId);
       if (cookie) this.cookie = cookie;
-      const requestObj_listDetail = httpFetch("https://music.163.com/api/linux/forward", {
+      const requestObj = httpFetch("https://music.163.com/api/linux/forward", {
         method: "post",
         headers: {
           "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.90 Safari/537.36",
@@ -16007,30 +16036,43 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
           }
         })
       });
-      const { statusCode, body } = await requestObj_listDetail;
-      if (statusCode !== 200 || body.code !== this.successCode) return this.getListDetail(id, page, ++tryNum);
-      let limit = 1e3;
-      let rangeStart = (page - 1) * limit;
+      const { statusCode, body } = await requestObj;
+      if (statusCode !== 200 || body.code !== this.successCode) return this.getListDetail(id, page, tryNum + 1);
+      const trackIds = Array.isArray(body.playlist?.trackIds) ? body.playlist.trackIds : [];
+      const total = trackIds.length;
+      const limit = 1e3;
+      const start = (page - 1) * limit;
+      const selectedIds = trackIds.slice(start, start + limit);
+      const tracks = Array.isArray(body.playlist?.tracks) ? body.playlist.tracks : [];
+      const privileges = Array.isArray(body.privileges) ? body.privileges : [];
       let list;
-      if (body.playlist.trackIds.length == body.privileges.length) {
-        list = this.filterListDetail(body);
+      let rawCount;
+      if (selectedIds.length === 0) {
+        list = [];
+        rawCount = 0;
+      } else if (tracks.length === total && privileges.length === total) {
+        const selectedTracks = tracks.slice(start, start + limit);
+        const selectedPrivileges = privileges.slice(start, start + limit);
+        list = this.filterListDetail({ playlist: { tracks: selectedTracks }, privileges: selectedPrivileges });
+        rawCount = selectedTracks.length;
       } else {
         try {
-          list = (await musicDetail_default.getList(body.playlist.trackIds.slice(rangeStart, limit * page).map((trackId) => trackId.id))).list;
+          const detail = await musicDetail_default.getList(selectedIds.map((trackId) => trackId.id));
+          list = detail.list;
+          rawCount = detail.rawCount;
         } catch (err2) {
           console.log(err2);
-          if (err2.message == "try max num") {
-            throw err2;
-          } else {
-            return this.getListDetail(id, page, ++tryNum);
-          }
+          if (err2.message == "try max num") throw err2;
+          return this.getListDetail(id, page, tryNum + 1);
         }
       }
       return {
         list,
+        rawCount,
         page,
         limit,
-        total: body.playlist.trackIds.length,
+        total,
+        allPage: total ? Math.ceil(total / limit) : 0,
         source: "wy",
         info: {
           play_count: formatPlayCount(body.playlist.playCount),
@@ -17130,11 +17172,16 @@ ${result.lyric}`;
       const requestObj_listDetail = httpFetch(this.getSongListDetailUrl(id, page), { headers: this.defaultHeaders });
       return requestObj_listDetail.then(({ body }) => {
         if (body.code !== this.successCode) return this.getListDetailList(id, page, ++tryNum);
+        const rawList = Array.isArray(body.data.songList) ? body.data.songList : [];
+        const limit = Number(body.data.pageSize) || this.limit_song;
+        const total = Number(body.data.totalCount) || 0;
         return {
-          list: filterMusicInfoListV5(body.data.songList),
+          list: filterMusicInfoListV5(rawList),
+          rawCount: rawList.length,
           page,
-          limit: this.limit_song,
-          total: body.data.totalCount,
+          limit,
+          total,
+          allPage: total ? Math.ceil(total / limit) : 0,
           source: "mg"
         };
       });
@@ -17146,13 +17193,13 @@ ${result.lyric}`;
         headers: this.defaultHeaders
       });
       return requestObj_listDetailInfo.then(({ body }) => {
-        if (body.code !== this.successCode) return this.getListDetail(id, ++tryNum);
+        if (body.code !== this.successCode) return this.getListDetailInfo(id, tryNum + 1);
         const cachedDetailInfo = this.cachedDetailInfo[id] = {
           name: body.data.title,
-          img: body.data.imgItem.img,
+          img: body.data.imgItem?.img || "",
           desc: body.data.summary,
           author: body.data.ownerName,
-          play_count: formatPlayCount(body.data.opNumItem.playNum)
+          play_count: formatPlayCount(body.data.opNumItem?.playNum ?? 0)
         };
         return cachedDetailInfo;
       });
@@ -17174,11 +17221,11 @@ ${result.lyric}`;
       return Promise.reject(new Error("link get failed"));
     },
     getListDetail(id, page, retryNum = 0) {
-      if (/\/playlist[/?]/.test(id)) {
+      if (this.regExps.listDetailLink.test(id)) {
+        id = id.replace(this.regExps.listDetailLink, "$1");
+      } else if (/\/playlist[/?]/.test(id)) {
         id = /(?:playlistId|id)=(\d+)/.exec(id)?.[1];
         if (!id) throw new Error("list detail id parse failed");
-      } else if (this.regExps.listDetailLink.test(id)) {
-        id = id.replace(this.regExps.listDetailLink, "$1");
       } else if (/[?&:/]/.test(id)) {
         const url = this.cachedUrl[id];
         return url ? this.getListDetail(url, page) : this.getDetailUrl(id, page);
@@ -17903,14 +17950,18 @@ ${result.lyric}`;
       }
       case "playlistSongs": {
         const result = await platform.songList.getListDetail(params.id, params.page || 1);
+        const rawList = Array.isArray(result.list) ? result.list : [];
         return {
           kind: "songs",
           source,
-          list: normalizeSongs(result.list, source),
+          list: normalizeSongs(rawList, source),
           total: result.total ?? 0,
           allPage: result.allPage ?? 0,
           limit: result.limit ?? 30,
-          page: params.page || 1
+          page: params.page || 1,
+          playlistName: result.info?.name ?? null,
+          playlistCover: result.info?.img ?? null,
+          rawCount: Number.isInteger(result.rawCount) && result.rawCount >= 0 ? result.rawCount : rawList.length
         };
       }
       case "lyric": {

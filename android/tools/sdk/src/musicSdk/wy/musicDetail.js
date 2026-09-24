@@ -107,6 +107,7 @@ export default {
     const { body, statusCode } = await requestObj
     if (statusCode != 200 || body.code !== 200) throw new Error('获取歌曲详情失败')
     // console.log(body)
-    return { source: 'wy', list: this.filterList(body) }
+    const rawCount = Array.isArray(body.songs) ? body.songs.length : 0
+    return { source: 'wy', list: this.filterList(body), rawCount }
   },
 }

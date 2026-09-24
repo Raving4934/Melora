@@ -126,13 +126,22 @@ export default {
       if (statusCode !== 200 || body?.status !== 1 || body?.error_code !== 0 || !Array.isArray(body.data?.info)) {
         throw new Error('invalid Kugou playlist response')
       }
-      const list = this.filterSpecialDetail(body.data.info)
+      const rawList = body.data.info
+      const list = this.filterSpecialDetail(rawList)
+      const total = Number(body.data.count) || 0
+      const pageSize = Number(body.data.pagesize) || limit
       return {
         list,
+        rawCount: rawList.length,
         page: Number(body.data.page) || page,
-        limit: Number(body.data.pagesize) || limit,
-        total: Number(body.data.count) || list.length,
+        limit: pageSize,
+        total,
+        allPage: total ? Math.ceil(total / pageSize) : 0,
         source: 'kg',
+        info: {
+          name: body.data.specialname || body.data.name,
+          img: body.data.imgurl || body.data.pic,
+        },
       }
     } catch (error) {
       if (retryNum < 1) return this.getListDetailBySpecialId(id, page, retryNum + 1)
@@ -300,7 +309,7 @@ export default {
         .then(([...datas]) => datas.flat()))
   },
 
-  async getUserListDetailByCode(id) {
+  async getUserListDetailByCode(id, page = 1) {
     const songInfo = await this.createHttp('http://t.kugou.com/command/', {
       method: 'POST',
       headers: {
@@ -316,13 +325,13 @@ export default {
     let info = songInfo.info
     switch (info.type) {
       case 2:
-        if (!info.global_collection_id) return this.getListDetailBySpecialId(info.id)
+        if (!info.global_collection_id) return this.getListDetailBySpecialId(info.id, page)
         break
 
       default:
         break
     }
-    if (info.global_collection_id) return this.getUserListDetail2(info.global_collection_id)
+    if (info.global_collection_id) return this.getUserListDetail2(info.global_collection_id, page)
     if (info.userid != null) {
       songList = await this.createHttp('http://www2.kugou.kugou.com/apps/kucodeAndShare/app/', {
         method: 'POST',
@@ -359,16 +368,20 @@ export default {
       },
     })
     if (!songInfo.list) {
-      if (songInfo.global_collection_id) return this.getUserListDetail2(songInfo.global_collection_id)
+      if (songInfo.global_collection_id) return this.getUserListDetail2(songInfo.global_collection_id, page)
       else return this.getUserListDetail4(songInfo, chain, page).catch(() => this.getUserListDetail5(chain))
     }
-    let list = await this.getMusicInfos(songInfo.list)
+    const rawList = Array.isArray(songInfo.list) ? songInfo.list : []
+    const list = await this.getMusicInfos(rawList)
+    const total = Number(songInfo.total ?? songInfo.info?.count ?? songInfo.count) || 0
     // console.log(info, songInfo)
     return {
       list,
-      page: 1,
+      rawCount: rawList.length,
+      page,
       limit: this.listDetailLimit,
-      total: list.length,
+      total,
+      allPage: total ? Math.ceil(total / this.listDetailLimit) : 0,
       source: 'kg',
       info: {
         name: songInfo.info.name,
@@ -411,61 +424,37 @@ export default {
     return result.list[0].global_collection_id
   },
 
-  async getUserListDetailByLink({ info }, link) {
-    let listInfo = info['0']
-    let total = listInfo.count
-    let tasks = []
-    let page = 0
-    while (total) {
-      const limit = total > 90 ? 90 : total
-      total -= limit
-      page += 1
-      tasks.push(this.createHttp(link.replace(/pagesize=\d+/, 'pagesize=' + limit).replace(/page=\d+/, 'page=' + page), {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 9_1 like Mac OS X) AppleWebKit/601.1.46 (KHTML, like Gecko) Version/9.0 Mobile/13B143 Safari/601.1',
-          Referer: link,
-        },
-      }).then(data => data.list.info))
-    }
-    let result = await Promise.all(tasks).then(([...datas]) => datas.flat())
-    result = await this.getMusicInfos(result)
-    // console.log(result)
+  async getUserListDetailByLink({ info }, link, page = 1) {
+    const listInfo = info['0']
+    const limit = 90
+    const total = Number(listInfo.count) || 0
+    const setQuery = (url, key, value) => new RegExp(`${key}=\\d+`).test(url)
+      ? url.replace(new RegExp(`${key}=\\d+`), `${key}=${value}`)
+      : `${url}${url.includes('?') ? '&' : '?'}${key}=${value}`
+    const url = setQuery(setQuery(link, 'pagesize', limit), 'page', page)
+    const data = await this.createHttp(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 9_1 like Mac OS X) AppleWebKit/601.1.46 (KHTML, like Gecko) Version/9.0 Mobile/13B143 Safari/601.1',
+        Referer: link,
+      },
+    })
+    const rawList = data.list.info || []
     return {
-      list: result,
+      list: await this.getMusicInfos(rawList),
+      rawCount: rawList.length,
       page,
-      limit: this.listDetailLimit,
-      total: result.length,
+      limit,
+      total,
+      allPage: total ? Math.ceil(total / limit) : 0,
       source: 'kg',
       info: {
         name: listInfo.name,
         img: listInfo.pic && listInfo.pic.replace('{size}', 240),
-        // desc: body.result.info.list_desc,
         author: listInfo.list_create_username,
-        // play_count: formatPlayCount(listInfo.count),
       },
     }
   },
-  createGetListDetail2Task(id, total) {
-    let tasks = []
-    let page = 0
-    while (total) {
-      const limit = total > 300 ? 300 : total
-      total -= limit
-      page += 1
-      const params = 'appid=1058&global_specialid=' + id + '&specialid=0&plat=0&version=8000&page=' + page + '&pagesize=' + limit + '&srcappid=2919&clientver=20000&clienttime=1586163263991&mid=1586163263991&uuid=1586163263991&dfid=-'
-      tasks.push(this.createHttp(`https://mobiles.kugou.com/api/v5/special/song_v2?${params}&signature=${signatureParams(params, 'web')}`, {
-        headers: {
-          mid: '1586163263991',
-          Referer: 'https://m3ws.kugou.com/share/index.php',
-          'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 11_0 like Mac OS X) AppleWebKit/604.1.38 (KHTML, like Gecko) Version/11.0 Mobile/15A372 Safari/604.1',
-          dfid: '-',
-          clienttime: '1586163263991',
-        },
-      }).then(data => data.info))
-    }
-    return Promise.all(tasks).then(([...datas]) => datas.flat())
-  },
-  async getUserListDetail2(global_collection_id) {
+  async getUserListDetail2(global_collection_id, page = 1) {
     let id = global_collection_id
     if (id.length > 1000) throw new Error('get list error')
     const params = 'appid=1058&specialid=0&global_specialid=' + id + '&format=jsonp&srcappid=2919&clientver=20000&clienttime=1586163242519&mid=1586163242519&uuid=1586163242519&dfid=-'
@@ -478,14 +467,28 @@ export default {
         clienttime: '1586163242519',
       },
     })
-    const songInfo = await this.createGetListDetail2Task(id, info.songcount)
-    let list = await this.getMusicInfos(songInfo)
+    const limit = 300
+    const pageParams = 'appid=1058&global_specialid=' + id + '&specialid=0&plat=0&version=8000&page=' + page + '&pagesize=' + limit + '&srcappid=2919&clientver=20000&clienttime=1586163263991&mid=1586163263991&uuid=1586163263991&dfid=-'
+    const response = await this.createHttp(`https://mobiles.kugou.com/api/v5/special/song_v2?${pageParams}&signature=${signatureParams(pageParams, 'web')}`, {
+      headers: {
+        mid: '1586163263991',
+        Referer: 'https://m3ws.kugou.com/share/index.php',
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 11_0 like Mac OS X) AppleWebKit/604.1.38 (KHTML, like Gecko) Version/11.0 Mobile/15A372 Safari/604.1',
+        dfid: '-',
+        clienttime: '1586163263991',
+      },
+    })
+    const songInfo = response.info || []
+    const list = await this.getMusicInfos(songInfo)
+    const total = Number(info.songcount) || 0
     // console.log(info, songInfo, list)
     return {
       list,
-      page: 1,
-      limit: this.listDetailLimit,
-      total: list.length,
+      rawCount: songInfo.length,
+      page,
+      limit,
+      total,
+      allPage: total ? Math.ceil(total / limit) : 0,
       source: 'kg',
       info: {
         name: info.specialname,
@@ -536,7 +539,7 @@ export default {
       list: list || [],
       page,
       limit,
-      total: list.length ?? 0,
+      total: Number(listInfo.songcount ?? listInfo.count) || 0,
       source: 'kg',
       info: {
         name: listInfo.specialname,
@@ -557,7 +560,7 @@ export default {
       list: list || [],
       page: 1,
       limit: this.listDetailLimit,
-      total: list.length ?? 0,
+      total: Number(listInfo.songcount ?? listInfo.count) || 0,
       source: 'kg',
       info: {
         name: listInfo.specialname,
@@ -588,12 +591,12 @@ export default {
   async getUserListDetail(link, page, retryNum = 0) {
     if (retryNum > 3) return Promise.reject(new Error('link try max num'))
     if (link.includes('#')) link = link.replace(/#.*$/, '')
-    if (link.includes('global_collection_id')) return this.getUserListDetail2(link.replace(/^.*?global_collection_id=(\w+)(?:&.*$|#.*$|$)/, '$1'))
+    if (link.includes('global_collection_id')) return this.getUserListDetail2(link.replace(/^.*?global_collection_id=(\w+)(?:&.*$|#.*$|$)/, '$1'), page)
     if (link.includes('gcid_')) {
       let gcid = link.match(/gcid_\w+/)?.[0]
       if (gcid) {
         const global_collection_id = await this.decodeGcid(gcid)
-        if (global_collection_id) return this.getUserListDetail2(global_collection_id)
+        if (global_collection_id) return this.getUserListDetail2(global_collection_id, page)
       }
     }
     if (link.includes('chain=')) return this.getUserListDetail3(link.replace(/^.*?chain=(\w+)(?:&.*$|#.*$|$)/, '$1'), page)
@@ -619,12 +622,12 @@ export default {
     if (statusCode > 400) return this.getUserListDetail(link, page, ++retryNum)
     if (location.split('?')[0] != link.split('?')[0]) {
       // console.log(location)
-      if (location.includes('global_collection_id')) return this.getUserListDetail2(location.replace(/^.*?global_collection_id=(\w+)(?:&.*$|#.*$|$)/, '$1'))
+      if (location.includes('global_collection_id')) return this.getUserListDetail2(location.replace(/^.*?global_collection_id=(\w+)(?:&.*$|#.*$|$)/, '$1'), page)
       if (location.includes('gcid_')) {
-        let gcid = link.match(/gcid_\w+/)?.[0]
+        let gcid = location.match(/gcid_\w+/)?.[0]
         if (gcid) {
           const global_collection_id = await this.decodeGcid(gcid)
-          if (global_collection_id) return this.getUserListDetail2(global_collection_id)
+          if (global_collection_id) return this.getUserListDetail2(global_collection_id, page)
         }
       }
       if (location.includes('chain=')) return this.getUserListDetail3(location.replace(/^.*?chain=(\w+)(?:&.*$|#.*$|$)/, '$1'), page)
@@ -642,9 +645,9 @@ export default {
       // console.log('location', location)
       // return this.getUserListDetail(link, page, ++retryNum)
     }
-    if (typeof body == 'string') return this.getUserListDetail2(body.replace(/^[\s\S]+?"global_collection_id":"(\w+)"[\s\S]+?$/, '$1'))
+    if (typeof body == 'string') return this.getUserListDetail2(body.replace(/^[\s\S]+?"global_collection_id":"(\w+)"[\s\S]+?$/, '$1'), page)
     if (body.errcode !== 0) return this.getUserListDetail(link, page, ++retryNum)
-    return this.getUserListDetailByLink(body, link)
+    return this.getUserListDetailByLink(body, link, page)
   },
 
   async getListDetail(id, page) { // 获取歌曲列表内的音乐
@@ -655,7 +658,7 @@ export default {
       // fix https://www.kugou.com/songlist/xxx/?uid=xxx&chl=qq_client&cover=http%3A%2F%2Fimge.kugou.com%xxx.jpg&iszlist=1
       return this.getUserListDetail(id.replace(/^.*?http/, 'http'), page)
     } else if (/^\d+$/.test(id)) {
-      return this.getUserListDetailByCode(id)
+      return this.getUserListDetailByCode(id, page)
     } else if (id.startsWith('id_')) {
       id = id.replace('id_', '')
     }

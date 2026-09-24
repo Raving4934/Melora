@@ -80,11 +80,16 @@ export default {
       if (body.code !== this.successCode) return this.getListDetailList(id, page, ++tryNum)
       // console.log(JSON.stringify(body))
       // console.log(body)
+      const rawList = Array.isArray(body.data.songList) ? body.data.songList : []
+      const limit = Number(body.data.pageSize) || this.limit_song
+      const total = Number(body.data.totalCount) || 0
       return {
-        list: filterMusicInfoListV5(body.data.songList),
+        list: filterMusicInfoListV5(rawList),
+        rawCount: rawList.length,
         page,
-        limit: this.limit_song,
-        total: body.data.totalCount,
+        limit,
+        total,
+        allPage: total ? Math.ceil(total / limit) : 0,
         source: 'mg',
       }
     })
@@ -98,15 +103,15 @@ export default {
       headers: this.defaultHeaders,
     })
     return requestObj_listDetailInfo.then(({ body }) => {
-      if (body.code !== this.successCode) return this.getListDetail(id, ++tryNum)
+      if (body.code !== this.successCode) return this.getListDetailInfo(id, tryNum + 1)
       // console.log(JSON.stringify(body))
       // console.log(body)
       const cachedDetailInfo = this.cachedDetailInfo[id] = {
         name: body.data.title,
-        img: body.data.imgItem.img,
+        img: body.data.imgItem?.img || '',
         desc: body.data.summary,
         author: body.data.ownerName,
-        play_count: formatPlayCount(body.data.opNumItem.playNum),
+        play_count: formatPlayCount(body.data.opNumItem?.playNum ?? 0),
       }
       return cachedDetailInfo
     })
@@ -135,11 +140,11 @@ export default {
     // https://h5.nf.migu.cn/app/v4/p/share/playlist/index.html?id=184187437&channel=0146921
     // http://c.migu.cn/00bTY6?ifrom=babddaadfde4ebeda289d671ab62f236
     // https://music.migu.cn/v5/#/playlist?playlistId=221573417
-    if (/\/playlist[/?]/.test(id)) {
+    if (this.regExps.listDetailLink.test(id)) {
+      id = id.replace(this.regExps.listDetailLink, '$1')
+    } else if (/\/playlist[/?]/.test(id)) {
       id = /(?:playlistId|id)=(\d+)/.exec(id)?.[1]
       if (!id) throw new Error('list detail id parse failed')
-    } else if (this.regExps.listDetailLink.test(id)) {
-      id = id.replace(this.regExps.listDetailLink, '$1')
     } else if ((/[?&:/]/.test(id))) {
       const url = this.cachedUrl[id]
       return url ? this.getListDetail(url, page) : this.getDetailUrl(id, page)

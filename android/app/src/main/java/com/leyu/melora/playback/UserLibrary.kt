@@ -171,7 +171,7 @@ object UserLibrary {
         }.orEmpty()
     }
 
-    private fun buildRoot(): JSONObject = JSONObject()
+    private fun buildRoot(playlistSnapshot: List<UserPlaylist> = playlists.value): JSONObject = JSONObject()
         .put("favorites", songsToJson(favorites.value))
         .put("recents", songsToJson(recents.value))
         .put("searchHistory", JSONArray().apply { searchHistory.value.forEach(::put) })
@@ -213,7 +213,7 @@ object UserLibrary {
             }
         })
         .put("playlists", JSONArray().apply {
-            playlists.value.forEach { playlist ->
+            playlistSnapshot.forEach { playlist ->
                 put(JSONObject().put("id", playlist.id).put("name", playlist.name).put("songs", songsToJson(playlist.songs)))
             }
         })
@@ -375,11 +375,21 @@ object UserLibrary {
 
     fun clearSearchHistory() = mutate { searchHistory.value = emptyList() }
 
-    fun createPlaylist(name: String): UserPlaylist = synchronized(lock) {
-        UserPlaylist("pl_${System.currentTimeMillis()}", name.ifBlank { "新建歌单" }, emptyList()).also {
-            playlists.value += it
-            writeTextAtomically(file, buildRoot().toString())
-        }
+    fun createPlaylist(name: String, songs: List<OnlineSong> = emptyList()): UserPlaylist = synchronized(lock) {
+        val currentPlaylists = playlists.value
+        val existingIds = currentPlaylists.mapTo(hashSetOf()) { it.id }
+        var timestamp = System.currentTimeMillis()
+        while ("pl_$timestamp" in existingIds) timestamp++
+
+        val playlist = UserPlaylist(
+            id = "pl_$timestamp",
+            name = name.ifBlank { "新建歌单" },
+            songs = songs.distinctBy { it.uid },
+        )
+        val candidatePlaylists = currentPlaylists + playlist
+        writeTextAtomically(file, buildRoot(candidatePlaylists).toString())
+        playlists.value = candidatePlaylists
+        playlist
     }
 
     fun deletePlaylist(id: String) = mutate { playlists.value = playlists.value.filterNot { it.id == id } }
@@ -404,16 +414,20 @@ object UserLibrary {
 internal fun writeTextAtomically(target: File, text: String) {
     val temp = File(target.parentFile, "${target.name}.tmp")
     val backup = File(target.parentFile, "${target.name}.bak")
+    var backupCreated = false
     try {
         temp.writeText(text)
-        if (target.isFile) target.copyTo(backup, overwrite = true)
+        if (target.isFile) {
+            target.copyTo(backup, overwrite = true)
+            backupCreated = true
+        }
         try {
             Files.move(temp.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
         } catch (_: AtomicMoveNotSupportedException) {
             Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
         }
     } catch (error: Throwable) {
-        if (backup.isFile) runCatching { backup.copyTo(target, overwrite = true) }
+        if (backupCreated && backup.isFile) runCatching { backup.copyTo(target, overwrite = true) }
         throw error
     } finally {
         temp.delete()

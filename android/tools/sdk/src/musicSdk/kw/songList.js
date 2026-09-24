@@ -174,12 +174,17 @@ export default {
 
     const requestObj = httpFetch(this.getListDetailUrl(id, page))
     return requestObj.then(({ body }) => {
-      if (body.result !== 'ok') return this.getListDetail(id, page, ++tryNum)
+      if (body.result !== 'ok') return this.getListDetail(id, page, tryNum + 1)
+      const rawList = Array.isArray(body.musiclist) ? body.musiclist : []
+      const limit = Number(body.rn) || this.limit_song
+      const total = Number(body.total) || 0
       return {
-        list: this.filterListDetail(body.musiclist),
+        list: this.filterListDetail(rawList),
+        rawCount: rawList.length,
         page,
-        limit: body.rn,
-        total: body.total,
+        limit,
+        total,
+        allPage: total ? Math.ceil(total / limit) : 0,
         source: 'kw',
         info: {
           name: body.title,
@@ -191,26 +196,31 @@ export default {
       }
     })
   },
-  getListDetailDigest5Info(id, tryNum = 0) {
+  getListDetailDigest5Info(id, page, tryNum = 0) {
     if (tryNum > 2) return Promise.reject(new Error('try max num'))
     const requestObj = httpFetch(`http://qukudata.kuwo.cn/q.k?op=query&cont=ninfo&node=${id}&pn=0&rn=1&fmt=json&src=mbox&level=2`)
     return requestObj.then(({ statusCode, body }) => {
-      if (statusCode != 200 || !body.child) return this.getListDetail(id, ++tryNum)
+      if (statusCode != 200 || !body.child) return this.getListDetailDigest5Info(id, page, tryNum + 1)
       // console.log(body)
       return body.child.length ? body.child[0].sourceid : null
     })
   },
   getListDetailDigest5Music(id, page, tryNum = 0) {
     if (tryNum > 2) return Promise.reject(new Error('try max num'))
-    const requestObj = httpFetch(`http://nplserver.kuwo.cn/pl.svc?op=getlistinfo&pid=${id}&pn=${page - 1}}&rn=${this.limit_song}&encode=utf-8&keyset=pl2012&identity=kuwo&pcmp4=1`)
+    const requestObj = httpFetch(`http://nplserver.kuwo.cn/pl.svc?op=getlistinfo&pid=${id}&pn=${page - 1}&rn=${this.limit_song}&encode=utf-8&keyset=pl2012&identity=kuwo&pcmp4=1`)
     return requestObj.then(({ body }) => {
       // console.log(body)
-      if (body.result !== 'ok') return this.getListDetail(id, page, ++tryNum)
+      if (body.result !== 'ok') return this.getListDetailDigest5Music(id, page, tryNum + 1)
+      const rawList = Array.isArray(body.musiclist) ? body.musiclist : []
+      const limit = Number(body.rn) || this.limit_song
+      const total = Number(body.total) || 0
       return {
-        list: this.filterListDetail(body.musiclist),
+        list: this.filterListDetail(rawList),
+        rawCount: rawList.length,
         page,
-        limit: body.rn,
-        total: body.total,
+        limit,
+        total,
+        allPage: total ? Math.ceil(total / limit) : 0,
         source: 'kw',
         info: {
           name: body.title,
@@ -222,8 +232,8 @@ export default {
       }
     })
   },
-  async getListDetailDigest5(id, page, retryNum) {
-    const detailId = await this.getListDetailDigest5Info(id, retryNum)
+  async getListDetailDigest5(id, page, retryNum = 0) {
+    const detailId = await this.getListDetailDigest5Info(id, page, retryNum)
     return this.getListDetailDigest5Music(detailId, page, retryNum)
   },
 
@@ -336,11 +346,16 @@ export default {
 
     if (listData.code !== 200) return Promise.reject(new Error('failed'))
 
+    const rawList = Array.isArray(listData.data.list) ? listData.data.list : []
+    const limit = Number(listData.data.pageSize) || this.limit_song
+    const total = Number(listData.data.total) || 0
     return {
-      list: this.filterBDListDetail(listData.data.list),
+      list: this.filterBDListDetail(rawList),
+      rawCount: rawList.length,
       page,
-      limit: listData.data.pageSize,
-      total: listData.data.total,
+      limit,
+      total,
+      allPage: total ? Math.ceil(total / limit) : 0,
       source: 'kw',
     }
   },
