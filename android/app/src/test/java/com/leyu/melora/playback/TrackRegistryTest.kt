@@ -80,6 +80,31 @@ class TrackRegistryTest {
         assertNull(TrackRegistry.get(original.uid))
     }
 
+    @Test
+    fun clearingResolutionNotifiesOnceAndKeepsOtherPreloadedSources() {
+        val uid = "kw_reload"
+        val preloaded = "kw_next"
+        TrackRegistry.notifyResolved(uid, "320k", "lx:fixture:old", fromCompleteCache = true)
+        TrackRegistry.notifyResolved(preloaded, "flac", "lx:fixture:next", fromCompleteCache = true)
+        val pending = TrackRegistry.resolved(preloaded)
+        val changes = mutableListOf<Pair<String, TrackRegistry.Resolution?>>()
+        val listener: (String) -> Unit = { changes += it to TrackRegistry.resolved(it) }
+        TrackRegistry.onResolved(listener)
+        try {
+            TrackRegistry.clearResolved(uid)
+            TrackRegistry.clearResolved(uid)
+            assertEquals(listOf(uid to null), changes)
+            assertSame(pending, TrackRegistry.resolved(preloaded))
+            TrackRegistry.notifyResolved(uid, "128k", "lx:fixture:new")
+            assertEquals(2, changes.size)
+            assertEquals(false, changes.last().second?.fromCompleteCache)
+        } finally {
+            TrackRegistry.removeResolvedListener(listener)
+        }
+        TrackRegistry.clearResolved(uid)
+        assertEquals(2, changes.size)
+    }
+
     private fun assertOriginalIdentity(original: OnlineSong) {
         val stored = requireNotNull(TrackRegistry.get(original.uid))
         assertEquals(original.uid, stored.uid)

@@ -55,10 +55,16 @@ object TrackRegistry {
     /** 本地资源（下载文件或本地媒体文件）：播放层据此跳过网络预取/重试。 */
     fun isLocalResource(uid: String): Boolean = resolutions[uid]?.resourceId in LOCAL_RESOURCE_IDS
 
-    fun clearResolved(uid: String) { resolutions.remove(uid) }
+    fun clearResolved(uid: String) {
+        if (resolutions.remove(uid) != null) resolvedListeners.forEach { it(uid) }
+    }
 
     fun onResolved(listener: (String) -> Unit) {
         resolvedListeners.add(listener)
+    }
+
+    fun removeResolvedListener(listener: (String) -> Unit) {
+        resolvedListeners.remove(listener)
     }
 
     fun onArtwork(listener: (String, String) -> Unit) {
@@ -152,6 +158,9 @@ class MeloraDataSourceFactory(context: Context, base: DataSource.Factory) : Data
             return@ResolvingDataSource AudioCacheStore.applyToDataSpec(cached, dataSpec)
         }
 
+        // 确认本次未命中缓存后再撤销历史结果；不在切歌时清空已预加载的来源。
+        // 先通知 UI 进入解析态，慢源等待期间不能继续显示上次的“缓存”。
+        TrackRegistry.clearResolved(uid)
         val resolved = runBlocking {
             SourceResolver.resolve(
                 context = appContext,

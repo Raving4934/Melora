@@ -123,15 +123,15 @@ class PlaybackResolutionTest {
         assertEquals("flac", SourceResolver.selectQuality(" FLAC ", listOf("FLAC")))
     }
 
-    @Test fun failedResourceIsRejectedOnlyForItsTrackAndClearingPolicyResetsIt() {
+    @Test fun failedPhysicalResourceIsSharedAcrossConsumersWithoutRejectingOtherFiles() {
         SourceResolver.clearCache()
         try {
-            SourceResolver.rejectResource(song.uid, "lx:source:bad-url")
-            assertTrue(SourceResolver.isRejected(song.uid, "lx:source:bad-url"))
-            assertFalse(SourceResolver.isRejected(song.uid, "lx:source:new-url"))
-            assertFalse(SourceResolver.isRejected("kw_other", "lx:source:bad-url"))
+            SourceResolver.rejectResource("lx:source:bad-url")
+            assertTrue(SourceResolver.isRejected("lx:source:bad-url"))
+            assertFalse(SourceResolver.isRejected("lx:source:new-url"))
+            assertFalse(SourceResolver.isRejected(null))
             SourceResolver.clearCache()
-            assertFalse(SourceResolver.isRejected(song.uid, "lx:source:bad-url"))
+            assertFalse(SourceResolver.isRejected("lx:source:bad-url"))
         } finally { SourceResolver.clearCache() }
     }
 

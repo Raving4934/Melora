@@ -39,6 +39,15 @@ class PlaybackSourceLabelTest {
         assertEquals("播放源：label-test", playbackSourceLabel(state.copy(resolvedPlatform = "kw"), false))
     }
 
+    @Test fun pendingResolutionDoesNotClaimACacheHitOrAPreviousSource() {
+        val pending = state("lx:label-test.js:old", "tx").copy(fromCompleteCache = true, resolving = true)
+        listOf(false, true).forEach { autoSwitch ->
+            assertEquals("播放源：正在解析…", playbackSourceLabel(pending, autoSwitch))
+            assertEquals("播放源：正在解析…", playbackSourceLabel(PlayerUiState(resolving = true), autoSwitch))
+        }
+        assertEquals("播放源：缓存", playbackSourceLabel(pending.copy(resolving = false), false))
+    }
+
     @Test fun switchingBackToNetworkDoesNotKeepTheCacheLabel() {
         val cached = state("lx:label-test.js:hash", "tx").copy(fromCompleteCache = true)
         assertEquals("播放源：缓存", playbackSourceLabel(cached, true))

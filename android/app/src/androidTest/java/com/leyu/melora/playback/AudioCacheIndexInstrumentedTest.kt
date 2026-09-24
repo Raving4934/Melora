@@ -72,6 +72,48 @@ class AudioCacheIndexInstrumentedTest {
         assertNull(index.find(target, "128k", online = true))
     }
 
+    @Test fun rejectedSharedResourceCannotBeReusedThroughAnyUidOrReRegisteredAlias() {
+        val current = checkNotNull(cache)
+        val index = AudioCacheIndex(current)
+        val original = song("kw", "owner")
+        val consumer = song("tx", "consumer")
+        val thirdParty = song("wy", "third-party")
+        val bytes = ByteArray(12_288) { (it % 239).toByte() }
+        val resource = index.register(original.uid, "320k", resolved(original))
+        val resourceId = checkNotNull(audioResourceId(resource.key))
+        write(current, resource, bytes)
+        index.recordObservedQuality(resourceId, "320k")
+        val originalCacheSize = current.cacheSpace
+
+        assertEquals(resource.key, index.find(consumer, "320k", online = true)?.key)
+        SourceResolver.rejectResource(resourceId)
+        listOf(original, consumer, thirdParty).forEach { song ->
+            assertNull("$song must not reuse a cooling-down physical resource",
+                index.find(song, "320k", online = true))
+        }
+
+        // 重新登记同一物理资源会重建各 UID 的偏好别名，但不能绕过资源级冷却。
+        listOf(original, consumer, thirdParty).forEach { aliasOwner ->
+            val alias = index.register(aliasOwner.uid, "320k", resolved(original))
+            assertEquals(resourceId, audioResourceId(alias.key))
+            assertNull("re-registering an alias must not reopen a rejected resource",
+                index.find(aliasOwner, "320k", online = true))
+        }
+
+        SourceResolver.clearCache()
+        index.recordObservedQuality(resourceId, "320k")
+        assertFalse(SourceResolver.isRejected(resourceId))
+        assertEquals("clearing the cooldown must not delete or rewrite cached audio bytes",
+            originalCacheSize, current.cacheSpace)
+        val reusable = checkNotNull(index.find(consumer, "320k", online = true))
+        assertEquals(resource.key, reusable.key)
+        val spec = AudioCacheStore.applyToDataSpec(reusable,
+            DataSpec.Builder().setUri("melora://song/${consumer.uid}").build())
+        val source = CacheDataSource.Factory().setCache(current).createDataSource()
+        assertArrayEquals(bytes, DataSourceInputStream(source, spec).use { it.readBytes() })
+        assertEquals(originalCacheSize, current.cacheSpace)
+    }
+
     @Test fun interruptedFillIsNotSharedUntilAllBytesArePresent() {
         val current = checkNotNull(cache)
         val index = AudioCacheIndex(current)
@@ -104,8 +146,8 @@ class AudioCacheIndexInstrumentedTest {
         CacheWriter(source, spec, null, null).cache()
     }
 
-    private fun song(source: String) = OnlineSong(JSONObject()
-        .put("source", source).put("songmid", "fixture").put("name", "缓存测试")
+    private fun song(source: String, id: String = "fixture") = OnlineSong(JSONObject()
+        .put("source", source).put("songmid", id).put("name", "缓存测试")
         .put("singer", "测试歌手").put("albumName", "测试专辑").put("interval", "03:20"))
 
     private fun resolved(song: OnlineSong) = SourceResolver.Resolved(

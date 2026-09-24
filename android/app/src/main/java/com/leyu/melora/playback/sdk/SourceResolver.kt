@@ -71,7 +71,7 @@ object SourceResolver {
     private val cacheLock = Any()
     // 播放地址缓存：按歌曲、目标音质与换源策略隔离，避免播放与下载相互污染。
     private val urlCache = mutableMapOf<ResolveKey, CachedUrl>()
-    private val failedResources = mutableMapOf<String, MutableMap<String, Long>>()
+    private val failedResources = mutableMapOf<String, Long>()
     private val observedQualities = linkedMapOf<String, String>()
     // 在应用级作用域合并同参数请求：调用方取消只停止等待，不会毒化其他播放/预取调用方。
     private val inFlight = SingleFlight<InFlightKey, Resolved>(CoroutineScope(SupervisorJob() + Dispatchers.IO), cacheLock)
@@ -117,28 +117,24 @@ object SourceResolver {
 
     fun observedQuality(resourceId: String?): String? = synchronized(cacheLock) { observedQualities[resourceId] }
 
-    /** 只隔离本曲实际失败的资源，不清空其它曲目/下载缓存，也不把坏URL再交回播放器。 */
-    fun rejectResource(songUid: String, resourceId: String) = synchronized(cacheLock) {
-        failedResources.getOrPut(songUid) { mutableMapOf() }[resourceId] =
-            System.currentTimeMillis() + FAILED_RESOURCE_TTL_MS
+    /** 只隔离实际失败的物理资源；完整缓存与网络重解析共用，不封禁曲目或平台。 */
+    fun rejectResource(resourceId: String) = synchronized(cacheLock) {
+        failedResources[resourceId] = System.currentTimeMillis() + FAILED_RESOURCE_TTL_MS
         urlCache.entries.removeAll { it.value.resolved.resourceId == resourceId }
     }
 
-    fun isRejected(songUid: String, resourceId: String?): Boolean =
-        resourceId != null && resourceId in rejectedResources(songUid)
-
-    /** 跨 UID 完整缓存共享时，遵守任一消费者对同一物理资源的失败冷却，不新增失败账本。 */
-    internal fun isResourceRejected(resourceId: String): Boolean = synchronized(cacheLock) {
-        val now = System.currentTimeMillis()
-        failedResources.values.any { (it[resourceId] ?: 0L) > now }
+    fun isRejected(resourceId: String?): Boolean = synchronized(cacheLock) {
+        val until = failedResources[resourceId] ?: return@synchronized false
+        if (until > System.currentTimeMillis()) true else {
+            failedResources.remove(resourceId)
+            false
+        }
     }
 
-    private fun rejectedResources(songUid: String): Set<String> = synchronized(cacheLock) {
-        val failures = failedResources[songUid] ?: return@synchronized emptySet()
+    private fun rejectedResources(): Set<String> = synchronized(cacheLock) {
         val now = System.currentTimeMillis()
-        failures.entries.removeAll { it.value <= now }
-        if (failures.isEmpty()) failedResources.remove(songUid)
-        failures.keys.toSet()
+        failedResources.entries.removeAll { it.value <= now }
+        failedResources.keys.toSet()
     }
 
     /** 命中缓存则立即返回（非挂起），供预取判重与点击前的快速检查。 */
@@ -169,7 +165,7 @@ object SourceResolver {
             else -> URL_TTL_MS
         }
         synchronized(cacheLock) {
-            if (generation != inFlight.currentGeneration() || isRejected(key.songUid, resolved.resourceId)) return
+            if (generation != inFlight.currentGeneration() || isRejected(resolved.resourceId)) return
             val expireAt = System.currentTimeMillis() + ttlMs
             urlCache[key] = CachedUrl(resolved, expireAt)
             if (resolved.song.uid != key.songUid) {
@@ -193,7 +189,7 @@ object SourceResolver {
             val generation = inFlight.currentGeneration()
             val key = ResolveKey(song.uid, normalizedQuality(preferredQuality), allowSwitch)
             // 慢源只在本次恢复中排除，不污染下载、缓存或全局失败名单。
-            val rejected = rejectedResources(song.uid) + excludedResources
+            val rejected = rejectedResources() + excludedResources
             val cached = if (isRefresh) null else peek(key)?.takeIf {
                 it.resourceId !in rejected &&
                     (purpose == Purpose.PLAYBACK || sameQualityTier(key.preferredQuality, it.quality))
@@ -207,7 +203,7 @@ object SourceResolver {
                 currentCoroutineContext().ensureActive()
                 continue
             }
-            if (generation != inFlight.currentGeneration() || isRejected(song.uid, resolved.resourceId)) continue
+            if (generation != inFlight.currentGeneration() || isRejected(resolved.resourceId)) continue
             return observedQuality(resolved.resourceId)?.let { resolved.copy(quality = it) } ?: resolved
         }
     }
@@ -237,7 +233,7 @@ object SourceResolver {
             val alternativeSlots = Semaphore(2)
             val lowerResults = ConcurrentHashMap<String, Resolved>()
             fun accept(result: Resolved?, quality: String): Resolved? {
-                if (result == null || result.resourceId in excludedResources || isRejected(song.uid, result.resourceId)) return null
+                if (result == null || result.resourceId in excludedResources || isRejected(result.resourceId)) return null
                 val actual = result.copy(quality = observedQuality(result.resourceId) ?: result.quality, switched = result.song.uid != song.uid)
                 if (if (purpose == Purpose.REBUFFER) sameQualityTier(quality, actual.quality)
                     else qualitySatisfies(quality, actual.quality)) return actual

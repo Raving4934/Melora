@@ -519,9 +519,9 @@ internal class AudioCacheIndex(private val cache: Cache) {
         fun resource(key: String, crossSource: Boolean): AudioCacheResource? {
             val metadata = cache.getContentMetadata(key)
             val id = audioResourceId(key)
-            if (id in excludedResources || SourceResolver.isRejected(song.uid, id)) return null
+            if (id in excludedResources || SourceResolver.isRejected(id)) return null
             val source = metadata.string(META_SOURCE_IDENTITY) ?: return null
-            if (crossSource && (id == null || SourceResolver.isResourceRejected(id))) return null
+            if (crossSource && id == null) return null
             val verified = SourceResolver.observedQuality(id) ?: metadata.string(META_VERIFIED_QUALITY)
             // 不把源声明的“无损/320k”扩散给其它曲目；须有解码器或文件探测的实测证据。
             if (crossSource && verified == null) return null

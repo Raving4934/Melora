@@ -120,12 +120,19 @@ class AudioCacheIndexTest {
         assertSameResource(resource, index.find(target, "320k", online = true))
         assertNull(index.find(target, "320k", online = true, excludedResources = setOf(resourceId(resource))))
 
-        SourceResolver.rejectResource(target.uid, resourceId(resource))
+        SourceResolver.rejectResource(resourceId(resource))
         assertNull(index.find(target, "320k", online = false))
         assertNull(index.find(target, "320k", online = true))
         assertNull(index.find(song("tx", "next-consumer"), "320k", online = true))
+        // 别的消费者已判失败，原 UID 的偏好别名和无别名的离线降档均不能绕过。
+        assertNull(index.find(cachedSong, "320k", online = true))
+        assertNull(index.find(cachedSong, "flac", online = false))
+        assertSameResource(resource, index.register(cachedSong.uid, "flac", resolved(cachedSong)))
+        assertNull(index.find(cachedSong, "flac", online = false))
         SourceResolver.clearCache() // 现有失败冷却是临时状态，不持久封禁一份可能恢复的资源。
         assertSameResource(resource, index.find(song("tx", "next-consumer"), "320k", online = true))
+        assertSameResource(resource, index.find(cachedSong, "320k", online = true))
+        assertSameResource(resource, index.find(cachedSong, "flac", online = false))
     }
 
     @Test

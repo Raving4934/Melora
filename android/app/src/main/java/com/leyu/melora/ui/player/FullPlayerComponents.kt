@@ -79,6 +79,7 @@ internal fun fullPlayerLyricsOrFallback(track: UiTrack?, lyrics: List<LyricLine>
 
 /** 普通/沉浸 page0 共用来源文案；缓存由真实命中标记判断，不根据资源 ID 猜测。 */
 internal fun playbackSourceLabel(state: PlayerUiState, autoSwitch: Boolean): String {
+    if (state.resolving) return "播放源：正在解析…"
     if (state.fromCompleteCache) return "播放源：缓存"
     val id = state.resolvedBy?.trim().orEmpty()
     val source = when {

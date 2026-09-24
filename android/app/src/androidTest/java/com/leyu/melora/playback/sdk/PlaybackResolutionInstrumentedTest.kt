@@ -6,15 +6,26 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.AudioCacheStore
+import com.leyu.melora.playback.AudioCacheIndex
+import com.leyu.melora.playback.MeloraDataSourceFactory
+import com.leyu.melora.playback.TrackRegistry
+import com.leyu.melora.playback.UiTrack
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.ByteArrayDataSource
+import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.datasource.cache.ContentMetadataMutations
 import com.leyu.melora.playback.lx.LxScriptStore
 import java.io.File
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.cancelAndJoin
 import org.json.JSONObject
+import java.util.concurrent.CopyOnWriteArrayList
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -129,11 +140,43 @@ class PlaybackResolutionInstrumentedTest {
         store.setEnabled("primary.js", true)
         val first = SourceResolver.resolve(context, song, "320k", allowSwitch = true)
         assertTrue(first.resourceId.startsWith("lx:primary.js:"))
-        SourceResolver.rejectResource(song.uid, first.resourceId)
+        SourceResolver.rejectResource(first.resourceId)
         val second = SourceResolver.resolve(context, song, "320k", allowSwitch = true)
         assertEquals("320k", second.quality)
         assertTrue(second.resourceId.startsWith("lx:backup.js:"))
         assertNotEquals(first.resourceId, second.resourceId)
+    }
+
+    @Test fun rejectedSharedScriptUrlIsSkippedForAnotherUidWhileBackupRemainsUsable() = runBlocking<Unit> {
+        val suffix = System.nanoTime().toString()
+        val primary = store.import("shared-primary-$suffix", source("shared-$suffix"))
+        val backup = store.import("shared-backup-$suffix", source("good-$suffix"))
+        store.setEnabled(primary.id, true)
+        LxScriptPool.reload(context)
+        val firstSong = OnlineSong(JSONObject(song.raw.toString())
+            .put("songmid", "shared-owner-$suffix").put("isBookChapter", true))
+        val nextSong = OnlineSong(JSONObject(song.raw.toString())
+            .put("songmid", "shared-next-$suffix").put("isBookChapter", true))
+        try {
+            val failed = SourceResolver.resolve(context, firstSong, "320k", allowSwitch = true)
+            assertTrue(failed.resourceId.startsWith("lx:${primary.id}:"))
+            assertEquals("同一脚本对不同 UID 返回相同 URL，应具有相同物理资源身份",
+                SourceResolver.scriptResourceId(primary.id, failed.url), failed.resourceId)
+            assertTrue(failed.url.startsWith("https://example.test/shared-$suffix-"))
+
+            SourceResolver.rejectResource(failed.resourceId)
+            assertTrue(SourceResolver.isRejected(failed.resourceId))
+            val recovered = SourceResolver.resolve(context, nextSong, "320k", allowSwitch = true)
+            assertTrue("另一 UID 不得再次解析命中已拒绝 URL", recovered.resourceId.startsWith("lx:${backup.id}:"))
+            assertNotEquals(failed.resourceId, recovered.resourceId)
+            assertTrue("未被拒绝的备用 URL 仍可解析", recovered.url.startsWith("https://example.test/good-$suffix-"))
+            assertFalse(SourceResolver.isRejected(recovered.resourceId))
+        } finally {
+            store.remove(primary.id)
+            store.remove(backup.id)
+            LxScriptPool.reload(context)
+            SourceResolver.clearCache()
+        }
     }
 
     @Test fun slowSourceCandidateDoesNotPoisonActiveUrlCacheOrRejectCurrentResource() = runBlocking<Unit> {
@@ -147,7 +190,7 @@ class PlaybackResolutionInstrumentedTest {
             purpose = SourceResolver.Purpose.REBUFFER, excludedResources = setOf(first.resourceId))
         assertEquals("flac24bit", candidate.quality)
         assertTrue(candidate.resourceId.startsWith("lx:backup.js:"))
-        assertFalse(SourceResolver.isRejected(chapter.uid, first.resourceId))
+        assertFalse(SourceResolver.isRejected(first.resourceId))
         assertEquals(first, SourceResolver.peek(chapter, "flac24bit", allowSwitch = true))
         assertEquals(first, SourceResolver.resolve(context, chapter, "flac24bit", allowSwitch = true))
         MeloraSettings.autoSwitchSource.value = true
@@ -166,7 +209,7 @@ class PlaybackResolutionInstrumentedTest {
                 purpose = SourceResolver.Purpose.REBUFFER, excludedResources = setOf(first.resourceId))
         }
         assertTrue(result.isFailure)
-        assertFalse(SourceResolver.isRejected(chapter.uid, first.resourceId))
+        assertFalse(SourceResolver.isRejected(first.resourceId))
         assertEquals(first, SourceResolver.peek(chapter, "flac24bit", allowSwitch = true))
     }
 
@@ -222,9 +265,70 @@ class PlaybackResolutionInstrumentedTest {
         assertNotEquals(resource.key, next.key)
         assertEquals("flac24bit", next.actualQuality)
         assertTrue(cache.getCachedSpans(next.key).isEmpty())
-        SourceResolver.rejectResource(song.uid, original.resourceId)
-        val lookup = AudioCacheStore.javaClass.declaredMethods.single { it.name == "preferredResource" }.apply { isAccessible = true }
-        assertNull(lookup.invoke(AudioCacheStore, context, song.uid, "128k", true, emptySet<String>()))
+        SourceResolver.rejectResource(original.resourceId)
+        assertNull(AudioCacheIndex(cache).find(song, "128k", online = true))
+    }
+
+    @Test fun cacheMissClearsOnlyItsStaleResolutionBeforeSlowFactoryResolve() = runBlocking<Unit> {
+        val suffix = System.nanoTime().toString()
+        val target = OnlineSong(JSONObject(song.raw.toString())
+            .put("songmid", "factory-$suffix").put("name", "Factory Fixture").put("isBookChapter", true))
+        val untouched = OnlineSong(JSONObject(song.raw.toString())
+            .put("source", "tx").put("songmid", "untouched-$suffix"))
+        val script = store.import("factory-slow-$suffix", source("factory-slow", responseDelay = 1800))
+        val scriptId = script.id
+        store.setEnabled(scriptId, true)
+        LxScriptPool.reload(context)
+        SourceResolver.clearCache()
+
+        val cacheField = AudioCacheStore.javaClass.getDeclaredField("cache").apply { isAccessible = true }
+        assertNull("factory fixture must start with an uninitialized AudioCacheStore cache", cacheField.get(AudioCacheStore))
+        ownsCache = true
+        TrackRegistry.register(UiTrack.fromOnline(target))
+        TrackRegistry.register(UiTrack.fromOnline(untouched))
+        TrackRegistry.notifyResolved(target.uid, "320k", "fixture:old-cache", "320k", "fixture", fromCompleteCache = true)
+        TrackRegistry.notifyResolved(untouched.uid, "128k", "fixture:untouched", "128k", "fixture", fromCompleteCache = true)
+        val untouchedResolution = checkNotNull(TrackRegistry.resolved(untouched.uid))
+        val targetEvents = CopyOnWriteArrayList<TrackRegistry.Resolution?>()
+        val targetCleared = CompletableDeferred<Unit>()
+        val listener: (String) -> Unit = { uid ->
+            if (uid == target.uid) {
+                val resolution = TrackRegistry.resolved(uid)
+                targetEvents += resolution
+                if (resolution == null) targetCleared.complete(Unit)
+            }
+        }
+        TrackRegistry.onResolved(listener)
+        val dataSource = MeloraDataSourceFactory(context,
+            DataSource.Factory { ByteArrayDataSource("fixture stream".toByteArray()) }).createDataSource()
+        val opening = async(Dispatchers.IO) {
+            dataSource.open(DataSpec(TrackRegistry.songUri(target.uid)))
+        }
+        try {
+            withTimeout(1_000) { targetCleared.await() }
+            delay(100)
+            assertTrue("慢源解析仍在进行", opening.isActive)
+            assertNull("缓存未命中后应先撤销旧来源", TrackRegistry.resolved(target.uid))
+            assertSame("清理目标 UID 不得影响其它 UID 的预加载来源", untouchedResolution,
+                TrackRegistry.resolved(untouched.uid))
+
+            val openedLength = withTimeout(8_000) { opening.await() }
+            assertTrue(openedLength > 0)
+            val resolved = checkNotNull(TrackRegistry.resolved(target.uid))
+            assertFalse(resolved.fromCompleteCache)
+            assertTrue(resolved.resourceId.orEmpty().startsWith("lx:$scriptId:"))
+            assertEquals(listOf(null, resolved), targetEvents.toList())
+        } finally {
+            opening.cancelAndJoin()
+            dataSource.close()
+            TrackRegistry.removeResolvedListener(listener)
+            TrackRegistry.clearResolved(target.uid)
+            TrackRegistry.clearResolved(untouched.uid)
+            TrackRegistry.clear()
+            store.remove(scriptId)
+            LxScriptPool.reload(context)
+            SourceResolver.clearCache()
+        }
     }
 
     @Test fun lateScriptPromiseCannotMasqueradeAsNextQualityResponse() {

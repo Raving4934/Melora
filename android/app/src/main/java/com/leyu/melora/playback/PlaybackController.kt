@@ -582,13 +582,13 @@ object PlaybackController {
                 TrackRegistry.clearResolved(track.uid)
             }
             val failed = TrackRegistry.resolved(track.uid)?.resourceId
-            if (failed != null) SourceResolver.rejectResource(track.uid, failed)
+            if (failed != null) SourceResolver.rejectResource(failed)
             val failedResource = failed ?: "local:${track.uid}".takeIf { retryLocalFallback }
             if (failedResource != null && errorRecovery.allowRetry(
                     failedResource, SystemClock.elapsedRealtime(), MeloraSettings.autoSwitchSource.value,
                 )) {
                 TrackRegistry.clearResolved(track.uid)
-                _state.value = snapshot.copy(message = "播放链接失效，正在尝试其它可用资源…")
+                _state.value = _state.value.copy(message = "播放链接失效，正在尝试其它可用资源…")
                 // 仍由唯一DataSource入口解析，prepare保留当前位置与用户的播放意图。
                 player.prepare()
                 return@launch
