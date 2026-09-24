@@ -16,8 +16,8 @@ android {
         applicationId = "com.leyu.melora"
         minSdk = 26
         targetSdk = 37
-        versionCode = 10
-        versionName = "0.1.3"
+        versionCode = 11
+        versionName = "0.1.4"
         testInstrumentationRunner = "com.leyu.melora.IsolatedTestRunner"
         ndk {
             abiFilters += listOf("arm64-v8a")

@@ -2,6 +2,64 @@
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-09-24
+
+### 安卓客户端
+
+【歌单与播放队列】
+- 支持从网易云、QQ 音乐、酷我、酷狗、咪咕的公开歌单分享链接导入歌曲；完善移动端链接识别，入口放在“新建歌单”标题右侧。
+- 自建歌单更多菜单新增“添加所有歌曲到播放队列”，无需替换当前队列或打断正在播放的歌曲。
+- 列表循环、单曲循环和随机播放模式可在重启后恢复，并纳入备份；听书仍按章节顺序播放。
+- 修复清空队列后界面残留、队列意外恢复，以及快速切歌时清除已播放条目可能错位的问题。
+
+【歌词与播放器】
+- 完善桌面歌词：与播放器共用逐词渲染，窗口随内容调整，拖动位置可记忆并随备份恢复；全屏歌词工具栏可直接开关桌面歌词。
+- 统一歌词匹配、来源选择和本地文件写入，保留真实逐词时间信息，改善在线与本地歌曲的歌词一致性。
+- 全屏歌词的字号、对齐、加粗和模糊设置支持持久化与备份；精简歌词来源抽屉，修复大字号摘要裁切。
+- 长按封面可打开外观卡片，集中选择封面样式与播放主题，并保留明确的沉浸播放入口。
+
+【缓存与音源】
+- 同一录音、同档实测音质的完整音频缓存可跨来源复用，供播放、下载和后台补齐共用，不拼接不同来源的音频片段。
+- 完整缓存命中时显示“播放源：缓存”；缓存失效后重新解析时显示解析状态，不再沿用上次的缓存标签。
+- 统一共享解析请求和物理资源失败冷却，避免取消一个请求影响其他调用，以及重新解析再次选中同一个失败资源。
+- 完善页面、封面与歌词缓存的容量控制、按需恢复和清理反馈，减少批量操作中的重复文件系统访问。
+- 音源文件选择器限制为 JavaScript 文件，轻量校验拦截误导入；脚本执行延后，避免导入时执行整份脚本。修复检查更新与本地替换、备份恢复之间的覆盖冲突。
+
+【下载与本地音乐】
+- 本地歌曲下载更高音质前先检查实际规格；没有更优版本时不新增下载记录，升级失败保留原文件。
+- 下载遇到音频传输失败时可在限定次数内自动换源重试，不把不同资源拼接到同一文件；完善暂停、取消、任务冲突和下载完成记录处理。
+- 完善下载文件被外部删除后的本地标记、记录与播放回退，支持本地歌曲批量删除授权，避免继续将缺失文件当作可播放的本地歌曲。
+- 本地歌曲排序及字母索引在后台生成，补全实际码率徽标，减少大列表占用主线程的工作。
+
+【稳定性与交互】
+- 修复备份恢复中断后的重试、启动恢复及前台服务处理，并调整原生恢复弹窗的配色和文字层级。
+- 修复脚本引擎初始化失败时的异常传递和资源清理，避免相关崩溃或长时间无响应。
+- 完善发现、听书等页面的导航与加载状态恢复，避免播放器详情页残余滑动速度误触收起。
+- 优化歌单创建、导入和重试状态，减少短暂加载文字闪烁；修复新歌推荐已到末尾仍显示“加载更多”的问题。
+
+### 提交追溯（安卓版）
+
+> 仅发布 Android 0.1.4；Web / NAS、FPK 与 Docker 维持 0.1.1。完整提交区间：[android-v0.1.3...android-v0.1.4][Android 0.1.4]。
+
+- 公开歌单链接导入与入口布局：[`6d50f81`](https://github.com/Raving4934/Melora/commit/6d50f8189a4f0a95e2b2e97aa7984c8e0d748581)、[`997e0e4`](https://github.com/Raving4934/Melora/commit/997e0e4b9afa4e85451c193f5f6580df45a902c4)、[`65aa018`](https://github.com/Raving4934/Melora/commit/65aa018a9ab3c906e0e6bda093b37c2d7316ca1e)、[`ef8ade1`](https://github.com/Raving4934/Melora/commit/ef8ade1908c68f931266eb6488e6293a3386d4dd)。
+- 队列追加、清空同步与播放模式记忆：[`fb244df`](https://github.com/Raving4934/Melora/commit/fb244df318c0c55f186769a575942f8a0162473e)、[`b64a467`](https://github.com/Raving4934/Melora/commit/b64a46729729094a2968fc4c7d2586b0f434e842)、[`b26826f`](https://github.com/Raving4934/Melora/commit/b26826f900262e94d29f77a1ae739f49109053a0)、[`2d0b5af`](https://github.com/Raving4934/Melora/commit/2d0b5af8ead9f4961916f2df33004281350c8895)。
+- 封面外观卡片与详情滚动边界：[`4c1fc76`](https://github.com/Raving4934/Melora/commit/4c1fc763670b0d4035d08bbb6a479cb14c4fb0e2)、[`d60e740`](https://github.com/Raving4934/Melora/commit/d60e740b6a977c02e00f149af1c0126f6ebe24f5)。
+- 逐词歌词匹配、写入与外观持久化：[`e029097`](https://github.com/Raving4934/Melora/commit/e029097b607b4e5f2db80c193f45fff52d2f434f)、[`6cf87d4`](https://github.com/Raving4934/Melora/commit/6cf87d44a224380478a8136683b21696b45dbaa0)、[`7d13866`](https://github.com/Raving4934/Melora/commit/7d1386648cd3a97f378677418a29cb5a10dd4d07)、[`58dcbaf`](https://github.com/Raving4934/Melora/commit/58dcbafbe971b0a7646f90c92c585e16bcd1b3e1)。
+- 桌面歌词渲染、位置记忆与快捷开关：[`e06b34b`](https://github.com/Raving4934/Melora/commit/e06b34bc5f06eb78c2bebeb1e03e3dcf56ab537e)、[`86d7021`](https://github.com/Raving4934/Melora/commit/86d70210c91b866999f7c43baf71328680e10cec)。
+- 页面、封面、歌词缓存及批量开销：[`cf60d55`](https://github.com/Raving4934/Melora/commit/cf60d55d003c666b5736b849024cfa31c276e467)、[`220b2c3`](https://github.com/Raving4934/Melora/commit/220b2c32b118d776c59e14f61666e1dc4c23c2b1)、[`b7cc845`](https://github.com/Raving4934/Melora/commit/b7cc84507e5c10375293feb698f4ac8ff1f292b0)、[`60154cc`](https://github.com/Raving4934/Melora/commit/60154cc57fe10f46e7bc2e9b28023b41049812d9)。
+- 完整音频缓存跨来源复用与来源状态：[`9b30413`](https://github.com/Raving4934/Melora/commit/9b30413d8fb555cbc6e6da023cc315b3700860aa)、[`2f4f588`](https://github.com/Raving4934/Melora/commit/2f4f58869c934af6f2a30c246ad5b718c2db5040)、[`dad4733`](https://github.com/Raving4934/Melora/commit/dad4733a4506f9bbe22e217a59c6a31309268095)。
+- 下载音质预检、任务与完成记录：[`c53ae1d`](https://github.com/Raving4934/Melora/commit/c53ae1dcdd79848e5523c1553a099c111640f007)、[`1cc01a7`](https://github.com/Raving4934/Melora/commit/1cc01a7ebf31c68bf1fc195ddd77b66bee4c9cd4)、[`c448612`](https://github.com/Raving4934/Melora/commit/c44861258ede40c84ac4b862760c8dba1896a0bb)、[`667e046`](https://github.com/Raving4934/Melora/commit/667e0460996179f0f5fa5a76eeff1026c964611f)。
+- 播放／下载失败恢复与共享解析：[`3cb93c9`](https://github.com/Raving4934/Melora/commit/3cb93c9e1678e318290155487721d2e49e6e1081)、[`7a1cff4`](https://github.com/Raving4934/Melora/commit/7a1cff430da2824ac649374a5203aec00a8e7e92)、[`58a8d43`](https://github.com/Raving4934/Melora/commit/58a8d4376085abe119950823d2e43a84758f966a)。
+- 本地删除、文件失效、徽标与后台排序：[`095e5a4`](https://github.com/Raving4934/Melora/commit/095e5a413e6a3f7a94dee3c33dc9dd6261353852)、[`9d1d7c1`](https://github.com/Raving4934/Melora/commit/9d1d7c134e15b64eaeb877673720286668d2c05e)、[`b311311`](https://github.com/Raving4934/Melora/commit/b311311108c97048dfbd5894694d942a007a9e9e)、[`2a4b325`](https://github.com/Raving4934/Melora/commit/2a4b3256aa284289bc699c2df06b5a24291bdfe6)。
+- 音源文件选择、轻量校验与更新冲突：[`eb537fe`](https://github.com/Raving4934/Melora/commit/eb537fe5a3b4258ad63453aa67e80d780b2c6a00)、[`f6f3d10`](https://github.com/Raving4934/Melora/commit/f6f3d1023a1bcbcf0934a519876c0215dec152ee)、[`7c3f7eb`](https://github.com/Raving4934/Melora/commit/7c3f7eba65569f0b24dd7115a175adc31b01c54b)、[`79e532c`](https://github.com/Raving4934/Melora/commit/79e532ced5e562da2721698bda425bf659b0563e)。
+- 备份、启动恢复与脚本引擎异常：[`3fd1bd8`](https://github.com/Raving4934/Melora/commit/3fd1bd86c9e49bd0b176cfcb931fd378de34629a)、[`031c19a`](https://github.com/Raving4934/Melora/commit/031c19a51210166c011dc8ddc049a49cfa6a8601)、[`660d9ba`](https://github.com/Raving4934/Melora/commit/660d9bae87aa3d7e1aa2d3df99ea724ba2ffc011)。
+- 导航恢复、歌单抽屉与推荐列表边界：[`a8a8277`](https://github.com/Raving4934/Melora/commit/a8a82777e3d79f9cadd8dc2690b3185d9a50a55f)、[`3da0fde`](https://github.com/Raving4934/Melora/commit/3da0fdea8c97a0d4216d2d9b8c41ea26510efa80)、[`b46ce57`](https://github.com/Raving4934/Melora/commit/b46ce5745e6fc9f54a21ca31289e6b51feaa96d2)。
+
+### 安卓安装包
+
+- [下载 Android 0.1.4 APK（arm64-v8a）](https://github.com/Raving4934/Melora/releases/download/android-v0.1.4/melora-android-v0.1.4-arm64-v8a.apk)
+- 适用于 Android 8.0 及以上的 ARM64 设备；正式签名保持不变，可直接覆盖安装。
+
 ## [0.1.3] - 2026-09-23
 
 ### 安卓客户端
@@ -139,9 +197,11 @@
 
 **Docker 镜像：** `ghcr.io/raving4934/melora:0.1.0`（支持 `linux/amd64`、`linux/arm64`）。
 
-[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.3...HEAD
-[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.3...HEAD
+[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.4...HEAD
+[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.4...HEAD
 [Web Unreleased]: https://github.com/Raving4934/Melora/compare/v0.1.1...HEAD
+[0.1.4]: https://github.com/Raving4934/Melora/compare/android-v0.1.3...android-v0.1.4
+[Android 0.1.4]: https://github.com/Raving4934/Melora/compare/android-v0.1.3...android-v0.1.4
 [0.1.3]: https://github.com/Raving4934/Melora/compare/android-v0.1.2...android-v0.1.3
 [Android 0.1.3]: https://github.com/Raving4934/Melora/compare/android-v0.1.2...android-v0.1.3
 [0.1.2]: https://github.com/Raving4934/Melora/compare/android-v0.1.1...android-v0.1.2
