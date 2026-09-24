@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import androidx.core.content.edit
 import com.leyu.melora.playback.local.LocalSortField
 import kotlinx.coroutines.flow.MutableStateFlow
+import org.json.JSONObject
 
 /**
  * 全局设置中心：所有设置项持久化于 SharedPreferences 并以 StateFlow 暴露给 UI 与播放层。
@@ -89,16 +90,15 @@ object MeloraSettings {
     // --- 桌面歌词 ---
     val showDesktopLyrics = MutableStateFlow(false)
     val lockLyrics = MutableStateFlow(false)
-    val lyricAnimEnabled = MutableStateFlow(true)
     val singleLineLyric = MutableStateFlow(false)
     val lyricFontSize = MutableStateFlow(20f)
-    val lyricWindowPercent = MutableStateFlow(85f)
     val lyricMaxLines = MutableStateFlow(2f)
     val lyricAlpha = MutableStateFlow(90f)
     val lyricHAlign = MutableStateFlow(1)
     val lyricVAlign = MutableStateFlow(1)
+    internal val desktopLyricPosition = MutableStateFlow(DesktopLyricPosition())
     val lyricColorIndex = MutableStateFlow(1)
-    // 桌面歌词底板：默认关闭=纯文字（阴影保证浅色壁纸可读），开=圆角深色底板
+    // 桌面歌词底板：默认关闭为纯文字，开启为圆角浅色半透明底板
     val lyricBackground = MutableStateFlow(false)
     // 通知栏歌词：开启后系统通知栏（控制中心/锁屏）实时显示当前歌词行
     val notificationLyrics = MutableStateFlow(false)
@@ -162,14 +162,15 @@ object MeloraSettings {
         maxCacheMb.value = prefs.getInt(KEY_MAX_CACHE_MB, 1024)
         showDesktopLyrics.value = prefs.getBoolean(KEY_DESKTOP_LYRICS, false)
         lockLyrics.value = prefs.getBoolean(KEY_LYRICS_LOCK, false)
-        lyricAnimEnabled.value = prefs.getBoolean(KEY_LYRICS_ANIM, true)
         singleLineLyric.value = prefs.getBoolean(KEY_LYRICS_SINGLE_LINE, false)
         lyricFontSize.value = prefs.getFloat(KEY_LYRICS_FONT_SIZE, 20f)
-        lyricWindowPercent.value = prefs.getFloat(KEY_LYRICS_WINDOW_PERCENT, 85f)
         lyricMaxLines.value = prefs.getFloat(KEY_LYRICS_MAX_LINES, 2f)
         lyricAlpha.value = prefs.getFloat(KEY_LYRICS_ALPHA, 90f)
         lyricHAlign.value = prefs.getInt(KEY_LYRICS_H_ALIGN, 1)
         lyricVAlign.value = prefs.getInt(KEY_LYRICS_V_ALIGN, 1)
+        desktopLyricPosition.value = runCatching {
+            DesktopLyricPosition.fromJson(JSONObject(prefs.getString(KEY_DESKTOP_LYRIC_POSITION, null) ?: "{}"))
+        }.getOrDefault(DesktopLyricPosition())
         lyricColorIndex.value = prefs.getInt(KEY_LYRICS_COLOR_INDEX, 1)
         lyricBackground.value = prefs.getBoolean(KEY_LYRICS_BACKGROUND, false)
         notificationLyrics.value = prefs.getBoolean(KEY_NOTIFICATION_LYRICS, false)
@@ -253,14 +254,35 @@ object MeloraSettings {
 
     fun updateShowDesktopLyrics(value: Boolean) = synchronized(BackupStateLock.monitor) { showDesktopLyrics.value = value; persist { putBoolean(KEY_DESKTOP_LYRICS, value) } }
     fun updateLockLyrics(value: Boolean) = synchronized(BackupStateLock.monitor) { lockLyrics.value = value; persist { putBoolean(KEY_LYRICS_LOCK, value) } }
-    fun updateLyricAnim(value: Boolean) = synchronized(BackupStateLock.monitor) { lyricAnimEnabled.value = value; persist { putBoolean(KEY_LYRICS_ANIM, value) } }
     fun updateSingleLine(value: Boolean) = synchronized(BackupStateLock.monitor) { singleLineLyric.value = value; persist { putBoolean(KEY_LYRICS_SINGLE_LINE, value) } }
     fun updateLyricFontSize(value: Float) = synchronized(BackupStateLock.monitor) { lyricFontSize.value = value; persist { putFloat(KEY_LYRICS_FONT_SIZE, value) } }
-    fun updateLyricWindowPercent(value: Float) = synchronized(BackupStateLock.monitor) { lyricWindowPercent.value = value; persist { putFloat(KEY_LYRICS_WINDOW_PERCENT, value) } }
     fun updateLyricMaxLines(value: Float) = synchronized(BackupStateLock.monitor) { lyricMaxLines.value = value; persist { putFloat(KEY_LYRICS_MAX_LINES, value) } }
     fun updateLyricAlpha(value: Float) = synchronized(BackupStateLock.monitor) { lyricAlpha.value = value; persist { putFloat(KEY_LYRICS_ALPHA, value) } }
-    fun updateLyricHAlign(value: Int) = synchronized(BackupStateLock.monitor) { lyricHAlign.value = value; persist { putInt(KEY_LYRICS_H_ALIGN, value) } }
-    fun updateLyricVAlign(value: Int) = synchronized(BackupStateLock.monitor) { lyricVAlign.value = value; persist { putInt(KEY_LYRICS_V_ALIGN, value) } }
+    fun updateLyricHAlign(value: Int) = synchronized(BackupStateLock.monitor) {
+        if (lyricHAlign.value == value) return@synchronized
+        val position = desktopLyricPosition.value.copy(xFraction = null).normalized()
+        lyricHAlign.value = value
+        desktopLyricPosition.value = position
+        persist {
+            putInt(KEY_LYRICS_H_ALIGN, value)
+            putString(KEY_DESKTOP_LYRIC_POSITION, position.toJson().toString())
+        }
+    }
+    fun updateLyricVAlign(value: Int) = synchronized(BackupStateLock.monitor) {
+        if (lyricVAlign.value == value) return@synchronized
+        val position = desktopLyricPosition.value.copy(yFraction = null).normalized()
+        lyricVAlign.value = value
+        desktopLyricPosition.value = position
+        persist {
+            putInt(KEY_LYRICS_V_ALIGN, value)
+            putString(KEY_DESKTOP_LYRIC_POSITION, position.toJson().toString())
+        }
+    }
+    internal fun updateDesktopLyricPosition(value: DesktopLyricPosition) = synchronized(BackupStateLock.monitor) {
+        val normalized = value.normalized()
+        desktopLyricPosition.value = normalized
+        persist { putString(KEY_DESKTOP_LYRIC_POSITION, normalized.toJson().toString()) }
+    }
     fun updateLyricColorIndex(value: Int) = synchronized(BackupStateLock.monitor) { lyricColorIndex.value = value; persist { putInt(KEY_LYRICS_COLOR_INDEX, value) } }
     fun updateLyricBackground(value: Boolean) = synchronized(BackupStateLock.monitor) { lyricBackground.value = value; persist { putBoolean(KEY_LYRICS_BACKGROUND, value) } }
     fun updateNotificationLyrics(value: Boolean) = synchronized(BackupStateLock.monitor) { notificationLyrics.value = value; persist { putBoolean(KEY_NOTIFICATION_LYRICS, value) } }
@@ -305,7 +327,6 @@ object MeloraSettings {
     internal const val KEY_MAX_CACHE_MB = "playback.maxCacheMb"
     internal const val KEY_DESKTOP_LYRICS = "lyrics.show"
     internal const val KEY_LYRICS_LOCK = "lyrics.lock"
-    internal const val KEY_LYRICS_ANIM = "lyrics.anim"
     internal const val KEY_LYRICS_BACKGROUND = "lyrics.background"
     internal const val KEY_NOTIFICATION_LYRICS = "lyrics.notification"
     private const val LEGACY_BUILTIN_KUWO_UNLOCKED = "source.builtinKuwoUnlocked"
@@ -313,11 +334,11 @@ object MeloraSettings {
     internal const val KEY_SOURCE_ALIAS = "source.alias"
     internal const val KEY_LYRICS_SINGLE_LINE = "lyrics.singleLine"
     internal const val KEY_LYRICS_FONT_SIZE = "lyrics.fontSize"
-    internal const val KEY_LYRICS_WINDOW_PERCENT = "lyrics.windowPercent"
     internal const val KEY_LYRICS_MAX_LINES = "lyrics.maxLines"
     internal const val KEY_LYRICS_ALPHA = "lyrics.alpha"
     internal const val KEY_LYRICS_H_ALIGN = "lyrics.hAlign"
     internal const val KEY_LYRICS_V_ALIGN = "lyrics.vAlign"
+    internal const val KEY_DESKTOP_LYRIC_POSITION = "lyrics.position"
     internal const val KEY_LYRICS_COLOR_INDEX = "lyrics.colorIndex"
     internal const val KEY_LOCAL_MEDIA_STORE = "local.useMediaStore"
     internal const val KEY_LOCAL_FOLDERS = "local.folders"

@@ -41,6 +41,69 @@ class PlayerAppearanceSettingsTest {
     }
 
     @Test
+    fun desktopLyricPositionIsScreenIndependentAndSerializesNullableFractions() {
+        val position = DesktopLyricPosition(0.25f, 0.75f).normalized()
+        val json = position.toJson()
+        assertEquals(0.25, json.getDouble("xFraction"), 0.0)
+        assertEquals(0.75, json.getDouble("yFraction"), 0.0)
+        assertFalse(json.has("xPixels"))
+        assertFalse(json.has("yPixels"))
+        assertEquals(position, DesktopLyricPosition.fromJson(JSONObject(json.toString())))
+
+        val partialJson = DesktopLyricPosition(xFraction = 0.25f).toJson()
+        assertFalse(partialJson.has("yFraction"))
+        assertEquals(1, partialJson.length())
+        assertEquals(DesktopLyricPosition(0f, 1f), DesktopLyricPosition.fromJson(
+            JSONObject().put("xFraction", -2f).put("yFraction", 3f)))
+
+        assertEquals(DesktopLyricPosition(0f, 1f), DesktopLyricPosition(-2f, 3f).normalized())
+
+        val aboveTop = DesktopLyricPosition(0.25f, -0.75f)
+        val aboveTopJson = aboveTop.toJson()
+        assertEquals(-0.75, aboveTopJson.getDouble("yFraction"), 0.0)
+        assertEquals(aboveTop, DesktopLyricPosition.fromJson(JSONObject(aboveTopJson.toString())))
+        assertEquals(DesktopLyricPosition(0.25f, -1f), DesktopLyricPosition(0.25f, -1.25f).normalized())
+        assertEquals(DesktopLyricPosition(0.25f, -1f), DesktopLyricPosition.fromJson(
+            JSONObject().put("xFraction", 0.25f).put("yFraction", -1.25f)))
+
+        assertEquals(DesktopLyricPosition(), DesktopLyricPosition(Float.NaN, Float.POSITIVE_INFINITY).normalized())
+        assertEquals(DesktopLyricPosition(), DesktopLyricPosition.fromJson(
+            JSONObject().put("xFraction", "NaN").put("yFraction", "Infinity")))
+    }
+
+    @Test
+    fun desktopLyricPositionBackupIsNestedAndOldBackupKeepsCurrentPosition() = withAppearanceSettings {
+        val selected = DesktopLyricPosition(0.2f, 0.8f)
+        MeloraSettings.updateDesktopLyricPosition(selected)
+        val exported = BackupSettings.collect()
+        assertEquals(0.2, exported.getJSONObject("desktopLyricPosition").getDouble("xFraction"), 1e-6)
+        assertEquals(0.8, exported.getJSONObject("desktopLyricPosition").getDouble("yFraction"), 1e-6)
+
+        BackupSettings.apply(BackupSettings.prepare(JSONObject().put("lyricFontSize", 20f), emptySet(), emptySet()).first)
+        assertEquals(selected, MeloraSettings.desktopLyricPosition.value)
+    }
+
+    @Test
+    fun alignmentChangesResetOnlyTheirPositionAxisAndOnlyWhenChanged() = withAppearanceSettings {
+        val selected = DesktopLyricPosition(0.3f, 0.7f)
+        MeloraSettings.lyricHAlign.value = 1
+        MeloraSettings.lyricVAlign.value = 1
+        MeloraSettings.updateDesktopLyricPosition(selected)
+
+        MeloraSettings.updateLyricHAlign(1)
+        assertEquals(selected, MeloraSettings.desktopLyricPosition.value)
+        MeloraSettings.updateLyricHAlign(2)
+        assertEquals(DesktopLyricPosition(null, 0.7f), MeloraSettings.desktopLyricPosition.value)
+        MeloraSettings.updateLyricHAlign(2)
+        assertEquals(DesktopLyricPosition(null, 0.7f), MeloraSettings.desktopLyricPosition.value)
+
+        MeloraSettings.updateLyricVAlign(1)
+        assertEquals(DesktopLyricPosition(null, 0.7f), MeloraSettings.desktopLyricPosition.value)
+        MeloraSettings.updateLyricVAlign(0)
+        assertEquals(DesktopLyricPosition(), MeloraSettings.desktopLyricPosition.value)
+    }
+
+    @Test
     fun coverStyleRestoreParsesAllValuesAndUsesFallback() {
         assertEquals(PlayerCoverStyle.Default, PlayerCoverStyle.restore("default"))
         assertEquals(PlayerCoverStyle.Circle, PlayerCoverStyle.restore("circle"))
@@ -139,6 +202,34 @@ class PlayerAppearanceSettingsTest {
     }
 
     @Test
+    fun legacyDesktopLyricAnimationBackupFieldIsIgnoredWithoutAffectingOtherSettings() = withAppearanceSettings {
+        val prepared = BackupSettings.prepare(
+            JSONObject().put("lyricAnim", false).put("lyricFontSize", 24f),
+            emptySet(),
+            emptySet(),
+        ).first
+
+        assertFalse(prepared.has("lyricAnim"))
+        BackupSettings.apply(prepared)
+        assertEquals(24f, MeloraSettings.lyricFontSize.value, 0f)
+        assertFalse(BackupSettings.collect().has("lyricAnim"))
+    }
+
+    @Test
+    fun legacyDesktopLyricWindowPercentBackupFieldIsIgnoredWhileSupportedSettingsRestore() = withAppearanceSettings {
+        val prepared = BackupSettings.prepare(
+            JSONObject().put("lyricWindowPercent", "not-a-number").put("lyricFontSize", 24f),
+            emptySet(),
+            emptySet(),
+        ).first
+
+        assertFalse(prepared.has("lyricWindowPercent"))
+        BackupSettings.apply(prepared)
+        assertEquals(24f, MeloraSettings.lyricFontSize.value, 0f)
+        assertFalse(BackupSettings.collect().has("lyricWindowPercent"))
+    }
+
+    @Test
     fun invalidPlayerLyricsBackupTypeIsRejectedBeforeApply() = withAppearanceSettings {
         val selected = LyricsUiConfig(24f, isBold = true)
         MeloraSettings.updatePlayerLyrics(selected)
@@ -167,6 +258,9 @@ class PlayerAppearanceSettingsTest {
     private inline fun withAppearanceSettings(block: () -> Unit) {
         val originalPlayerLyrics = MeloraSettings.playerLyrics.value
         val originalDesktopSize = MeloraSettings.lyricFontSize.value
+        val originalHAlign = MeloraSettings.lyricHAlign.value
+        val originalVAlign = MeloraSettings.lyricVAlign.value
+        val originalDesktopLyricPosition = MeloraSettings.desktopLyricPosition.value
         val originalHideStatusBar = MeloraSettings.hideStatusBar.value
         val originalBlurTopBar = MeloraSettings.blurTopBar.value
         val originalPlayerThemeMode = MeloraSettings.playerThemeMode.value
@@ -178,6 +272,9 @@ class PlayerAppearanceSettingsTest {
         } finally {
             MeloraSettings.playerLyrics.value = originalPlayerLyrics
             MeloraSettings.lyricFontSize.value = originalDesktopSize
+            MeloraSettings.lyricHAlign.value = originalHAlign
+            MeloraSettings.lyricVAlign.value = originalVAlign
+            MeloraSettings.desktopLyricPosition.value = originalDesktopLyricPosition
             MeloraSettings.hideStatusBar.value = originalHideStatusBar
             MeloraSettings.blurTopBar.value = originalBlurTopBar
             MeloraSettings.playerThemeMode.value = originalPlayerThemeMode

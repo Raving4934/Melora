@@ -67,14 +67,14 @@ internal object BackupSettings {
         field("localSortAscending", MeloraSettings.KEY_LOCAL_SORT_ASCENDING, MeloraSettings.localSortAscending, ::backupBoolean),
         field("showDesktopLyrics", MeloraSettings.KEY_DESKTOP_LYRICS, MeloraSettings.showDesktopLyrics, ::backupBoolean),
         field("lockLyrics", MeloraSettings.KEY_LYRICS_LOCK, MeloraSettings.lockLyrics, ::backupBoolean),
-        field("lyricAnim", MeloraSettings.KEY_LYRICS_ANIM, MeloraSettings.lyricAnimEnabled, ::backupBoolean),
         field("singleLineLyric", MeloraSettings.KEY_LYRICS_SINGLE_LINE, MeloraSettings.singleLineLyric, ::backupBoolean),
         field("lyricFontSize", MeloraSettings.KEY_LYRICS_FONT_SIZE, MeloraSettings.lyricFontSize, { backupNumber("lyricFontSize", it).toFloat() }),
-        field("lyricWindowPercent", MeloraSettings.KEY_LYRICS_WINDOW_PERCENT, MeloraSettings.lyricWindowPercent, { backupNumber("lyricWindowPercent", it).toFloat() }),
         field("lyricMaxLines", MeloraSettings.KEY_LYRICS_MAX_LINES, MeloraSettings.lyricMaxLines, { backupNumber("lyricMaxLines", it).toFloat() }),
         field("lyricAlpha", MeloraSettings.KEY_LYRICS_ALPHA, MeloraSettings.lyricAlpha, { backupNumber("lyricAlpha", it).toFloat() }),
         field("lyricHAlign", MeloraSettings.KEY_LYRICS_H_ALIGN, MeloraSettings.lyricHAlign, { backupNumber("lyricHAlign", it).toInt() }),
         field("lyricVAlign", MeloraSettings.KEY_LYRICS_V_ALIGN, MeloraSettings.lyricVAlign, { backupNumber("lyricVAlign", it).toInt() }),
+        field("desktopLyricPosition", MeloraSettings.KEY_DESKTOP_LYRIC_POSITION, MeloraSettings.desktopLyricPosition,
+            { DesktopLyricPosition.fromJson(it as? JSONObject ?: error("桌面歌词位置无效")) }, DesktopLyricPosition::toJson),
         field("lyricColorIndex", MeloraSettings.KEY_LYRICS_COLOR_INDEX, MeloraSettings.lyricColorIndex, { backupNumber("lyricColorIndex", it).toInt() }),
         field("playlistTagId", MeloraSettings.KEY_PLAYLIST_TAG_ID, MeloraSettings.playlistTagId, ::backupString),
         field("playlistTagName", MeloraSettings.KEY_PLAYLIST_TAG_NAME, MeloraSettings.playlistTagName, ::backupString),
@@ -152,14 +152,14 @@ private fun backupNumber(name: String, value: Any): Number {
         "downloadConcurrentTasks" -> 1.0..5.0
         "maxCacheMb" -> 0.0..1_048_576.0
         "lyricFontSize" -> 8.0..100.0
-        "lyricWindowPercent", "lyricAlpha" -> 0.0..100.0
+        "lyricAlpha" -> 0.0..100.0
         "lyricMaxLines" -> 1.0..20.0
         "lyricHAlign", "lyricVAlign" -> 0.0..2.0
         "lyricColorIndex" -> 0.0..32.0
         else -> error("未知数值设置$name")
     }
     require(number.isFinite() && number in range) { "$name 数值超出范围" }
-    if (name !in setOf("lyricFontSize", "lyricWindowPercent", "lyricMaxLines", "lyricAlpha")) {
+    if (name !in setOf("lyricFontSize", "lyricMaxLines", "lyricAlpha")) {
         require(number == number.toInt().toDouble()) { "$name 必须为整数" }
     }
     return number

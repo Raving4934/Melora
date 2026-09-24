@@ -95,6 +95,73 @@ class BackupRoundTripTest {
     }
 
     @Test
+    fun missingDesktopLyricPositionPreferenceRestoresDefaultForLegacyInstall() {
+        MeloraSettings.updateDesktopLyricPosition(DesktopLyricPosition(0.35f, 0.65f))
+        val prefs = context.getSharedPreferences(MeloraSettings.PREFS, Context.MODE_PRIVATE)
+        assertTrue(prefs.edit().remove(MeloraSettings.KEY_DESKTOP_LYRIC_POSITION).commit())
+
+        MeloraSettings.reloadAfterRestore()
+
+        assertEquals(DesktopLyricPosition(), MeloraSettings.desktopLyricPosition.value)
+    }
+
+    @Test
+    fun desktopLyricsPersistReloadAndRestoreThroughBackupImport() = runBlocking<Unit> {
+        MeloraSettings.updateShowDesktopLyrics(true)
+        MeloraSettings.updateLockLyrics(true)
+        MeloraSettings.updateSingleLine(true)
+        MeloraSettings.updateLyricFontSize(24.5f)
+        MeloraSettings.updateLyricMaxLines(4f)
+        MeloraSettings.updateLyricAlpha(63f)
+        MeloraSettings.updateLyricHAlign(2)
+        MeloraSettings.updateLyricVAlign(0)
+        val selectedPosition = DesktopLyricPosition(0.24f, -0.24f)
+        MeloraSettings.updateDesktopLyricPosition(selectedPosition)
+        assertEquals(-0.24f, MeloraSettings.desktopLyricPosition.value.yFraction!!, 0f)
+        MeloraSettings.updateLyricColorIndex(7)
+        MeloraSettings.updateLyricBackground(true)
+        MeloraSettings.updateNotificationLyrics(true)
+        val expected = desktopLyricSnapshot()
+
+        val prefs = context.getSharedPreferences(MeloraSettings.PREFS, Context.MODE_PRIVATE)
+        val savedPosition = JSONObject(prefs.getString(MeloraSettings.KEY_DESKTOP_LYRIC_POSITION, "{}")!!)
+        assertEquals(-0.24, savedPosition.getDouble("yFraction"), 1e-6)
+        assertTrue(prefs.edit().putBoolean("lyrics.anim", false).commit())
+        MeloraSettings.showDesktopLyrics.value = false
+        MeloraSettings.lockLyrics.value = false
+        MeloraSettings.singleLineLyric.value = false
+        MeloraSettings.lyricFontSize.value = 20f
+        MeloraSettings.lyricMaxLines.value = 2f
+        MeloraSettings.lyricAlpha.value = 90f
+        MeloraSettings.lyricHAlign.value = 1
+        MeloraSettings.lyricVAlign.value = 1
+        MeloraSettings.desktopLyricPosition.value = DesktopLyricPosition()
+        MeloraSettings.lyricColorIndex.value = 1
+        MeloraSettings.lyricBackground.value = false
+        MeloraSettings.notificationLyrics.value = false
+        MeloraSettings.reloadAfterRestore()
+        assertEquals(expected, desktopLyricSnapshot())
+
+        val target = document("desktop-lyrics-round-trip.json")
+        assertTrue(BackupManager.export(context, target).isSuccess)
+        MeloraSettings.updateShowDesktopLyrics(false)
+        MeloraSettings.updateLockLyrics(false)
+        MeloraSettings.updateSingleLine(false)
+        MeloraSettings.updateLyricFontSize(18f)
+        MeloraSettings.updateLyricMaxLines(2f)
+        MeloraSettings.updateLyricAlpha(82f)
+        MeloraSettings.updateLyricHAlign(0)
+        MeloraSettings.updateLyricVAlign(2)
+        MeloraSettings.updateDesktopLyricPosition(DesktopLyricPosition(0.9f, 0.1f))
+        MeloraSettings.updateLyricColorIndex(3)
+        MeloraSettings.updateLyricBackground(false)
+        MeloraSettings.updateNotificationLyrics(false)
+
+        BackupManager.import(context, target).getOrThrow()
+        assertEquals(expected, desktopLyricSnapshot())
+    }
+
+    @Test
     fun realFileExportImportRoundTripRestoresAllPortableDataAndKeepsOtherSources() = runBlocking<Unit> {
         MeloraSettings.updatePlayerLyrics(LyricsUiConfig(26f, true, true, true))
         MeloraSettings.updatePlaylistTag("tag-id", "测试分类")
@@ -304,6 +371,36 @@ class BackupRoundTripTest {
             .associate { it.relativeTo(retained).path to it.readBytes().toList() })
     }
 
+    private data class DesktopLyricSnapshot(
+        val enabled: Boolean,
+        val locked: Boolean,
+        val singleLine: Boolean,
+        val fontSize: Float,
+        val maxLines: Float,
+        val alpha: Float,
+        val horizontalAlignment: Int,
+        val verticalAlignment: Int,
+        val position: DesktopLyricPosition,
+        val colorIndex: Int,
+        val background: Boolean,
+        val notificationLyrics: Boolean,
+    )
+
+    private fun desktopLyricSnapshot() = DesktopLyricSnapshot(
+        enabled = MeloraSettings.showDesktopLyrics.value,
+        locked = MeloraSettings.lockLyrics.value,
+        singleLine = MeloraSettings.singleLineLyric.value,
+        fontSize = MeloraSettings.lyricFontSize.value,
+        maxLines = MeloraSettings.lyricMaxLines.value,
+        alpha = MeloraSettings.lyricAlpha.value,
+        horizontalAlignment = MeloraSettings.lyricHAlign.value,
+        verticalAlignment = MeloraSettings.lyricVAlign.value,
+        position = MeloraSettings.desktopLyricPosition.value,
+        colorIndex = MeloraSettings.lyricColorIndex.value,
+        background = MeloraSettings.lyricBackground.value,
+        notificationLyrics = MeloraSettings.notificationLyrics.value,
+    )
+
     private fun assertBlockedRecovery(corrupt: (File) -> Unit) {
         seedExistingData()
         BackupRestoreTransaction.prepare(context)
@@ -333,13 +430,16 @@ class BackupRoundTripTest {
         File(uri.path!!).writeText(JSONObject().put("settings", JSONObject()
             .put("followSystemTheme", "FaLsE").put("playQuality", "flac")
             .put("unknownObjectSetting", JSONObject()).put("unknownArraySetting", JSONArray())
+            .put("lyricWindowPercent", "not-a-number").put("lyricFontSize", 24f)
             .put("showExitButton", false).put("dataChannel", "app")
             .put("localFolders", JSONArray().put("content://missing/tree/music"))
             .put("downloadPath", "content://missing/tree/downloads")).toString())
         val result = BackupManager.import(context, uri).getOrThrow()
         assertEquals(ThemeMode.Light, MeloraSettings.themeMode.value)
         assertEquals("flac", MeloraSettings.playQualityWifi.value)
+        assertEquals(24f, MeloraSettings.lyricFontSize.value, 0f)
         assertFalse(MeloraSettings.showExitButton.value)
+        assertFalse(BackupSettings.collect().has("lyricWindowPercent"))
         assertFalse(BackupSettings.collect().has("dataChannel"))
         assertTrue(MeloraSettings.localFolders.value.isEmpty())
         assertEquals(MeloraSettings.DEFAULT_DOWNLOAD_PATH, MeloraSettings.downloadPath.value)

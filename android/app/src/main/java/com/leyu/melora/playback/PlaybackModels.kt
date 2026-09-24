@@ -105,6 +105,35 @@ data class LyricsUiConfig(
     }
 }
 
+/** 横向保存对齐锚点、纵向保存窗口顶部相对屏幕的坐标（可为负）；空轴使用对齐默认位置。 */
+internal data class DesktopLyricPosition(
+    val xFraction: Float? = null,
+    val yFraction: Float? = null,
+) {
+    internal fun normalized() = copy(
+        xFraction = xFraction?.takeIf { it.isFinite() }?.coerceIn(0f, 1f),
+        yFraction = yFraction?.takeIf { it.isFinite() }?.coerceIn(-1f, 1f),
+    )
+
+    internal fun toJson(): JSONObject {
+        val position = normalized()
+        return JSONObject().apply {
+            position.xFraction?.let { put("xFraction", it) }
+            position.yFraction?.let { put("yFraction", it) }
+        }
+    }
+
+    companion object {
+        internal fun fromJson(value: JSONObject): DesktopLyricPosition {
+            fun fraction(key: String): Float? {
+                val number = (value.opt(key) as? Number)?.toDouble() ?: return null
+                return number.takeIf { it.isFinite() }?.coerceIn(-1.0, 1.0)?.toFloat()
+            }
+            return DesktopLyricPosition(fraction("xFraction"), fraction("yFraction")).normalized()
+        }
+    }
+}
+
 /** 所有格式共用一份时序模型；words 为空意味着只有行级时间，不能假定逐词进度。 */
 data class LyricWord(val text: String, val startMs: Long, val endMs: Long)
 

@@ -1,8 +1,8 @@
 package com.leyu.melora.ui.settings
 
 import android.content.Intent
+import com.leyu.melora.ui.common.rememberDesktopLyricsToggle
 import android.os.Build
-import android.provider.Settings as AndroidSettings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -66,7 +66,6 @@ import com.leyu.melora.playback.BackupManager
 import com.leyu.melora.playback.CacheManager
 import com.leyu.melora.playback.CacheStats
 import com.leyu.melora.playback.formatCacheBytes
-import com.leyu.melora.playback.DesktopLyricService
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.PlayerCoverStyle
@@ -74,7 +73,6 @@ import com.leyu.melora.ui.common.runCatchingCancellable
 import com.leyu.melora.ui.common.MeloraAboutMark
 import com.leyu.melora.ui.theme.MeloraAppearance
 import kotlinx.coroutines.launch
-import androidx.core.net.toUri
 
 // 1. 二级菜单：基本设置
 @OptIn(ExperimentalMaterial3Api::class)
@@ -427,15 +425,12 @@ internal fun PlaybackSettingsSubPage(onBack: () -> Unit) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun DesktopLyricsSubPage(onBack: () -> Unit) {
-    val context = LocalContext.current
     val showDesktopLyrics by MeloraSettings.showDesktopLyrics.collectAsStateWithLifecycle()
     val lockLyrics by MeloraSettings.lockLyrics.collectAsStateWithLifecycle()
-    val lyricAnimEnabled by MeloraSettings.lyricAnimEnabled.collectAsStateWithLifecycle()
     val singleLineLyric by MeloraSettings.singleLineLyric.collectAsStateWithLifecycle()
     val lyricBackground by MeloraSettings.lyricBackground.collectAsStateWithLifecycle()
 
     val lyricFontSize by MeloraSettings.lyricFontSize.collectAsStateWithLifecycle()
-    val windowPercent by MeloraSettings.lyricWindowPercent.collectAsStateWithLifecycle()
     val maxLines by MeloraSettings.lyricMaxLines.collectAsStateWithLifecycle()
     val lyricAlpha by MeloraSettings.lyricAlpha.collectAsStateWithLifecycle()
 
@@ -444,43 +439,7 @@ internal fun DesktopLyricsSubPage(onBack: () -> Unit) {
     val selectedColorIndex by MeloraSettings.lyricColorIndex.collectAsStateWithLifecycle()
 
     val themeColors = listOf(Color.White, Color(0xFF38BDF8), Color(0xFF4ADE80), Color(0xFFFBBF24), Color(0xFFFB7185))
-    val overlayPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult(),
-    ) {
-        if (MeloraSettings.showDesktopLyrics.value && AndroidSettings.canDrawOverlays(context)) {
-            DesktopLyricService.start(context)
-        } else if (MeloraSettings.showDesktopLyrics.value) {
-            MeloraSettings.updateShowDesktopLyrics(false)
-            PlaybackController.postMessage(context, "未获得悬浮窗权限，桌面歌词未开启")
-        }
-    }
-
-    fun toggleDesktopLyrics(enabled: Boolean) {
-        MeloraSettings.updateShowDesktopLyrics(enabled)
-        if (enabled) {
-            if (AndroidSettings.canDrawOverlays(context)) {
-                DesktopLyricService.start(context)
-            } else {
-                runCatchingCancellable {
-                    overlayPermissionLauncher.launch(
-                        Intent(
-                            AndroidSettings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            "package:${context.packageName}".toUri(),
-                        ),
-                    )
-                }.onFailure {
-                    MeloraSettings.updateShowDesktopLyrics(false)
-                    PlaybackController.postMessage(context, "无法打开悬浮窗权限设置")
-                }
-            }
-        } else {
-            DesktopLyricService.stop(context)
-        }
-    }
-
-    fun refreshOverlay() {
-        if (showDesktopLyrics) DesktopLyricService.refresh(context)
-    }
+    val toggleDesktopLyrics = rememberDesktopLyricsToggle()
 
     SettingsSubPageScaffold(title = "桌面歌词", onBack = onBack) {
         item {
@@ -493,25 +452,16 @@ internal fun DesktopLyricsSubPage(onBack: () -> Unit) {
 
                 SwitchItem("锁定歌词位置", "锁定后不可拖拽穿透触摸", lockLyrics) {
                     MeloraSettings.updateLockLyrics(it)
-                    refreshOverlay()
-                }
-                SettingsDivider(Modifier.padding(horizontal = 14.dp))
-
-                SwitchItem("显示歌词切换动画", "行与行平滑淡入淡出", lyricAnimEnabled) {
-                    MeloraSettings.updateLyricAnim(it)
-                    refreshOverlay()
                 }
                 SettingsDivider(Modifier.padding(horizontal = 14.dp))
 
                 SwitchItem("使用单行歌词", "极简模式只展示当前唱段", singleLineLyric) {
                     MeloraSettings.updateSingleLine(it)
-                    refreshOverlay()
                 }
                 SettingsDivider(Modifier.padding(horizontal = 14.dp))
 
-                SwitchItem("显示歌词底板", "开启为浅色磨砂胶囊；关闭为纯净文字", lyricBackground) {
+                SwitchItem("显示歌词底板", "开启为浅色半透明底板；关闭为纯净文字", lyricBackground) {
                     MeloraSettings.updateLyricBackground(it)
-                    refreshOverlay()
                 }
             }
         }
@@ -533,7 +483,6 @@ internal fun DesktopLyricsSubPage(onBack: () -> Unit) {
                                 .background(color)
                                 .clickable {
                                     MeloraSettings.updateLyricColorIndex(index)
-                                    refreshOverlay()
                                 },
                             contentAlignment = Alignment.Center,
                         ) {
@@ -559,19 +508,12 @@ internal fun DesktopLyricsSubPage(onBack: () -> Unit) {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     SettingSliderRow("歌词字体大小", "${lyricFontSize.toInt()} sp", lyricFontSize, 12f..36f) {
                         MeloraSettings.updateLyricFontSize(it)
-                        refreshOverlay()
-                    }
-                    SettingSliderRow("窗口宽度占比", "${windowPercent.toInt()} %", windowPercent, 50f..100f) {
-                        MeloraSettings.updateLyricWindowPercent(it)
-                        refreshOverlay()
                     }
                     SettingSliderRow("最大行数", "${maxLines.toInt()} 行", maxLines, 1f..8f, steps = 6) {
                         MeloraSettings.updateLyricMaxLines(it)
-                        refreshOverlay()
                     }
                     SettingSliderRow("歌词不透明度", "${lyricAlpha.toInt()} %", lyricAlpha, 20f..100f) {
                         MeloraSettings.updateLyricAlpha(it)
-                        refreshOverlay()
                     }
                 }
             }
@@ -591,7 +533,6 @@ internal fun DesktopLyricsSubPage(onBack: () -> Unit) {
                         steps = 1,
                     ) {
                         MeloraSettings.updateLyricHAlign(it.toInt().coerceIn(0, 2))
-                        refreshOverlay()
                     }
                     SettingSliderRow(
                         title = "歌词垂直对齐",
@@ -601,7 +542,6 @@ internal fun DesktopLyricsSubPage(onBack: () -> Unit) {
                         steps = 1,
                     ) {
                         MeloraSettings.updateLyricVAlign(it.toInt().coerceIn(0, 2))
-                        refreshOverlay()
                     }
                 }
             }
