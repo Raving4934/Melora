@@ -19,6 +19,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.longClick
@@ -328,6 +329,46 @@ class ImmersivePlayerInstrumentedTest {
             compose.onNodeWithContentDescription(label).performTouchInput { click(center) }
         }
         assertEquals(listOf("previous", "toggle", "next", "exit"), actions)
+    }
+
+    @Test fun desktopLyricShortcutTogglesWithoutChangingToolbarGeometry() {
+        val enabled = mutableStateOf(false)
+        val requests = mutableListOf<Boolean>()
+        compose.setContent {
+            PlayerAppearanceProvider(dark = true) {
+                LyricsToolsPanel(true, LyricsUiConfig(), {}, {}, enabled.value) {
+                    requests += it
+                    enabled.value = it
+                }
+            }
+        }
+        val off = compose.onNodeWithContentDescription("开启桌面歌词")
+        off.assertIsDisplayed().assertIsNotSelected()
+        val before = off.fetchSemanticsNode().boundsInRoot
+        off.performClick()
+        val on = compose.onNodeWithContentDescription("关闭桌面歌词")
+        on.assertIsDisplayed().assertIsSelected()
+        assertEquals(before, on.fetchSemanticsNode().boundsInRoot)
+        on.performClick()
+        compose.onNodeWithContentDescription("开启桌面歌词").assertIsNotSelected()
+        compose.runOnIdle { assertEquals(listOf(true, false), requests) }
+    }
+
+    @Test fun desktopLyricShortcutReflectsSharedSettingsWithoutMovingPlayerContent() {
+        val original = MeloraSettings.showDesktopLyrics.value
+        try {
+            MeloraSettings.showDesktopLyrics.value = false
+            showPlayer()
+            compose.onNodeWithTag("player-pages").performTouchInput { swipeLeft() }
+            val before = compose.onNodeWithTag("player-pages").fetchSemanticsNode().boundsInRoot
+            compose.onNodeWithContentDescription("展开歌词设置").performClick()
+            compose.onNodeWithContentDescription("开启桌面歌词").assertIsDisplayed().assertIsNotSelected()
+            compose.runOnIdle { MeloraSettings.showDesktopLyrics.value = true }
+            compose.onNodeWithContentDescription("关闭桌面歌词").assertIsSelected()
+            assertEquals(before, compose.onNodeWithTag("player-pages").fetchSemanticsNode().boundsInRoot)
+            compose.onNodeWithContentDescription("收起歌词设置").performClick()
+            compose.onNodeWithContentDescription("关闭桌面歌词").assertDoesNotExist()
+        } finally { MeloraSettings.showDesktopLyrics.value = original }
     }
 
     @Test fun lyricFontPreferenceSurvivesPlayerDisposalAndKeepsOtherOptions() {

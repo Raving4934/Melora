@@ -122,6 +122,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.PictureInPictureAlt
+import com.leyu.melora.ui.common.rememberDesktopLyricsToggle
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.outlined.Mic
@@ -1330,6 +1332,8 @@ private fun LyricsSettingsTools(
     onOpenSource: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val desktopLyricsEnabled by MeloraSettings.showDesktopLyrics.collectAsStateWithLifecycle()
+    val onDesktopLyricsChanged = rememberDesktopLyricsToggle()
     var expanded by remember { mutableStateOf(false) }
     val accent = FullPlayerSheetPrimaryBlue
     val chipInteraction = remember { MutableInteractionSource() }
@@ -1381,17 +1385,19 @@ private fun LyricsSettingsTools(
         Spacer(Modifier.width(6.dp))
         // 外层由起点揭示；横向滚动不越界
         Box(Modifier.weight(1f).height(36.dp), contentAlignment = Alignment.CenterStart) {
-            LyricsToolsPanel(expanded, config, onConfigChange, onOpenSource)
+            LyricsToolsPanel(expanded, config, onConfigChange, onOpenSource, desktopLyricsEnabled, onDesktopLyricsChanged)
         }
     }
 }
 
 @Composable
-private fun LyricsToolsPanel(
+internal fun LyricsToolsPanel(
     expanded: Boolean,
     config: LyricsUiConfig,
     onConfigChange: (LyricsUiConfig) -> Unit,
     onOpenSource: () -> Unit,
+    desktopLyricsEnabled: Boolean,
+    onDesktopLyricsChanged: (Boolean) -> Unit,
 ) {
     AnimatedVisibility(
         visible = expanded,
@@ -1402,6 +1408,11 @@ private fun LyricsToolsPanel(
             Modifier.height(36.dp).horizontalScroll(rememberScrollState()),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            LyricsToolButton(
+                Icons.Outlined.PictureInPictureAlt,
+                if (desktopLyricsEnabled) "关闭桌面歌词" else "开启桌面歌词",
+                isSelected = desktopLyricsEnabled,
+            ) { onDesktopLyricsChanged(!desktopLyricsEnabled) }
             LyricsToolButton(Icons.Outlined.MusicNote, "歌词来源与写入", onClick = onOpenSource)
             LyricsToolDivider()
             LyricsToolButton(
