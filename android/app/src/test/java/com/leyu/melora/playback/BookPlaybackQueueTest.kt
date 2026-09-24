@@ -189,6 +189,47 @@ class BookPlaybackQueueTest {
         manager.stop()
     }
 
+    @Test fun reconnectOnlyRecognizesCompleteSingleAlbumBookQueues() {
+        assertNull(Queue().player.bookAlbumId(TrackRegistry::get))
+        val chapters = Queue(chapter(1), chapter(2))
+        assertEquals("fixture", chapters.player.bookAlbumId(TrackRegistry::get))
+        assertNull(chapters.player.bookAlbumId { null })
+        val otherAlbum = Queue(chapter(1), otherBook(chapter(2)))
+        assertNull(otherAlbum.player.bookAlbumId(TrackRegistry::get))
+        val music = OnlineSong(JSONObject(chapter(2).raw.toString()).put("isBookChapter", false))
+        assertNull(Queue(chapter(1), music).player.bookAlbumId(TrackRegistry::get))
+    }
+
+    @Test fun persistedMusicModesNeverMakeBookChaptersRepeatOrShuffle() = runBlocking {
+        for (mode in PlayMode.entries) {
+            val queue = Queue(chapter(1))
+            queue.player.applyPlayMode(mode)
+            val manager = manager(queue, this) { _, _ -> error("尾章未到，不应加载") }
+            manager.start("fixture")
+            assertEquals(Player.REPEAT_MODE_OFF, queue.repeat)
+            assertFalse(queue.shuffle)
+            manager.stop()
+            assertEquals(mode.repeat, queue.repeat)
+            assertEquals(mode.shuffled, queue.shuffle)
+            manager.stop()
+            assertEquals(mode.repeat, queue.repeat)
+        }
+    }
+
+    @Test fun restoringMusicPreferenceDuringBookOnlyChangesTheModeUsedAfterLeavingIt() = runBlocking {
+        val queue = Queue(chapter(1))
+        val manager = manager(queue, this) { _, _ -> error("尾章未到，不应加载") }
+        manager.applyMusicMode(PlayMode.Single)
+        assertEquals(Player.REPEAT_MODE_ONE, queue.repeat)
+        manager.start("fixture")
+        manager.applyMusicMode(PlayMode.Shuffle)
+        assertEquals(Player.REPEAT_MODE_OFF, queue.repeat)
+        assertFalse(queue.shuffle)
+        manager.stop()
+        assertEquals(Player.REPEAT_MODE_ALL, queue.repeat)
+        assertTrue(queue.shuffle)
+    }
+
     @Test fun switchingBooksDiscardsPreviousRequestAndRestoresMusicMode() = runBlocking {
         val oldStarted = CompletableDeferred<Unit>()
         val oldResponse = CompletableDeferred<KwBookApi.BookChapters>()

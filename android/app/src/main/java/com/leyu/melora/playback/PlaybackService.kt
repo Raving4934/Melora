@@ -99,7 +99,7 @@ class PlaybackService : MediaSessionService() {
             )
             .setHandleAudioBecomingNoisy(true)
             .build()
-        player.repeatMode = androidx.media3.common.Player.REPEAT_MODE_ALL
+        player.applyPlayMode(MeloraSettings.musicPlayMode.value)
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .setAudioOffloadPreferences(
                 TrackSelectionParameters.AudioOffloadPreferences.Builder()

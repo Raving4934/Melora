@@ -19,6 +19,7 @@ class PlayerAppearanceSettingsTest {
         assertFalse(MeloraSettings.keepScreenAwake.value)
         assertTrue(MeloraSettings.miniLyricsEnabled.value)
         assertEquals(PlayerCoverStyle.Default, MeloraSettings.playerCoverStyle.value)
+        assertEquals(PlayMode.List, MeloraSettings.musicPlayMode.value)
     }
 
     @Test
@@ -29,6 +30,7 @@ class PlayerAppearanceSettingsTest {
         MeloraSettings.keepScreenAwake.value = true
         MeloraSettings.miniLyricsEnabled.value = false
         MeloraSettings.playerCoverStyle.value = PlayerCoverStyle.Vinyl
+        MeloraSettings.updateMusicPlayMode(PlayMode.Shuffle)
 
         val settings = BackupSettings.collect()
 
@@ -38,6 +40,7 @@ class PlayerAppearanceSettingsTest {
         assertTrue(settings.getBoolean("keepScreenAwake"))
         assertFalse(settings.getBoolean("miniLyricsEnabled"))
         assertEquals("vinyl", settings.getString("playerCoverStyle"))
+        assertEquals("shuffle", settings.getString("musicPlayMode"))
     }
 
     @Test
@@ -113,6 +116,32 @@ class PlayerAppearanceSettingsTest {
     }
 
     @Test
+    fun musicPlayModeBackupRoundTripsEveryModeAndUnknownValuesKeepCurrentMode() = withAppearanceSettings {
+        listOf(PlayMode.List, PlayMode.Single, PlayMode.Shuffle).forEach { selected ->
+            MeloraSettings.updateMusicPlayMode(selected)
+            val exported = BackupSettings.collect()
+            assertEquals(selected.storageValue, exported.getString("musicPlayMode"))
+
+            MeloraSettings.updateMusicPlayMode(PlayMode.List)
+            BackupSettings.apply(BackupSettings.prepare(exported, emptySet(), emptySet()).first)
+            assertEquals(selected, MeloraSettings.musicPlayMode.value)
+        }
+
+        MeloraSettings.updateMusicPlayMode(PlayMode.Shuffle)
+        val oldBackup = BackupSettings.prepare(JSONObject(), emptySet(), emptySet()).first
+        assertFalse(oldBackup.has("musicPlayMode"))
+        BackupSettings.apply(oldBackup)
+        assertEquals(PlayMode.Shuffle, MeloraSettings.musicPlayMode.value)
+
+        val unknownMode = BackupSettings.prepare(
+            JSONObject().put("musicPlayMode", "legacy-random"), emptySet(), emptySet(),
+        ).first
+        assertEquals("shuffle", unknownMode.getString("musicPlayMode"))
+        BackupSettings.apply(unknownMode)
+        assertEquals(PlayMode.Shuffle, MeloraSettings.musicPlayMode.value)
+    }
+
+    @Test
     fun missingAndInvalidImportValuesKeepCurrentSelections() = withAppearanceSettings {
         MeloraSettings.hideStatusBar.value = true
         MeloraSettings.blurTopBar.value = true
@@ -120,6 +149,7 @@ class PlayerAppearanceSettingsTest {
         MeloraSettings.keepScreenAwake.value = true
         MeloraSettings.miniLyricsEnabled.value = false
         MeloraSettings.playerCoverStyle.value = PlayerCoverStyle.Circle
+        MeloraSettings.updateMusicPlayMode(PlayMode.Single)
 
         BackupSettings.apply(BackupSettings.prepare(JSONObject(), emptySet(), emptySet()).first)
         assertAppearance(
@@ -130,13 +160,16 @@ class PlayerAppearanceSettingsTest {
             miniLyricsEnabled = false,
             playerCoverStyle = PlayerCoverStyle.Circle,
         )
+        assertEquals(PlayMode.Single, MeloraSettings.musicPlayMode.value)
 
         BackupSettings.apply(BackupSettings.prepare(
             JSONObject()
                 .put("playerThemeMode", "sepia")
-                .put("playerCoverStyle", "square"), emptySet(), emptySet()).first)
+                .put("playerCoverStyle", "square")
+                .put("musicPlayMode", "unexpected"), emptySet(), emptySet()).first)
         assertEquals(ThemeMode.Light, MeloraSettings.playerThemeMode.value)
         assertEquals(PlayerCoverStyle.Circle, MeloraSettings.playerCoverStyle.value)
+        assertEquals(PlayMode.Single, MeloraSettings.musicPlayMode.value)
     }
 
     @Test
@@ -147,6 +180,7 @@ class PlayerAppearanceSettingsTest {
         MeloraSettings.keepScreenAwake.value = true
         MeloraSettings.miniLyricsEnabled.value = false
         MeloraSettings.playerCoverStyle.value = PlayerCoverStyle.Vinyl
+        MeloraSettings.updateMusicPlayMode(PlayMode.Shuffle)
         val exported = BackupSettings.collect()
 
         MeloraSettings.hideStatusBar.value = false
@@ -155,6 +189,7 @@ class PlayerAppearanceSettingsTest {
         MeloraSettings.keepScreenAwake.value = false
         MeloraSettings.miniLyricsEnabled.value = true
         MeloraSettings.playerCoverStyle.value = PlayerCoverStyle.Circle
+        MeloraSettings.updateMusicPlayMode(PlayMode.List)
 
         BackupSettings.apply(BackupSettings.prepare(exported, emptySet(), emptySet()).first)
 
@@ -166,6 +201,7 @@ class PlayerAppearanceSettingsTest {
             miniLyricsEnabled = false,
             playerCoverStyle = PlayerCoverStyle.Vinyl,
         )
+        assertEquals(PlayMode.Shuffle, MeloraSettings.musicPlayMode.value)
     }
 
     @Test
@@ -267,6 +303,7 @@ class PlayerAppearanceSettingsTest {
         val originalKeepScreenAwake = MeloraSettings.keepScreenAwake.value
         val originalMiniLyricsEnabled = MeloraSettings.miniLyricsEnabled.value
         val originalPlayerCoverStyle = MeloraSettings.playerCoverStyle.value
+        val originalMusicPlayMode = MeloraSettings.musicPlayMode.value
         try {
             block()
         } finally {
@@ -281,6 +318,7 @@ class PlayerAppearanceSettingsTest {
             MeloraSettings.keepScreenAwake.value = originalKeepScreenAwake
             MeloraSettings.miniLyricsEnabled.value = originalMiniLyricsEnabled
             MeloraSettings.playerCoverStyle.value = originalPlayerCoverStyle
+            MeloraSettings.updateMusicPlayMode(originalMusicPlayMode)
         }
     }
 }

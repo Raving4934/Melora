@@ -66,6 +66,36 @@ class BackupRoundTripTest {
     }
 
     @Test
+    fun musicPlayModePersistsAndReloadsFromRealPreferences() {
+        val originalMode = MeloraSettings.musicPlayMode.value
+        val prefs = context.getSharedPreferences(MeloraSettings.PREFS, Context.MODE_PRIVATE)
+        try {
+            listOf(PlayMode.List, PlayMode.Single, PlayMode.Shuffle).forEach { selected ->
+                MeloraSettings.updateMusicPlayMode(selected)
+                assertTrue(prefs.edit().commit())
+                assertEquals(selected.storageValue, prefs.getString(MeloraSettings.KEY_MUSIC_PLAY_MODE, null))
+
+                MeloraSettings.musicPlayMode.value = if (selected == PlayMode.List) PlayMode.Shuffle else PlayMode.List
+                MeloraSettings.reloadAfterRestore()
+                assertEquals(selected, MeloraSettings.musicPlayMode.value)
+            }
+
+            assertTrue(prefs.edit().putString(MeloraSettings.KEY_MUSIC_PLAY_MODE, "legacy-random").commit())
+            MeloraSettings.musicPlayMode.value = PlayMode.Shuffle
+            MeloraSettings.reloadAfterRestore()
+            assertEquals(PlayMode.List, MeloraSettings.musicPlayMode.value)
+
+            assertTrue(prefs.edit().remove(MeloraSettings.KEY_MUSIC_PLAY_MODE).commit())
+            MeloraSettings.musicPlayMode.value = PlayMode.Single
+            MeloraSettings.reloadAfterRestore()
+            assertEquals(PlayMode.List, MeloraSettings.musicPlayMode.value)
+        } finally {
+            MeloraSettings.updateMusicPlayMode(originalMode)
+            assertTrue(prefs.edit().commit())
+        }
+    }
+
+    @Test
     fun playerLyricsPersistAndReloadIndependentlyOfDesktopLyrics() {
         val selected = LyricsUiConfig(28f, true, true, true)
         MeloraSettings.updateLyricFontSize(18f)

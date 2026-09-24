@@ -2,11 +2,29 @@ package com.leyu.melora.playback
 
 import androidx.media3.common.C
 import androidx.media3.common.Format
+import androidx.media3.common.Player
 import com.leyu.melora.playback.sdk.OnlineSong
 import java.util.Locale
 import org.json.JSONObject
 
-enum class PlayMode { List, Single, Shuffle }
+enum class PlayMode(val storageValue: String, @get:Player.RepeatMode internal val repeat: Int, internal val shuffled: Boolean) {
+    List("list", Player.REPEAT_MODE_ALL, false),
+    Single("single", Player.REPEAT_MODE_ONE, false),
+    Shuffle("shuffle", Player.REPEAT_MODE_ALL, true);
+
+    internal fun next(): PlayMode = entries[(ordinal + 1) % entries.size]
+
+    companion object {
+        internal fun restore(value: String?, fallback: PlayMode = List): PlayMode =
+            entries.firstOrNull { it.storageValue == value } ?: fallback
+    }
+}
+
+/** 初始化、切换及备份恢复共用模式映射，不触碰倍速、进度或队列。 */
+internal fun Player.applyPlayMode(mode: PlayMode) {
+    repeatMode = mode.repeat
+    shuffleModeEnabled = mode.shuffled
+}
 
 /** 播放层统一曲目模型：在线与本地索引歌曲都可携带归一化 raw；raw=null 仅用于外部直链兜底。 */
 data class UiTrack(

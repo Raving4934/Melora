@@ -44,6 +44,7 @@ internal object BackupSettings {
         field("keepScreenAwake", MeloraSettings.KEY_KEEP_SCREEN_AWAKE, MeloraSettings.keepScreenAwake, ::backupBoolean),
         field("miniLyricsEnabled", MeloraSettings.KEY_MINI_LYRICS_ENABLED, MeloraSettings.miniLyricsEnabled, ::backupBoolean),
         field("playerCoverStyle", MeloraSettings.KEY_PLAYER_COVER_STYLE, MeloraSettings.playerCoverStyle, { PlayerCoverStyle.restore(it as? String, MeloraSettings.playerCoverStyle.value) }, PlayerCoverStyle::storageValue),
+        field("musicPlayMode", MeloraSettings.KEY_MUSIC_PLAY_MODE, MeloraSettings.musicPlayMode, { PlayMode.restore(it as? String, MeloraSettings.musicPlayMode.value) }, PlayMode::storageValue),
         field("playerLyrics", MeloraSettings.KEY_PLAYER_LYRICS, MeloraSettings.playerLyrics,
             { LyricsUiConfig.fromJson(it as? JSONObject ?: error("全屏歌词设置无效")) }, LyricsUiConfig::toJson),
         field("notificationCover", MeloraSettings.KEY_NOTIFICATION_COVER, MeloraSettings.showNotificationCover, ::backupBoolean),

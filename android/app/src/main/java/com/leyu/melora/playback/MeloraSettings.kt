@@ -79,6 +79,7 @@ object MeloraSettings {
     val keepScreenAwake = MutableStateFlow(false)
     val miniLyricsEnabled = MutableStateFlow(true)
     val playerCoverStyle = MutableStateFlow(PlayerCoverStyle.Default)
+    internal val musicPlayMode = MutableStateFlow(PlayMode.List)
     val playerLyrics = MutableStateFlow(LyricsUiConfig())
     // 音效预设ID由AudioEffects唯一目录校验，实际应用结果由播放服务发布。
     val audioEffectPreset = MutableStateFlow("off")
@@ -151,6 +152,7 @@ object MeloraSettings {
         playerCoverStyle.value = PlayerCoverStyle.restore(
             prefs.getString(KEY_PLAYER_COVER_STYLE, null),
         )
+        musicPlayMode.value = PlayMode.restore(prefs.getString(KEY_MUSIC_PLAY_MODE, null))
         playerLyrics.value = runCatching {
             LyricsUiConfig.fromJson(org.json.JSONObject(prefs.getString(KEY_PLAYER_LYRICS, null) ?: "{}"))
         }.getOrDefault(LyricsUiConfig())
@@ -221,6 +223,7 @@ object MeloraSettings {
     fun updateKeepScreenAwake(value: Boolean) = synchronized(BackupStateLock.monitor) { keepScreenAwake.value = value; persist { putBoolean(KEY_KEEP_SCREEN_AWAKE, value) } }
     fun updateMiniLyricsEnabled(value: Boolean) = synchronized(BackupStateLock.monitor) { miniLyricsEnabled.value = value; persist { putBoolean(KEY_MINI_LYRICS_ENABLED, value) } }
     fun updatePlayerCoverStyle(value: PlayerCoverStyle) = synchronized(BackupStateLock.monitor) { playerCoverStyle.value = value; persist { putString(KEY_PLAYER_COVER_STYLE, value.storageValue) } }
+    internal fun updateMusicPlayMode(value: PlayMode) = synchronized(BackupStateLock.monitor) { musicPlayMode.value = value; persist { putString(KEY_MUSIC_PLAY_MODE, value.storageValue) } }
     fun toggleAudioEffectPreset(value: String) = synchronized(BackupStateLock.monitor) {
         // 读取即时值而不是UI捕获的快照，连续两次点击也能正确开/关。
         updateAudioEffectPreset(if (audioEffectPreset.value == value) AudioEffects.OFF else value)
@@ -319,6 +322,7 @@ object MeloraSettings {
     internal const val KEY_KEEP_SCREEN_AWAKE = "player.keepScreenAwake"
     internal const val KEY_MINI_LYRICS_ENABLED = "player.miniLyricsEnabled"
     internal const val KEY_PLAYER_COVER_STYLE = "player.coverStyle"
+    internal const val KEY_MUSIC_PLAY_MODE = "playback.musicPlayMode"
     internal const val KEY_AUDIO_EFFECT = "playback.audioEffect"
     internal const val KEY_NOTIFICATION_COVER = "playback.notificationCover"
     private const val KEY_QUALITY = "playback.quality"

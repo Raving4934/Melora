@@ -185,7 +185,7 @@ object PlaybackController {
                             pending.insertSingle -> playTrackNow(pending.tracks.single())
                             else -> playQueueNow(pending.tracks, pending.index, pending.queueId)
                         }
-                        publish()
+                        applyMusicPlayMode()
                         checkLocalQueue(application)
                     }
                     .onFailure { error ->
@@ -1088,20 +1088,14 @@ object PlaybackController {
             _state.value = _state.value.copy(message = "听书按章节顺序播放")
             return
         }
-        when (player.playMode()) {
-            PlayMode.List -> {
-                player.repeatMode = Player.REPEAT_MODE_ONE
-                player.shuffleModeEnabled = false
-            }
-            PlayMode.Single -> {
-                player.repeatMode = Player.REPEAT_MODE_ALL
-                player.shuffleModeEnabled = true
-            }
-            PlayMode.Shuffle -> {
-                player.repeatMode = Player.REPEAT_MODE_ALL
-                player.shuffleModeEnabled = false
-            }
-        }
+        MeloraSettings.updateMusicPlayMode(player.playMode().next())
+        applyMusicPlayMode()
+    }
+
+    /** 备份恢复复用同一路径；听书期间只更新待恢复的音乐模式，不打乱章节顺序。 */
+    internal fun applyMusicPlayMode() {
+        if (controller?.isConnected != true) return
+        bookQueue?.applyMusicMode(MeloraSettings.musicPlayMode.value)
         publish()
     }
 
@@ -1272,7 +1266,11 @@ object PlaybackController {
 
     /** 冷启动恢复上次队列（不自动播放时保持暂停，仅让 mini 播放条出现）。 */
     private fun restoreQueue(player: MediaController, autoPlay: Boolean = MeloraSettings.autoPlayOnStart.value) {
-        if (player.mediaItemCount > 0) return
+        if (player.mediaItemCount > 0) {
+            // 重连仍存活的服务时先恢复听书上下文，再应用音乐偏好，不能把章节改为随机播放。
+            if (bookQueue?.albumId == null) player.bookAlbumId(TrackRegistry::get)?.let { bookQueue?.start(it) }
+            return
+        }
         val prefs = queuePrefs() ?: return
         val json = prefs.getString(KEY_QUEUE, null) ?: return
         val array = runCatching { JSONArray(json) }.getOrNull() ?: return

@@ -53,6 +53,15 @@ internal suspend fun followingBookChapters(
     }
 }
 
+/** 仅完整属于同一专辑的章节队列才采用听书规则；缺少登记信息或混合曲目不能猜测。 */
+@androidx.annotation.OptIn(UnstableApi::class)
+internal fun Player.bookAlbumId(trackFor: (String) -> UiTrack?): String? {
+    val albumId = currentMediaItem?.mediaId?.let(trackFor)?.raw?.let(OnlineSong::from)?.bookId() ?: return null
+    return albumId.takeIf { id -> (0 until mediaItemCount).all { index ->
+        trackFor(getMediaItemAt(index).mediaId)?.raw?.let(OnlineSong::from)?.bookId() == id
+    } }
+}
+
 /** 仅管理明确选择的整书队列；目录请求不阻塞当前章节开播，也不依赖详情页面存活。 */
 @androidx.annotation.OptIn(UnstableApi::class)
 internal class BookPlaybackQueue(
@@ -73,6 +82,15 @@ internal class BookPlaybackQueue(
     private var advanceFrom: String? = null
     private var musicRepeat = Player.REPEAT_MODE_ALL
     private var musicShuffle = false
+
+    fun applyMusicMode(mode: PlayMode) {
+        if (albumId == null) {
+            player.applyPlayMode(mode)
+        } else {
+            musicRepeat = mode.repeat
+            musicShuffle = mode.shuffled
+        }
+    }
 
     fun start(id: String) {
         stop()
