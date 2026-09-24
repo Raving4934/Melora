@@ -167,6 +167,8 @@ internal fun resolveStableSystemTopInsetPx(
     resourceInset: Int,
 ): Int = maxOf(previousInset, resolveSystemTopInsetPx(composeInset, platformInset, resourceInset))
 
+// 首帧Insets尚未分发、或OEM隐藏状态栏返回0时的尺寸兜底；不是替代正常Insets的数据通道。
+@android.annotation.SuppressLint("InternalInsetResource", "DiscouragedApi")
 private fun Context.statusBarHeightPx(): Int {
     val resourceId = resources.getIdentifier("status_bar_height", "dimen", "android")
     return if (resourceId != 0) resources.getDimensionPixelSize(resourceId) else 0

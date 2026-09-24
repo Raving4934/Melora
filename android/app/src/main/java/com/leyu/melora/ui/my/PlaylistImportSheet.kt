@@ -245,7 +245,7 @@ internal fun PlaylistImportSheet(
                     else -> "读取歌单"
                 },
                 confirmEnabled = if (result == null) text.isNotBlank() else name.isNotBlank(),
-                busy = busy, cancelEnabled = !saving, confirmModifier = Modifier.testTag("playlist-import-submit"),
+                busy = busy, cancelEnabled = !saving,
             )
         }
     }
@@ -278,18 +278,18 @@ internal fun PlaylistSheetActions(
     onConfirm: () -> Unit,
     confirmText: String,
     confirmEnabled: Boolean,
+    modifier: Modifier = Modifier,
     busy: Boolean = false,
     cancelEnabled: Boolean = true,
-    confirmModifier: Modifier = Modifier,
 ) {
-    Row(Modifier.fillMaxWidth().height(44.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    Row(modifier = modifier.fillMaxWidth().height(44.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Surface(onClick = onDismiss, enabled = cancelEnabled, shape = RoundedCornerShape(22.dp), color = MeloraAppearance.softFill,
             border = MeloraAppearance.chipBorder, modifier = Modifier.weight(1f).fillMaxHeight()) {
             Box(contentAlignment = Alignment.Center) { Text("取消", color = TextSub, fontSize = 14.sp) }
         }
         Surface(onClick = onConfirm, enabled = confirmEnabled && !busy, shape = RoundedCornerShape(22.dp),
             color = BrandBlue.copy(alpha = if (confirmEnabled) 1f else 0.35f),
-            modifier = Modifier.weight(1.6f).fillMaxHeight().then(confirmModifier)) {
+            modifier = Modifier.weight(1.6f).fillMaxHeight().testTag("playlist-import-submit")) {
             Box(contentAlignment = Alignment.Center) {
                 Text(confirmText, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium,
                     maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 8.dp))
