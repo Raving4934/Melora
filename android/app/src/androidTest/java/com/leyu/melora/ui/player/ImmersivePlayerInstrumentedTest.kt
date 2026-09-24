@@ -16,7 +16,8 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -36,6 +37,8 @@ import com.leyu.melora.playback.LyricLine
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlayerCoverStyle
 import com.leyu.melora.playback.ThemeMode
+import com.leyu.melora.playback.PlayerLyric
+import com.leyu.melora.playback.LyricWord
 import com.leyu.melora.playback.PlayerUiState
 import com.leyu.melora.playback.UiTrack
 import com.leyu.melora.ui.theme.SystemBarsAppearance
@@ -357,12 +360,38 @@ class ImmersivePlayerInstrumentedTest {
         assertEquals(before.height, after.height, 1f)
         compose.onNodeWithContentDescription("歌词来源与写入").performClick()
         compose.onNodeWithTag("lyrics-source-sheet").assertIsDisplayed()
-        compose.onNodeWithTag("lyrics-source-write").assertIsNotEnabled()
+        compose.onNodeWithTag("lyrics-source-write").assertDoesNotExist()
+        compose.onAllNodesWithText("晚风与海 · 测试歌手").assertCountEquals(1)
         compose.onNodeWithTag("lyrics-source-confirm-write").assertDoesNotExist()
         Espresso.pressBack()
         compose.onNodeWithTag("lyrics-source-sheet").assertDoesNotExist()
         compose.onNodeWithTag("player-pages").assertIsDisplayed()
         compose.runOnIdle { assertFalse(immersive.value) }
+    }
+
+    @Test fun lyricCandidateSummaryHasOneIdentityAndStableLoadingAndLongTitleHeight() {
+        val track = UiTrack("summary", "晚风与海", "测试歌手", "专辑")
+        val candidate = mutableStateOf<PlayerLyric?>(null)
+        val loading = mutableStateOf(true)
+        val match = PlayerLyric(track.uid, track.title, track.artist,
+            listOf(LyricLine(0, "不应重复显示的歌词署名", words = listOf(LyricWord("不应重复显示的歌词署名", 0, 1000)))), "kw")
+        compose.setContent {
+            Box(Modifier.requiredSize(280.dp, 120.dp)) {
+                PlayerAppearanceProvider(dark = false) { LyricsCandidateSummary(track, candidate.value, loading.value) }
+            }
+        }
+        val height = compose.onNodeWithTag("lyrics-source-candidate").fetchSemanticsNode().boundsInRoot.height
+        compose.onAllNodesWithText("晚风与海 · 测试歌手").assertCountEquals(1)
+        compose.runOnIdle { candidate.value = match; loading.value = false }
+        compose.onAllNodesWithText("晚风与海 · 测试歌手").assertCountEquals(1)
+        compose.onNodeWithText("不应重复显示的歌词署名").assertDoesNotExist()
+        compose.onNodeWithText("逐字歌词", substring = true).assertIsDisplayed()
+        assertEquals(height, compose.onNodeWithTag("lyrics-source-candidate").fetchSemanticsNode().boundsInRoot.height, 1f)
+        compose.runOnIdle { candidate.value = match.copy(title = "很长的歌曲名称".repeat(12)) }
+        assertEquals(height, compose.onNodeWithTag("lyrics-source-candidate").fetchSemanticsNode().boundsInRoot.height, 1f)
+        compose.runOnIdle { candidate.value = null }
+        compose.onNodeWithText("暂未找到匹配，保留原有歌词").assertIsDisplayed()
+        assertEquals(height, compose.onNodeWithTag("lyrics-source-candidate").fetchSemanticsNode().boundsInRoot.height, 1f)
     }
 
     @Test fun backgroundWordEnrichmentDoesNotRecreateTheLyricsViewport() {

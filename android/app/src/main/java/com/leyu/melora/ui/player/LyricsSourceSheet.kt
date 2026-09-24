@@ -8,13 +8,14 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -27,6 +28,7 @@ import com.leyu.melora.playback.local.LocalMediaStore
 import com.leyu.melora.playback.local.LocalTagFiller
 import com.leyu.melora.playback.local.tagExtension
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.sourceAliasDisplay
 import com.leyu.melora.ui.theme.SystemBarsVisibility
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -67,23 +69,39 @@ internal fun LyricsSourceSheet(track: UiTrack, onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = colors.sheetBackground,
+        dragHandle = {
+            Box(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 6.dp), contentAlignment = Alignment.Center) {
+                Box(Modifier.size(32.dp, 4.dp).background(colors.textSecondary.copy(alpha = 0.35f), RoundedCornerShape(2.dp)))
+            }
+        },
     ) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp, vertical = 12.dp)
-            .testTag("lyrics-source-sheet"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("歌词来源", color = colors.textPrimary, fontSize = 20.sp, fontWeight = FontWeight.Medium)
-            Text(track.title, color = colors.textSecondary, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (local != null) Column(Modifier.selectableGroup()) {
-                LyricSourceMode.entries.forEach { option ->
-                    val enabled = preferenceReady && !choosing && when (option) {
-                        LyricSourceMode.Auto -> true
-                        LyricSourceMode.Embedded -> embedded != null
-                        LyricSourceMode.Matched -> !loading && candidate?.lines?.any { it.words.isNotEmpty() } == true
-                    }
-                    val isSelected = preferenceReady && mode == option && (option != LyricSourceMode.Matched ||
-                        (candidate != null && candidate?.lines == current?.lines && candidate?.source == current?.source))
-                    Row(
-                        Modifier.fillMaxWidth().heightIn(min = 54.dp)
-                            .background(if (isSelected) colors.cardSelected else colors.cardSurface, RoundedCornerShape(12.dp))
+            .testTag("lyrics-source-sheet"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("歌词来源", color = colors.textPrimary, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                TextButton(enabled = !loading && !choosing,
+                    onClick = { scope.launch { findCandidate(true); PlaybackController.refreshLyrics(track.uid) } },
+                    colors = ButtonDefaults.textButtonColors(contentColor = colors.textPrimary, disabledContentColor = colors.textSecondary),
+                    contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.width(100.dp).heightIn(min = 48.dp).testTag("lyrics-source-search")) {
+                    Icon(Icons.Rounded.Refresh, null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("重新查找", fontSize = 13.sp)
+                }
+            }
+            LyricsCandidateSummary(track, candidate, loading)
+            if (local != null) {
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(colors.cardSurface)
+                    .padding(4.dp).selectableGroup(), verticalAlignment = Alignment.CenterVertically) {
+                    LyricSourceMode.entries.forEach { option ->
+                        val enabled = preferenceReady && !choosing && when (option) {
+                            LyricSourceMode.Auto -> true
+                            LyricSourceMode.Embedded -> embedded != null
+                            LyricSourceMode.Matched -> !loading && candidate?.lines?.any { it.words.isNotEmpty() } == true
+                        }
+                        val isSelected = preferenceReady && mode == option && (option != LyricSourceMode.Matched ||
+                            (candidate != null && candidate?.lines == current?.lines && candidate?.source == current?.source))
+                        Box(Modifier.weight(1f).heightIn(min = 48.dp).clip(RoundedCornerShape(12.dp))
+                            .background(if (isSelected) colors.textPrimary else Color.Transparent)
                             .selectable(selected = isSelected, enabled = enabled, role = Role.RadioButton) {
                                 val selected = candidate
                                 choosing = true
@@ -99,46 +117,33 @@ internal fun LyricsSourceSheet(track: UiTrack, onDismiss: () -> Unit) {
                                         } else PlaybackController.postMessage(context, "无法保存歌词选择，请重试")
                                     } finally { choosing = false }
                                 }
-                            }.testTag("lyrics-source-${option.storageValue}").padding(horizontal = 14.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(when (option) {
-                            LyricSourceMode.Auto -> "自动 · 优先可靠逐字"
-                            LyricSourceMode.Embedded -> "使用内嵌歌词"
-                            LyricSourceMode.Matched -> "使用这份匹配逐字歌词"
-                        }, color = colors.textPrimary.copy(alpha = if (enabled) 1f else 0.4f), fontSize = 14.sp,
-                            modifier = Modifier.weight(1f))
-                        Box(Modifier.size(20.dp)) {
-                            if (isSelected) Icon(Icons.Rounded.Check, null, tint = colors.textPrimary)
+                            }.testTag("lyrics-source-${option.storageValue}").padding(horizontal = 4.dp, vertical = 10.dp),
+                            contentAlignment = Alignment.Center) {
+                            Text(when (option) {
+                                LyricSourceMode.Auto -> "自动"
+                                LyricSourceMode.Embedded -> "内嵌"
+                                LyricSourceMode.Matched -> "匹配逐字"
+                            }, color = if (isSelected) colors.sheetBackground else colors.textPrimary.copy(alpha = if (enabled) 1f else 0.4f),
+                                fontSize = 13.sp, fontWeight = if (isSelected) FontWeight.Medium else FontWeight.Normal)
                         }
                     }
-                    Spacer(Modifier.height(6.dp))
+                }
+                Text(when {
+                    tagExtension(local.mimeType, local.uri) == null -> "此格式暂不支持写入，仅支持 MP3 / FLAC。"
+                    !canWrite -> "当前歌曲有可用歌词后，即可写入文件。"
+                    mode == LyricSourceMode.Auto -> "优先内嵌歌词，仅为同句同时间补充逐字信息。"
+                    mode == LyricSourceMode.Embedded -> "只使用歌曲文件里的歌词，不使用匹配结果。"
+                    else -> "重查不会替换已固定的歌词，点选「匹配逐字」可更新。"
+                }, color = colors.textSecondary, fontSize = 12.sp, lineHeight = 18.sp, minLines = 2, maxLines = 2,
+                    overflow = TextOverflow.Ellipsis)
+                FilledTonalButton(enabled = canWrite && !writing, onClick = { confirmWrite = true },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("lyrics-source-write"),
+                    shape = RoundedCornerShape(14.dp), colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = colors.cardSurface, contentColor = colors.textPrimary,
+                        disabledContainerColor = colors.cardSurface, disabledContentColor = colors.textPrimary.copy(alpha = 0.4f))) {
+                    Text("写入当前歌词", fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 }
             }
-            // 固定候选区域，加载、空结果与成功不会推挤下面的操作按钮。
-            Column(Modifier.fillMaxWidth().height(28.dp + with(LocalDensity.current) { 106.sp.toDp() }), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(if (loading) "正在匹配…" else candidate?.let { "${it.title} · ${it.artist}" } ?: "暂未找到匹配歌词",
-                    color = colors.textPrimary, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(candidate?.let { "来源 ${it.source} · ${if (it.lines.any { line -> line.words.isNotEmpty() }) "包含逐字时间轴" else "仅普通歌词"}" }
-                    ?: "原有歌词会继续显示，不会因匹配失败被清空", color = colors.textSecondary, fontSize = 12.sp,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(candidate?.lines?.firstOrNull { it.text.isNotBlank() }?.text.orEmpty(), color = colors.textSecondary,
-                    fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("请核对录音版本；重新查找仅更新候选，手选后固定使用这份歌词。", color = colors.textSecondary,
-                    fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                TextButton(enabled = !loading && !choosing, onClick = { scope.launch { findCandidate(true); PlaybackController.refreshLyrics(track.uid) } },
-                    modifier = Modifier.testTag("lyrics-source-search")) {
-                    Text("重新查找", color = colors.textPrimary.copy(alpha = if (loading) 0.4f else 1f))
-                }
-                TextButton(enabled = canWrite && !writing, onClick = { confirmWrite = true },
-                    modifier = Modifier.testTag("lyrics-source-write")) {
-                    Text("将当前歌词写入文件", color = colors.textPrimary.copy(alpha = if (canWrite && !writing) 1f else 0.4f))
-                }
-            }
-            if (!canWrite) Text("写入仅支持本地 MP3 / FLAC，且需要当前曲目的有效歌词。",
-                color = colors.textSecondary, fontSize = 11.sp)
         }
     }
     if (confirmWrite) AlertDialog(
@@ -163,4 +168,22 @@ internal fun LyricsSourceSheet(track: UiTrack, onDismiss: () -> Unit) {
         },
         dismissButton = { TextButton(onClick = { confirmWrite = false }) { Text("取消", color = colors.textSecondary) } },
     )
+}
+
+/** 固定两行歌曲信息和一行状态，不展示歌词首行，加载完成也不推挤下方控件。 */
+@Composable
+internal fun LyricsCandidateSummary(track: UiTrack, candidate: PlayerLyric?, loading: Boolean) {
+    val colors = LocalPlayerColors.current
+    val title = candidate?.title ?: track.title
+    val artist = candidate?.artist ?: track.artist
+    Column(Modifier.fillMaxWidth().testTag("lyrics-source-candidate"), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(listOf(title, artist).filter { it.isNotBlank() }.joinToString(" · "), color = colors.textPrimary,
+            fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.Medium,
+            minLines = 2, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(when {
+            loading -> "正在查找匹配歌词…"
+            candidate == null -> "暂未找到匹配，保留原有歌词"
+            else -> "${sourceAliasDisplay(candidate.source, platformLabel(candidate.source))} · ${if (candidate.lines.any { it.words.isNotEmpty() }) "逐字歌词" else "普通歌词"}"
+        }, color = colors.textSecondary, fontSize = 12.sp, lineHeight = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
 }
