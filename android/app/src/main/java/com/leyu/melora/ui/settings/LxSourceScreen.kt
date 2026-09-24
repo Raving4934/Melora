@@ -125,7 +125,7 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
     var importChooserOpen by remember { mutableStateOf(false) }
     var onlineImportOpen by remember { mutableStateOf(false) }
     var onlineImportError by remember { mutableStateOf<String?>(null) }
-    val sourceImporter = remember(context, store) { LxSourceImporter(context, store) }
+    val sourceImporter = remember(context, store) { LxSourceImporter(store) }
     val sourceAlias by MeloraSettings.sourceAliasEnabled.collectAsStateWithLifecycle()
     val autoSwitch by MeloraSettings.autoSwitchSource.collectAsStateWithLifecycle()
 

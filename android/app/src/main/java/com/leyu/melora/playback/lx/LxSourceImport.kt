@@ -1,7 +1,5 @@
 package com.leyu.melora.playback.lx
 
-import android.content.Context
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -126,10 +124,8 @@ internal class LxSourceDownloader(
  * Android 的唯一脚本导入入口：本地文件和在线 URL 最终都进入同一个文本解析、校验和 Store 写入流程。
  */
 internal class LxSourceImporter(
-    private val context: Context,
     private val store: LxScriptStore,
     private val downloader: LxSourceDownloader = LxSourceDownloader(),
-    private val validationTimeoutMs: Long = 8_000,
 ) {
     suspend fun importLocal(input: InputStream, displayName: String?): List<LxScript> = withContext(Dispatchers.IO) {
         val text = input.use { it.readBoundedLxSourceText(MAX_LOCAL_SOURCE_DOCUMENT_BYTES) }
@@ -150,7 +146,6 @@ internal class LxSourceImporter(
             ?: error("远端音源包中未找到「${script.name}」")
         val currentCode = store.code(script.id) ?: error("本地音源脚本不存在")
         if (currentCode == remote.second) return@withContext LxSourceUpdate(script, updated = false)
-        checkSource(script.id, remote.second)
         currentCoroutineContext().ensureActive()
         LxSourceUpdate(store.import(script.id, remote.second, payload.originUrl), updated = true)
     }
@@ -162,25 +157,9 @@ internal class LxSourceImporter(
         originUrl: String?,
     ): List<LxScript> {
         val entries = parseLxSourceDocument(text, fallbackName, maxDocumentBytes)
-        // 整包检查通过才开始写盘，坏脚本不能新增条目或覆盖已有同名源。
-        for ((name, code) in entries) checkSource(name, code)
+        // 整包轻量校验通过才开始写盘，避免无效条目导致半导入状态。
         currentCoroutineContext().ensureActive()
         return entries.map { (name, code) -> store.import(name, code, originUrl) }
-    }
-
-    private suspend fun checkSource(name: String, code: String) {
-        currentCoroutineContext().ensureActive()
-        try {
-            LxScriptEngine(context.applicationContext).use { engine ->
-                engine.inspectSource(code, name, validationTimeoutMs)
-            }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (failure: Exception) {
-            throw IllegalArgumentException(
-                "「${name.take(60)}」音源校验未通过，未保存。${failure.message.orEmpty().take(160)}", failure,
-            )
-        }
     }
 }
 

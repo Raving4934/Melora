@@ -10,12 +10,11 @@ import java.io.File
 import java.io.Closeable
 import java.net.InetAddress
 import java.net.ServerSocket
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 import java.util.UUID
-import java.util.concurrent.CancellationException
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
@@ -45,48 +44,91 @@ class LxSourceImportInstrumentedTest {
     }
 
     @Test
-    fun validLocalJsonBundleAndCommentFreeEvalWrappedScriptsImport() = runBlocking<Unit> {
-        val local = importer().importLocal(sourceInput(validSource()), "local.js").single()
+    fun importsLocalScriptsAndJsonBundlesVerbatim() = runBlocking<Unit> {
+        val localCode = "const localScript = true;"
+        val local = importer().importLocal(sourceInput(localCode), "local.js").single()
         assertEquals("local.js", local.id)
-        assertEquals(validSource(), store.code(local.id))
+        assertEquals(localCode, store.code(local.id))
 
+        val firstCode = "throw new Error('must not execute');"
+        val secondCode = "const neverInitializes = true;"
         val bundle = JSONObject().put(
             "scripts",
             JSONArray()
-                .put(JSONObject().put("name", "bundle-one.js").put("code", validSource()))
-                .put(JSONObject().put("name", "bundle-two.js").put("code", validSource("kg"))),
+                .put(JSONObject().put("name", "bundle-one.js").put("code", firstCode))
+                .put(JSONObject().put("name", "bundle-two.js").put("code", secondCode)),
         )
         val bundled = importer().importLocal(sourceInput(bundle.toString()), "sources.json")
         assertEquals(setOf("bundle-one.js", "bundle-two.js"), bundled.map { it.id }.toSet())
-
-        val noCommentsEvalWrapper = "eval(${JSONObject.quote(validSource())})"
-        val evaluated = importer().importLocal(sourceInput(noCommentsEvalWrapper), "eval-wrapped.js").single()
-        assertEquals("eval-wrapped.js", evaluated.id)
-        assertEquals(noCommentsEvalWrapper, store.code(evaluated.id))
-        val statusless = validSource().replace("status:true,", "")
-        assertEquals("statusless.js", importer().importLocal(sourceInput(statusless), "statusless.js").single().id)
+        assertEquals(firstCode, store.code("bundle-one.js"))
+        assertEquals(secondCode, store.code("bundle-two.js"))
     }
 
     @Test
-    fun rejectsNonSourceFormatsAndScriptsWithoutAUsableProtocol() {
-        val invalidDocuments = listOf(
-            "plain text that is not JavaScript" to "plain.txt",
-            "const renamedButNotASource = true;" to "renamed.js",
-            "{\"name\":\"ordinary JSON\",\"actions\":[\"musicUrl\"]}" to "ordinary.json",
-            "// @name metadata only\n// @version 1.0" to "metadata.js",
-            "lx.send(lx.EVENT_NAMES.inited, {status:true,sources:{kw:{name:'fixture',type:'music',actions:['musicUrl']}}});" to "no-request.js",
-            requestAndInit("{}") to "empty-platform.js",
-            requestAndInit("{kw:{name:'fixture',type:'music',actions:[]}}") to "empty-actions.js",
-            requestAndInit("{kw:{name:'fixture',type:'music',actions:['musicUrl']}}", status = false) to "failed-init.js",
+    fun importsScriptsThatThrowOrDoNotInitializeWithoutExecutingThem() = runBlocking<Unit> {
+        val scripts = listOf(
+            "throw new Error('initialization must not run during import');" to "throws.js",
+            "const sourceThatNeverInitializes = true;" to "no-init.js",
+            "lx.send(lx.EVENT_NAMES.inited, {status:false,sources:{}});" to "failed-init.js",
         )
-        invalidDocuments.forEach { (code, name) -> assertRejected(code, name) }
-        assertRejectedBytes(byteArrayOf(0xff.toByte(), 0xfe.toByte(), 0x00), "binary.js")
+        scripts.forEach { (code, name) ->
+            val imported = importer().importLocal(sourceInput(code), name).single()
+            assertEquals(name, imported.id)
+            assertEquals(code, store.code(name))
+        }
+    }
+
+    @Test
+    fun manualInspectStillRejectsUninitializedAndProtocolInvalidScripts() {
+        assertThrows(Exception::class.java) {
+            runBlocking {
+                LxScriptEngine(fixtureContext).use { engine ->
+                    engine.inspectSource("const sourceThatNeverInitializes = true;", "no-init.js", timeoutMs = 500)
+                }
+            }
+        }
+        assertThrows(Exception::class.java) {
+            runBlocking {
+                LxScriptEngine(fixtureContext).use { engine ->
+                    engine.inspectSource(
+                        "lx.send(lx.EVENT_NAMES.inited, {status:false,sources:{}});",
+                        "invalid-protocol.js",
+                        timeoutMs = 500,
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
+    fun importingScriptWithTopLevelNetworkRequestDoesNotExecuteIt() = runBlocking<Unit> {
+        ScriptServer("unused response").use { server ->
+            val code = "lx.request('${server.url}', {timeout:100});"
+            val imported = importer().importLocal(sourceInput(code), "network.js").single()
+
+            assertEquals("network.js", imported.id)
+            assertEquals(code, store.code(imported.id))
+            assertEquals(0, server.requestCount.get())
+        }
+    }
+
+    @Test
+    fun rejectsOnlyLightweightInvalidContentAndJsonStructure() {
+        listOf(
+            "" to "empty.js",
+            "   " to "blank.js",
+            "<!doctype html><html></html>" to "html.js",
+            "{\"ordinary\":true}" to "ordinary.json",
+            "{\"scripts\":[{}]}" to "invalid-bundle.json",
+        ).forEach { (code, name) -> assertRejected(code, name) }
+        assertRejectedBytes(byteArrayOf(0xff.toByte(), 0xfe.toByte()), "binary.js")
+        assertRejectedBytes(ByteArray(MAX_IMPORTED_SCRIPT_BYTES + 1) { 'a'.code.toByte() }, "oversized.js")
         assertTrue(store.list().isEmpty())
     }
 
     @Test
     fun failedLaterBundleEntryWritesNothingAndKeepsSameNameState() = runBlocking<Unit> {
-        val oldCode = validSource("kw")
+        val oldCode = "const previousSource = true;"
         val origin = "https://fixture.example.test/old.js"
         val old = store.import("same-name.js", oldCode, origin)
         store.setEnabled(old.id, true)
@@ -94,8 +136,8 @@ class LxSourceImportInstrumentedTest {
         val bundle = JSONObject().put(
             "scripts",
             JSONArray()
-                .put(JSONObject().put("name", "must-not-exist.js").put("code", validSource("kg")))
-                .put(JSONObject().put("name", "same-name.js").put("code", "const notASource = true;")),
+                .put(JSONObject().put("name", "must-not-exist.js").put("code", "throw new Error('not run');"))
+                .put(JSONObject().put("name", "same-name.js").put("code", "")),
         )
         assertThrows(Exception::class.java) {
             runBlocking { importer().importLocal(sourceInput(bundle.toString()), "bundle.json") }
@@ -109,66 +151,40 @@ class LxSourceImportInstrumentedTest {
     }
 
     @Test
-    fun validationTimeoutDoesNotPersistDelayedInitialization() {
-        val delayed = delayedInitSource(1_000)
-        assertThrows(Exception::class.java) {
-            runBlocking {
-                importer(validationTimeoutMs = 200)
-                    .importLocal(sourceInput(delayed), "timeout.js")
-            }
-        }
-        assertTrue(store.list().isEmpty())
-        assertNull(store.code("timeout.js"))
-    }
-
-    @Test
-    fun coroutineCancellationDuringDelayedInitializationDoesNotPersist() {
-        val delayed = delayedInitSource(2_000)
-        assertThrows(CancellationException::class.java) {
-            runBlocking {
-                withTimeout(500) {
-                    importer(validationTimeoutMs = 8_000)
-                        .importLocal(sourceInput(delayed), "cancelled.js")
-                }
-            }
-        }
-        assertTrue(store.list().isEmpty())
-        assertNull(store.code("cancelled.js"))
-    }
-
-    @Test
-    fun urlImportAndOriginUpdateRejectBadPayloadWithoutReplacingEnabledSource() = runBlocking<Unit> {
-        ScriptServer(validSource()).use { server ->
-            val importer = importer()
-            val original = importer.importUrl(server.url).single()
+    fun urlImportAndOriginUpdateSkipExecutionButRejectHtml() = runBlocking<Unit> {
+        val throwingCode = "throw new Error('remote import must not execute');"
+        ScriptServer(throwingCode).use { server ->
+            val sourceImporter = importer()
+            val original = sourceImporter.importUrl(server.url).single()
+            assertEquals(throwingCode, store.code(original.id))
             store.setEnabled(original.id, true)
             val before = store.list().single()
-            val originalCode = store.code(before.id)
-            server.body.set("const ordinaryJavaScript = true;")
-            assertThrows(Exception::class.java) { runBlocking { importer.updateFromOrigin(before) } }
-            assertEquals(before, store.list().single())
-            assertEquals(originalCode, store.code(before.id))
-            assertThrows(Exception::class.java) { runBlocking { importer.importUrl(server.url) } }
-            assertEquals(before, store.list().single())
-            server.body.set("<!doctype html><html>not a script</html>")
-            assertThrows(Exception::class.java) { runBlocking { importer.importUrl(server.url) } }
-            assertEquals(originalCode, store.code(before.id))
-            server.body.set(validSource("kg"))
-            val update = importer.updateFromOrigin(before)
+            val updatedCode = "lx.request('${server.url}', {timeout:100});"
+            server.body.set(updatedCode)
+            val update = sourceImporter.updateFromOrigin(before)
             assertTrue(update.updated)
             assertTrue(update.script.enabled)
             assertEquals(server.url, update.script.originUrl)
-            assertEquals(validSource("kg"), store.code(before.id))
+            assertEquals(updatedCode, store.code(before.id))
+            assertEquals(2, server.requestCount.get())
+
+            server.body.set("<!doctype html><html>not a script</html>")
+            assertThrows(Exception::class.java) { runBlocking { sourceImporter.updateFromOrigin(update.script) } }
+            assertEquals(updatedCode, store.code(before.id))
+            assertThrows(Exception::class.java) { runBlocking { sourceImporter.importUrl(server.url) } }
+            assertEquals(updatedCode, store.code(before.id))
         }
     }
 
     private class ScriptServer(initial: String) : Closeable {
         val body = AtomicReference(initial)
+        val requestCount = AtomicInteger()
         private val server = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
         val url = "http://127.0.0.1:${server.localPort}/fixture.js"
         private val worker = thread(name = "source-import-fixture", isDaemon = true) {
             while (!server.isClosed) {
                 val socket = try { server.accept() } catch (_: java.io.IOException) { break }
+                requestCount.incrementAndGet()
                 socket.use {
                     it.soTimeout = 2_000
                     val reader = it.getInputStream().bufferedReader()
@@ -204,23 +220,9 @@ class LxSourceImportInstrumentedTest {
         assertNull(store.code(name))
     }
 
-    private fun importer(validationTimeoutMs: Long = DEFAULT_VALIDATION_TIMEOUT_MS) =
-        LxSourceImporter(fixtureContext, store, validationTimeoutMs = validationTimeoutMs)
+    private fun importer() = LxSourceImporter(store)
 
     private fun sourceInput(source: String) = ByteArrayInputStream(source.toByteArray(Charsets.UTF_8))
-
-    private fun validSource(platform: String = "kw"): String = requestAndInit(
-        "{$platform:{name:'fixture',type:'music',actions:['musicUrl'],qualitys:['128k']}}",
-    )
-
-    private fun requestAndInit(sources: String, status: Boolean = true): String =
-        "lx.on(lx.EVENT_NAMES.request, ()=>Promise.resolve('fixture')); " +
-            "lx.send(lx.EVENT_NAMES.inited, {status:$status,sources:$sources});"
-
-    private fun delayedInitSource(delayMs: Int): String =
-        "lx.on(lx.EVENT_NAMES.request, ()=>Promise.resolve('fixture')); " +
-            "setTimeout(()=>lx.send(lx.EVENT_NAMES.inited, {status:true,sources:" +
-            "{kw:{name:'fixture',type:'music',actions:['musicUrl'],qualitys:['128k']}}}), $delayMs);"
 
     private class FixtureContext(base: Context, runId: String) : ContextWrapper(base) {
         private val root = File(base.cacheDir, "lx-source-import-test-$runId")
@@ -243,7 +245,4 @@ class LxSourceImportInstrumentedTest {
         }
     }
 
-    private companion object {
-        const val DEFAULT_VALIDATION_TIMEOUT_MS = 250L
-    }
 }

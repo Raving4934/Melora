@@ -89,7 +89,7 @@ class LxScriptEngine(private val context: Context) : Closeable {
             }
         }
 
-    /** 导入和“检查脚本”共用同一协议检查；不以文件名、注释或lx字样猜测脚本有效性。 */
+    /** 手动“检查脚本”时执行并检查音源协议；不以文件名、注释或lx字样猜测脚本有效性。 */
     internal suspend fun inspectSource(code: String, fileName: String, timeoutMs: Long = 8_000): JSONObject {
         val initialized = initialize(code, fileName, timeoutMs)
             ?: error("脚本未按音源协议完成初始化")
