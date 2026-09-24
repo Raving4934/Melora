@@ -124,6 +124,7 @@ class PlayerCoverPickerSystemBarsTest {
 
             // Reopen and use the explicit cancel action to cover the other close path.
             compose.onNodeWithTag("open-player-cover-picker").performClick()
+            compose.waitForIdle()
             compose.onNodeWithTag("player-cover-picker").assertIsDisplayed()
             awaitVisibility(::dialogWindow, hidden = policy.expectedHidden)
             compose.onNodeWithText("取消").performClick()

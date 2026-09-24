@@ -64,7 +64,12 @@ class PlaylistImportSheetTest {
             compose.onNodeWithTag("playlist-import-link").performTextInput(initialLink)
         }
         if (autoRead) {
-            compose.onNodeWithTag("playlist-import-submit").performScrollTo().performClick()
+            compose.waitForIdle()
+            compose.onNodeWithTag("playlist-import-submit").assertIsEnabled().performScrollTo()
+            compose.waitUntil(5_000) {
+                runCatching { compose.onNodeWithTag("playlist-import-submit").assertIsDisplayed() }.isSuccess
+            }
+            compose.onNodeWithTag("playlist-import-submit").performClick()
         }
     }
 
@@ -100,14 +105,16 @@ class PlaylistImportSheetTest {
     @Test fun loadingAndPreviewKeepActionsStableAndOnlyExplicitConfirmationSaves() {
         val ready = CompletableDeferred<PlaylistImportResult>()
         show(read = { _, _, progress -> progress(PlaylistImportProgress(2, 100, 250)); ready.await() })
-        compose.waitUntil(5_000) { reads.get() == 1 }
+        compose.waitForIdle()
+        compose.waitUntil(5_000) { reads.get() > 0 }
+        compose.runOnIdle { assertEquals("one submit starts one read", 1, reads.get()) }
         compose.onNodeWithTag("playlist-import-submit").assertIsNotEnabled()
         compose.waitForIdle()
-        val before = compose.onNodeWithTag("playlist-import-submit").fetchSemanticsNode().boundsInRoot
+        val before = bounds("playlist-import-submit")
         assertEquals(0, saves.get())
         ready.complete(result())
         compose.waitUntil(5_000) { compose.onAllNodesWithText("导入 1 首").fetchSemanticsNodes().isNotEmpty() }
-        val after = compose.onNodeWithTag("playlist-import-submit").fetchSemanticsNode().boundsInRoot
+        val after = bounds("playlist-import-submit")
         assertEquals(before.height, after.height, 1f)
         assertEquals(before.top, after.top, 2f)
         assertEquals(0, saves.get())

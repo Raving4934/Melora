@@ -10,6 +10,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.longClick
@@ -71,7 +72,9 @@ class PlayerLyricsPagingTest {
         compose.waitForIdle()
         if (immersive) {
             compose.onNodeWithTag("player-artwork").performTouchInput { longClick() }
+            compose.waitUntil(5_000) { runCatching { compose.onNodeWithTag("player-cover-immersive").assertIsDisplayed() }.isSuccess }
             compose.onNodeWithTag("player-cover-immersive").performClick()
+            compose.waitUntil(5_000) { immersiveState.value }
             compose.runOnIdle { assertTrue(immersiveState.value) }
             compose.onNodeWithTag("player-heading").assertDoesNotExist()
             compose.onNodeWithTag("player-transport").assertDoesNotExist()
@@ -119,9 +122,27 @@ class PlayerLyricsPagingTest {
         assertEquals("两页应保持连续，无空隙或重叠", cover.right.value, lyrics.left.value, 1f)
         compose.mainClock.advanceTimeBy(1_500)
         assertEquals(viewport.left.value, compose.onNodeWithTag("player-page-2").getUnclippedBoundsInRoot().left.value, 1f)
-        compose.mainClock.autoAdvance = true
-        compose.onNodeWithTag("player-pages").performTouchInput { swipeRight() }
+        // 在手指仍按住的明确中间位置验连续性；高速整屏swipe可能在96ms前已结束回弹。
+        compose.onNodeWithTag("player-pages").performTouchInput {
+            down(Offset(width * .1f, center.y))
+            moveTo(Offset(width * .4f, center.y), delayMillis = 150)
+        }
+        compose.mainClock.advanceTimeByFrame()
+        try {
+            val returningCover = compose.onNodeWithTag("player-page-1").getUnclippedBoundsInRoot()
+            val returningLyrics = compose.onNodeWithTag("player-page-2").getUnclippedBoundsInRoot()
+            assertTrue("歌词页应向右滑出", returningLyrics.left > viewport.left)
+            assertTrue("封面页应从左侧连续滑入", returningCover.left > viewport.left - (viewport.right - viewport.left) && returningCover.left < viewport.left)
+            assertEquals("返回时两页应保持连续", returningCover.right.value, returningLyrics.left.value, 1f)
+        } finally {
+            compose.onNodeWithTag("player-pages").performTouchInput {
+                moveTo(Offset(width * .85f, center.y), delayMillis = 150)
+                up()
+            }
+        }
+        compose.mainClock.advanceTimeBy(1_500)
         assertEquals(viewport.left.value, compose.onNodeWithTag("player-page-1").getUnclippedBoundsInRoot().left.value, 1f)
+        compose.mainClock.autoAdvance = true
     }
 
     @Test fun fingerCanReverseClickAnimationBeforeItFinishes() {

@@ -130,7 +130,10 @@ class PlayerCoverPickerTest {
             ThemeMode.Light to "player-cover-theme-light",
             ThemeMode.Dark to "player-cover-theme-dark",
         )
-        options.forEach { (mode, tag) -> compose.onNodeWithTag(tag).assertIsDisplayed() }
+        compose.waitUntil(5_000) {
+            runCatching { compose.onNodeWithTag("player-cover-theme-auto").assertIsDisplayed() }.isSuccess
+        }
+        options.forEach { (_, tag) -> compose.onNodeWithTag(tag).assertIsDisplayed() }
         compose.onNodeWithTag("player-cover-theme-auto").assertIsSelected()
         compose.onNodeWithTag("player-cover-theme-light").assertIsNotSelected()
         compose.onNodeWithTag("player-cover-theme-dark").assertIsNotSelected()

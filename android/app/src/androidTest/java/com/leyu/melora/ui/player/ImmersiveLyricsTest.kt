@@ -121,10 +121,12 @@ class ImmersiveLyricsTest {
             immersive = immersion,
         )
         composeRule.waitForIdle()
+        composeRule.onNodeWithText("Immersive focus", useUnmergedTree = true).assertIsDisplayed()
         val ordinaryInk = foregroundBounds(composeRule.onNodeWithTag(VIEWPORT_TAG).captureToImage())
 
         composeRule.runOnIdle { immersion.value = true }
         composeRule.waitForIdle()
+        composeRule.onNodeWithText("Immersive focus", useUnmergedTree = true).assertIsDisplayed()
 
         val viewport = viewportBounds()
         val lyric = textBounds("Immersive focus")

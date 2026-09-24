@@ -38,7 +38,8 @@ class PlaylistMoreSheetTest {
 
     @Test fun appendActionFollowsPlayAllAndDoesNotPlayOrEditPlaylist() {
         show()
-        val play = compose.onNodeWithText("播放全部").fetchSemanticsNode().boundsInRoot
+        compose.waitForIdle()
+        val play = compose.onNodeWithText("播放全部").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
         val append = compose.onNodeWithText("添加全部歌曲到播放队列").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
         assertTrue(append.top > play.top)
         compose.onNodeWithText("添加全部歌曲到播放队列").performClick()
