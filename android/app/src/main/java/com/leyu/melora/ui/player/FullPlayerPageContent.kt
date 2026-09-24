@@ -1,5 +1,7 @@
 package com.leyu.melora.ui.player
 
+import com.leyu.melora.playback.LyricsUiConfig
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.Spring
@@ -211,25 +213,6 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 
-// 歌词视图配置状态
-data class LyricsUiConfig(
-    val fontSizeSp: Float = DEFAULT_FONT_SIZE_SP,
-    val isCentered: Boolean = false,
-    val isBold: Boolean = false,
-    val isBlurEnabled: Boolean = false,
-) {
-    fun resizeBy(steps: Int): LyricsUiConfig =
-        copy(fontSizeSp = (fontSizeSp + steps * 2f).coerceIn(FONT_SIZE_MIN_SP, FONT_SIZE_MAX_SP))
-
-    fun resetFontSize(): LyricsUiConfig = copy(fontSizeSp = DEFAULT_FONT_SIZE_SP)
-
-    companion object {
-        const val DEFAULT_FONT_SIZE_SP = 22f
-        const val FONT_SIZE_MIN_SP = 16f
-        const val FONT_SIZE_MAX_SP = 30f
-    }
-}
-
 // 与 Pager 手势松手后的默认吸附一致；点击翻页不能使用更硬、更急的默认 spring。
 private val PlayerPageSnapSpec = spring<Float>(
     stiffness = Spring.StiffnessMediumLow,
@@ -272,7 +255,7 @@ internal fun FullPlayerPageContent(
     val coverPagerState = rememberPagerState(initialPage = 1, pageCount = { 3 })
 
     // 弹窗状态管理
-    var lyricsConfig by remember { mutableStateOf(LyricsUiConfig()) }
+    val lyricsConfig by MeloraSettings.playerLyrics.collectAsStateWithLifecycle()
     var showTimerSettings by remember { mutableStateOf(false) }
     var showMoreActions by remember { mutableStateOf(false) }
     var showAudioEffects by remember { mutableStateOf(false) }
@@ -472,7 +455,7 @@ internal fun FullPlayerPageContent(
                             motionEnabled = motionEnabled,
                             config = lyricsConfig,
                             immersive = immersive, immersion = immersion,
-                            onConfigChange = { lyricsConfig = it },
+                            onConfigChange = MeloraSettings::updatePlayerLyrics,
                             onOpenSource = { showLyricsSource = true },
                         )
                     }

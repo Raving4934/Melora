@@ -78,6 +78,7 @@ object MeloraSettings {
     val keepScreenAwake = MutableStateFlow(false)
     val miniLyricsEnabled = MutableStateFlow(true)
     val playerCoverStyle = MutableStateFlow(PlayerCoverStyle.Default)
+    val playerLyrics = MutableStateFlow(LyricsUiConfig())
     // 音效预设ID由AudioEffects唯一目录校验，实际应用结果由播放服务发布。
     val audioEffectPreset = MutableStateFlow("off")
     val showNotificationCover = MutableStateFlow(true)
@@ -150,6 +151,9 @@ object MeloraSettings {
         playerCoverStyle.value = PlayerCoverStyle.restore(
             prefs.getString(KEY_PLAYER_COVER_STYLE, null),
         )
+        playerLyrics.value = runCatching {
+            LyricsUiConfig.fromJson(org.json.JSONObject(prefs.getString(KEY_PLAYER_LYRICS, null) ?: "{}"))
+        }.getOrDefault(LyricsUiConfig())
         audioEffectPreset.value = AudioEffects.restoreId(prefs.getString(KEY_AUDIO_EFFECT, null))
         showNotificationCover.value = prefs.getBoolean(KEY_NOTIFICATION_COVER, true)
         // 旧版单一音质键迁移为 WiFi 音质
@@ -241,6 +245,12 @@ object MeloraSettings {
     internal fun updateLocalSortField(value: LocalSortField) = synchronized(BackupStateLock.monitor) { localSortField.value = value; persist { putString(KEY_LOCAL_SORT_FIELD, value.storageValue) } }
     internal fun updateLocalSortAscending(value: Boolean) = synchronized(BackupStateLock.monitor) { localSortAscending.value = value; persist { putBoolean(KEY_LOCAL_SORT_ASCENDING, value) } }
 
+    fun updatePlayerLyrics(value: LyricsUiConfig) = synchronized(BackupStateLock.monitor) {
+        val normalized = value.normalized()
+        playerLyrics.value = normalized
+        persist { putString(KEY_PLAYER_LYRICS, normalized.toJson().toString()) }
+    }
+
     fun updateShowDesktopLyrics(value: Boolean) = synchronized(BackupStateLock.monitor) { showDesktopLyrics.value = value; persist { putBoolean(KEY_DESKTOP_LYRICS, value) } }
     fun updateLockLyrics(value: Boolean) = synchronized(BackupStateLock.monitor) { lockLyrics.value = value; persist { putBoolean(KEY_LYRICS_LOCK, value) } }
     fun updateLyricAnim(value: Boolean) = synchronized(BackupStateLock.monitor) { lyricAnimEnabled.value = value; persist { putBoolean(KEY_LYRICS_ANIM, value) } }
@@ -282,6 +292,7 @@ object MeloraSettings {
     internal const val KEY_REMEMBER_PROGRESS = "playback.rememberProgress"
     internal const val KEY_AUTO_CLEAR_PLAYED = "playback.autoClearPlayed"
     internal const val KEY_PAUSE_OTHER_AUDIO = "playback.pauseOnOtherAudio"
+    internal const val KEY_PLAYER_LYRICS = "player.lyrics"
     internal const val KEY_PLAYER_THEME_MODE = "player.themeMode"
     internal const val KEY_KEEP_SCREEN_AWAKE = "player.keepScreenAwake"
     internal const val KEY_MINI_LYRICS_ENABLED = "player.miniLyricsEnabled"

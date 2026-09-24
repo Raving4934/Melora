@@ -66,7 +66,37 @@ class BackupRoundTripTest {
     }
 
     @Test
+    fun playerLyricsPersistAndReloadIndependentlyOfDesktopLyrics() {
+        val selected = LyricsUiConfig(28f, true, true, true)
+        MeloraSettings.updateLyricFontSize(18f)
+        MeloraSettings.updatePlayerLyrics(selected)
+        val prefs = context.getSharedPreferences(MeloraSettings.PREFS, Context.MODE_PRIVATE)
+        // 等待此前apply完成，再通过启动同用的load链路读取，而非继续使用页面内存。
+        assertTrue(prefs.edit().commit())
+        assertEquals(selected, LyricsUiConfig.fromJson(JSONObject(prefs.getString(MeloraSettings.KEY_PLAYER_LYRICS, null)!!)))
+        MeloraSettings.playerLyrics.value = LyricsUiConfig()
+        MeloraSettings.lyricFontSize.value = 20f
+        MeloraSettings.reloadAfterRestore()
+        assertEquals(selected, MeloraSettings.playerLyrics.value)
+        assertEquals(18f, MeloraSettings.lyricFontSize.value, 0f)
+        MeloraSettings.updatePlayerLyrics(selected.resetFontSize())
+        MeloraSettings.reloadAfterRestore()
+        assertEquals(selected.copy(fontSizeSp = 22f), MeloraSettings.playerLyrics.value)
+    }
+
+    @Test
+    fun corruptPlayerLyricsStorageFallsBackWithoutResettingOtherSettings() {
+        MeloraSettings.updateLyricFontSize(18f)
+        assertTrue(context.getSharedPreferences(MeloraSettings.PREFS, 0).edit()
+            .putString(MeloraSettings.KEY_PLAYER_LYRICS, "{broken").commit())
+        MeloraSettings.reloadAfterRestore()
+        assertEquals(LyricsUiConfig(), MeloraSettings.playerLyrics.value)
+        assertEquals(18f, MeloraSettings.lyricFontSize.value, 0f)
+    }
+
+    @Test
     fun realFileExportImportRoundTripRestoresAllPortableDataAndKeepsOtherSources() = runBlocking<Unit> {
+        MeloraSettings.updatePlayerLyrics(LyricsUiConfig(26f, true, true, true))
         MeloraSettings.updatePlaylistTag("tag-id", "测试分类")
         MeloraSettings.updatePlaylistSort(1)
         MeloraSettings.updateLyricBackground(true)
@@ -84,12 +114,17 @@ class BackupRoundTripTest {
         assertEquals("saved.js", exportedScripts.single().fileName)
         assertEquals(originUrl, exportedScripts.single().originUrl)
 
+        MeloraSettings.updatePlayerLyrics(LyricsUiConfig())
         MeloraSettings.updatePlaylistTag("different", "changed")
         MeloraSettings.updateLyricBackground(false)
         UserLibrary.replaceFromBackup(library("changed").toString())
         store.import("saved.js", "// changed test source", "https://stale.example.test/saved.js")
         store.import("other.js", "// not part of backup")
         BackupManager.import(context, target).getOrThrow()
+        assertEquals(LyricsUiConfig(26f, true, true, true), MeloraSettings.playerLyrics.value)
+        MeloraSettings.playerLyrics.value = LyricsUiConfig()
+        MeloraSettings.reloadAfterRestore()
+        assertEquals(LyricsUiConfig(26f, true, true, true), MeloraSettings.playerLyrics.value)
         assertEquals("original", UserLibrary.favorites.value.single().name)
         assertEquals("tag-id", MeloraSettings.playlistTagId.value)
         assertEquals("测试分类", MeloraSettings.playlistTagName.value)

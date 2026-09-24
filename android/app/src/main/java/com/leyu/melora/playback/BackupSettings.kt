@@ -44,6 +44,8 @@ internal object BackupSettings {
         field("keepScreenAwake", MeloraSettings.KEY_KEEP_SCREEN_AWAKE, MeloraSettings.keepScreenAwake, ::backupBoolean),
         field("miniLyricsEnabled", MeloraSettings.KEY_MINI_LYRICS_ENABLED, MeloraSettings.miniLyricsEnabled, ::backupBoolean),
         field("playerCoverStyle", MeloraSettings.KEY_PLAYER_COVER_STYLE, MeloraSettings.playerCoverStyle, { PlayerCoverStyle.restore(it as? String, MeloraSettings.playerCoverStyle.value) }, PlayerCoverStyle::storageValue),
+        field("playerLyrics", MeloraSettings.KEY_PLAYER_LYRICS, MeloraSettings.playerLyrics,
+            { LyricsUiConfig.fromJson(it as? JSONObject ?: error("全屏歌词设置无效")) }, LyricsUiConfig::toJson),
         field("notificationCover", MeloraSettings.KEY_NOTIFICATION_COVER, MeloraSettings.showNotificationCover, ::backupBoolean),
         field("autoSwitchSource", MeloraSettings.KEY_AUTO_SWITCH_SOURCE, MeloraSettings.autoSwitchSource, ::backupBoolean),
         field("playQualityWifi", MeloraSettings.KEY_QUALITY_WIFI, MeloraSettings.playQualityWifi, ::backupString),
@@ -121,7 +123,7 @@ internal object BackupSettings {
         val values = fields.filter { prepared.has(it.name) }
         MeloraSettings.commitBackupValues(values.associate { field ->
             val value = field.normalize(prepared.get(field.name))
-            field.key to if (value is JSONArray) value.toString() else value
+            field.key to if (value is JSONArray || value is JSONObject) value.toString() else value
         })
         values.forEach { it.publish(prepared.get(it.name)) }
     }

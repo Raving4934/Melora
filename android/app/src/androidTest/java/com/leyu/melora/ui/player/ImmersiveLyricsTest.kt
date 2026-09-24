@@ -1,5 +1,7 @@
 package com.leyu.melora.ui.player
 
+import com.leyu.melora.playback.LyricsUiConfig
+
 import android.graphics.Color as AndroidColor
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box

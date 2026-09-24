@@ -31,6 +31,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.leyu.melora.playback.LyricsUiConfig
 import com.leyu.melora.playback.LyricLine
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlayerCoverStyle
@@ -57,10 +58,12 @@ class ImmersivePlayerInstrumentedTest {
         landscape: Boolean = false,
         observeCoverStyle: Boolean = false,
         linesOverride: androidx.compose.runtime.State<List<LyricLine>>? = null,
+        playerVisible: androidx.compose.runtime.State<Boolean>? = null,
     ) {
         val position = mutableLongStateOf(2_000)
         val defaultLines = listOf(LyricLine(0, "慢慢听见海风"), LyricLine(5_000, "灯火落在远方"))
         compose.setContent {
+            if (playerVisible?.value == false) return@setContent
             val lines = linesOverride?.value ?: defaultLines
             val coverStyle = if (observeCoverStyle) {
                 MeloraSettings.playerCoverStyle.collectAsState().value
@@ -322,6 +325,27 @@ class ImmersivePlayerInstrumentedTest {
             compose.onNodeWithContentDescription(label).performTouchInput { click(center) }
         }
         assertEquals(listOf("previous", "toggle", "next", "exit"), actions)
+    }
+
+    @Test fun lyricFontPreferenceSurvivesPlayerDisposalAndKeepsOtherOptions() {
+        val original = MeloraSettings.playerLyrics.value
+        val visible = mutableStateOf(true)
+        try {
+            MeloraSettings.updatePlayerLyrics(LyricsUiConfig(22f, true, true, true))
+            showPlayer(playerVisible = visible)
+            compose.onNodeWithTag("player-pages").performTouchInput { swipeLeft() }
+            compose.onNodeWithContentDescription("展开歌词设置").performClick()
+            compose.onNodeWithContentDescription("增大字号，当前22sp").performScrollTo().performClick()
+            compose.runOnIdle { assertEquals(LyricsUiConfig(24f, true, true, true), MeloraSettings.playerLyrics.value) }
+            compose.runOnIdle { visible.value = false }
+            compose.onNodeWithTag("player-pages").assertDoesNotExist()
+            compose.runOnIdle { visible.value = true }
+            compose.onNodeWithTag("player-pages").performTouchInput { swipeLeft() }
+            compose.onNodeWithContentDescription("展开歌词设置").performClick()
+            compose.onNodeWithContentDescription("增大字号，当前24sp").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithContentDescription("重置字号，恢复22sp").performScrollTo().performClick()
+            compose.runOnIdle { assertEquals(LyricsUiConfig(22f, true, true, true), MeloraSettings.playerLyrics.value) }
+        } finally { MeloraSettings.updatePlayerLyrics(original) }
     }
 
     @Test fun lyricSourceMenuKeepsTheExistingPageGeometryAndCannotWriteAnOnlineTrack() {

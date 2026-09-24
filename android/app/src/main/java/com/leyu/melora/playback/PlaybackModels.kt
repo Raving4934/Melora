@@ -71,6 +71,40 @@ data class PlayerUiState(
     val pendingQueueId: String? = null,
 )
 
+/** 全屏歌词外观；由设置中心持久化，mini与桌面悬浮歌词保持各自字号。 */
+data class LyricsUiConfig(
+    val fontSizeSp: Float = DEFAULT_FONT_SIZE_SP,
+    val isCentered: Boolean = false,
+    val isBold: Boolean = false,
+    val isBlurEnabled: Boolean = false,
+) {
+    fun resizeBy(steps: Int): LyricsUiConfig =
+        copy(fontSizeSp = (fontSizeSp + steps * 2f).coerceIn(FONT_SIZE_MIN_SP, FONT_SIZE_MAX_SP))
+
+    fun resetFontSize(): LyricsUiConfig = copy(fontSizeSp = DEFAULT_FONT_SIZE_SP)
+
+    internal fun normalized(): LyricsUiConfig = copy(
+        fontSizeSp = if (fontSizeSp.isFinite()) fontSizeSp.coerceIn(FONT_SIZE_MIN_SP, FONT_SIZE_MAX_SP) else DEFAULT_FONT_SIZE_SP,
+    )
+
+    internal fun toJson(): JSONObject = JSONObject()
+        .put("fontSizeSp", fontSizeSp).put("isCentered", isCentered)
+        .put("isBold", isBold).put("isBlurEnabled", isBlurEnabled)
+
+    companion object {
+        const val DEFAULT_FONT_SIZE_SP = 22f
+        const val FONT_SIZE_MIN_SP = 16f
+        const val FONT_SIZE_MAX_SP = 30f
+
+        internal fun fromJson(value: JSONObject): LyricsUiConfig = LyricsUiConfig(
+            fontSizeSp = value.optDouble("fontSizeSp", DEFAULT_FONT_SIZE_SP.toDouble()).toFloat(),
+            isCentered = value.optBoolean("isCentered", false),
+            isBold = value.optBoolean("isBold", false),
+            isBlurEnabled = value.optBoolean("isBlurEnabled", false),
+        ).normalized()
+    }
+}
+
 /** 所有格式共用一份时序模型；words 为空意味着只有行级时间，不能假定逐词进度。 */
 data class LyricWord(val text: String, val startMs: Long, val endMs: Long)
 

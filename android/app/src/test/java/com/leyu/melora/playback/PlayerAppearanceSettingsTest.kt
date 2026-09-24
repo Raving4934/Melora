@@ -117,6 +117,37 @@ class PlayerAppearanceSettingsTest {
         assertFalse(BackupSettings.collect().has("playerVisualTheme"))
     }
 
+    @Test
+    fun playerLyricsRoundTripThroughBackupWithoutChangingDesktopLyrics() = withAppearanceSettings {
+        val selected = LyricsUiConfig(28f, true, true, true)
+        val desktopSize = MeloraSettings.lyricFontSize.value
+        MeloraSettings.updatePlayerLyrics(selected)
+        val backup = JSONObject(BackupSettings.collect().toString())
+        assertEquals(28.0, backup.getJSONObject("playerLyrics").getDouble("fontSizeSp"), 0.0)
+        MeloraSettings.updatePlayerLyrics(LyricsUiConfig())
+        BackupSettings.apply(BackupSettings.prepare(backup, emptySet(), emptySet()).first)
+        assertEquals(selected, MeloraSettings.playerLyrics.value)
+        assertEquals(desktopSize, MeloraSettings.lyricFontSize.value, 0f)
+    }
+
+    @Test
+    fun oldBackupWithoutPlayerLyricsKeepsCurrentPreference() = withAppearanceSettings {
+        val selected = LyricsUiConfig(26f, true, false, true)
+        MeloraSettings.updatePlayerLyrics(selected)
+        BackupSettings.apply(BackupSettings.prepare(JSONObject().put("lyricFontSize", 20f), emptySet(), emptySet()).first)
+        assertEquals(selected, MeloraSettings.playerLyrics.value)
+    }
+
+    @Test
+    fun invalidPlayerLyricsBackupTypeIsRejectedBeforeApply() = withAppearanceSettings {
+        val selected = LyricsUiConfig(24f, isBold = true)
+        MeloraSettings.updatePlayerLyrics(selected)
+        org.junit.Assert.assertThrows(IllegalStateException::class.java) {
+            BackupSettings.prepare(JSONObject().put("playerLyrics", "invalid"), emptySet(), emptySet())
+        }
+        assertEquals(selected, MeloraSettings.playerLyrics.value)
+    }
+
     private fun assertAppearance(
         hideStatusBar: Boolean,
         blurTopBar: Boolean,
@@ -134,6 +165,8 @@ class PlayerAppearanceSettingsTest {
     }
 
     private inline fun withAppearanceSettings(block: () -> Unit) {
+        val originalPlayerLyrics = MeloraSettings.playerLyrics.value
+        val originalDesktopSize = MeloraSettings.lyricFontSize.value
         val originalHideStatusBar = MeloraSettings.hideStatusBar.value
         val originalBlurTopBar = MeloraSettings.blurTopBar.value
         val originalPlayerThemeMode = MeloraSettings.playerThemeMode.value
@@ -143,6 +176,8 @@ class PlayerAppearanceSettingsTest {
         try {
             block()
         } finally {
+            MeloraSettings.playerLyrics.value = originalPlayerLyrics
+            MeloraSettings.lyricFontSize.value = originalDesktopSize
             MeloraSettings.hideStatusBar.value = originalHideStatusBar
             MeloraSettings.blurTopBar.value = originalBlurTopBar
             MeloraSettings.playerThemeMode.value = originalPlayerThemeMode

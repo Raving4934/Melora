@@ -1,5 +1,7 @@
 package com.leyu.melora.ui.player
 
+import com.leyu.melora.playback.LyricsUiConfig
+
 import android.os.Build
 import android.os.SystemClock
 import androidx.compose.animation.core.animateFloatAsState
