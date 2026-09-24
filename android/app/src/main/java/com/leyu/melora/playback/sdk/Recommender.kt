@@ -355,14 +355,14 @@ object Recommender {
         refresh: Boolean,
         load: suspend () -> T,
     ): T {
-        if (!refresh) return OnlineCache.refresh(key, ttlMs, load)
+        if (!refresh) return OnlineCache.refresh(key, ttlMs, load = load)
         val generation = synchronized(refreshLock) { discoveryRefreshGeneration }
-        if (generation == null) return OnlineCache.refresh(key, -1L, load)
+        if (generation == null) return OnlineCache.refresh(key, -1L, load = load)
 
         val generationKey = "$key.refresh.$generation"
         val pending = OnlineCache.pendingRefresh<T>(key)
         return OnlineCache.refresh(generationKey, ttlMs) {
-            pending?.await() ?: OnlineCache.refresh(key, -1L, load)
+            pending?.await() ?: OnlineCache.refresh(key, -1L, load = load)
         }
     }
 

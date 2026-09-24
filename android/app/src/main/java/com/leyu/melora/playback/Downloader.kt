@@ -21,6 +21,8 @@ import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.documentfile.provider.DocumentFile
 import com.leyu.melora.playback.sdk.CoverLoader
+import com.leyu.melora.playback.sdk.OnlineLyric
+import com.leyu.melora.playback.sdk.OnlineRepository
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.sdk.SourceResolver
 import java.io.File
@@ -61,6 +63,14 @@ internal fun shouldRetryDownloadTransfer(
     remainingRetryWindowMs: Long,
 ): Boolean = autoSwitch && networkAvailable &&
     attemptedResources < MAX_DOWNLOAD_TRANSFER_RESOURCES && remainingRetryWindowMs > 0L
+
+/** 下载标签必须对应实际音频；缺少身份时宁可不写，也不把另一版本降级成普通歌词混入。 */
+internal fun embeddedLyricsForDownload(lyric: OnlineLyric, audioSongUid: String): EmbeddedLyrics? {
+    if (lyric.song?.uid != audioSongUid) return null
+    return EmbeddedLyrics.fromLines(
+        LyricParser.parse(lyric.lyric, lyric.tlyric, lyric.rlyric, wordByWord = lyric.lxlyric),
+    )?.takeUnless { it.isBlank }
+}
 
 internal fun findDownloadHttpTransferFailure(failure: Throwable): DownloadHttpTransferFailure? {
     val visited = mutableSetOf<Throwable>()
@@ -404,7 +414,22 @@ object Downloader {
                     recoverableOrNull { SourceResolver.matchOnline(context, song) }
                 } else null
                 val cover = if (request.embedCover) recoverableOrNull { fetchCover(context, recordId, song) } else null
-                val lyric = if (request.embedLyric) recoverableOrNull { SourceResolver.lyric(context, song)?.lyric } else null
+                val lyric = if (request.embedLyric) recoverableOrNull {
+                    val lyricSong = if (input.sourceIdentity == song.uid) song else {
+                        recoverableOrNull {
+                            SourceResolver.findAlternatives(context, song)
+                                .firstOrNull { it.uid == input.sourceIdentity }
+                        }
+                    }
+                    val exactLyrics = lyricSong?.let { matchedSong ->
+                        recoverableOrNull {
+                            OnlineRepository.lyric(context, matchedSong.source, matchedSong)
+                        }?.takeIf { it.hasLyrics }
+                    }
+                    exactLyrics?.let { matched ->
+                        embeddedLyricsForDownload(matched, input.sourceIdentity)
+                    }
+                } else null
                 recoverableOrNull {
                     DownloadMetadataWriter.write(temp, extension, song.name,
                         song.singer.ifBlank { fallback?.singer.orEmpty() }, song.albumName.ifBlank { fallback?.albumName.orEmpty() },
@@ -947,28 +972,33 @@ internal object Id3Writer {
         artist: String,
         album: String,
         cover: ByteArray?,
-        lyric: String?,
+        lyric: EmbeddedLyrics?,
         year: Int? = null,
     ) {
         val existing = readExistingTag(file)
         val validYear = year?.takeIf { it in 1900..2100 }
         val usableCover = cover?.takeIf { it.isNotEmpty() }
-        val usableLyric = lyric?.takeIf { it.isNotBlank() }
+        val usableLyric = lyric?.plain?.takeIf { it.isNotBlank() }
+        val usableTtml = lyric?.ttml?.takeIf { it.isNotBlank() }
         val replacedFrameIds = buildSet {
             if (title.isNotBlank()) add("TIT2")
             if (artist.isNotBlank()) add("TPE1")
             if (album.isNotBlank()) add("TALB")
             if (validYear != null) addAll(listOf("TYER", "TDRC"))
             if (usableCover != null) add("APIC")
-            if (usableLyric != null) add("USLT")
+            if (lyric != null) add("USLT")
         }
-        val frames = existing.frames.filterNot { it.id in replacedFrameIds }.toMutableList()
+        val frames = existing.frames.filterNot { frame ->
+            frame.id in replacedFrameIds ||
+                (lyric != null && frame.id == "TXXX" && txxxDescription(frame.payload)?.equals(EmbeddedLyrics.TTML_FIELD, ignoreCase = true) == true)
+        }.toMutableList()
         addText(frames, "TIT2", title)
         addText(frames, "TPE1", artist)
         addText(frames, "TALB", album)
         validYear?.let { addText(frames, if (existing.major >= 4) "TDRC" else "TYER", it.toString()) }
         usableCover?.let { frames += Frame("APIC", ZERO_FLAGS, apicPayload(it)) }
         usableLyric?.let { frames += Frame("USLT", ZERO_FLAGS, usltPayload(it)) }
+        usableTtml?.let { frames += Frame("TXXX", ZERO_FLAGS, txxxPayload(EmbeddedLyrics.TTML_FIELD, it)) }
         if (frames.isEmpty()) return
 
         val tag = buildTag(frames, existing.major)
@@ -1049,6 +1079,43 @@ internal object Id3Writer {
             payload = byteArrayOf(1) + byteArrayOf(0xFF.toByte(), 0xFE.toByte()) + value.toByteArray(Charsets.UTF_16LE),
         )
     }
+
+    private fun txxxDescription(payload: ByteArray): String? {
+        if (payload.isEmpty()) return null
+        val encoding = payload[0].toInt() and 0xFF
+        val descriptionStart = when (encoding) {
+            0, 3 -> 1
+            1 -> 3 // UTF-16 with BOM
+            2 -> 1 // UTF-16BE
+            else -> return null
+        }
+        val delimiter = when (encoding) {
+            0, 3 -> (descriptionStart until payload.size).firstOrNull { payload[it] == 0.toByte() }
+            else -> (descriptionStart until payload.size - 1 step 2).firstOrNull {
+                payload[it] == 0.toByte() && payload[it + 1] == 0.toByte()
+            }
+        } ?: return null
+        val charset = when (encoding) {
+            0 -> Charsets.ISO_8859_1
+            1 -> if (payload[1] == 0xFF.toByte() && payload[2] == 0xFE.toByte()) Charsets.UTF_16LE else Charsets.UTF_16BE
+            2 -> Charsets.UTF_16BE
+            else -> Charsets.UTF_8
+        }
+        return String(payload, descriptionStart, delimiter - descriptionStart, charset)
+    }
+
+    private fun txxxPayload(description: String, value: String): ByteArray =
+        java.io.ByteArrayOutputStream().apply {
+            write(1) // UTF-16 with BOM
+            write(0xFF)
+            write(0xFE)
+            write(description.toByteArray(Charsets.UTF_16LE))
+            write(0)
+            write(0)
+            write(0xFF)
+            write(0xFE)
+            write(value.toByteArray(Charsets.UTF_16LE))
+        }.toByteArray()
 
     private fun apicPayload(cover: ByteArray): ByteArray {
         val isPng = cover.size > 8 && cover[0] == 0x89.toByte() && cover[1] == 'P'.code.toByte()

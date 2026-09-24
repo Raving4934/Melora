@@ -4,8 +4,11 @@ import android.content.Context
 import android.content.ContextWrapper
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.RandomAccessFile
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.nio.file.Files
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -44,6 +47,36 @@ class LocalTagReaderTest {
         resetIndex()
         cacheRoot.deleteRecursively()
         filesRoot.deleteRecursively()
+    }
+
+    @Test
+    fun id3ScansUsltAndTheNamedTxxxFrameWithoutEarlyReturn() {
+        val rich = "<tt><body><div><p begin=\"1s\">rich</p></div></body></tt>"
+        val bytes = id3Tag(
+            id3Frame("PRIV", byteArrayOf(1, 2, 3)),
+            id3Frame("USLT", usltBody("plain lyrics")),
+            id3Frame("TXXX", txxxBody("LYRICS_TTML", rich)),
+        )
+
+        val lyrics = requireNotNull(LocalTagReader.embeddedLyricsFromBytes(bytes, "audio/mpeg"))
+
+        assertEquals("plain lyrics", lyrics.plain)
+        assertEquals(rich, lyrics.ttml)
+    }
+
+    @Test
+    fun flacScansAllCommentFieldsAndKeepsOrdinaryLyricsAfterTtml() {
+        val rich = "<tt><body><div><p begin=\"1s\">rich</p></div></body></tt>"
+        val bytes = flacCommentBlock(
+            "LYRICS_TTML=$rich",
+            "X_UNKNOWN=untouched",
+            "UNSYNCED LYRICS=plain lyrics",
+        )
+
+        val lyrics = requireNotNull(LocalTagReader.embeddedLyricsFromBytes(bytes, "audio/flac"))
+
+        assertEquals("plain lyrics", lyrics.plain)
+        assertEquals(rich, lyrics.ttml)
     }
 
     @Test
@@ -185,6 +218,49 @@ class LocalTagReaderTest {
         assertFalse(File(cacheRoot, LOCAL_COVER_CACHE_DIR).exists())
         assertNull(LocalMediaStore.find(song.id)?.coverUri)
         assertFalse(LocalMediaStore.find(song.id)?.infoFilled == true)
+    }
+
+    private fun id3Tag(vararg frames: ByteArray): ByteArray {
+        val body = frames.fold(ByteArrayOutputStream()) { output, frame -> output.apply { write(frame) } }.toByteArray()
+        return byteArrayOf('I'.code.toByte(), 'D'.code.toByte(), '3'.code.toByte(), 4, 0, 0) +
+            synchsafe(body.size) + body
+    }
+
+    private fun id3Frame(id: String, body: ByteArray): ByteArray =
+        id.toByteArray(Charsets.ISO_8859_1) + synchsafe(body.size) + byteArrayOf(0, 0) + body
+
+    private fun usltBody(text: String): ByteArray =
+        byteArrayOf(3, 'e'.code.toByte(), 'n'.code.toByte(), 'g'.code.toByte(), 0) + text.toByteArray(Charsets.UTF_8)
+
+    private fun txxxBody(description: String, text: String): ByteArray =
+        byteArrayOf(3) + description.toByteArray(Charsets.UTF_8) + byteArrayOf(0) + text.toByteArray(Charsets.UTF_8)
+
+    private fun synchsafe(value: Int): ByteArray = byteArrayOf(
+        ((value shr 21) and 0x7F).toByte(),
+        ((value shr 14) and 0x7F).toByte(),
+        ((value shr 7) and 0x7F).toByte(),
+        (value and 0x7F).toByte(),
+    )
+
+    private fun flacCommentBlock(vararg comments: String): ByteArray {
+        val vendor = "test".toByteArray(Charsets.UTF_8)
+        val payload = ByteArrayOutputStream().apply {
+            write(ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(vendor.size).array())
+            write(vendor)
+            write(ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(comments.size).array())
+            comments.forEach { comment ->
+                val value = comment.toByteArray(Charsets.UTF_8)
+                write(ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(value.size).array())
+                write(value)
+            }
+        }.toByteArray()
+        require(payload.size <= 0xFFFFFF)
+        return "fLaC".toByteArray(Charsets.US_ASCII) + byteArrayOf(
+            0x84.toByte(),
+            ((payload.size shr 16) and 0xFF).toByte(),
+            ((payload.size shr 8) and 0xFF).toByte(),
+            (payload.size and 0xFF).toByte(),
+        ) + payload
     }
 
     private fun resetIndex() {

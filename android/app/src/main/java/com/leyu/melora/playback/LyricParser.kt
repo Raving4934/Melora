@@ -9,10 +9,10 @@ import org.w3c.dom.Element
 import org.w3c.dom.Node
 import org.xml.sax.InputSource
 
-/** 统一歌词解析入口，覆盖 LRC/增强 LRC 与 Apple/AMLL 风格 TTML。 */
+/** 统一歌词解析入口：LRC、增强/LX 逐字歌词与 Apple/AMLL 风格 TTML。 */
 object LyricParser {
     private val lrcTimeTag = Regex("""\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?]""")
-    private val enhancedWordTag = Regex("""<(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?>""")
+    private val wordTag = Regex("""<(?:(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?|([+-]?\d+),([+-]?\d+))>""")
     private val offsetTag = Regex("""(?i)\[offset\s*:\s*([+-]?\d+)\s*]""")
     private val booleanValues = setOf("1", "true", "yes", "on")
 
@@ -21,38 +21,43 @@ object LyricParser {
      *
      * 翻译-only 行不会被丢弃：当没有唯一的主歌词行可关联时，结果会保留空 text 的行。
      */
-    fun parse(raw: String, translation: String = "", romanization: String = ""): List<LyricLine> {
-        val primary = parseDocument(raw)
+    fun parse(raw: String, translation: String = "", romanization: String = "", wordByWord: String = ""): List<LyricLine> {
         val offset = findOffset(raw)
-        val translations = parseSidecar(translation, offset).map { it.copy(text = it.translation ?: it.text) }
-        val romanizations = parseSidecar(romanization, offset).map { it.copy(text = it.romanization ?: it.text) }
+        val ordinary = parseDocument(raw, offset)
+        val wordOffset = if (offsetTag.containsMatchIn(wordByWord)) findOffset(wordByWord) else offset
+        val timed = parseDocument(wordByWord, wordOffset).filter { it.words.isNotEmpty() }
+        // 只为同一句补全时间轴；逐字轨缺行/损坏/与正文不符，不能覆盖已有歌词。
+        val primary = enrich(ordinary, timed)
+        val sidecarOffset = if (ordinary.isEmpty()) wordOffset else offset
+        val translations = parseDocument(translation, sidecarOffset).map { it.copy(text = it.translation ?: it.text) }
+        val romanizations = parseDocument(romanization, sidecarOffset).map { it.copy(text = it.romanization ?: it.text) }
         return attachSidecars(primary, translations, romanizations)
     }
 
-    private fun parseDocument(raw: String): List<LyricLine> {
-        if (raw.isBlank()) return emptyList()
-        val trimmed = raw.trimStart('\uFEFF', ' ', '\t', '\r', '\n')
-        return if (trimmed.startsWith('<')) {
-            parseXml(trimmed)
-        } else {
-            parseLrc(raw, findOffset(raw))
+    /** 自动补词只使用同时间、同正文且唯一匹配的行；不会替换本地正文或已有逐字时间轴。 */
+    internal fun enrich(ordinary: List<LyricLine>, candidates: List<LyricLine>): List<LyricLine> {
+        val timed = candidates.filter { it.words.isNotEmpty() }
+        if (timed.isEmpty()) return ordinary
+        if (ordinary.isEmpty()) return timed
+        val byLine = timed.groupBy { it.startMs to it.text }
+        return ordinary.map { line ->
+            val match = byLine[line.startMs to line.text]?.singleOrNull()
+            if (line.words.isEmpty() && match != null) line.copy(
+                words = match.words, endMs = match.endMs,
+            ) else line
         }
     }
 
-    private fun parseSidecar(raw: String, offset: Long): List<LyricLine> {
+    private fun parseDocument(raw: String, offset: Long): List<LyricLine> {
         if (raw.isBlank()) return emptyList()
         val trimmed = raw.trimStart('\uFEFF', ' ', '\t', '\r', '\n')
-        return if (trimmed.startsWith('<')) {
-            parseXml(trimmed)
-        } else {
-            parseLrc(raw, offset)
-        }
+        return if (trimmed.startsWith('<')) parseXml(trimmed) else parseLrc(raw, offset)
     }
 
     private fun findOffset(raw: String): Long =
         offsetTag.find(raw)?.groupValues?.getOrNull(1)?.toLongOrNull() ?: 0L
 
-    private data class LrcWordSeed(val startMs: Long, val text: String)
+    private data class LrcWordSeed(val startMs: Long, val text: String, val endMs: Long? = null)
 
     private data class LrcEntry(
         val order: Int,
@@ -70,16 +75,12 @@ object LyricParser {
             if (matches.isEmpty()) return@forEach
 
             val body = line.replace(lrcTimeTag, "")
-            val enhanced = parseEnhancedBody(body, offset)
-            val text = enhanced.first.trim()
-            if (text.isBlank()) return@forEach
-
             matches.forEach { match ->
-                val start = parseLrcTime(match.groupValues[1], match.groupValues[2], match.groupValues.getOrNull(3))
-                    ?.minus(offset)
-                    ?.coerceAtLeast(0L)
+                val rawStart = parseLrcTime(match.groupValues[1], match.groupValues[2], match.groupValues.getOrNull(3))
                     ?: return@forEach
-                entries += LrcEntry(order++, start, text, enhanced.second)
+                val (visible, words) = parseWordBody(body, rawStart, offset)
+                val text = visible.trim()
+                if (text.isNotBlank()) entries += LrcEntry(order++, (rawStart - offset).coerceAtLeast(0L), text, words)
             }
         }
 
@@ -101,7 +102,7 @@ object LyricParser {
             LyricLine(
                 startMs = entry.startMs,
                 text = entry.text,
-                endMs = words.lastOrNull()?.endMs ?: inferredEnd?.takeIf { entry.words.isNotEmpty() },
+                endMs = words.maxOfOrNull { it.endMs } ?: inferredEnd?.takeIf { entry.words.isNotEmpty() },
                 words = words,
             )
         }
@@ -113,25 +114,33 @@ object LyricParser {
             if (group.all { it.words.isEmpty() }) listOf(group.first().copy(text = group.map { it.text }.distinct().joinToString("\n")))
             else group
         }
-    /**
-     * 读取增强 LRC 的 `<mm:ss.xxx>` 标签。
-     * 标签本身是绝对时间；没有后续词或行边界时不为末词编造结束时间。
-     */
-    private fun parseEnhancedBody(body: String, offset: Long): Pair<String, List<LrcWordSeed>> {
-        val matches = enhancedWordTag.findAll(body).toList()
+    /** 绝对时间标签与 LX 的相对偏移/持续时间共用词种子，LX 不用下一字起点猜结束时间。 */
+    private fun parseWordBody(body: String, lineStartMs: Long, offset: Long): Pair<String, List<LrcWordSeed>> {
+        val matches = wordTag.findAll(body).toList()
         if (matches.isEmpty()) return body to emptyList()
-
-        val visible = body.replace(enhancedWordTag, "")
-        val seeds = matches.mapIndexedNotNull { index, match ->
-            val rawStart = parseLrcTime(match.groupValues[1], match.groupValues[2], match.groupValues.getOrNull(3))
-                ?.minus(offset)
-                ?.coerceAtLeast(0L)
-                ?: return@mapIndexedNotNull null
-            val textStart = match.range.last + 1
+        val visible = body.replace(wordTag, "")
+        val relative = matches.any { it.groupValues[4].isNotEmpty() }
+        val seeds = matches.mapIndexed { index, match ->
             val textEnd = matches.getOrNull(index + 1)?.range?.first ?: body.length
-            val text = body.substring(textStart, textEnd)
-            rawStart to text
-        }.map { (startMs, text) -> LrcWordSeed(startMs, text) }
+            var text = body.substring(match.range.last + 1, textEnd)
+            if (relative && index == 0) text = text.trimStart()
+            if (relative && index == matches.lastIndex) text = text.trimEnd()
+            if (match.groupValues[4].isEmpty()) {
+                val start = parseLrcTime(match.groupValues[1], match.groupValues[2], match.groupValues[3])
+                    ?: return visible to emptyList()
+                LrcWordSeed((start - offset).coerceAtLeast(0L), text)
+            } else {
+                val start = match.groupValues[4].toLongOrNull()?.takeIf { it >= 0 } ?: return visible to emptyList()
+                val duration = match.groupValues[5].toLongOrNull()?.takeIf { it >= 0 } ?: return visible to emptyList()
+                try {
+                    val absoluteStart = Math.addExact(lineStartMs, start)
+                    val absoluteEnd = Math.addExact(absoluteStart, duration)
+                    LrcWordSeed(Math.subtractExact(absoluteStart, offset).coerceAtLeast(0L), text,
+                        Math.subtractExact(absoluteEnd, offset).coerceAtLeast(0L))
+                } catch (_: ArithmeticException) { return visible to emptyList() }
+            }
+        }
+        if (relative && seeds.zipWithNext().any { (a, b) -> a.startMs > b.startMs }) return visible to emptyList()
         return visible to seeds
     }
 
@@ -146,6 +155,7 @@ object LyricParser {
             if (seed.text.isEmpty()) return@mapIndexedNotNull null
             val nextStart = sorted.getOrNull(index + 1)?.startMs
             val end = when {
+                seed.endMs != null -> seed.endMs
                 nextStart != null && nextStart > seed.startMs -> nextStart
                 lineEndMs != null && lineEndMs > seed.startMs -> lineEndMs
                 else -> null

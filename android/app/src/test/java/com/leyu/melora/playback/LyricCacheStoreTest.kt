@@ -18,7 +18,62 @@ class LyricCacheStoreTest {
     private val root = Files.createTempDirectory("lyrics-test").toFile()
     private fun lyric(uid: String, text: String = "歌词") = PlayerLyric(uid, "歌曲", "歌手", listOf(LyricLine(0, text)), "fixture")
     private fun file(uid: String, version: String = "") = File(root, "${lyricCacheKey(uid, version)}.json")
+    private fun writeCache(uid: String, value: PlayerLyric, cacheVersion: Int = 2, savedAt: Long = 1_000L) {
+        file(uid).writeText(
+            encodePlayerLyric(value)
+                .put("cacheVersion", cacheVersion)
+                .put("fileVersion", "")
+                .put("savedAt", savedAt)
+                .toString(),
+        )
+    }
+
     @After fun cleanup() { root.deleteRecursively() }
+
+    private fun wordLyric(uid: String) = lyric(uid).copy(lines = listOf(
+        LyricLine(0, "歌词", endMs = 500, words = listOf(LyricWord("歌", 0, 200), LyricWord("词", 200, 500))),
+    ))
+
+    @Test fun manualChoiceSurvivesRestartAndAutomaticCacheRefreshAndClear() = runBlocking {
+        val choices = File(root, "choices")
+        val cached = File(root, "cache")
+        val selected = wordLyric("a")
+        LyricChoiceStore(choices).write("a", LyricSourceMode.Matched, selected)
+        val cache = LyricCacheStore()
+        cache.load(cached, "a") { lyric("a", "另一个候选") }
+        cache.load(cached, "a", force = true) { lyric("a", "再次匹配") }
+        cache.clear(cached)
+        assertEquals(LyricChoice(LyricSourceMode.Matched, selected), LyricChoiceStore(choices).read("a"))
+    }
+
+    @Test fun changingSourceDropsPinnedDataAndAutoRemovesChoiceRecord() {
+        val store = LyricChoiceStore(root)
+        store.write("a", LyricSourceMode.Matched, wordLyric("a"))
+        store.write("a", LyricSourceMode.Embedded)
+        assertEquals(LyricChoice(LyricSourceMode.Embedded), store.read("a"))
+        assertFalse(file("a").readText().contains("lines"))
+        store.write("a", LyricSourceMode.Auto)
+        assertEquals(LyricChoice(), store.read("a"))
+        assertFalse(file("a").exists())
+    }
+
+    @Test fun invalidManualCandidateDoesNotOverwriteExistingChoice() {
+        val store = LyricChoiceStore(root)
+        val selected = wordLyric("a")
+        store.write("a", LyricSourceMode.Matched, selected)
+        assertThrows(IllegalArgumentException::class.java) { store.write("a", LyricSourceMode.Matched, wordLyric("b")) }
+        assertThrows(IllegalArgumentException::class.java) { store.write("a", LyricSourceMode.Matched, lyric("a")) }
+        assertEquals(LyricChoice(LyricSourceMode.Matched, selected), store.read("a"))
+    }
+
+    @Test fun corruptedUnknownOrMismatchedChoiceSafelyFallsBackToAuto() {
+        val store = LyricChoiceStore(root)
+        for (text in listOf("broken json", "{\"mode\":\"future\"}", "{\"mode\":\"matched\"}",
+            JSONObject().put("mode", "matched").put("lyric", encodePlayerLyric(wordLyric("b"))).toString())) {
+            file("a").writeText(text)
+            assertEquals(LyricChoice(), store.read("a"))
+        }
+    }
 
     @Test fun memoryIsBoundedAndKeepsRecentlyReadEntries() = runBlocking {
         val store = LyricCacheStore(maxEntries = 2)
@@ -49,6 +104,76 @@ class LyricCacheStoreTest {
         val store = LyricCacheStore()
         assertEquals("旧标签", store.load(root, "a", "file-v1") { error("disk miss") }!!.lines.single().text)
         assertEquals("新标签", store.load(root, "a", "file-v2") { lyric("a", "新标签") }!!.lines.single().text)
+    }
+
+    @Test fun freshVersionTwoEntryUpgradesAndVersionThreeWordsRoundTripFromDisk() = runBlocking {
+        val old = lyric("a", "歌词")
+        writeCache("a", old, savedAt = 1_000L)
+        val words = listOf(LyricWord("歌", 0L, 500L), LyricWord("词", 500L, 1_000L))
+        val upgraded = old.copy(lines = listOf(old.lines.single().copy(endMs = 1_000L, words = words)))
+        var fetches = 0
+
+        assertEquals(upgraded, LyricCacheStore(now = { 1_000L }).load(root, "a") {
+            fetches++
+            upgraded
+        })
+        assertEquals(3, JSONObject(file("a").readText()).getInt("cacheVersion"))
+
+        val restarted = LyricCacheStore(now = { 1_000L })
+        assertEquals(upgraded, restarted.load(root, "a") {
+            fetches++
+            error("version 3 disk hit should not fetch")
+        })
+        assertEquals(upgraded, restarted.load(root, "a") {
+            fetches++
+            error("repeated version 3 memory hit should not fetch")
+        })
+        assertEquals(1, fetches)
+    }
+
+    @Test fun versionTwoFallbackSurvivesOfflineAndEmptyRefreshThenSuccessfulRefreshReplacesIt() = runBlocking {
+        var now = 1_000L
+        val store = LyricCacheStore(now = { now })
+        for ((uid, empty) in listOf("offline" to false, "empty" to true)) {
+            val old = lyric(uid, "旧歌词").copy(
+                lines = listOf(
+                    LyricLine(
+                        startMs = 0L,
+                        text = "旧歌词",
+                        endMs = 1_000L,
+                        words = listOf(
+                            LyricWord("旧", 0L, 300L),
+                            LyricWord("歌", 300L, 600L),
+                            LyricWord("词", 600L, 1_000L),
+                        ),
+                    ),
+                ),
+            )
+            writeCache(uid, old, savedAt = now)
+            val original = file(uid).readText()
+
+            val retained = store.load(root, uid) {
+                if (empty) null else throw java.io.IOException("offline")
+            }
+            assertEquals(old, retained)
+            assertEquals(2, JSONObject(file(uid).readText()).getInt("cacheVersion"))
+            assertEquals(original, file(uid).readText())
+
+            now++
+            val refreshed = lyric(uid, "新歌词")
+            assertEquals(refreshed, store.load(root, uid) { refreshed })
+            assertEquals(3, JSONObject(file(uid).readText()).getInt("cacheVersion"))
+        }
+    }
+
+    @Test fun onlyTheAccessedVersionTwoEntryIsMigrated() = runBlocking {
+        writeCache("visited", lyric("visited", "访问曲目"))
+        writeCache("untouched", lyric("untouched", "未访问曲目"))
+
+        LyricCacheStore(now = { 1_000L }).load(root, "visited") { lyric("visited", "升级结果") }
+
+        assertEquals(3, JSONObject(file("visited").readText()).getInt("cacheVersion"))
+        assertEquals(2, JSONObject(file("untouched").readText()).getInt("cacheVersion"))
     }
 
     @Test fun ttlIsNotExtendedByReadsAndFailedRefreshKeepsUsableOldLyrics() = runBlocking {
@@ -190,5 +315,66 @@ class LyricCacheStoreTest {
         try { store.load(root, "b") { lyric("c") }; fail("mismatched uid accepted") }
         catch (_: IllegalArgumentException) { }
         assertFalse(file("b").exists())
+    }
+
+    @Test fun forcingOneSongDoesNotCancelOtherSongsInFlight() = runBlocking {
+        val store = LyricCacheStore()
+        val started = CompletableDeferred<Unit>()
+        val finish = CompletableDeferred<Unit>()
+        val other = async {
+            store.load(root, "b") { started.complete(Unit); finish.await(); lyric("b", "另一首") }
+        }
+        try {
+            kotlinx.coroutines.withTimeout(5_000) { started.await() }
+            val epoch = store.generation()
+            assertEquals("刷新", store.load(root, "a", force = true) { lyric("a", "刷新") }!!.lines.single().text)
+            assertEquals(epoch, store.generation())
+            finish.complete(Unit)
+            assertEquals("另一首", kotlinx.coroutines.withTimeout(5_000) { other.await() }!!.lines.single().text)
+            assertEquals("另一首", LyricCacheStore().load(root, "b") { error("missing persisted prefetch") }!!.lines.single().text)
+        } finally { finish.complete(Unit) }
+    }
+
+    @Test fun forcedRefreshFencesLateSameSongWithoutDiscardingOtherCache() = runBlocking {
+        val store = LyricCacheStore()
+        val started = CompletableDeferred<Unit>()
+        val finish = CompletableDeferred<Unit>()
+        val returned = CompletableDeferred<Unit>()
+        val old = async {
+            store.load(root, "a") {
+                withContext(NonCancellable) { started.complete(Unit); finish.await() }
+                returned.complete(Unit)
+                lyric("a", "过期结果")
+            }
+        }
+        try {
+            kotlinx.coroutines.withTimeout(5_000) { started.await() }
+            val fresh = lyric("a", "新结果")
+            assertEquals(fresh, store.load(root, "a", force = true) { fresh })
+            finish.complete(Unit)
+            try { kotlinx.coroutines.withTimeout(5_000) { old.await() }; fail("old producer must be cancelled") } catch (_: CancellationException) { }
+            kotlinx.coroutines.withTimeout(5_000) { returned.await() }
+            assertEquals(fresh, store.peek(root, "a"))
+            assertEquals(fresh, LyricCacheStore().load(root, "a") { error("missing fresh disk entry") })
+        } finally { finish.complete(Unit) }
+    }
+
+    @Test fun forcedRefreshRetainsOldOfflineResultAndDoesNotClearOtherSongs() = runBlocking {
+        val store = LyricCacheStore()
+        val old = lyric("a", "旧歌词")
+        store.load(root, "a") { old }
+        store.load(root, "b") { lyric("b", "另一首") }
+        val disk = file("a").readText()
+        assertEquals(old, store.peek(root, "a"))
+        assertEquals(old, store.load(root, "a", force = true) { throw java.io.IOException("offline") })
+        assertEquals(disk, file("a").readText())
+        assertEquals(old, store.load(root, "a", force = true) { null })
+        assertEquals("另一首", store.load(root, "b") { error("other cache lost") }!!.lines.single().text)
+        val newer = lyric("a", "新歌词")
+        assertEquals(newer, store.load(root, "a", force = true) { newer })
+        assertEquals(newer, store.peek(root, "a"))
+        assertEquals(newer, store.load(root, "a") { error("unnecessary fetch") })
+        store.clear(root)
+        assertNull(store.peek(root, "a"))
     }
 }

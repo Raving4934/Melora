@@ -314,6 +314,55 @@ class SourceResolverMatchingTest {
     }
 
     @Test
+    fun forcedMatchRefreshReplacesOnlyThatSongsCachedCandidates() = runBlocking {
+        val original = song(source = "wy", songmid = "force-original")
+        val other = song(
+            source = "wy", songmid = "other-original",
+            name = "Another Track", singer = "Other Artist", album = "Other Album",
+        )
+        val oldCandidate = song(source = "kg", songmid = "old-candidate")
+        val newCandidate = song(source = "kg", songmid = "new-candidate")
+        val otherCandidate = song(
+            source = "kg", songmid = "other-candidate",
+            name = "Another Track", singer = "Other Artist", album = "Other Album",
+        )
+        val originalSearchCalls = AtomicInteger()
+
+        val initial = SourceResolver.findMatchedSongs(original, "kg", timeoutMs = 1_000) {
+            originalSearchCalls.incrementAndGet()
+            listOf(oldCandidate)
+        }
+        SourceResolver.findMatchedSongs(other, "kg", timeoutMs = 1_000) { listOf(otherCandidate) }
+        val originalKey = SourceResolver.matchingCacheKey(original, "kg")
+        val otherKey = SourceResolver.matchingCacheKey(other, "kg")
+
+        assertEquals(listOf("old-candidate"), initial.map { it.songmid })
+        assertNotEquals(originalKey, otherKey)
+        assertEquals(listOf("old-candidate"), OnlineCache.peek<List<OnlineSong>>(originalKey)?.map { it.songmid })
+        assertEquals(listOf("other-candidate"), OnlineCache.peek<List<OnlineSong>>(otherKey)?.map { it.songmid })
+
+        val refreshed = SourceResolver.findMatchedSongs(
+            original,
+            "kg",
+            timeoutMs = 1_000,
+            force = true,
+        ) {
+            originalSearchCalls.incrementAndGet()
+            listOf(newCandidate)
+        }
+
+        assertEquals(listOf("new-candidate"), refreshed.map { it.songmid })
+        assertEquals(listOf("new-candidate"), OnlineCache.peek<List<OnlineSong>>(originalKey)?.map { it.songmid })
+        assertEquals(listOf("other-candidate"), OnlineCache.peek<List<OnlineSong>>(otherKey)?.map { it.songmid })
+        assertEquals(2, originalSearchCalls.get())
+
+        val cached = SourceResolver.findMatchedSongs(original, "kg", timeoutMs = 1_000) {
+            error("forced matching result should replace the previous cache")
+        }
+        assertEquals(listOf("new-candidate"), cached.map { it.songmid })
+    }
+
+    @Test
     fun findMatchedSongsSharesSingleFlightWhenOneWaiterIsCancelled() = runBlocking {
         val original = song(source = "wy", songmid = "original")
         val candidate = song(source = "kg", songmid = "shared")

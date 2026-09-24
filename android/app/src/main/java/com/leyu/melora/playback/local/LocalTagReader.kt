@@ -4,8 +4,10 @@ import android.content.Context
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import androidx.core.net.toUri
+import com.leyu.melora.playback.EmbeddedLyrics
 import android.os.Build
 import java.io.BufferedInputStream
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -235,22 +237,34 @@ object LocalTagReader {
         extractMetadata(key)?.trim().orEmpty()
 
     /** 内嵌歌词：只读取容器元数据块，不把整首音频载入内存。 */
-    fun embeddedLyrics(context: Context, uri: String, mimeType: String): String? {
+    fun embeddedLyrics(context: Context, uri: String, mimeType: String): EmbeddedLyrics? {
         val mime = mimeType.lowercase()
         return runCatching {
             LocalMediaIoCoordinator.withRead(context, uri.toUri()) {
                 context.contentResolver.openInputStream(uri.toUri())?.buffered()?.use { input ->
-                    when {
-                        mime.contains("mpeg") || mime.contains("mp3") -> readId3Lyrics(input)
-                        mime.contains("flac") -> readFlacLyrics(input)
-                        else -> detectAndReadLyrics(input)
-                    }
+                    readEmbeddedLyrics(input, mime)
                 }
             }
-        }.getOrNull()?.takeIf { it.isNotBlank() }
+        }.getOrNull()?.takeUnless { it.isBlank }
     }
 
-    private fun detectAndReadLyrics(input: BufferedInputStream): String? {
+    /** 共用生产解析链，仅供容器帧/块的 instrumented fixture 注入字节。 */
+    internal fun embeddedLyricsFromBytes(bytes: ByteArray, mimeType: String): EmbeddedLyrics? = runCatching {
+        ByteArrayInputStream(bytes).use { input -> readEmbeddedLyrics(input, mimeType) }
+    }.getOrNull()?.takeUnless { it.isBlank }
+
+    /** 生产与 JVM 测试共用的流入口；调用方负责关闭输入流。 */
+    internal fun readEmbeddedLyrics(input: InputStream, mimeType: String): EmbeddedLyrics? {
+        val stream = input as? BufferedInputStream ?: input.buffered()
+        val mime = mimeType.lowercase()
+        return when {
+            mime.contains("mpeg") || mime.contains("mp3") -> readId3Lyrics(stream)
+            mime.contains("flac") -> readFlacLyrics(stream)
+            else -> detectAndReadLyrics(stream)
+        }
+    }
+
+    private fun detectAndReadLyrics(input: BufferedInputStream): EmbeddedLyrics? {
         input.mark(10)
         val header = input.readExact(4) ?: return null
         input.reset()
@@ -261,9 +275,9 @@ object LocalTagReader {
         }
     }
 
-    // --- MP3: ID3v2 USLT ---
+    // --- MP3: ID3v2 USLT + TXXX[LYRICS_TTML] ---
 
-    private fun readId3Lyrics(input: InputStream): String? {
+    private fun readId3Lyrics(input: InputStream): EmbeddedLyrics? {
         val header = input.readExact(10) ?: return null
         if (header[0] != 'I'.code.toByte() || header[1] != 'D'.code.toByte() || header[2] != '3'.code.toByte()) return null
         val tagSize = synchsafe(header, 6)
@@ -272,7 +286,7 @@ object LocalTagReader {
         return parseId3Lyrics(header + body)
     }
 
-    private fun parseId3Lyrics(bytes: ByteArray): String? {
+    private fun parseId3Lyrics(bytes: ByteArray): EmbeddedLyrics? {
         val major = bytes[3].toInt() and 0xFF
         if (major != 3 && major != 4) return null
         val flags = bytes[5].toInt() and 0xFF
@@ -282,93 +296,139 @@ object LocalTagReader {
             if (offset + 4 > end) return null
             val declared = if (major >= 4) synchsafe(bytes, offset) else beInt(bytes, offset, 4)
             val total = if (major >= 4) declared else 4 + declared
-            if (total < 4 || offset + total > end) return null
+            if (total < 4 || offset.toLong() + total > end.toLong()) return null
             offset += total
         }
+
+        var plain = ""
+        var ttml = ""
         while (offset + 10 <= end) {
             val id = String(bytes, offset, 4, Charsets.ISO_8859_1)
             if (id.isBlank() || id[0] == '\u0000') break
             val size = if (major >= 4) synchsafe(bytes, offset + 4) else beInt(bytes, offset + 4, 4)
             val body = offset + 10
-            if (size <= 0 || body + size > end) break
-            if (id == "USLT") {
-                val text = decodeId3Text(bytes, body, size, skipHeader = 4)
-                if (!text.isNullOrBlank()) return text
+            if (size < 0 || size > end - body) break
+            val frameFlags = bytes[offset + 9].toInt() and 0xFF
+            if (frameFlags == 0 && (id == "USLT" || id == "TXXX")) {
+                val fields = decodeId3Fields(bytes, body, size, if (id == "USLT") 4 else 1)
+                if (fields != null && fields.second.isNotBlank()) {
+                    if (fields.first.equals(EmbeddedLyrics.TTML_FIELD, ignoreCase = true)) {
+                        if (ttml.isBlank()) ttml = fields.second
+                    } else if (id == "USLT" && plain.isBlank()) {
+                        plain = fields.second
+                    }
+                }
             }
             offset = body + size
         }
-        return null
+        return EmbeddedLyrics(plain = plain, ttml = ttml).takeUnless { it.isBlank }
     }
 
-    /** encoding(1) + lang(3) + descriptor + lyrics */
-    private fun decodeId3Text(bytes: ByteArray, start: Int, size: Int, skipHeader: Int): String? {
-        if (size <= skipHeader || start < 0 || start + size > bytes.size) return null
-        val encoding = bytes[start].toInt()
-        var cursor = start + skipHeader
+    /** 返回 (description, value)；USLT 的前缀含 encoding+language，TXXX 仅含 encoding。 */
+    private fun decodeId3Fields(bytes: ByteArray, start: Int, size: Int, prefixLength: Int): Pair<String, String>? {
+        if (size <= prefixLength || start < 0 || size > bytes.size - start) return null
+        val encoding = bytes[start].toInt() and 0xFF
         val end = start + size
+        val descriptionStart = start + prefixLength
         val charset = when (encoding) {
             0 -> Charsets.ISO_8859_1
-            1 -> Charsets.UTF_16
+            1 -> if (descriptionStart + 1 < end && bytes[descriptionStart] == 0xFF.toByte() && bytes[descriptionStart + 1] == 0xFE.toByte()) {
+                Charsets.UTF_16LE
+            } else {
+                Charsets.UTF_16BE
+            }
             2 -> Charsets.UTF_16BE
             else -> Charsets.UTF_8
         }
-        if (charset == Charsets.ISO_8859_1 || charset == Charsets.UTF_8) {
-            while (cursor < end && bytes[cursor] != 0.toByte()) cursor++
-            cursor++
+        val wide = encoding == 1 || encoding == 2
+        var cursor = descriptionStart
+        if (wide && encoding == 1 && cursor + 1 < end &&
+            ((bytes[cursor] == 0xFF.toByte() && bytes[cursor + 1] == 0xFE.toByte()) ||
+                (bytes[cursor] == 0xFE.toByte() && bytes[cursor + 1] == 0xFF.toByte()))
+        ) cursor += 2
+
+        val delimiter = if (wide) {
+            var index = cursor
+            while (index + 1 < end && !(bytes[index] == 0.toByte() && bytes[index + 1] == 0.toByte())) index += 2
+            if (index + 1 >= end) return null
+            index
         } else {
-            while (cursor + 1 < end && !(bytes[cursor] == 0.toByte() && bytes[cursor + 1] == 0.toByte())) cursor += 2
-            cursor += 2
+            while (cursor < end && bytes[cursor] != 0.toByte()) cursor++
+            if (cursor >= end) return null
+            cursor
         }
-        if (cursor >= end) return null
-        return runCatching { String(bytes, cursor, end - cursor, charset).trimEnd('\u0000') }.getOrNull()
+        val descriptionEnd = delimiter
+        val valueStart = delimiter + if (wide) 2 else 1
+        if (valueStart > end) return null
+        val description = runCatching {
+            String(bytes, descriptionStart, descriptionEnd - descriptionStart, charset).trim('\uFEFF', '\u0000')
+        }.getOrNull() ?: return null
+        val value = runCatching {
+            String(bytes, valueStart, end - valueStart, charset).trimStart('\uFEFF').trimEnd('\u0000')
+        }.getOrNull() ?: return null
+        return description to value
     }
 
     // --- FLAC: VORBIS_COMMENT ---
 
-    private fun readFlacLyrics(input: InputStream): String? {
+    private fun readFlacLyrics(input: InputStream): EmbeddedLyrics? {
         val magic = input.readExact(4) ?: return null
         if (String(magic, Charsets.US_ASCII) != "fLaC") return null
-        repeat(MAX_FLAC_BLOCKS) {
-            val header = input.readExact(4) ?: return null
+        var plain = ""
+        var ttml = ""
+        var blockCount = 0
+        while (blockCount++ < MAX_FLAC_BLOCKS) {
+            val header = input.readExact(4) ?: break
             val first = header[0].toInt() and 0xFF
             val isLast = first and 0x80 != 0
             val type = first and 0x7F
             val length = beInt(header, 1, 3)
-            if (length < 0) return null
             if (type == 4) {
-                if (length > MAX_TAG_BYTES) return null
-                val body = input.readExact(length) ?: return null
-                readVorbisComment(body)?.let { return it }
+                if (length > MAX_TAG_BYTES) {
+                    if (!input.skipExact(length.toLong())) break
+                } else {
+                    val body = input.readExact(length) ?: break
+                    val found = readVorbisComment(body)
+                    if (plain.isBlank() && found.plain.isNotBlank()) plain = found.plain
+                    if (ttml.isBlank() && found.ttml.isNotBlank()) ttml = found.ttml
+                }
             } else if (!input.skipExact(length.toLong())) {
-                return null
+                break
             }
-            if (isLast) return null
+            if (isLast) break
         }
-        return null
+        return EmbeddedLyrics(plain = plain, ttml = ttml).takeUnless { it.isBlank }
     }
 
-    private fun readVorbisComment(bytes: ByteArray): String? {
+    private fun readVorbisComment(bytes: ByteArray): EmbeddedLyrics {
         val buffer = ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
-        if (buffer.remaining() < 4) return null
+        if (buffer.remaining() < 4) return EmbeddedLyrics()
         val vendorLength = buffer.int
-        if (vendorLength < 0 || vendorLength > buffer.remaining()) return null
+        if (vendorLength < 0 || vendorLength > buffer.remaining()) return EmbeddedLyrics()
         buffer.position(buffer.position() + vendorLength)
-        if (buffer.remaining() < 4) return null
+        if (buffer.remaining() < 4) return EmbeddedLyrics()
         val count = buffer.int
-        repeat(count.coerceAtMost(256)) {
-            if (buffer.remaining() < 4) return null
+        if (count < 0) return EmbeddedLyrics()
+        var plain = ""
+        var ttml = ""
+        repeat(minOf(count, buffer.remaining() / 4)) {
+            if (buffer.remaining() < 4) return EmbeddedLyrics(plain, ttml)
             val size = buffer.int
-            if (size < 0 || size > buffer.remaining()) return null
+            if (size < 0 || size > buffer.remaining()) return EmbeddedLyrics(plain, ttml)
             val text = String(bytes, buffer.position(), size, Charsets.UTF_8)
             buffer.position(buffer.position() + size)
-            val key = text.substringBefore('=')
-            if (key.equals("LYRICS", true) || key.equals("UNSYNCEDLYRICS", true) || key.equals("UNSYNCED LYRICS", true)) {
-                val value = text.substringAfter('=', "")
-                if (value.isNotBlank()) return value
+            val key = text.substringBefore('=').trim()
+            val value = text.substringAfter('=', "")
+            when {
+                key.equals(EmbeddedLyrics.TTML_FIELD, ignoreCase = true) && ttml.isBlank() -> ttml = value
+                isPlainLyricsField(key) && plain.isBlank() -> plain = value
             }
         }
-        return null
+        return EmbeddedLyrics(plain, ttml)
     }
+
+    private fun isPlainLyricsField(key: String): Boolean =
+        key.equals("LYRICS", true) || key.equals("UNSYNCEDLYRICS", true) || key.equals("UNSYNCED LYRICS", true)
 
     private fun InputStream.readExact(size: Int): ByteArray? {
         if (size < 0) return null

@@ -43,6 +43,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -472,14 +473,26 @@ object PlaybackController {
         }
     }
 
+    /** 来源选择只刷新歌词，不重启音频、清空当前歌词或改播放进度。 */
+    fun refreshLyrics(uid: String) {
+        val track = _state.value.current?.takeIf { it.uid == uid } ?: return
+        val context = appContext ?: return
+        lyricJob?.cancel()
+        lyricJob = scope.launch {
+            recoverableOrNull {
+                LyricRepository.observe(context, track).collect { value ->
+                    if (_state.value.current?.uid == uid) _lyric.value = value
+                }
+            }
+        }
+    }
+
     private fun loadTrackDetails() {
         val snapshot = _state.value
         val track = snapshot.current
         // 封面与歌词是独立生命周期；歌词缓存命中也不能跳过封面补齐和下一曲预取。
         ensureCurrentArtwork()
-        if (track != null) {
-            appContext?.let { LocalTagFiller.consider(it, track) }
-        }
+        appContext?.let { LocalTagFiller.consider(it, track) }
         if (track == null) {
             lyricJob?.cancel()
             _lyric.value = null
@@ -488,13 +501,7 @@ object PlaybackController {
 
         lyricJob?.cancel()
         _lyric.value = null
-        appContext?.let { context ->
-            lyricJob = scope.launch {
-                // 同一入口验证本地文件版本，不能因UID命中旧内存而跳过物理标签更新。
-                val lyric = recoverableOrNull { LyricRepository.load(context, track) }
-                if (_state.value.current?.uid == track.uid) _lyric.value = lyric
-            }
-        }
+        refreshLyrics(track.uid)
 
         val context = appContext ?: return
         // 预取下一首歌词：自动连播时歌词秒现（听书连播同理）
@@ -690,7 +697,7 @@ object PlaybackController {
             playQueue(context, cached.map(UiTrack::fromOnline), 0, queueId)
             if (OnlineCache.get<T>(cacheKey, OnlineCache.CATALOG_TTL_MS) == null) {
                 scope.launch(Dispatchers.IO) {
-                    recoverableOrNull { OnlineCache.refresh(cacheKey, OnlineCache.CATALOG_TTL_MS, load) }
+                    recoverableOrNull { OnlineCache.refresh(cacheKey, OnlineCache.CATALOG_TTL_MS, load = load) }
                 }
             }
             return
@@ -702,7 +709,7 @@ object PlaybackController {
         // 先登记任务身份，再启动，避免同步缓存完成或旧请求取消回调抢占新请求。
         queueLoadJob = scope.launch(start = CoroutineStart.LAZY) {
             try {
-                val tracks = songs(OnlineCache.refresh(cacheKey, OnlineCache.CATALOG_TTL_MS, load)).map(UiTrack::fromOnline)
+                val tracks = songs(OnlineCache.refresh(cacheKey, OnlineCache.CATALOG_TTL_MS, load = load)).map(UiTrack::fromOnline)
                 check(tracks.isNotEmpty()) { "暂无可播放内容" }
                 if (queueLoadJob === coroutineContext[Job]) {
                     queueLoadJob = null
@@ -1143,6 +1150,7 @@ object PlaybackController {
         _state.value = PlayerUiState(
             ready = controller?.isConnected == true, mode = previous.mode, speed = previous.speed,
         )
+        appContext?.let { LocalTagFiller.consider(it, null) }
     }
 
     fun consumeMessage() {

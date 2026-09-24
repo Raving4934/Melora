@@ -277,6 +277,8 @@ internal fun FullPlayerPageContent(
     var showMoreActions by remember { mutableStateOf(false) }
     var showAudioEffects by remember { mutableStateOf(false) }
     var showCoverPicker by remember { mutableStateOf(false) }
+    var showLyricsSource by remember { mutableStateOf(false) }
+    LaunchedEffect(track?.uid, isVisible, isCollapsed) { showLyricsSource = false }
     LaunchedEffect(isVisible, isCollapsed) { if (!isVisible || isCollapsed) showCoverPicker = false }
     // 专辑/歌手聚合页（从音频信息页点击进入）
     var openedCollection by remember(isCollapsed) { mutableStateOf<SongsCollection?>(null) }
@@ -471,6 +473,7 @@ internal fun FullPlayerPageContent(
                             config = lyricsConfig,
                             immersive = immersive, immersion = immersion,
                             onConfigChange = { lyricsConfig = it },
+                            onOpenSource = { showLyricsSource = true },
                         )
                     }
                 }
@@ -628,6 +631,10 @@ internal fun FullPlayerPageContent(
             onToggleImmersive = { showCoverPicker = false; onImmersiveChange(!immersive) },
             onDismiss = { showCoverPicker = false },
         )
+    }
+
+    if (showLyricsSource && track != null) {
+        key(track.uid) { LyricsSourceSheet(track, onDismiss = { showLyricsSource = false }) }
     }
 
     // 1. 定时与倍速设置底部抽屉
@@ -1312,19 +1319,22 @@ private fun LyricsPage(
     immersive: Boolean,
     immersion: androidx.compose.runtime.State<Float>,
     onConfigChange: (LyricsUiConfig) -> Unit,
+    onOpenSource: () -> Unit,
 ) {
     val lines = remember(track?.uid, track?.title, track?.artist, lyrics) { fullPlayerLyricsOrFallback(track, lyrics) }
+    // 后台只补词时间时保留浏览/滚动状态；仅歌词正文或行时间改变才重新定位视口。
+    val contentKey = remember(lines) { lines.map { it.startMs to it.text } }
     Column(Modifier.fillMaxSize()) {
-        key(track?.uid, lines) {
+        key(track?.uid, contentKey) {
             LyricsViewport(lines, position, config, frameState = frame, motionEnabled = motionEnabled,
                 immersive = immersive,
-                modifier = Modifier.weight(1f).fillMaxWidth()
+                modifier = Modifier.weight(1f).fillMaxWidth().testTag("player-full-lyrics")
                     .lyricViewportFade(),
                 onLineClick = { if (lyrics.isNotEmpty()) PlaybackController.seekTo(it.startMs) },
             )
         }
         Box(Modifier.immersionChrome(immersion)) {
-            LyricsSettingsTools(config = config, onConfigChange = onConfigChange)
+            LyricsSettingsTools(config = config, onConfigChange = onConfigChange, onOpenSource = onOpenSource)
         }
     }
 }
@@ -1334,6 +1344,7 @@ private fun LyricsPage(
 private fun LyricsSettingsTools(
     config: LyricsUiConfig,
     onConfigChange: (LyricsUiConfig) -> Unit,
+    onOpenSource: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -1387,7 +1398,7 @@ private fun LyricsSettingsTools(
         Spacer(Modifier.width(6.dp))
         // 外层由起点揭示；横向滚动不越界
         Box(Modifier.weight(1f).height(36.dp), contentAlignment = Alignment.CenterStart) {
-            LyricsToolsPanel(expanded, config, onConfigChange)
+            LyricsToolsPanel(expanded, config, onConfigChange, onOpenSource)
         }
     }
 }
@@ -1397,6 +1408,7 @@ private fun LyricsToolsPanel(
     expanded: Boolean,
     config: LyricsUiConfig,
     onConfigChange: (LyricsUiConfig) -> Unit,
+    onOpenSource: () -> Unit,
 ) {
     AnimatedVisibility(
         visible = expanded,
@@ -1407,6 +1419,8 @@ private fun LyricsToolsPanel(
             Modifier.height(36.dp).horizontalScroll(rememberScrollState()),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            LyricsToolButton(Icons.Outlined.MusicNote, "歌词来源与写入", onClick = onOpenSource)
+            LyricsToolDivider()
             LyricsToolButton(
                 Icons.Rounded.RestartAlt,
                 "重置字号，恢复${LyricsUiConfig.DEFAULT_FONT_SIZE_SP.toInt()}sp",

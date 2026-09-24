@@ -5,10 +5,14 @@ import android.content.ContextWrapper
 import java.io.File
 import java.nio.file.Files
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -257,6 +261,80 @@ class OnlineCacheTest {
         first.cancelAndJoin()
         release.complete(Unit)
         assertEquals(listOf("new"), second.await())
+    }
+
+    @Test fun forcedRefreshIsKeyScopedAndRetiredSameKeyResultCannotOverwriteReplacement() = runBlocking {
+        OnlineCache.put("a", listOf("a-old"))
+        OnlineCache.put("b", listOf("b-old"))
+
+        val oldAStarted = CompletableDeferred<Unit>()
+        val releaseOldA = CompletableDeferred<Unit>()
+        val oldALoaderFinished = CompletableDeferred<Unit>()
+        val bStarted = CompletableDeferred<Unit>()
+        val releaseB = CompletableDeferred<Unit>()
+        val forcedAStarted = CompletableDeferred<Unit>()
+        val releaseForcedA = CompletableDeferred<Unit>()
+        try {
+            val oldA = async(start = CoroutineStart.UNDISPATCHED) {
+                try {
+                    OnlineCache.refresh<List<String>>("a", -1) {
+                        oldAStarted.complete(Unit)
+                        withContext(NonCancellable) {
+                            try {
+                                releaseOldA.await()
+                                listOf("a-late")
+                            } finally {
+                                oldALoaderFinished.complete(Unit)
+                            }
+                        }
+                    }
+                } catch (_: CancellationException) {
+                    emptyList()
+                }
+            }
+            withTimeout(2_000) { oldAStarted.await() }
+
+            val b = async(start = CoroutineStart.UNDISPATCHED) {
+                OnlineCache.refresh<List<String>>("b", -1) {
+                    bStarted.complete(Unit)
+                    releaseB.await()
+                    listOf("b-new")
+                }
+            }
+            withTimeout(2_000) { bStarted.await() }
+
+            val forcedA = async(start = CoroutineStart.UNDISPATCHED) {
+                OnlineCache.refresh<List<String>>("a", Long.MAX_VALUE, force = true) {
+                    forcedAStarted.complete(Unit)
+                    releaseForcedA.await()
+                    listOf("a-new")
+                }
+            }
+            withTimeout(2_000) { forcedAStarted.await() }
+
+            // 强刷绕过新鲜TTL，但新结果提交前原缓存仍可读；不同key的请求和缓存保持不变。
+            assertEquals(listOf("a-old"), OnlineCache.peek<List<String>>("a"))
+            assertEquals(listOf("b-old"), OnlineCache.peek<List<String>>("b"))
+            assertTrue(b.isActive)
+
+            releaseForcedA.complete(Unit)
+            assertEquals(listOf("a-new"), forcedA.await())
+            assertEquals(listOf("a-new"), OnlineCache.peek<List<String>>("a"))
+            assertTrue("refreshing a must not cancel the in-flight b refresh", b.isActive)
+
+            releaseB.complete(Unit)
+            assertEquals(listOf("b-new"), b.await())
+            releaseOldA.complete(Unit)
+            withTimeout(2_000) { oldALoaderFinished.await() }
+            assertTrue(withTimeout(2_000) { oldA.await() }.isEmpty())
+
+            assertEquals(listOf("a-new"), OnlineCache.peek<List<String>>("a"))
+            assertEquals(listOf("b-new"), OnlineCache.peek<List<String>>("b"))
+        } finally {
+            releaseForcedA.complete(Unit)
+            releaseB.complete(Unit)
+            releaseOldA.complete(Unit)
+        }
     }
 
     @Test fun clearCancelsFetchAndPreventsLateRepopulation() = runBlocking {

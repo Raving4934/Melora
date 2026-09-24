@@ -495,7 +495,7 @@ class LocalMediaTest {
         val file = java.io.File.createTempFile("melora-info-", ".mp3")
         try {
             file.writeBytes(byteArrayOf(0xFF.toByte(), 0xFB.toByte(), 1, 2, 3, 4, 5, 6, 7, 8))
-            DownloadMetadataWriter.write(file, ".mp3", "标题", "歌手", "专辑", null, null, year = 2005)
+            DownloadMetadataWriter.write(file, ".mp3", "标题", "歌手", "专辑", null, lyric = null, year = 2005)
             val tag = file.readBytes().toString(Charsets.ISO_8859_1)
             assertTrue(tag.contains("TIT2"))
             assertTrue(tag.contains("TPE1"))

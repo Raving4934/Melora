@@ -8,6 +8,43 @@ import org.junit.Test
 
 class OnlineContentBoundaryTest {
     @Test
+    fun lyricMappingPreservesEveryLyricsFieldAndSource() {
+        val lyric = OnlineLyric.from(
+            JSONObject()
+                .put("lyric", "ordinary")
+                .put("lxlyric", "word-by-word")
+                .put("tlyric", "translation")
+                .put("rlyric", "romanization")
+                .put("source", "ignored"),
+            source = "kw",
+        )
+
+        assertEquals("ordinary", lyric.lyric)
+        assertEquals("word-by-word", lyric.lxlyric)
+        assertEquals("translation", lyric.tlyric)
+        assertEquals("romanization", lyric.rlyric)
+        assertEquals("kw", lyric.source)
+    }
+
+    @Test
+    fun lyricMappingDefaultsMissingFieldsToEmptyStrings() {
+        val lyric = OnlineLyric.from(JSONObject(), source = "")
+
+        assertEquals("", lyric.lyric)
+        assertEquals("", lyric.lxlyric)
+        assertEquals("", lyric.tlyric)
+        assertEquals("", lyric.rlyric)
+        assertEquals("", lyric.source)
+    }
+
+    @Test
+    fun hasLyricsAcceptsOrdinaryOrWordByWordLyrics() {
+        assertTrue(OnlineLyric.from(JSONObject().put("lyric", "ordinary"), source = "tx").hasLyrics)
+        assertTrue(OnlineLyric.from(JSONObject().put("lxlyric", "word-by-word"), source = "wy").hasLyrics)
+        assertFalse(OnlineLyric.from(JSONObject(), source = "").hasLyrics)
+    }
+
+    @Test
     fun identifiesAudiobookChapterFromCanonicalMarker() {
         val music = song("music")
         val chapter = song("chapter", isBookChapter = true)

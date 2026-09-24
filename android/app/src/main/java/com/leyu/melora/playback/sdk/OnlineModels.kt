@@ -242,4 +242,19 @@ data class OnlineLyric(
     val tlyric: String = "",
     val rlyric: String = "",
     val source: String = "",
-)
+    val lxlyric: String = "",
+    val song: OnlineSong? = null,
+) {
+    val hasLyrics: Boolean get() = lyric.isNotBlank() || lxlyric.isNotBlank()
+
+    companion object {
+        fun from(raw: JSONObject, source: String, song: OnlineSong? = null): OnlineLyric = OnlineLyric(
+            lyric = raw.optString("lyric"),
+            tlyric = raw.optString("tlyric"),
+            rlyric = raw.optString("rlyric"),
+            source = source,
+            lxlyric = raw.optString("lxlyric"),
+            song = song,
+        )
+    }
+}

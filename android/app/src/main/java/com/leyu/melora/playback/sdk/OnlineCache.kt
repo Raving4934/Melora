@@ -146,11 +146,12 @@ object OnlineCache {
         refreshing[key] as Deferred<T>?
     }
 
-    /** 同 key 网络请求合并。单个等待者取消不影响其他等待者；清缓存后旧请求不能回填。 */
+    /** 同 key 网络请求合并。单个等待者取消不影响其他等待者；强刷仅替换同key，旧请求不能回填。 */
     @Suppress("UNCHECKED_CAST")
-    suspend fun <T : Any> refresh(key: String, ttlMs: Long, load: suspend () -> T): T {
+    suspend fun <T : Any> refresh(key: String, ttlMs: Long, force: Boolean = false, load: suspend () -> T): T {
         val request = synchronized(lock) {
-            get<T>(key, ttlMs)?.let { return it }
+            if (!force) get<T>(key, ttlMs)?.let { return it }
+            else refreshing.remove(key)?.cancel()
             refreshing[key] ?: run {
                 val previous = store[key]
                 lateinit var task: Deferred<Any>

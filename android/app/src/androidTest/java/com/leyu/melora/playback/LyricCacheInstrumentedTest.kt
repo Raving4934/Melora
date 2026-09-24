@@ -9,6 +9,7 @@ import com.leyu.melora.playback.local.LocalMediaStore
 import com.leyu.melora.playback.local.LocalSong
 import java.io.File
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.first
 import org.junit.After
 import org.junit.Before
 import org.junit.Assert.*
@@ -40,23 +41,32 @@ class LyricCacheInstrumentedTest {
     private fun checkPhysicalTags(asset: String, extension: String) = runBlocking {
         val file = File(context.filesDir, "song$extension")
         instrumentation.context.assets.open("audio/$asset").use { input -> file.outputStream().use(input::copyTo) }
-        fun write(text: String) = DownloadMetadataWriter.write(file, extension, "测试歌曲", "测试歌手", "测试专辑", null, "[00:00.00]$text")
+        fun write(text: String) = DownloadMetadataWriter.write(file, extension, "测试歌曲", "测试歌手", "测试专辑", null, EmbeddedLyrics("[00:00.00]$text"))
         write("旧歌词")
         val indexed = LocalSong("lyric-local", Uri.fromFile(file).toString(), "测试歌曲", "测试歌手", "测试专辑",
             1_000, file.length(), if (extension == ".mp3") "audio/mpeg" else "audio/flac",
             44_100, 128_000, file.lastModified(), 0, folder = context.filesDir.path)
         LocalMediaStore.replaceAll(listOf(indexed))
         val track = UiTrack.fromOnline(indexed.toOnlineSong())
-        assertEquals("旧歌词", LyricRepository.load(context, track)!!.lines.single().text)
+        LyricRepository.chooseSource(context, track.uid, LyricSourceMode.Embedded)
+        assertEquals("旧歌词", LyricRepository.observe(context, track).first()!!.lines.single().text)
         write("新的正确歌词内容")
         assertTrue(file.setLastModified(indexed.modifiedAt + 2_000))
         // 故意不更新LocalMediaStore：验证读取正在访问的文件版本，而不是只信旧索引。
-        assertEquals("新的正确歌词内容", LyricRepository.load(context, track)!!.lines.single().text)
+        assertEquals("新的正确歌词内容", LyricRepository.observe(context, track).first()!!.lines.single().text)
         val audioBeforeClear = file.readBytes()
         LyricRepository.clear(context)
         assertFalse(File(context.cacheDir, "lyrics").exists())
         assertArrayEquals(audioBeforeClear, file.readBytes())
-        assertEquals("新的正确歌词内容", LyricRepository.load(context, track)!!.lines.single().text)
+        assertEquals("新的正确歌词内容", LyricRepository.observe(context, track).first()!!.lines.single().text)
+        val selected = PlayerLyric(track.uid, "确认版本", "歌手", listOf(
+            LyricLine(0, "词", endMs = 500, words = listOf(LyricWord("词", 0, 500))),
+        ), "fixture")
+        LyricRepository.chooseSource(context, track.uid, LyricSourceMode.Matched, selected)
+        LyricRepository.clear(context)
+        assertEquals(LyricSourceMode.Matched, LyricRepository.sourceMode(context, track.uid))
+        assertEquals(selected, LyricRepository.observe(context, track).first())
+        assertArrayEquals(audioBeforeClear, file.readBytes())
     }
 
     @Test fun failedFilesystemCleanupIsNotReportedAsSuccess() {

@@ -23,7 +23,7 @@ internal object DownloadMetadataWriter {
         artist: String,
         album: String,
         cover: ByteArray?,
-        lyric: String?,
+        lyric: EmbeddedLyrics?,
         year: Int? = null,
     ) {
         when (extension.lowercase(Locale.ROOT)) {
@@ -55,7 +55,7 @@ internal object FlacMetadataWriter {
         artist: String,
         album: String,
         cover: ByteArray?,
-        lyric: String?,
+        lyric: EmbeddedLyrics?,
         year: Int? = null,
     ) {
         val rewritten = File(file.parentFile, "${file.name}.tag")
@@ -104,7 +104,7 @@ internal object FlacMetadataWriter {
         artist: String,
         album: String,
         cover: ByteArray?,
-        lyric: String?,
+        lyric: EmbeddedLyrics?,
         year: Int?,
     ): List<Block> {
         var vendor = "Melora"
@@ -155,17 +155,19 @@ internal object FlacMetadataWriter {
         title: String,
         artist: String,
         album: String,
-        lyric: String?,
+        lyric: EmbeddedLyrics?,
         year: Int?,
     ): ByteArray {
         val replacedKeys = mutableSetOf<String>()
         if (title.isNotBlank()) replacedKeys += "TITLE"
         if (artist.isNotBlank()) replacedKeys += "ARTIST"
         if (album.isNotBlank()) replacedKeys += "ALBUM"
-        if (!lyric.isNullOrBlank()) replacedKeys += setOf("LYRICS", "UNSYNCEDLYRICS")
+        if (lyric != null) {
+            replacedKeys += setOf("LYRICS", EmbeddedLyrics.TTML_FIELD, "UNSYNCED LYRICS", "UNSYNCEDLYRICS")
+        }
         if (year?.let { it in 1900..2100 } == true) replacedKeys += setOf("DATE", "YEAR")
         val entries = existing.filterNot { entry ->
-            entry.substringBefore('=', "").uppercase(Locale.ROOT) in replacedKeys
+            entry.substringBefore('=', "").trim().uppercase(Locale.ROOT) in replacedKeys
         }.toMutableList()
         fun add(key: String, value: String?) {
             value?.takeIf { it.isNotBlank() }?.let { entries += "$key=$it" }
@@ -174,7 +176,10 @@ internal object FlacMetadataWriter {
         add("ARTIST", artist)
         add("ALBUM", album)
         add("DATE", year?.takeIf { it in 1900..2100 }?.toString())
-        add("LYRICS", lyric)
+        if (lyric != null) {
+            add("LYRICS", lyric.plain)
+            add(EmbeddedLyrics.TTML_FIELD, lyric.ttml)
+        }
 
         val output = ByteArrayOutputStream()
         output.writeLeUtf8(vendor.ifBlank { "Melora" })

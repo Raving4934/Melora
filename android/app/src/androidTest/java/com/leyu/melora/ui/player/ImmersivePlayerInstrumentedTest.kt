@@ -16,6 +16,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -55,10 +56,12 @@ class ImmersivePlayerInstrumentedTest {
         compact: Boolean = false,
         landscape: Boolean = false,
         observeCoverStyle: Boolean = false,
+        linesOverride: androidx.compose.runtime.State<List<LyricLine>>? = null,
     ) {
         val position = mutableLongStateOf(2_000)
-        val lines = listOf(LyricLine(0, "慢慢听见海风"), LyricLine(5_000, "灯火落在远方"))
+        val defaultLines = listOf(LyricLine(0, "慢慢听见海风"), LyricLine(5_000, "灯火落在远方"))
         compose.setContent {
+            val lines = linesOverride?.value ?: defaultLines
             val coverStyle = if (observeCoverStyle) {
                 MeloraSettings.playerCoverStyle.collectAsState().value
             } else {
@@ -319,5 +322,36 @@ class ImmersivePlayerInstrumentedTest {
             compose.onNodeWithContentDescription(label).performTouchInput { click(center) }
         }
         assertEquals(listOf("previous", "toggle", "next", "exit"), actions)
+    }
+
+    @Test fun lyricSourceMenuKeepsTheExistingPageGeometryAndCannotWriteAnOnlineTrack() {
+        showPlayer()
+        compose.onNodeWithTag("player-pages").performTouchInput { swipeLeft() }
+        val before = compose.onNodeWithTag("player-pages").fetchSemanticsNode().boundsInRoot
+        compose.onNodeWithContentDescription("展开歌词设置").performClick()
+        val after = compose.onNodeWithTag("player-pages").fetchSemanticsNode().boundsInRoot
+        assertEquals(before.height, after.height, 1f)
+        compose.onNodeWithContentDescription("歌词来源与写入").performClick()
+        compose.onNodeWithTag("lyrics-source-sheet").assertIsDisplayed()
+        compose.onNodeWithTag("lyrics-source-write").assertIsNotEnabled()
+        compose.onNodeWithTag("lyrics-source-confirm-write").assertDoesNotExist()
+        Espresso.pressBack()
+        compose.onNodeWithTag("lyrics-source-sheet").assertDoesNotExist()
+        compose.onNodeWithTag("player-pages").assertIsDisplayed()
+        compose.runOnIdle { assertFalse(immersive.value) }
+    }
+
+    @Test fun backgroundWordEnrichmentDoesNotRecreateTheLyricsViewport() {
+        val lines = mutableStateOf(listOf(LyricLine(0, "慢慢听见海风"), LyricLine(5000, "灯火落在远方")))
+        showPlayer(linesOverride = lines)
+        compose.onNodeWithTag("player-pages").performTouchInput { swipeLeft() }
+        val before = compose.onNodeWithTag("player-full-lyrics").fetchSemanticsNode()
+        compose.runOnIdle {
+            lines.value = lines.value.map { line -> line.copy(endMs = line.startMs + 5000,
+                words = listOf(com.leyu.melora.playback.LyricWord(line.text, line.startMs, line.startMs + 5000))) }
+        }
+        val after = compose.onNodeWithTag("player-full-lyrics").fetchSemanticsNode()
+        assertEquals(before.id, after.id)
+        assertEquals(before.boundsInRoot.height, after.boundsInRoot.height, 1f)
     }
 }

@@ -133,12 +133,7 @@ object OnlineRepository {
 
     suspend fun lyric(context: Context, source: String, song: OnlineSong, background: Boolean = false): OnlineLyric {
         val data = MusicSdkEngine.call(context, "lyric", source, JSONObject().put("song", song.raw), background = background)
-        return OnlineLyric(
-            lyric = data.optString("lyric"),
-            tlyric = data.optString("tlyric"),
-            rlyric = data.optString("rlyric"),
-            source = source,
-        )
+        return OnlineLyric.from(data, source, song)
     }
 
     suspend fun pic(

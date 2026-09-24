@@ -452,13 +452,13 @@ object SourceResolver {
     }
 
     /** 全平台兜底与内置定向解析共用匹配/缓存，不重复维护两套搜索。 */
-    suspend fun findAlternatives(context: Context, song: OnlineSong, background: Boolean = false): List<OnlineSong> {
+    suspend fun findAlternatives(context: Context, song: OnlineSong, background: Boolean = false, force: Boolean = false): List<OnlineSong> {
         if (song.isBookChapter) return emptyList()
         return parallelMapWithinBudget(
             inputs = SWITCH_SOURCES.filterNot { it == song.source },
             budgetMs = ALT_SEARCH_TOTAL_BUDGET_MS,
         ) { source ->
-            findMatchedSongs(song, source, ALT_SEARCH_REQUEST_TIMEOUT_MS) { keyword ->
+            findMatchedSongs(song, source, ALT_SEARCH_REQUEST_TIMEOUT_MS, force = force) { keyword ->
                 OnlineRepository.search(
                     context, source, keyword, limit = 25,
                     background = background, timeoutMs = ALT_SEARCH_REQUEST_TIMEOUT_MS,
@@ -475,6 +475,7 @@ object SourceResolver {
         requireArtist: Boolean = true,
         cacheNamespace: String = "",
         score: (OnlineSong, OnlineSong) -> Int? = ::alternativeScore,
+        force: Boolean = false,
         search: suspend (String) -> List<OnlineSong>,
     ): List<OnlineSong> {
         if (song.isBookChapter || song.source.isBlank() || song.songmid.isBlank() ||
@@ -486,7 +487,7 @@ object SourceResolver {
             attempt {
                 // 等待已有慢请求也受本次预算限制；单飞任务自身有独立上限，取消等待不泄漏网络请求。
                 withTimeoutOrNull(timeoutMs) {
-                    OnlineCache.refresh(key, ALT_TTL_MS) {
+                    OnlineCache.refresh(key, ALT_TTL_MS, force = force) {
                         withTimeoutOrNull(timeoutMs) {
                             search("${song.name} ${song.singer}".trim()).mapNotNull { candidate ->
                                 if (candidate.source != targetSource) return@mapNotNull null
@@ -591,7 +592,7 @@ object SourceResolver {
      * 按标题/歌手在默认平台严格匹配真实在线条目（歌名/歌手/版本/时长全对才算）；
      * 本地歌曲联网取封面/歌词与下载标签补全共用，无匹配返回 null。
      */
-    suspend fun matchOnline(context: Context, song: OnlineSong, background: Boolean = false): OnlineSong? =
+    suspend fun matchOnline(context: Context, song: OnlineSong, background: Boolean = false, force: Boolean = false): OnlineSong? =
         findMatchedSongs(
             song = song,
             targetSource = LOCAL_MATCH_SOURCE,
@@ -599,6 +600,7 @@ object SourceResolver {
             requireArtist = false,
             cacheNamespace = "local:",
             score = ::localMetadataScore,
+            force = force,
         ) { keyword ->
             OnlineRepository.search(
                 context, LOCAL_MATCH_SOURCE, keyword, limit = 25,
@@ -608,26 +610,27 @@ object SourceResolver {
 
 
     /** 本地歌曲（source=local）没有平台 songmid：换出真实在线条目；在线歌曲原样返回。 */
-    suspend fun localAsOnline(context: Context, song: OnlineSong, background: Boolean = false): OnlineSong? =
+    suspend fun localAsOnline(context: Context, song: OnlineSong, background: Boolean = false, force: Boolean = false): OnlineSong? =
         if (song.source != LOCAL_SOURCE) song
-        else matchOnline(context, song, background)
+        else matchOnline(context, song, background, force)
 
     /**
      * 歌词：由内置目录模块提供（音源脚本只负责播放解析）。
      * 当前平台无词时按同曲匹配换平台再取内置歌词。
      */
-    suspend fun lyric(context: Context, song: OnlineSong, background: Boolean = false): OnlineLyric? {
-        val base = localAsOnline(context, song, background) ?: return null
-        attempt { OnlineRepository.lyric(context, base.source, base, background) }
-            ?.takeIf { it.lyric.isNotBlank() }
-            ?.let { return it }
-        for (candidate in findAlternatives(context, base, background).take(3)) {
+    suspend fun lyric(context: Context, song: OnlineSong, background: Boolean = false, preferWordTimings: Boolean = false, force: Boolean = false): OnlineLyric? {
+        val base = localAsOnline(context, song, background, force) ?: return null
+        var fallback = attempt { OnlineRepository.lyric(context, base.source, base, background) }?.takeIf { it.hasLyrics }
+        if (fallback != null && (!preferWordTimings || fallback.lxlyric.isNotBlank())) return fallback
+        // 本地补词复用现有同曲/版本匹配和最多三个候选；没有逐字时仍保留首个普通结果。
+        for (candidate in findAlternatives(context, base, background, force).take(3)) {
             if (candidate.source == base.source) continue
-            attempt { OnlineRepository.lyric(context, candidate.source, candidate, background) }
-                ?.takeIf { it.lyric.isNotBlank() }
-                ?.let { return it }
+            val result = attempt { OnlineRepository.lyric(context, candidate.source, candidate, background) }
+                ?.takeIf { it.hasLyrics } ?: continue
+            if (!preferWordTimings || result.lxlyric.isNotBlank()) return result
+            if (fallback == null) fallback = result
         }
-        return null
+        return fallback
     }
 
     suspend fun pic(context: Context, song: OnlineSong): String? {
@@ -683,9 +686,11 @@ internal class SingleFlight<K : Any, V : Any>(
         return nextGeneration
     }
 
-    suspend fun run(key: K, generation: Long = currentGeneration(), block: suspend () -> V): V {
+    /** restart仅替换同key；使用方提交结果前仍需在同一锁内检查任务取消或全局代次。 */
+    suspend fun run(key: K, generation: Long = currentGeneration(), restart: Boolean = false, block: suspend () -> V): V {
         val pending = synchronized(lock) {
             if (generation != this.generation) throw FlightFencedException()
+            if (restart) requests.remove(key)?.task?.cancel(FlightFencedException())
             (requests[key] ?: Pending(scope.async(start = CoroutineStart.LAZY) { block() }).also { next ->
                 requests[key] = next
                 next.task.invokeOnCompletion {
