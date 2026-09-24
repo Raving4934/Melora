@@ -501,9 +501,9 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
     if (importChooserOpen) {
         ImportSourceSheet(
             onDismiss = { importChooserOpen = false },
-            onLocalFile = {
+            onLocalFile = { mimeTypes ->
                 importChooserOpen = false
-                importer.launch(arrayOf("application/javascript", "application/json", "text/*", "*/*"))
+                importer.launch(mimeTypes)
             },
             onOnlineUrl = {
                 importChooserOpen = false
@@ -679,9 +679,9 @@ private fun SourceModalSheet(
 }
 
 @Composable
-private fun ImportSourceSheet(
+internal fun ImportSourceSheet(
     onDismiss: () -> Unit,
-    onLocalFile: () -> Unit,
+    onLocalFile: (Array<String>) -> Unit,
     onOnlineUrl: () -> Unit,
 ) {
     SourceModalSheet(
@@ -694,10 +694,12 @@ private fun ImportSourceSheet(
             icon = Icons.Outlined.FolderOpen,
             iconTint = BrandBlue,
             iconBg = BrandBlue.copy(alpha = 0.12f),
-            title = "选择本地文件",
-            subtitle = "导入设备存储中的 .js 脚本或 .json 音源合集",
+            title = "选择 JS 文件",
+            subtitle = "仅选择设备存储中的 .js 音源脚本",
             titleColor = TextMain,
-            onClick = onLocalFile,
+            onClick = {
+                onLocalFile(arrayOf("application/javascript", "text/javascript", "application/x-javascript"))
+            },
         )
         SourceSheetAction(
             icon = Icons.Outlined.Link,
@@ -707,6 +709,15 @@ private fun ImportSourceSheet(
             subtitle = "粘贴 HTTP/HTTPS 音源脚本直链",
             titleColor = TextMain,
             onClick = onOnlineUrl,
+        )
+        SourceSheetAction(
+            icon = Icons.Rounded.Refresh,
+            iconTint = Color(0xFF7C3AED),
+            iconBg = Color(0xFF7C3AED).copy(alpha = 0.12f),
+            title = "恢复音源备份",
+            subtitle = "选择此前导出的 .json 音源合集",
+            titleColor = TextMain,
+            onClick = { onLocalFile(arrayOf("application/json")) },
         )
     }
 }
