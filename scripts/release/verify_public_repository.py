@@ -37,15 +37,18 @@ HTTP_URL = re.compile(
     rb"\bhttp" + rb"""://[A-Za-z0-9][A-Za-z0-9._:-]*(?:/|\?|#)[^\s"'<>\\]*""",
     re.IGNORECASE,
 )
-# XML parser feature/property names are identifiers, not fetched endpoints.
-# Match whole identifiers only: never exempt a parser file or an entire domain.
-XML_CONFIGURATION_URIS = {
+# XML parser settings and TTML namespaces are identifiers, not fetched endpoints.
+# Match whole identifiers only: never exempt a source file or an entire domain.
+NON_ENDPOINT_HTTP_URIS = {
     b"http://apache.org/xml/features/disallow-doctype-decl",
     b"http://xml.org/sax/features/external-general-entities",
     b"http://xml.org/sax/features/external-parameter-entities",
     b"http://apache.org/xml/features/nonvalidating/load-external-dtd",
     b"http://javax.xml.XMLConstants/property/accessExternalDTD",
     b"http://javax.xml.XMLConstants/property/accessExternalSchema",
+    b"http://www.w3.org/ns/ttml",
+    b"http://www.w3.org/ns/ttml#metadata",
+    b"http://www.w3.org/ns/ttml#styling",
 }
 
 SOURCE_SUFFIXES = {".go", ".java", ".js", ".jsx", ".kt", ".kts", ".mjs", ".py", ".sh", ".ts", ".tsx"}
@@ -156,7 +159,7 @@ def violations(name: str, content: bytes) -> list[str]:
     # endpoints.  Test servers, metadata, and the reviewed musicSdk surface are
     # intentionally outside this rule.
     if _is_android_app_production_source(path):
-        if any(match.group() not in XML_CONFIGURATION_URIS for match in HTTP_URL.finditer(content)):
+        if any(match.group() not in NON_ENDPOINT_HTTP_URIS for match in HTTP_URL.finditer(content)):
             issues.append("insecure HTTP endpoint in production source")
 
     return list(dict.fromkeys(issues))

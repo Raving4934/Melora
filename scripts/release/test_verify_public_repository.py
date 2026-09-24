@@ -95,6 +95,15 @@ class PublicBoundaryTest(unittest.TestCase):
             violations(name, b'val feature = "' + identifiers[0] + b'"; val url = "http://apache.org/audio.mp3"'),
         )
 
+    def test_ttml_namespace_identifiers_are_not_network_endpoints(self) -> None:
+        name = "android/app/src/main/java/com/leyu/melora/playback/EmbeddedLyrics.kt"
+        content = (Path(__file__).resolve().parents[2] / name).read_bytes()
+        self.assertEqual(violations(name, content), [])
+        self.assertIn(
+            "insecure HTTP endpoint in production source",
+            violations(name, content + b'\nval endpoint = "http://www.w3.org/ns/ttml/audio.mp3"'),
+        )
+
     def test_real_lyric_parser_keeps_xml_security_identifiers_without_exempting_file(self) -> None:
         name = "android/app/src/main/java/com/leyu/melora/playback/LyricParser.kt"
         content = (Path(__file__).resolve().parents[2] / name).read_bytes()
