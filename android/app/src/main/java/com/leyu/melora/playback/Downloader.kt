@@ -405,7 +405,7 @@ object Downloader {
             audio.spec.verifiedQuality?.let { quality ->
                 audioResourceId(input.resourceKey)?.let { resource ->
                     SourceResolver.confirmQuality(resource, quality)
-                    AudioCacheStore.recordObservedQuality(context, song.uid, resource, quality)
+                    AudioCacheStore.recordObservedQuality(context, resource, quality)
                 }
             }
             val note = audio.spec.verifiedQuality?.let { downloadQualityNote(request.quality, it) } ?: "（实际音质尚未识别）"
@@ -651,7 +651,7 @@ object Downloader {
                 actual.verifiedQuality?.let { quality ->
                     audioResourceId(input.resourceKey)?.let { resource ->
                         SourceResolver.confirmQuality(resource, quality)
-                        AudioCacheStore.recordObservedQuality(context, song.uid, resource, quality)
+                        AudioCacheStore.recordObservedQuality(context, resource, quality)
                     }
                 }
                 when (isBetterDownloadQuality(actual, baseline)) {

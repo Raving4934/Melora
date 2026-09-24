@@ -1,3 +1,5 @@
+@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+
 package com.leyu.melora.playback
 
 import android.content.Context
@@ -6,11 +8,11 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.util.Log
 import androidx.core.net.toUri
-import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheDataSink
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.CacheWriter
@@ -24,6 +26,7 @@ import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.net.URLEncoder
+import org.json.JSONObject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -37,23 +40,24 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 internal const val AUDIO_TRANSFER_BUFFER_BYTES = 64 * 1024
 
+private const val META_PREFIX = ContentMetadata.KEY_CUSTOM_PREFIX + "melora."
+private const val META_SOURCE_URL = META_PREFIX + "source_url"
+private const val META_SOURCE_IDENTITY = META_PREFIX + "source_identity"
+private const val META_ACTUAL_QUALITY = META_PREFIX + "actual_quality"
+private const val META_VERIFIED_QUALITY = META_PREFIX + "verified_quality"
+private const val META_EXTENSION = META_PREFIX + "extension"
+private const val META_ALIAS_RESOURCE = META_PREFIX + "alias_resource"
+private const val META_RECORDING = META_PREFIX + "recording"
+
 /**
  * 播放与下载共用的唯一音频缓存入口。
  *
  * MediaItem 仍沿用历史 `melora://song/<uid>?q=<preferred>` 逻辑 URI；真正落盘时改用
  * “曲目 uid + 实际音质 + 实际音源 + 媒体文件身份”物理 key，禁止跨编码或文件拼接分片。
  */
-@androidx.annotation.OptIn(UnstableApi::class)
 object AudioCacheStore {
     private const val TAG = "AudioCacheStore"
     private const val AUDIO_DIR = "audio_cache"
-    private const val META_PREFIX = ContentMetadata.KEY_CUSTOM_PREFIX + "melora."
-    private const val META_SOURCE_URL = META_PREFIX + "source_url"
-    private const val META_SOURCE_IDENTITY = META_PREFIX + "source_identity"
-    private const val META_ACTUAL_QUALITY = META_PREFIX + "actual_quality"
-    private const val META_VERIFIED_QUALITY = META_PREFIX + "verified_quality"
-    private const val META_EXTENSION = META_PREFIX + "extension"
-    private const val META_ALIAS_RESOURCE = META_PREFIX + "alias_resource"
     private const val CACHE_FRAGMENT_BYTES = 1024L * 1024L
     private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36"
 
@@ -97,8 +101,7 @@ object AudioCacheStore {
     ): CachedAudioInput {
         val appContext = context.applicationContext
         val online = NetworkState.isConnected(appContext) && com.leyu.melora.playback.sdk.LxScriptPool.hasEnabledScripts(appContext)
-        preferredResource(appContext, song.uid, preferredQuality, online, excludedResources)
-            ?.takeIf { !online || SourceResolver.sameQualityTier(preferredQuality, it.actualQuality) }
+        AudioCacheIndex(obtainCache(appContext)).find(song, preferredQuality, online, excludedResources)
             ?.let { resource -> openComplete(appContext, resource)?.let { return it } }
 
         val resolve = suspend {
@@ -126,20 +129,15 @@ object AudioCacheStore {
     /** 供播放解析器在联网前查询完整的新缓存；同时兼容旧版本的完整逻辑 key。 */
     internal fun cachedPlaybackResource(
         context: Context,
-        uid: String,
+        song: OnlineSong,
         preferredQuality: String,
     ): AudioCacheResource? {
         val appContext = context.applicationContext
         val online = NetworkState.isConnected(appContext) && com.leyu.melora.playback.sdk.LxScriptPool.hasEnabledScripts(appContext)
-        preferredResource(appContext, uid, preferredQuality, online)
-            ?.takeIf { resource ->
-                isComplete(appContext, resource.key) &&
-                    (SourceResolver.sameQualityTier(preferredQuality, resource.actualQuality) || !online)
-            }
-            ?.let { return it }
+        AudioCacheIndex(obtainCache(appContext)).find(song, preferredQuality, online)?.let { return it }
 
         if (online) return null
-        val legacyKey = audioCacheKey(uid, preferredQuality)
+        val legacyKey = audioCacheKey(song.uid, preferredQuality)
         return legacyPlaybackResource(appContext, legacyKey, preferredQuality)
     }
 
@@ -150,42 +148,9 @@ object AudioCacheStore {
         preferredQuality: String,
         resolved: SourceResolver.Resolved,
     ): AudioCacheResource {
-        val appContext = context.applicationContext
-        val sourceIdentity = resolved.song.uid
-        val sharedCache = obtainCache(appContext)
-        val quality = SourceResolver.observedQuality(resolved.resourceId) ?: resolved.quality
-        val physicalKey = audioResourceKey(uid, quality, sourceIdentity, resolved.resourceId)
-        // 规格确认后仍复用相同文件的旧key；不重命名/拼接不同音源或URL的分片。
-        val existingKey = sharedCache.keys.firstOrNull { key ->
-            key.startsWith("melora://audio/$uid?") && audioResourceId(key) == resolved.resourceId &&
-                sharedCache.getContentMetadata(key).string(META_VERIFIED_QUALITY) == quality
+        return synchronized(metadataLock) {
+            AudioCacheIndex(obtainCache(context.applicationContext)).register(uid, preferredQuality, resolved)
         }
-        val resource = AudioCacheResource(
-            key = existingKey ?: physicalKey,
-            sourceUrl = resolved.url,
-            sourceIdentity = sourceIdentity,
-            actualQuality = quality,
-            extension = audioExtensionFromUrl(resolved.url),
-        )
-        synchronized(metadataLock) {
-            runCatching {
-                sharedCache.applyContentMetadataMutations(
-                    resource.key,
-                    resource.toMetadataMutations(),
-                )
-                sharedCache.applyContentMetadataMutations(
-                    audioCacheKey(uid, preferredQuality),
-                    ContentMetadataMutations()
-                        .remove(META_VERIFIED_QUALITY)
-                        .set(META_ALIAS_RESOURCE, resource.key)
-                        .set(META_SOURCE_URL, resource.sourceUrl.orEmpty())
-                        .set(META_SOURCE_IDENTITY, resource.sourceIdentity)
-                        .set(META_ACTUAL_QUALITY, resource.actualQuality)
-                        .apply { resource.extension?.let { set(META_EXTENSION, it) } },
-                )
-            }.onFailure { Log.d(TAG, "缓存元数据写入失败：${resource.key}", it) }
-        }
-        return resource
     }
 
     /** 普通歌曲形成有效播放记录后，在非计费网络后台补齐当前实际资源。 */
@@ -202,7 +167,7 @@ object AudioCacheStore {
             prefetchJob = scope.launch(start = CoroutineStart.LAZY) {
                 previous?.join()
                 try {
-                    val resource = preferredResource(appContext, uid, preferredQuality, online = true) ?: run {
+                    val resource = AudioCacheIndex(obtainCache(appContext)).find(song, preferredQuality, online = true) ?: run {
                         val resolved = SourceResolver.resolve(
                             context = appContext,
                             song = song,
@@ -276,50 +241,10 @@ object AudioCacheStore {
     }
 
     /** 首次识别实际音轨后落盘；只改元信息，物理文件/片段key保持稳定。 */
-    internal fun recordObservedQuality(context: Context, uid: String, resourceId: String, quality: String) {
-        val sharedCache = obtainCache(context)
+    internal fun recordObservedQuality(context: Context, resourceId: String, quality: String) {
         synchronized(metadataLock) {
-            sharedCache.keys.filter { key ->
-                (key.startsWith("melora://audio/$uid?") && audioResourceId(key) == resourceId) ||
-                    (key.startsWith("melora://song/$uid?") &&
-                        audioResourceId(sharedCache.getContentMetadata(key).string(META_ALIAS_RESOURCE).orEmpty()) == resourceId)
-            }.forEach { key ->
-                sharedCache.applyContentMetadataMutations(key, ContentMetadataMutations()
-                    .set(META_VERIFIED_QUALITY, quality).set(META_ACTUAL_QUALITY, quality))
-            }
+            AudioCacheIndex(obtainCache(context.applicationContext)).recordObservedQuality(resourceId, quality)
         }
-    }
-
-    private fun preferredResource(
-        context: Context,
-        uid: String,
-        preferredQuality: String,
-        online: Boolean,
-        excludedResources: Set<String> = emptySet(),
-    ): AudioCacheResource? {
-        val sharedCache = obtainCache(context)
-        val keys = sharedCache.keys.filter { it.startsWith("melora://audio/$uid?") }
-        // 同曲既有资源的实测规格先恢复到解析层；切换偏好/进程重启也不重新相信源的错标。
-        keys.forEach { key ->
-            val id = audioResourceId(key)
-            val verified = sharedCache.getContentMetadata(key).string(META_VERIFIED_QUALITY)
-            if (id != null && verified != null) SourceResolver.confirmQuality(id, verified)
-        }
-        val alias = sharedCache.getContentMetadata(audioCacheKey(uid, preferredQuality)).string(META_ALIAS_RESOURCE)
-        for (key in (listOfNotNull(alias) + keys).distinct()) {
-            val metadata = sharedCache.getContentMetadata(key)
-            val resourceId = audioResourceId(key)
-            if (resourceId != null && resourceId in excludedResources) continue
-            if (SourceResolver.isRejected(uid, resourceId)) continue
-            val actualQuality = SourceResolver.observedQuality(resourceId) ?: metadata.string(META_ACTUAL_QUALITY) ?: continue
-            val sourceIdentity = metadata.string(META_SOURCE_IDENTITY) ?: continue
-            if (online && !SourceResolver.sameQualityTier(preferredQuality, actualQuality)) continue
-            val complete = isComplete(context, key)
-            val resource = AudioCacheResource(key, metadata.string(META_SOURCE_URL), sourceIdentity,
-                actualQuality, metadata.string(META_EXTENSION))
-            if (complete) return resource
-        }
-        return null
     }
 
     private fun legacyPlaybackResource(
@@ -527,25 +452,110 @@ object AudioCacheStore {
         throw error
     }
 
-    private fun AudioCacheResource.toMetadataMutations(): ContentMetadataMutations =
-        ContentMetadataMutations()
-            .set(META_SOURCE_URL, sourceUrl.orEmpty())
-            .set(META_SOURCE_IDENTITY, sourceIdentity)
-            .set(META_ACTUAL_QUALITY, actualQuality)
-            .apply { extension?.let { set(META_EXTENSION, it) } }
-
     private fun AudioCacheResource.withMetadata(metadata: ContentMetadata): AudioCacheResource = copy(
         sourceUrl = metadata.string(META_SOURCE_URL) ?: sourceUrl ?: metadata.sourceUrl(),
         sourceIdentity = metadata.string(META_SOURCE_IDENTITY) ?: sourceIdentity,
-        actualQuality = metadata.string(META_ACTUAL_QUALITY) ?: actualQuality,
+        actualQuality = SourceResolver.observedQuality(audioResourceId(key)) ?: metadata.string(META_VERIFIED_QUALITY) ?: actualQuality,
         extension = metadata.string(META_EXTENSION) ?: extension,
     )
 
-    private fun ContentMetadata.string(key: String): String? =
-        get(key, "")?.takeIf { it.isNotBlank() }
-
     private fun ContentMetadata.sourceUrl(): String? =
         string(META_SOURCE_URL) ?: ContentMetadata.getRedirectedUri(this)?.toString()
+}
+
+private fun ContentMetadata.string(key: String): String? =
+    get(key, "")?.takeIf { it.isNotBlank() }
+
+/** 索引与音频共用 Media3 元数据存储；无额外数据库、音频副本或跨来源分片合并。 */
+internal class AudioCacheIndex(private val cache: Cache) {
+    fun register(uid: String, preferredQuality: String, resolved: SourceResolver.Resolved): AudioCacheResource {
+        val quality = SourceResolver.observedQuality(resolved.resourceId) ?: resolved.quality
+        // 实测规格可能修正源的错标，但同一文件的物理 key 不变。
+        val key = cache.keys.firstOrNull { key ->
+            key.startsWith("melora://audio/$uid?") && audioResourceId(key) == resolved.resourceId &&
+                cache.getContentMetadata(key).string(META_VERIFIED_QUALITY) == quality
+        } ?: audioResourceKey(uid, quality, resolved.song.uid, resolved.resourceId)
+        val resource = AudioCacheResource(key, resolved.url, resolved.song.uid, quality, audioExtensionFromUrl(resolved.url))
+        val metadata = ContentMetadataMutations()
+            .set(META_SOURCE_URL, resolved.url)
+            .set(META_SOURCE_IDENTITY, resolved.song.uid)
+            .set(META_ACTUAL_QUALITY, quality)
+            .set(META_RECORDING, JSONObject().apply {
+                // 保存实际文件对应的录音，而不是请求曲目；旧元数据缺失不推测回填。
+                val song = resolved.song
+                put("source", song.source)
+                put("songmid", song.songmid)
+                put("name", song.name)
+                put("singer", song.singer)
+                put("albumName", song.albumName)
+                put("interval", song.interval)
+                put("isBookChapter", song.isBookChapter)
+            }.toString())
+            .apply { resource.extension?.let { set(META_EXTENSION, it) } }
+        runCatching {
+            cache.applyContentMetadataMutations(key, metadata)
+            cache.applyContentMetadataMutations(audioCacheKey(uid, preferredQuality), ContentMetadataMutations()
+                .remove(META_VERIFIED_QUALITY)
+                .set(META_ALIAS_RESOURCE, key))
+        }.onFailure { Log.d("AudioCacheStore", "缓存元数据写入失败：$key", it) }
+        return resource
+    }
+
+    fun find(
+        song: OnlineSong,
+        preferredQuality: String,
+        online: Boolean,
+        excludedResources: Set<String> = emptySet(),
+    ): AudioCacheResource? {
+        val keys = cache.keys.filter { it.startsWith("melora://audio/") }
+        val ownKeys = keys.filterTo(linkedSetOf()) { it.startsWith("melora://audio/${song.uid}?") }
+        // 原 UID 的不完整资源也要恢复实测音质，避免后续网络解析重新相信源的错标。
+        ownKeys.forEach { key ->
+            val id = audioResourceId(key)
+            val verified = cache.getContentMetadata(key).string(META_VERIFIED_QUALITY)
+            if (id != null && verified != null && SourceResolver.observedQuality(id) == null) SourceResolver.confirmQuality(id, verified)
+        }
+        val alias = cache.getContentMetadata(audioCacheKey(song.uid, preferredQuality)).string(META_ALIAS_RESOURCE)
+        fun resource(key: String, crossSource: Boolean): AudioCacheResource? {
+            val metadata = cache.getContentMetadata(key)
+            val id = audioResourceId(key)
+            if (id in excludedResources || SourceResolver.isRejected(song.uid, id)) return null
+            val source = metadata.string(META_SOURCE_IDENTITY) ?: return null
+            if (crossSource && (id == null || SourceResolver.isResourceRejected(id))) return null
+            val verified = SourceResolver.observedQuality(id) ?: metadata.string(META_VERIFIED_QUALITY)
+            // 不把源声明的“无损/320k”扩散给其它曲目；须有解码器或文件探测的实测证据。
+            if (crossSource && verified == null) return null
+            if (id != null && verified != null && SourceResolver.observedQuality(id) == null) SourceResolver.confirmQuality(id, verified)
+            val quality = verified ?: metadata.string(META_ACTUAL_QUALITY) ?: return null
+            // 原 UID 保留离线降级行为；跨曲目复用即使离线也不能把低音质当成请求音质。
+            if ((online || crossSource) && !SourceResolver.sameQualityTier(preferredQuality, quality)) return null
+            val length = ContentMetadata.getContentLength(metadata)
+            if (length <= 0L || !cache.isCached(key, 0L, length)) return null
+            return AudioCacheResource(key, metadata.string(META_SOURCE_URL), source, quality, metadata.string(META_EXTENSION))
+        }
+        for (key in (listOfNotNull(alias) + ownKeys).distinct()) {
+            resource(key, crossSource = false)?.let { return it }
+        }
+        if (song.isBookChapter || song.intervalSeconds <= 0) return null
+        // 只查内存元数据，不扫描音频文件/解析标签。优先同专辑，其次更接近的时长。
+        return keys.asSequence().filterNot { it in ownKeys }.mapNotNull { key ->
+            val raw = cache.getContentMetadata(key).string(META_RECORDING) ?: return@mapNotNull null
+            val candidate = runCatching { OnlineSong.from(JSONObject(raw)) }.getOrNull() ?: return@mapNotNull null
+            val delta = kotlin.math.abs(song.intervalSeconds.toLong() - candidate.intervalSeconds.toLong())
+            if (candidate.intervalSeconds <= 0 || delta > 2) return@mapNotNull null
+            val score = SourceResolver.alternativeScore(song, candidate) ?: return@mapNotNull null
+            Triple(key, score, delta)
+        }.sortedWith(compareByDescending<Triple<String, Int, Long>> { it.second }.thenBy { it.third }.thenBy { it.first })
+            .firstNotNullOfOrNull { resource(it.first, crossSource = true) }
+    }
+
+    /** 复用后请求 UID 已不同；实测音质属于资源本身，须同步所有指向它的物理条目。 */
+    fun recordObservedQuality(resourceId: String, quality: String) {
+        cache.keys.filter { key -> audioResourceId(key) == resourceId }.forEach { key ->
+            cache.applyContentMetadataMutations(key, ContentMetadataMutations()
+                .set(META_VERIFIED_QUALITY, quality).set(META_ACTUAL_QUALITY, quality))
+        }
+    }
 }
 
 internal data class AudioCacheResource(
@@ -574,7 +584,6 @@ internal class DownloadHttpTransferFailure(
     cause: IOException,
 ) : IOException(cause.message ?: "HTTP 音频传输失败", cause)
 
-@androidx.annotation.OptIn(UnstableApi::class)
 private class OpenedDataSourceInputStream(private val dataSource: DataSource) : InputStream() {
     private val singleByte = ByteArray(1)
 
@@ -592,7 +601,6 @@ private class OpenedDataSourceInputStream(private val dataSource: DataSource) : 
 }
 
 /** 前台播放不能等待后台 CacheWriter 的 hole lock；下载/补齐则必须阻塞以复用已有分片。 */
-@androidx.annotation.OptIn(UnstableApi::class)
 internal fun cacheDataSourceFlags(blockOnCache: Boolean): Int =
     CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR or
         if (blockOnCache) CacheDataSource.FLAG_BLOCK_ON_CACHE else 0

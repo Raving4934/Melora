@@ -198,7 +198,7 @@ class PlaybackResolutionInstrumentedTest {
             })
         } finally { cache.releaseHoleSpan(hole) }
         SourceResolver.confirmQuality(original.resourceId, "128k")
-        AudioCacheStore.recordObservedQuality(context, song.uid, original.resourceId, "128k")
+        AudioCacheStore.recordObservedQuality(context, original.resourceId, "128k")
         SourceResolver.clearCache() // 模拟解析层没有内存音质观察记录。
         val downloaded = AudioCacheStore.openForDownload(context, song, "128k", allowSwitch = false)
         downloaded.stream.use { assertArrayEquals(bytes, it.readBytes()) }

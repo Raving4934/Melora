@@ -312,7 +312,7 @@ object PlaybackController {
             SourceResolver.confirmQuality(resourceId, verified)
             appContext?.let { context ->
                 scope.launch(Dispatchers.IO) {
-                    recoverableOrNull { AudioCacheStore.recordObservedQuality(context, uid, resourceId, verified) }
+                    recoverableOrNull { AudioCacheStore.recordObservedQuality(context, resourceId, verified) }
                 }
             }
         }
@@ -809,7 +809,9 @@ object PlaybackController {
         }
         playbackPreflight = scope.launch {
             val cached = withContext(Dispatchers.IO) {
-                AudioCacheStore.cachedPlaybackResource(context, track.uid, NetworkState.playQuality(context)) != null
+                OnlineSong.from(track.raw)?.let { song ->
+                    AudioCacheStore.cachedPlaybackResource(context, song, NetworkState.playQuality(context))
+                } != null
             }
             if (!cached && !com.leyu.melora.playback.sdk.LxScriptPool.hasEnabledScripts(context)) {
                 postMessage(context, SourceResolver.NO_SOURCE_MESSAGE)

@@ -147,7 +147,7 @@ class MeloraDataSourceFactory(context: Context, base: DataSource.Factory) : Data
         // 兼容旧队列的q参数，但不再让它覆盖用户当前设置。
         val preferredQuality = NetworkState.playQuality(appContext)
 
-        AudioCacheStore.cachedPlaybackResource(appContext, uid, preferredQuality)?.let { cached ->
+        AudioCacheStore.cachedPlaybackResource(appContext, song, preferredQuality)?.let { cached ->
             TrackRegistry.notifyResolved(uid, cached.actualQuality, audioResourceId(cached.key), preferredQuality, cached.sourceIdentity.substringBefore('_'), fromCompleteCache = true)
             return@ResolvingDataSource AudioCacheStore.applyToDataSpec(cached, dataSpec)
         }

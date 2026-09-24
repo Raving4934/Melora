@@ -127,6 +127,12 @@ object SourceResolver {
     fun isRejected(songUid: String, resourceId: String?): Boolean =
         resourceId != null && resourceId in rejectedResources(songUid)
 
+    /** 跨 UID 完整缓存共享时，遵守任一消费者对同一物理资源的失败冷却，不新增失败账本。 */
+    internal fun isResourceRejected(resourceId: String): Boolean = synchronized(cacheLock) {
+        val now = System.currentTimeMillis()
+        failedResources.values.any { (it[resourceId] ?: 0L) > now }
+    }
+
     private fun rejectedResources(songUid: String): Set<String> = synchronized(cacheLock) {
         val failures = failedResources[songUid] ?: return@synchronized emptySet()
         val now = System.currentTimeMillis()
@@ -570,6 +576,8 @@ object SourceResolver {
         "(?:sped[ -]?up|speed[ -]?up|加速)", "(?:\\bslowed\\b|慢速|降速)",
         "(?:\\bremaster(?:ed)?\\b|重制|重录)",
         "(?:\\bacoustic\\b|\\bunplugged\\b|不插电)", "(?:a[ -]?cappella|清唱)",
+        "(?:\\bradio[ -]?edit\\b|电台剪辑版)", "(?:\\bdemo\\b|小样)",
+        "(?:\\balternate[ -]?take\\b|另一录音版本)",
     ).map { Regex(it, RegexOption.IGNORE_CASE) }
 
     private fun filterStr(value: String?): String = Normalizer.normalize(value.orEmpty(), Normalizer.Form.NFKC)
