@@ -129,4 +129,112 @@ class LxSourceImportTest {
             parseLxSourceDocument("// source", "nested/single name", MAX_IMPORTED_SCRIPT_BYTES),
         )
     }
+
+    @Test
+    fun completeJsonMustBeAnObjectWithAScriptsArray() {
+        listOf(
+            "{\"ordinary\":true}",
+            "[1,2]",
+            "\"plain text\"",
+            "42",
+        ).forEach(::assertRejectedDocument)
+    }
+
+    @Test
+    fun scriptsMustBeANonEmptyArrayOfValidObjects() {
+        listOf(
+            "{\"scripts\":null}",
+            "{\"scripts\":\"not-an-array\"}",
+            "{\"scripts\":1}",
+            "{\"scripts\":{}}",
+            "{\"scripts\":[]}",
+            "{\"scripts\":[{\"code\":\"// valid\"},\"not-an-object\"]}",
+            "{\"scripts\":[{\"code\":\"// valid\"},{}]}",
+            "{\"scripts\":[{\"code\":\"// valid\"},{\"code\":17}]}",
+            "{\"scripts\":[{\"code\":\"// valid\"},{\"code\":null}]}",
+            "{\"scripts\":[{\"code\":\"// valid\"},{\"code\":\"\"}]}",
+            "{\"scripts\":[{\"code\":\"// valid\"},{\"code\":\"   \"}]}",
+        ).forEach(::assertRejectedDocument)
+    }
+
+    @Test
+    fun providedBundleNameMustBeAStringButMissingOrEmptyNamesUseIndexedFallbacks() {
+        listOf(
+            "{\"scripts\":[{\"name\":7,\"code\":\"// source\"}]}",
+            "{\"scripts\":[{\"name\":null,\"code\":\"// source\"}]}",
+        ).forEach(::assertRejectedDocument)
+
+        assertEquals(
+            listOf("source-0.js" to "// missing", "source-1.js" to "// empty"),
+            parseLxSourceDocument(
+                "{\"scripts\":[{\"code\":\"// missing\"},{\"name\":\"\",\"code\":\"// empty\"}]}",
+                "ignored.json",
+                MAX_LOCAL_SOURCE_DOCUMENT_BYTES,
+            ),
+        )
+    }
+
+    @Test
+    fun maximumAllowedBundleCountIsAccepted() {
+        val scripts = JSONArray().apply {
+            repeat(MAX_IMPORTED_SOURCE_COUNT) { index ->
+                put(JSONObject().put("name", "source-$index.js").put("code", "// source $index"))
+            }
+        }
+
+        assertEquals(
+            MAX_IMPORTED_SOURCE_COUNT,
+            parseLxSourceDocument(
+                JSONObject().put("scripts", scripts).toString(),
+                "bundle.json",
+                MAX_LOCAL_SOURCE_DOCUMENT_BYTES,
+            ).size,
+        )
+    }
+
+    @Test
+    fun jsonLookingPrefixesFollowedByJsRemainRawScripts() {
+        val rawObjectBlock = "{ const value = 1; }\nconst marker = true;"
+        val rawArrayExpression = "[];\nconst marker = true;"
+        val bundleJsonFollowedByJs =
+            "{\"scripts\":[{\"code\":\"// bundle\"}]}\nconst marker = true;"
+
+        assertEquals(
+            listOf("object.js" to rawObjectBlock),
+            parseLxSourceDocument(rawObjectBlock, "object.js", MAX_IMPORTED_SCRIPT_BYTES),
+        )
+        assertEquals(
+            listOf("array.js" to rawArrayExpression),
+            parseLxSourceDocument(rawArrayExpression, "array.js", MAX_IMPORTED_SCRIPT_BYTES),
+        )
+        assertEquals(
+            listOf("bundle.js" to bundleJsonFollowedByJs),
+            parseLxSourceDocument(bundleJsonFollowedByJs, "bundle.js", MAX_IMPORTED_SCRIPT_BYTES),
+        )
+    }
+
+    @Test
+    fun leadingBomIsRemovedByBoundedReaderBeforeBundleParsing() {
+        val bundle = JSONObject().put("scripts", JSONArray()
+            .put(JSONObject().put("code", "// source")))
+        val text = ByteArrayInputStream("\uFEFF${bundle}".toByteArray(Charsets.UTF_8))
+            .readBoundedLxSourceText(MAX_LOCAL_SOURCE_DOCUMENT_BYTES)
+
+        assertEquals(
+            listOf("source-0.js" to "// source"),
+            parseLxSourceDocument(text, "bundle.json", MAX_LOCAL_SOURCE_DOCUMENT_BYTES),
+        )
+    }
+
+    @Test
+    fun unquotedJavaScriptIsNotMisclassifiedByLenientJsonTokener() {
+        val code = "globalThis.loadSource()"
+        assertEquals(listOf("source.js" to code), parseLxSourceDocument(code, "source.js", MAX_IMPORTED_SCRIPT_BYTES))
+    }
+
+    private fun assertRejectedDocument(document: String) {
+        assertThrows(IllegalArgumentException::class.java) {
+            parseLxSourceDocument(document, "fallback.js", MAX_LOCAL_SOURCE_DOCUMENT_BYTES)
+        }
+    }
 }

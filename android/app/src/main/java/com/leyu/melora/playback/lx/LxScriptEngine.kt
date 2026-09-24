@@ -89,6 +89,22 @@ class LxScriptEngine(private val context: Context) : Closeable {
             }
         }
 
+    /** 导入和“检查脚本”共用同一协议检查；不以文件名、注释或lx字样猜测脚本有效性。 */
+    internal suspend fun inspectSource(code: String, fileName: String, timeoutMs: Long = 8_000): JSONObject {
+        val initialized = initialize(code, fileName, timeoutMs)
+            ?: error("脚本未按音源协议完成初始化")
+        check(initialized.opt("status") != false) { "脚本报告初始化失败" }
+        val sources = initialized.optJSONObject("sources") ?: error("脚本未声明音源")
+        val platforms = setOf("kw", "kg", "tx", "wy", "mg", "local")
+        val actions = setOf("musicUrl", "lyric", "pic")
+        check(sources.keys().asSequence().any { id ->
+            val declared = sources.optJSONObject(id)?.optJSONArray("actions")
+            id in platforms && declared != null && (0 until declared.length()).any { declared.opt(it) in actions }
+        }) { "脚本未声明有效的平台和请求动作" }
+        check(jsContext.executeBooleanScript("globalThis.__lxHasRequestHandler()", null)) { "脚本未注册 request 处理器" }
+        return sources
+    }
+
     // 解析一次 musicUrl/lyric/pic 请求；同步等待 Promise 链完成。
     // 非池化调用保留原 API，但仍走同一条可取消请求链路。
     fun request(source: String, action: String, info: JSONObject, timeoutMs: Long = 20_000): Any =

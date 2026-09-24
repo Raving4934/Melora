@@ -125,7 +125,7 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
     var importChooserOpen by remember { mutableStateOf(false) }
     var onlineImportOpen by remember { mutableStateOf(false) }
     var onlineImportError by remember { mutableStateOf<String?>(null) }
-    val sourceImporter = remember(store) { LxSourceImporter(store) }
+    val sourceImporter = remember(context, store) { LxSourceImporter(context, store) }
     val sourceAlias by MeloraSettings.sourceAliasEnabled.collectAsStateWithLifecycle()
     val autoSwitch by MeloraSettings.autoSwitchSource.collectAsStateWithLifecycle()
 
@@ -175,10 +175,6 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
 
     fun completeSourceImport(imported: List<LxScript>, onSuccess: () -> Unit = {}) {
         busy = false
-        if (imported.isEmpty()) {
-            notify("未识别到可导入的音源脚本")
-            return
-        }
         scripts = store.list()
         onSuccess()
         val message = "已导入 ${imported.joinToString("、") { it.name }}"
@@ -279,15 +275,12 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
         scope.launch(Dispatchers.IO) {
             val outcome = runCatchingCancellable {
                 LxScriptEngine(context).use { engine ->
-                    val initialized = engine.initialize(
+                    val sources = engine.inspectSource(
                         code = store.code(target.id) ?: error("脚本文件不存在"),
                         fileName = target.id,
                         timeoutMs = 8_000,
                     )
-                    val sources = initialized?.optJSONObject("sources")
-                    val names = sources?.keys()?.asSequence()?.toList().orEmpty()
-                    if (names.isEmpty()) error("脚本未声明音源")
-                    names
+                    sources.keys().asSequence().toList()
                 }
             }
             withContext(Dispatchers.Main) {

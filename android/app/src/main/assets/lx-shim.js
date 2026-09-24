@@ -336,6 +336,9 @@
     utils,
   }
 
+  // 只检查事件是否注册；导入检查不调用请求处理器，也不解析音频地址。
+  globalThis.__lxHasRequestHandler = () => typeof handlers.request === 'function'
+
   globalThis.__lxInvoke = (payloadJson) => {
     // 同一引擎超时后会被下一档/下一首复用；旧Promise晚到不能冒充新请求的结果。
     const generation = ++invokeGeneration

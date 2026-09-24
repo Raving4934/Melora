@@ -38,3 +38,15 @@ test('new invocation clears an unconsumed result left by an abandoned waiter', a
   context.__lxInvoke(JSON.stringify({ source: 'new' }))
   assert.equal(context.__lxTakeResult(), '')
 })
+
+
+test('source inspection checks registration without invoking the audio request handler', () => {
+  const context = vm.createContext({ __lxNative: {}, console })
+  vm.runInContext(shim, context)
+  assert.equal(context.__lxHasRequestHandler(), false)
+  vm.runInContext("globalThis.calls = 0; lx.on('request', () => { calls++; return 'fixture'; });", context)
+  assert.equal(context.__lxHasRequestHandler(), true)
+  assert.equal(context.calls, 0)
+  vm.runInContext("lx.on('request', null)", context)
+  assert.equal(context.__lxHasRequestHandler(), false)
+})
