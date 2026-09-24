@@ -31,7 +31,6 @@ import com.leyu.melora.ui.common.PageBackHandler as BackHandler
 import com.leyu.melora.ui.common.DetailPageHost
 import com.leyu.melora.ui.common.MeloraBottomSheet
 import com.leyu.melora.playback.AudioSpecification
-import com.leyu.melora.playback.TrackRegistry
 
 import org.json.JSONObject
 import dev.chrisbanes.haze.rememberHazeState
@@ -244,6 +243,7 @@ internal fun FullPlayerPageContent(
     isCollapsed: Boolean = false,
 ) {
     val track = state.current
+    val autoSwitch by MeloraSettings.autoSwitchSource.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val playerColors = LocalPlayerColors.current
@@ -398,9 +398,8 @@ internal fun FullPlayerPageContent(
                         0 -> AudioInfoPage(
                             immersive = immersive,
                             track = track,
-                            resolvedPlatform = state.resolvedPlatform,
-                            resolvedBy = state.resolvedBy,
                             audioSpec = state.audioSpec,
+                            sourceLabel = playbackSourceLabel(state, autoSwitch),
                             onOpenAlbum = { album ->
                                 onImmersiveChange(false)
                                 val raw = track?.raw
@@ -670,21 +669,14 @@ private fun showSystemOutputSwitcher(context: Context) {
 private fun AudioInfoPage(
     immersive: Boolean,
     track: UiTrack?,
-    resolvedPlatform: String?,
-    resolvedBy: String?,
     audioSpec: AudioSpecification?,
+    sourceLabel: String,
     onOpenAlbum: (String) -> Unit,
     onOpenArtist: (String) -> Unit,
 ) {
-    val autoSwitch by MeloraSettings.autoSwitchSource.collectAsStateWithLifecycle()
     val platformName = sourceAliasDisplay(track?.source.orEmpty(), platformLabel(track?.source))
-    val playbackSource = resolvedByLabel(resolvedBy) +
-        (resolvedPlatform?.takeIf { it in setOf("kw", "kg", "wy", "tx", "mg") && it != track?.source }
-            ?.let { " · ${platformLabel(it)}" } ?: "")
-    val isLocal = resolvedBy in TrackRegistry.LOCAL_RESOURCE_IDS
-    // 只显示已选中音轨的实测徽标；未解析时不借目录最高档或请求档冒充实际音质。
+    // 只显示已选中音轨的实测徽标，不借目录最高档或请求档冒充实际音质。
     val qualityBadge = audioSpec?.qualityBadge
-    val sourceLabel = if (autoSwitch && !isLocal) "播放源：$playbackSource · 已启用自动换源" else "播放源：$playbackSource"
     if (immersive) {
         ImmersiveTrackNotes(track, platformName, qualityBadge, sourceLabel, onOpenAlbum, onOpenArtist)
         return

@@ -82,6 +82,8 @@ data class PlayerUiState(
     val resolvedPlatform: String? = null,
     // 实际播放来源（resourceId）：lx:<scriptId>:<hash>（脚本）或内置
     val resolvedBy: String? = null,
+    // 当前解析确实命中完整音频缓存；边播边写入缓存不算命中。
+    val fromCompleteCache: Boolean = false,
     // 实际选中输入音轨的规格，用于展示徽标和校验缓存音质，不取请求档位。
     val audioSpec: AudioSpecification? = null,
     // 当前播放队列的来源标识（如 board.kw.93 / playlist.kw.xxx），供卡片播放按钮跟随状态

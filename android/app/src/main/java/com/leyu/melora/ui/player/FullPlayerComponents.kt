@@ -59,6 +59,8 @@ import com.leyu.melora.playback.sdk.LxScriptPool
 import com.leyu.melora.playback.LyricLine
 import com.leyu.melora.playback.PlayMode
 import com.leyu.melora.playback.UiTrack
+import com.leyu.melora.playback.PlayerUiState
+import com.leyu.melora.playback.TrackRegistry
 import com.leyu.melora.playback.PlayerLyric
 import com.leyu.melora.ui.common.SongArtwork
 
@@ -75,22 +77,25 @@ internal fun fullPlayerLyricsOrFallback(track: UiTrack?, lyrics: List<LyricLine>
         )
     }
 
-/**
- * 播放源展示名：这里只接收真正的 resourceId；旧缓存/无 `res` 的命中会传 null，不能误报为内置源。
- * LX 脚本使用 `lx:<scriptId>:<hash>`，其它历史缓存身份保持未知。
- */
-internal fun resolvedByLabel(resourceId: String?): String {
-    val id = resourceId?.trim().orEmpty()
-    if (id.isBlank() || id.equals("legacy", ignoreCase = true) || id.equals("unverified", ignoreCase = true)) {
-        return "未知/缓存"
+/** 普通/沉浸 page0 共用来源文案；缓存由真实命中标记判断，不根据资源 ID 猜测。 */
+internal fun playbackSourceLabel(state: PlayerUiState, autoSwitch: Boolean): String {
+    if (state.fromCompleteCache) return "播放源：缓存"
+    val id = state.resolvedBy?.trim().orEmpty()
+    val source = when {
+        id.isBlank() || id.equals("legacy", true) || id.equals("unverified", true) -> "未知/缓存"
+        id == "local" -> "本地下载"
+        id == "localmedia" -> "本地媒体"
+        !id.startsWith("lx:", ignoreCase = true) -> "未知音源"
+        else -> id.substring(3).substringBefore(':').trim().let { scriptId ->
+            if (scriptId.isBlank()) "未知音源"
+            else LxScriptPool.scriptDisplayName(scriptId) ?: scriptId.removeSuffix(".js")
+        }
     }
-    if (id == "local") return "本地下载"
-    if (id == "localmedia") return "本地媒体"
-    if (!id.startsWith("lx:", ignoreCase = true)) return "未知音源"
-
-    val scriptId = id.substring(3).substringBefore(':').trim()
-    if (scriptId.isBlank()) return "未知音源"
-    return LxScriptPool.scriptDisplayName(scriptId) ?: scriptId.removeSuffix(".js")
+    val switchedPlatform = state.resolvedPlatform
+        ?.takeIf { it in setOf("kw", "kg", "wy", "tx", "mg") && it != state.current?.source }
+        ?.let { " · ${platformLabel(it)}" }.orEmpty()
+    val switchHint = if (autoSwitch && state.resolvedBy !in TrackRegistry.LOCAL_RESOURCE_IDS) " · 已启用自动换源" else ""
+    return "播放源：$source$switchedPlatform$switchHint"
 }
 
 internal fun platformLabel(source: String?): String = when (source) {

@@ -357,6 +357,7 @@ object PlaybackController {
             quality = resolution?.quality,
             resolvedPlatform = resolution?.platform,
             resolvedBy = resolution?.resourceId,
+            fromCompleteCache = resolution?.fromCompleteCache == true,
             audioSpec = audioSpec,
             queueId = currentQueueId.takeIf { hasItems },
         )
