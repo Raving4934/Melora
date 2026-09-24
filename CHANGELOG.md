@@ -19,6 +19,8 @@
 - 长按封面可打开外观卡片，集中选择封面样式与播放主题，并保留明确的沉浸播放入口。
 
 【缓存与音源】
+- 自动换源优先保留当前启用音源的可用结果；主源按阶梯降级后能播放时，不再为追逐备用高档音质增加等待。主源迟迟无结果或不可用时，仍会尝试备用音源。
+- 区分播放与下载的音源选优缓存，避免下载选中的备用结果影响后续播放；下载保留按音质逐档选优，修复已失败资源重试时不必要的主源降级。
 - 同一录音、同档实测音质的完整音频缓存可跨来源复用，供播放、下载和后台补齐共用，不拼接不同来源的音频片段。
 - 完整缓存命中时显示“播放源：缓存”；缓存失效后重新解析时显示解析状态，不再沿用上次的缓存标签。
 - 统一共享解析请求和物理资源失败冷却，避免取消一个请求影响其他调用，以及重新解析再次选中同一个失败资源。
@@ -49,6 +51,7 @@
 - 页面、封面、歌词缓存及批量开销：[`cf60d55`](https://github.com/Raving4934/Melora/commit/cf60d55d003c666b5736b849024cfa31c276e467)、[`220b2c3`](https://github.com/Raving4934/Melora/commit/220b2c32b118d776c59e14f61666e1dc4c23c2b1)、[`b7cc845`](https://github.com/Raving4934/Melora/commit/b7cc84507e5c10375293feb698f4ac8ff1f292b0)、[`60154cc`](https://github.com/Raving4934/Melora/commit/60154cc57fe10f46e7bc2e9b28023b41049812d9)。
 - 完整音频缓存跨来源复用与来源状态：[`9b30413`](https://github.com/Raving4934/Melora/commit/9b30413d8fb555cbc6e6da023cc315b3700860aa)、[`2f4f588`](https://github.com/Raving4934/Melora/commit/2f4f58869c934af6f2a30c246ad5b718c2db5040)、[`dad4733`](https://github.com/Raving4934/Melora/commit/dad4733a4506f9bbe22e217a59c6a31309268095)。
 - 下载音质预检、任务与完成记录：[`c53ae1d`](https://github.com/Raving4934/Melora/commit/c53ae1dcdd79848e5523c1553a099c111640f007)、[`1cc01a7`](https://github.com/Raving4934/Melora/commit/1cc01a7ebf31c68bf1fc195ddd77b66bee4c9cd4)、[`c448612`](https://github.com/Raving4934/Melora/commit/c44861258ede40c84ac4b862760c8dba1896a0bb)、[`667e046`](https://github.com/Raving4934/Melora/commit/667e0460996179f0f5fa5a76eeff1026c964611f)。
+- 自动换源主源优先与播放／下载缓存隔离：[`c5b57e1`](https://github.com/Raving4934/Melora/commit/c5b57e102c4fe2a3edfc5af1e2872aee867ca4b0)。
 - 播放／下载失败恢复与共享解析：[`3cb93c9`](https://github.com/Raving4934/Melora/commit/3cb93c9e1678e318290155487721d2e49e6e1081)、[`7a1cff4`](https://github.com/Raving4934/Melora/commit/7a1cff430da2824ac649374a5203aec00a8e7e92)、[`58a8d43`](https://github.com/Raving4934/Melora/commit/58a8d4376085abe119950823d2e43a84758f966a)。
 - 本地删除、文件失效、徽标与后台排序：[`095e5a4`](https://github.com/Raving4934/Melora/commit/095e5a413e6a3f7a94dee3c33dc9dd6261353852)、[`9d1d7c1`](https://github.com/Raving4934/Melora/commit/9d1d7c134e15b64eaeb877673720286668d2c05e)、[`b311311`](https://github.com/Raving4934/Melora/commit/b311311108c97048dfbd5894694d942a007a9e9e)、[`2a4b325`](https://github.com/Raving4934/Melora/commit/2a4b3256aa284289bc699c2df06b5a24291bdfe6)。
 - 音源文件选择、轻量校验与更新冲突：[`eb537fe`](https://github.com/Raving4934/Melora/commit/eb537fe5a3b4258ad63453aa67e80d780b2c6a00)、[`f6f3d10`](https://github.com/Raving4934/Melora/commit/f6f3d1023a1bcbcf0934a519876c0215dec152ee)、[`7c3f7eb`](https://github.com/Raving4934/Melora/commit/7c3f7eba65569f0b24dd7115a175adc31b01c54b)、[`79e532c`](https://github.com/Raving4934/Melora/commit/79e532ced5e562da2721698bda425bf659b0563e)。
