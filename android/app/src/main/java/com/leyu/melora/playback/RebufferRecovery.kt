@@ -11,7 +11,12 @@ internal class RebufferRecovery {
     private var uid: String? = null
     private var hasPlayed = false
     private var bufferStartedAt: Long? = null
-    private var recoveryAttempted = false
+    private var attemptInFlight = false
+    private val slowResources = mutableSetOf<String>()
+    val excludedResources: Set<String> get() = slowResources.toSet()
+    private var finishedAttempts = 0
+    private var retryAtMs = 0L
+    private var updatedAtMs = 0L
     private var windowStartedAt = 0L
     private var stalls = 0
     private var waitedMs = 0L
@@ -21,15 +26,30 @@ internal class RebufferRecovery {
         uid = trackUid
         hasPlayed = false
         bufferStartedAt = null
-        recoveryAttempted = false
+        attemptInFlight = false
+        slowResources.clear()
+        finishedAttempts = 0
+        retryAtMs = 0L
         waitForPlayback = false
         stalls = 0
         waitedMs = 0L
     }
 
-    fun attemptStarted() { recoveryAttempted = true }
+    fun attemptStarted(resourceId: String? = null) {
+        resourceId?.let(slowResources::add)
+        attemptInFlight = true
+        retryAtMs = updatedAtMs + 30_000
+    }
+
+    /** 仅真正结束的搜索/接管计次；用户暂停、切歌或拖动取消不永久耗尽该曲机会。 */
+    fun attemptFinished(completed: Boolean, nowMs: Long) {
+        attemptInFlight = false
+        if (completed) finishedAttempts++
+        retryAtMs = nowMs + 30_000
+    }
 
     fun interrupted() {
+        attemptInFlight = false
         bufferStartedAt = null
         waitForPlayback = true
         stalls = 0
@@ -46,6 +66,7 @@ internal class RebufferRecovery {
         nowMs: Long,
     ): Action {
         if (uid != trackUid) reset(trackUid)
+        updatedAtMs = nowMs
         if (isPlaying) {
             hasPlayed = true
             waitForPlayback = false
@@ -70,13 +91,28 @@ internal class RebufferRecovery {
             bufferStartedAt = nowMs
             return Action.YIELD_PREFETCH
         }
-        // 单首最多一次；连续8秒，或30秒内至少3次且累计等待6秒才尝试，不追逐短抖动。
+        // 单首最多两次完整恢复，间隔至少30秒；连续8秒或30秒内三次累计6秒才启动。
         val ongoing = (nowMs - started).coerceAtLeast(0)
         val repeated = nowMs - windowStartedAt <= 30_000 && stalls >= 3 && waitedMs + ongoing >= 6_000
-        if (!recoveryAttempted && allowSwitch && (ongoing >= 8_000 || repeated)) {
+        if (!attemptInFlight && finishedAttempts < 2 && nowMs >= retryAtMs &&
+            allowSwitch && (ongoing >= 8_000 || repeated)) {
             return Action.FIND_ALTERNATIVE
         }
         return Action.NONE
+    }
+}
+
+/** 同曲错误恢复只尝试不同的失败资源；时间窗口仅限制再次发起，不中断已经正常出声的歌曲。 */
+internal class PlaybackErrorRecovery {
+    private val attempted = mutableSetOf<String>()
+    private var startedAtMs: Long? = null
+
+    fun reset() { attempted.clear(); startedAtMs = null }
+
+    fun allowRetry(resourceId: String, nowMs: Long, autoSwitch: Boolean): Boolean {
+        val started = startedAtMs ?: nowMs.also { startedAtMs = it }
+        return nowMs - started in 0L..30_000L && attempted.size < (if (autoSwitch) 2 else 1) &&
+            attempted.add(resourceId)
     }
 }
 

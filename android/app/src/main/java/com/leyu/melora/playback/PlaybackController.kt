@@ -137,7 +137,7 @@ object PlaybackController {
     private var lyricJob: Job? = null
     private var artworkJob: Job? = null
     private var artworkUid: String? = null
-    private val refreshAttempted = mutableSetOf<String>()
+    private val errorRecovery = PlaybackErrorRecovery()
     // 最近一次已加载详情/歌词的曲目，publish 时据此检测曲目变化
     private var detailUid: String? = null
     private var consecutiveErrors = 0
@@ -226,7 +226,7 @@ object PlaybackController {
                     interruptRecovery()
                     AudioCacheStore.cancelPrefetch()
                     if (urlPrefetchUid != mediaItem?.mediaId) urlPrefetchJob?.cancel()
-                    refreshAttempted.clear()
+                    errorRecovery.reset()
                     confirmedAudio = null
                     val currentMediaId = mediaItem?.mediaId
                     if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO &&
@@ -413,12 +413,14 @@ object PlaybackController {
                 val quality = readAudioSpec(player)?.verifiedQuality ?: resolution.quality
                 val preference = NetworkState.playQuality(context)
                 val generation = recoveryGeneration
-                rebufferRecovery.attemptStarted()
+                rebufferRecovery.attemptStarted(previousResource)
+                val excludedResources = rebufferRecovery.excludedResources
                 recoveryJob = scope.launch(start = CoroutineStart.LAZY) {
+                    var completed = false
                     try {
                         val alternative = withContext(Dispatchers.IO) {
                             SourceResolver.resolve(context, song, quality, allowSwitch = true,
-                                purpose = SourceResolver.Purpose.REBUFFER, excludedResources = setOf(previousResource))
+                                purpose = SourceResolver.Purpose.REBUFFER, excludedResources = excludedResources)
                         }
                         if (generation != recoveryGeneration || controller !== player ||
                             !MeloraSettings.autoSwitchSource.value || !player.isCurrentMediaItemSeekable ||
@@ -428,15 +430,21 @@ object PlaybackController {
                             TrackRegistry.resolved(item.mediaId)?.resourceId != previousResource) return@launch
                         SourceResolver.selectForPlayback(song, preference, alternative)
                         if (restartBufferedMediaItem(player, item)) {
+                            completed = true
                             _state.value = _state.value.copy(message = "当前音源较慢，已尝试同音质备用资源")
                         }
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (error: Exception) {
                         if (generation == recoveryGeneration) {
+                            completed = true
                             _state.value = _state.value.copy(message = "当前音源较慢，可继续缓存或手动降低音质")
                         }
                     } finally {
+                        // 接管自身的seek也会触发中断回调，成功仍计次；旧取消任务不能覆盖新任务的状态。
+                        if (completed || generation == recoveryGeneration) {
+                            rebufferRecovery.attemptFinished(completed, SystemClock.elapsedRealtime())
+                        }
                         if (generation == recoveryGeneration) recoveryJob = null
                     }
                 }.also { it.start() }
@@ -563,20 +571,24 @@ object PlaybackController {
                 retryLocalFallback = true
                 TrackRegistry.clearResolved(track.uid)
             }
-            consecutiveErrors++
-            if (consecutiveErrors >= 3) {
-                controller?.pause()
-                _state.value = _state.value.copy(message = "多个播放链接解析失败，已停止播放")
-                consecutiveErrors = 0
-                return@launch
-            }
             val failed = TrackRegistry.resolved(track.uid)?.resourceId
-            if ((failed != null || retryLocalFallback) && refreshAttempted.add(track.uid)) {
-                if (failed != null) SourceResolver.rejectResource(track.uid, failed)
+            if (failed != null) SourceResolver.rejectResource(track.uid, failed)
+            val failedResource = failed ?: "local:${track.uid}".takeIf { retryLocalFallback }
+            if (failedResource != null && errorRecovery.allowRetry(
+                    failedResource, SystemClock.elapsedRealtime(), MeloraSettings.autoSwitchSource.value,
+                )) {
                 TrackRegistry.clearResolved(track.uid)
                 _state.value = snapshot.copy(message = "播放链接失效，正在尝试其它可用资源…")
-                // 让唯一DataSource入口重解析，不再先手工解析一次再prepare第二次。
-                player.prepare() // prepare保留当前播放意图，无需强行play。
+                // 仍由唯一DataSource入口解析，prepare保留当前位置与用户的播放意图。
+                player.prepare()
+                return@launch
+            }
+            // 按已耗尽恢复机会的曲目计数，而不是把同曲第二次换源当成第三首失败。
+            consecutiveErrors++
+            if (consecutiveErrors >= 3) {
+                player.pause()
+                _state.value = _state.value.copy(message = "多个播放链接解析失败，已停止播放")
+                consecutiveErrors = 0
                 return@launch
             }
             val reason = when {
@@ -626,6 +638,8 @@ object PlaybackController {
             return
         }
         bookQueue?.stop()
+        errorRecovery.reset()
+        consecutiveErrors = 0
         currentQueueId = queueId
         _state.value = _state.value.copy(pendingQueueId = null, message = null)
         TrackRegistry.registerAll(tracks)
@@ -729,6 +743,7 @@ object PlaybackController {
         if (player != null && bookQueue?.albumId == id) {
             val index = (0 until player.mediaItemCount).firstOrNull { player.getMediaItemAt(it).mediaId == track.uid }
             if (index != null) {
+                if (player.playerError != null) { errorRecovery.reset(); consecutiveErrors = 0 }
                 if (player.currentMediaItemIndex != index || player.playbackState == Player.STATE_ENDED) {
                     player.seekToDefaultPosition(index)
                 }
@@ -833,6 +848,7 @@ object PlaybackController {
         )
         TrackRegistry.register(track)
         val changingTrack = player.currentMediaItem?.mediaId != track.uid
+        if (player.playerError != null) { errorRecovery.reset(); consecutiveErrors = 0 }
         if (changingTrack || player.playbackState == Player.STATE_IDLE) prefetchTrack(track)
         if (target.insert) {
             currentQueueId = null
@@ -1003,6 +1019,7 @@ object PlaybackController {
         if (player.playWhenReady) {
             player.pause()
         } else {
+            if (player.playerError != null) { errorRecovery.reset(); consecutiveErrors = 0 }
             bookQueue?.retry()
             player.prepareAndPlay()
         }
@@ -1115,6 +1132,8 @@ object PlaybackController {
             clearSavedQueue()
         }
         currentQueueId = null
+        errorRecovery.reset()
+        consecutiveErrors = 0
         lyricJob?.cancel()
         artworkJob?.cancel()
         detailUid = null
