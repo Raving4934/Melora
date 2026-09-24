@@ -286,6 +286,53 @@ class DownloadQualityInstrumentedTest {
         assertEquals(upgraded.savedUri, DownloadCenter.saved(song.uid)?.savedUri)
     }
 
+    @Test fun missingDownloadRetainsAddressAndConfirmedDeletionClearsLocalMarkers() = runBlocking<Unit> {
+        val deleted = File(context.filesDir, "externally-deleted.mp3")
+        deleted.writeBytes(byteArrayOf(1, 2, 3))
+        val uri = Uri.fromFile(deleted).toString()
+        val local = LocalMediaStore.registerDownloaded(song, uri,
+            AudioSpecification("audio/mpeg", 44100, 128000, -1), 1000, 3, deleted.name)
+        DownloadCenter.start(song, "fixture")
+        DownloadCenter.done(song.uid, "fixture", deleted.name, uri)
+        assertTrue(deleted.delete())
+
+        assertFailedDownloadResolution(uri)
+        assertEquals(com.leyu.melora.playback.local.LocalFilePresence.Missing,
+            com.leyu.melora.playback.local.localFilePresence(context, uri))
+        // 与播放错误处理共用已确认删除入口；只移除该URI，不进行全库扫描。
+        PlaybackController.onLocalFilesDeleted(context, emptySet(), setOf(uri)).join()
+        assertNull(DownloadCenter.saved(song.uid))
+        assertNull(LocalMediaStore.find(local.id))
+        assertNull(LocalMediaStore.matchTrack(UiTrack.fromOnline(song)))
+    }
+
+    @Test fun unavailableDownloadRetainsAddressAndSavedRecordForPermissionRecovery() {
+        val uri = "content://fixture.unavailable/tree/root/document/audio.mp3"
+        DownloadCenter.start(song, "fixture")
+        DownloadCenter.done(song.uid, "fixture", "unavailable.mp3", uri)
+        assertFailedDownloadResolution(uri)
+        assertEquals(com.leyu.melora.playback.local.LocalFilePresence.Unknown,
+            com.leyu.melora.playback.local.localFilePresence(context, uri))
+        assertEquals(uri, DownloadCenter.saved(song.uid)?.savedUri)
+    }
+
+    private fun assertFailedDownloadResolution(expectedUri: String) {
+        TrackRegistry.register(UiTrack.fromOnline(song))
+        val source = MeloraDataSourceFactory(context,
+            androidx.media3.datasource.DataSource.Factory { androidx.media3.datasource.ByteArrayDataSource(byteArrayOf(0)) })
+            .createDataSource()
+        try {
+            assertThrows(java.io.FileNotFoundException::class.java) {
+                source.open(androidx.media3.datasource.DataSpec(TrackRegistry.songUri(song.uid)))
+            }
+            assertEquals("读取失败仍须留下原URI，供已有的删除/权限判定使用", expectedUri,
+                TrackRegistry.resolved(song.uid)?.downloadUri)
+        } finally {
+            source.close()
+            TrackRegistry.clearResolved(song.uid)
+        }
+    }
+
     @Test fun sameFlacExtensionUpgradesAndStaleDeleteCannotRemoveNewFile() = runBlocking<Unit> {
         seed("flac", "fixture-16.flac"); download("flac")
         val old = requireNotNull(DownloadCenter.saved(song.uid)); val original = bytes(old.savedUri!!)

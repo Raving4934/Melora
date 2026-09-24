@@ -133,8 +133,9 @@ class MeloraDataSourceFactory(context: Context, base: DataSource.Factory) : Data
             return@ResolvingDataSource dataSpec.buildUpon().setUri(localMatch.uri.toUri()).setKey(null).build()
         }
         if (savedDownload != null) {
-            TrackRegistry.notifyResolved(uid, "local", "local")
-            // 失败只报告当前读取失败，不清除/重建下载记录，也不回环到另一条来源。
+            // 读取失败也必须保留原地址，播放错误处理才能区分永久删除与目录暂时失权。
+            TrackRegistry.notifyResolved(uid, "local", "local", downloadUri = savedDownload.savedUri)
+            // 不在加载线程清除记录或直接换源，由统一错误处理在确认文件状态后接管。
             val local = Downloader.downloadedUri(appContext, uid) ?: run {
                 DownloadCenter.failed(uid, "本地文件不存在或目录权限已失效")
                 throw FileNotFoundException("本地文件不存在或目录权限已失效，请检查下载目录")
