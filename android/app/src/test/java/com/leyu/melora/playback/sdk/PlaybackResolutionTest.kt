@@ -62,6 +62,21 @@ class PlaybackResolutionTest {
         assertEquals("320k", result.quality)
     }
 
+    @Test fun failedPhysicalResourceStopsPrimaryTiersBeforeDowngrading() = runBlocking {
+        val attempts = mutableListOf<String>()
+        var rejected = false
+        val result = runCatching {
+            SourceResolver.resolveTiers("320k", SourceResolver.Purpose.PLAYBACK,
+                stopAfterFailure = { rejected }) { quality ->
+                attempts += quality
+                rejected = true
+                null
+            }
+        }
+        assertTrue(result.isFailure)
+        assertEquals(listOf("320k"), attempts)
+    }
+
     @Test fun fastPrimaryAvoidsAnyBackupWork() = runBlocking {
         val result = SourceResolver.preferFirst(1000,
             primary = { "primary" }, fallback = { error("no speculative backup for fast source") })
@@ -83,6 +98,63 @@ class PlaybackResolutionTest {
             fallback = { "same-quality-backup" })
         assertEquals("same-quality-backup", result)
         stopped.await()
+    }
+
+    @Test fun knownPrimaryFallbackSkipsBackupAfterGraceAndCancelsHigherTier() = runBlocking {
+        val ready = CompletableDeferred<Unit>()
+        val stopped = CompletableDeferred<Unit>()
+        var candidate: String? = null
+        var backups = 0
+        val result = SourceResolver.preferFirst(10,
+            primary = {
+                try { candidate = "primary-hq"; ready.complete(Unit); awaitCancellation() }
+                finally { stopped.complete(Unit) }
+            },
+            fallback = { backups++; "backup-claimed-hr" },
+            available = { candidate }, availableSignal = ready)
+        assertEquals("primary-hq", result)
+        assertEquals(0, backups)
+        stopped.await()
+    }
+
+    @Test fun primaryCandidateArrivingDuringBackupWaitWinsWithoutWaitingForEitherChain() = runBlocking {
+        val ready = CompletableDeferred<Unit>()
+        val backupEntered = CompletableDeferred<Unit>()
+        val primaryStopped = CompletableDeferred<Unit>()
+        val backupStopped = CompletableDeferred<Unit>()
+        var candidate: String? = null
+        val result = withTimeout(1000) { SourceResolver.preferFirst(10,
+            primary = {
+                try {
+                    backupEntered.await()
+                    candidate = "primary-hq"; ready.complete(Unit)
+                    awaitCancellation()
+                } finally { primaryStopped.complete(Unit) }
+            },
+            fallback = { try { backupEntered.complete(Unit); awaitCancellation() } finally { backupStopped.complete(Unit) } },
+            available = { candidate }, availableSignal = ready) }
+        assertEquals("primary-hq", result)
+        primaryStopped.await(); backupStopped.await()
+    }
+
+    @Test fun failedPrimaryAndBackupDoNotLeaveCandidateSignalWaiting() = runBlocking {
+        val backupEntered = CompletableDeferred<Unit>()
+        val primaryFailed = CompletableDeferred<Unit>()
+        val result = withTimeout(1000) { SourceResolver.preferFirst<String>(10,
+            primary = { backupEntered.await(); primaryFailed.complete(Unit); null },
+            fallback = { backupEntered.complete(Unit); primaryFailed.await(); null },
+            availableSignal = CompletableDeferred()) }
+        assertNull(result)
+    }
+
+    @Test fun completedPrimaryHigherQualityWinsOverItsEarlierLowerCandidate() = runBlocking {
+        val ready = CompletableDeferred<Unit>()
+        var candidate: String? = null
+        val result = SourceResolver.preferFirst(1000,
+            primary = { candidate = "primary-hq"; ready.complete(Unit); "primary-hr" },
+            fallback = { error("No backup for completed primary") },
+            available = { candidate }, availableSignal = ready)
+        assertEquals("primary-hr", result)
     }
 
     @Test fun slowPlatformDoesNotBlockFirstUsableMatchingPlatform() = runBlocking {

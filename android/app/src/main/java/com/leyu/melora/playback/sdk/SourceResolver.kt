@@ -4,7 +4,9 @@ import android.content.Context
 import android.util.Log
 import com.leyu.melora.BuildConfig
 import com.leyu.melora.playback.MeloraSettings
+import com.leyu.melora.playback.sdk.LxScriptPool.ScriptScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
@@ -13,9 +15,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.supervisorScope
@@ -49,6 +53,8 @@ object SourceResolver {
         val switched: Boolean,
         // 实际文件身份，不是歌曲ID；用于隔离不同解析后端、编码与资源的缓存分片。
         val resourceId: String,
+        // 调度来源，不是音质证明；用于共享满足目标档位的主源 URL，隔离备用选优结果。
+        val fromPrimary: Boolean = false,
     )
 
     enum class Purpose { PLAYBACK, CACHE_FILL, DOWNLOAD, REBUFFER }
@@ -57,6 +63,8 @@ object SourceResolver {
         val songUid: String,
         val preferredQuality: String,
         val allowSwitch: Boolean,
+        // 播放主源优先；下载/补齐音质优先，不能互相复用不同选优策略的 URL 结果。
+        val preferPrimary: Boolean = true,
     )
 
     private data class InFlightKey(
@@ -167,9 +175,13 @@ object SourceResolver {
         synchronized(cacheLock) {
             if (generation != inFlight.currentGeneration() || isRejected(resolved.resourceId)) return
             val expireAt = System.currentTimeMillis() + ttlMs
-            urlCache[key] = CachedUrl(resolved, expireAt)
-            if (resolved.song.uid != key.songUid) {
-                urlCache[key.copy(songUid = resolved.song.uid)] = CachedUrl(resolved.copy(switched = false), expireAt)
+            val keys = if (resolved.fromPrimary && sameQualityTier(key.preferredQuality, resolved.quality))
+                listOf(key, key.copy(preferPrimary = !key.preferPrimary)) else listOf(key)
+            for (target in keys) {
+                urlCache[target] = CachedUrl(resolved, expireAt)
+                if (resolved.song.uid != target.songUid) {
+                    urlCache[target.copy(songUid = resolved.song.uid)] = CachedUrl(resolved.copy(switched = false), expireAt)
+                }
             }
         }
     }
@@ -187,7 +199,7 @@ object SourceResolver {
             // 完整缓存/本地文件在播放器与下载器的上游已处理；这里只允许启用源解析新的网络资源。
             check(LxScriptPool.hasEnabledScripts(context)) { NO_SOURCE_MESSAGE }
             val generation = inFlight.currentGeneration()
-            val key = ResolveKey(song.uid, normalizedQuality(preferredQuality), allowSwitch)
+            val key = ResolveKey(song.uid, normalizedQuality(preferredQuality), allowSwitch, purpose == Purpose.PLAYBACK)
             // 慢源只在本次恢复中排除，不污染下载、缓存或全局失败名单。
             val rejected = rejectedResources() + excludedResources
             val cached = if (isRefresh) null else peek(key)?.takeIf {
@@ -231,38 +243,76 @@ object SourceResolver {
                 }
             } else emptyList()
             val alternativeSlots = Semaphore(2)
-            val lowerResults = ConcurrentHashMap<String, Resolved>()
-            fun accept(result: Resolved?, quality: String): Resolved? {
-                if (result == null || result.resourceId in excludedResources || isRejected(result.resourceId)) return null
-                val actual = result.copy(quality = observedQuality(result.resourceId) ?: result.quality, switched = result.song.uid != song.uid)
+            val lowerResults = ScriptScope.entries.associateWith { ConcurrentHashMap<String, Resolved>() }
+            val primaryReady = CompletableDeferred<Unit>()
+            val rejectedPrimary = AtomicBoolean()
+            fun usable(result: Resolved): Boolean = result.resourceId !in excludedResources && !isRejected(result.resourceId)
+            fun candidate(quality: String, scope: ScriptScope): Resolved? {
+                val origins = when (scope) {
+                    ScriptScope.ENABLED -> listOf(ScriptScope.ENABLED)
+                    ScriptScope.DISABLED -> listOf(ScriptScope.DISABLED, ScriptScope.ALL)
+                    ScriptScope.ALL -> ScriptScope.entries
+                }
+                return origins.flatMap { lowerResults.getValue(it).values }.filter { value ->
+                    usable(value) && (if (purpose == Purpose.REBUFFER) sameQualityTier(quality, value.quality)
+                        else qualitySatisfies(quality, value.quality))
+                }.maxByOrNull { qualityRank(it.quality) }
+            }
+            fun accept(result: Resolved?, quality: String, scope: ScriptScope): Resolved? {
+                if (result == null) return null
+                if (!usable(result)) {
+                    if (scope == ScriptScope.ENABLED) rejectedPrimary.set(true)
+                    return null
+                }
+                val actual = result.copy(quality = observedQuality(result.resourceId) ?: result.quality,
+                    switched = result.song.uid != song.uid, fromPrimary = scope == ScriptScope.ENABLED)
                 if (if (purpose == Purpose.REBUFFER) sameQualityTier(quality, actual.quality)
                     else qualitySatisfies(quality, actual.quality)) return actual
-                // 已收到的真实低档响应留给后续档位，不重复请求，也不允许它抢占当前高档。
-                if (qualityRank(actual.quality) >= 0) lowerResults[actual.quality] = actual
+                // 分开保存主源、同平台备用与跨平台候选；后到的同档备用不能覆盖主源。
+                if (qualityRank(actual.quality) >= 0) {
+                    lowerResults.getValue(scope).compute(actual.quality) { _, previous -> previous?.takeIf(::usable) ?: actual }
+                    if (scope == ScriptScope.ENABLED) primaryReady.complete(Unit)
+                }
                 return null
             }
-            try {
-                resolveTiers(key.preferredQuality, purpose) { quality ->
-                    lowerResults.values.filter { qualitySatisfies(quality, it.quality) }
-                        .maxByOrNull { qualityRank(it.quality) }?.let { return@resolveTiers it }
-                    val requestTimeout = if (purpose == Purpose.DOWNLOAD || purpose == Purpose.CACHE_FILL) 8_000L else SOURCE_REQUEST_TIMEOUT_MS
-                    suspend fun scripts(candidate: OnlineSong, scope: LxScriptPool.ScriptScope): Resolved? =
-                        resolveOnScripts(context, candidate, quality, scope, requestTimeout,
-                            if (purpose == Purpose.DOWNLOAD || purpose == Purpose.CACHE_FILL) DOWNLOAD_TIER_BUDGET_MS else PLAYBACK_TIER_BUDGET_MS) { accept(it, quality) != null }
-                            ?.let { it.copy(switched = it.song.uid != song.uid) }
-                    preferFirst(ALTERNATIVE_START_DELAY_MS,
-                        primary = {
-                            preferFirst(BACKUP_START_DELAY_MS,
-                                primary = { scripts(song, LxScriptPool.ScriptScope.ENABLED) },
-                                fallback = { if (key.allowSwitch) scripts(song, LxScriptPool.ScriptScope.DISABLED) else null })
-                        },
-                        fallback = {
-                            firstSuccessful(matches) { match ->
-                                match.await().take(3).firstNotNullOfOrNull { candidate ->
-                                    alternativeSlots.withPermit { scripts(candidate, LxScriptPool.ScriptScope.ALL) }
-                                }
+            val requestTimeout = if (purpose == Purpose.DOWNLOAD || purpose == Purpose.CACHE_FILL) 8_000L else SOURCE_REQUEST_TIMEOUT_MS
+            val tierBudget = if (purpose == Purpose.DOWNLOAD || purpose == Purpose.CACHE_FILL) DOWNLOAD_TIER_BUDGET_MS else PLAYBACK_TIER_BUDGET_MS
+            suspend fun scripts(candidate: OnlineSong, scope: ScriptScope, quality: String): Resolved? =
+                resolveOnScripts(context, candidate, quality, scope, requestTimeout, tierBudget) { accept(it, quality, scope) != null }
+                    ?.let { it.copy(switched = it.song.uid != song.uid, fromPrimary = scope == ScriptScope.ENABLED) }
+            suspend fun chain(scope: ScriptScope): Resolved = resolveTiers(key.preferredQuality, purpose,
+                // 已失败的资源应尝试同档备用，不把故障当作“不支持此音质”继续向下探测。
+                stopAfterFailure = { scope == ScriptScope.ENABLED && purpose == Purpose.PLAYBACK && key.allowSwitch && rejectedPrimary.get() },
+            ) { quality ->
+                candidate(quality, scope) ?: if (scope == ScriptScope.ENABLED) {
+                    scripts(song, scope, quality)
+                } else preferFirst(ALTERNATIVE_START_DELAY_MS,
+                    primary = {
+                        if (scope == ScriptScope.DISABLED) scripts(song, scope, quality)
+                        else preferFirst(BACKUP_START_DELAY_MS,
+                            primary = { scripts(song, ScriptScope.ENABLED, quality) },
+                            fallback = { scripts(song, ScriptScope.DISABLED, quality) })
+                    },
+                    fallback = {
+                        firstSuccessful(matches) { match ->
+                            match.await().take(3).firstNotNullOfOrNull { matched ->
+                                alternativeSlots.withPermit { scripts(matched, ScriptScope.ALL, quality) }
                             }
-                        })
+                        }
+                    })
+            }
+            try {
+                when {
+                    !key.allowSwitch -> chain(ScriptScope.ENABLED)
+                    purpose != Purpose.PLAYBACK -> chain(ScriptScope.ALL)
+                    else -> withTimeoutOrNull(PLAYBACK_TIER_BUDGET_MS * qualityAttempts(key.preferredQuality).size) {
+                        // 把宽限放在整条主源阶梯外，而不是每一档都先等待备用。
+                        preferFirst(BACKUP_START_DELAY_MS,
+                            primary = { chain(ScriptScope.ENABLED) },
+                            fallback = { chain(ScriptScope.DISABLED) },
+                            available = { candidate("128k", ScriptScope.ENABLED) },
+                            availableSignal = primaryReady)
+                    } ?: error("各档播放音质均不可用，请检查网络或音源")
                 }
             } finally { matches.forEach { it.cancel() } }
         }
@@ -277,6 +327,7 @@ object SourceResolver {
         preferredQuality: String,
         purpose: Purpose,
         tierBudgetMs: Long = if (purpose == Purpose.DOWNLOAD || purpose == Purpose.CACHE_FILL) DOWNLOAD_TIER_BUDGET_MS else PLAYBACK_TIER_BUDGET_MS,
+        stopAfterFailure: () -> Boolean = { false },
         resolve: suspend (String) -> Resolved?,
     ): Resolved {
         val qualities = if (purpose == Purpose.REBUFFER) listOf(normalizedQuality(preferredQuality))
@@ -288,6 +339,7 @@ object SourceResolver {
                     if (purpose == Purpose.REBUFFER) sameQualityTier(quality, it.quality)
                     else qualitySatisfies(quality, it.quality)
                 }?.let { return it }
+            if (stopAfterFailure()) break
         }
         if (purpose == Purpose.REBUFFER) throw IllegalStateException("同音质备用资源不可用")
         val action = if (purpose == Purpose.DOWNLOAD) "下载" else "播放"
@@ -310,7 +362,7 @@ object SourceResolver {
         context: Context,
         song: OnlineSong,
         quality: String,
-        scope: LxScriptPool.ScriptScope,
+        scope: ScriptScope,
         timeoutMs: Long,
         budgetMs: Long,
         accept: (Resolved) -> Boolean,
@@ -424,12 +476,24 @@ object SourceResolver {
         delayMs: Long,
         primary: suspend () -> T?,
         fallback: suspend () -> T?,
+        available: () -> T? = { null },
+        availableSignal: Deferred<Unit>? = null,
     ): T? = supervisorScope {
         val first = async { attempt { primary() } }
         try {
             withTimeoutOrNull(delayMs) { first.await() }?.let { return@supervisorScope it }
-            if (first.isCompleted) first.await() ?: fallback()
-            else firstSuccessful(listOf<suspend () -> T?>({ first.await() }, fallback)) { it() }
+            available()?.let { return@supervisorScope it }
+            if (first.isCompleted) return@supervisorScope first.await() ?: fallback()
+            val attempts = mutableListOf<suspend () -> T?>({ first.await() }, fallback)
+            if (availableSignal != null) attempts += {
+                // 主源已经有低档结果时不必等备用；主源彻底失败也必须结束等待。
+                select<Unit> { availableSignal.onAwait { }; first.onAwait { } }
+                available()
+            }
+            val winner = firstSuccessful(attempts) { it() }
+            // 已完成的主源结果优先，不能用此前低档候选覆盖刚返回的高档。
+            if (first.isCompleted) first.await()?.let { return@supervisorScope it }
+            available() ?: winner
         } finally { first.cancel() }
     }
 
@@ -655,7 +719,7 @@ object SourceResolver {
 
     private suspend fun picFromScripts(context: Context, song: OnlineSong, timeoutMs: Long = 12_000): String? =
         attempt {
-            val scripts = LxScriptPool.scriptsFor(context, song.source, "pic", LxScriptPool.ScriptScope.ENABLED)
+            val scripts = LxScriptPool.scriptsFor(context, song.source, "pic", ScriptScope.ENABLED)
             for ((script, _) in scripts) {
                 val info = JSONObject().put("musicInfo", song.raw)
                 val data = LxScriptPool.resolve(context, script.id, song.source, "pic", info, timeoutMs)

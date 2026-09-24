@@ -134,6 +134,61 @@ class PlaybackResolutionInstrumentedTest {
         assertTrue(result.resourceId.startsWith("lx:primary.js:"))
     }
 
+    @Test fun playbackKeepsFastPrimaryHqWithoutRequestingSlowerHrBackup() = runBlocking<Unit> {
+        val chapter = chapterSong("playback-primary-first")
+        store.import("primary.js", prioritySource("primary", "320k"))
+        val backup = store.import("backup.js", prioritySource("backup", "flac24bit", responseDelay = 1200))
+        store.setEnabled("primary.js", true)
+
+        val result = SourceResolver.resolve(context, chapter, "flac24bit", allowSwitch = true,
+            purpose = SourceResolver.Purpose.PLAYBACK)
+
+        assertEquals("320k", result.quality)
+        assertTrue(result.resourceId.startsWith("lx:primary.js:"))
+        delay(700) // 覆盖600ms宽限窗口，确认没有延迟启动备用请求。
+        // probe_count is a synthetic script query, explicitly excluded from musicUrl call accounting.
+        val backupCalls = LxScriptPool.resolve(context, backup.id, "kw", "musicUrl",
+            JSONObject().put("type", "probe_count"), 1_000)
+        assertEquals("calls:0", backupCalls)
+    }
+
+    @Test fun playbackFallsBackWhenPrimaryHasNoCandidateWithinHedgeWindow() = runBlocking<Unit> {
+        val chapter = chapterSong("playback-primary-slow")
+        store.import("primary.js", prioritySource("primary", "320k", responseDelay = 3000, unavailable = true))
+        store.import("backup.js", prioritySource("backup", "flac24bit"))
+        store.setEnabled("primary.js", true)
+        val started = android.os.SystemClock.elapsedRealtime()
+
+        val result = withTimeout(4_000) {
+            SourceResolver.resolve(context, chapter, "flac24bit", allowSwitch = true,
+                purpose = SourceResolver.Purpose.PLAYBACK)
+        }
+
+        val elapsed = android.os.SystemClock.elapsedRealtime() - started
+        assertTrue(result.resourceId.startsWith("lx:backup.js:"))
+        assertEquals("flac24bit", result.quality)
+        assertTrue("备用接管不应等待主源的长响应窗口（${elapsed}ms）", elapsed < 2500)
+    }
+
+    @Test fun playbackPrefersLatePrimaryCandidateWhileBackupIsStillResolving() = runBlocking<Unit> {
+        val chapter = chapterSong("playback-primary-late-candidate")
+        store.import("primary.js", prioritySource("primary", "320k", responseDelay = 1200))
+        store.import("backup.js", prioritySource("backup", "flac24bit", responseDelay = 1000))
+        store.setEnabled("primary.js", true)
+        val started = android.os.SystemClock.elapsedRealtime()
+
+        val result = withTimeout(4_000) {
+            SourceResolver.resolve(context, chapter, "flac24bit", allowSwitch = true,
+                purpose = SourceResolver.Purpose.PLAYBACK)
+        }
+
+        val elapsed = android.os.SystemClock.elapsedRealtime() - started
+        assertTrue("候选到达前应经过600ms宽限", elapsed >= 600)
+        assertTrue(result.resourceId.startsWith("lx:primary.js:"))
+        assertEquals("320k", result.quality)
+        assertTrue("主源晚到候选不应等待其完整长超时（${elapsed}ms）", elapsed < 2500)
+    }
+
     @Test fun rejectedPlayableUrlIsNotSelectedAgainAndBackupStaysSameQuality() = runBlocking<Unit> {
         store.import("primary.js", source("primary"))
         store.import("backup.js", source("backup"))
@@ -213,14 +268,58 @@ class PlaybackResolutionInstrumentedTest {
         assertEquals(first, SourceResolver.peek(chapter, "flac24bit", allowSwitch = true))
     }
 
-    @Test fun sourceReportedDowngradeDoesNotBeatHighQualityBackup() = runBlocking<Unit> {
+    @Test fun downloadReportedPrimaryDowngradeDoesNotBeatHighQualityBackup() = runBlocking<Unit> {
+        val chapter = chapterSong("download-reported-downgrade")
         store.import("primary.js", source("primary", reportedQuality = "128k"))
         store.import("backup.js", source("backup"))
         store.setEnabled("primary.js", true)
-        val result = SourceResolver.resolve(context, song, "flac24bit", allowSwitch = true,
+        val result = SourceResolver.resolve(context, chapter, "flac24bit", allowSwitch = true,
             purpose = SourceResolver.Purpose.DOWNLOAD)
         assertEquals("flac24bit", result.quality)
         assertTrue(result.resourceId.startsWith("lx:backup.js:"))
+    }
+
+    @Test fun downloadQualityChoiceDoesNotPollutePlaybackUrlResolution() = runBlocking<Unit> {
+        val chapter = chapterSong("download-then-playback")
+        store.import("primary.js", prioritySource("primary", "320k"))
+        store.import("backup.js", prioritySource("backup", "flac24bit", responseDelay = 120))
+        store.setEnabled("primary.js", true)
+
+        val downloaded = SourceResolver.resolve(context, chapter, "flac24bit", allowSwitch = true,
+            purpose = SourceResolver.Purpose.DOWNLOAD)
+        assertEquals("flac24bit", downloaded.quality)
+        assertTrue(downloaded.resourceId.startsWith("lx:backup.js:"))
+
+        // Intentionally keep resolver/script caches intact between purposes.
+        assertNull("DOWNLOAD结果不能进入默认PLAYBACK peek缓存",
+            SourceResolver.peek(chapter, "flac24bit", allowSwitch = true))
+        val playback = SourceResolver.resolve(context, chapter, "flac24bit", allowSwitch = true,
+            purpose = SourceResolver.Purpose.PLAYBACK)
+        assertEquals("320k", playback.quality)
+        assertTrue(playback.resourceId.startsWith("lx:primary.js:"))
+        assertNotEquals(downloaded.url, playback.url)
+    }
+
+    @Test fun playbackPrimaryHrResolutionIsSharedWithDownloadWithoutRefetch() = runBlocking<Unit> {
+        val chapter = chapterSong("playback-hr-then-download")
+        val primary = store.import("primary.js", prioritySource("primary", "flac24bit"))
+        store.setEnabled(primary.id, true)
+
+        val playback = SourceResolver.resolve(context, chapter, "flac24bit", allowSwitch = true,
+            purpose = SourceResolver.Purpose.PLAYBACK)
+        assertEquals("flac24bit", playback.quality)
+        assertTrue(playback.resourceId.startsWith("lx:${primary.id}:"))
+        val callsAfterPlayback = LxScriptPool.resolve(context, primary.id, "kw", "musicUrl",
+            JSONObject().put("type", "probe_count"), 1_000)
+
+        val downloaded = SourceResolver.resolve(context, chapter, "flac24bit", allowSwitch = true,
+            purpose = SourceResolver.Purpose.DOWNLOAD)
+
+        assertEquals(playback.url, downloaded.url)
+        assertEquals(playback.resourceId, downloaded.resourceId)
+        val callsAfterDownload = LxScriptPool.resolve(context, primary.id, "kw", "musicUrl",
+            JSONObject().put("type", "probe_count"), 1_000)
+        assertEquals("满足请求档位的主源缓存应跨purpose共享，不重复请求", callsAfterPlayback, callsAfterDownload)
     }
 
     @Test fun verifiedQualitySurvivesCacheLookupAndDownloadExtractionWithoutRelabellingAnotherFile() = runBlocking<Unit> {
@@ -362,6 +461,30 @@ class PlaybackResolutionInstrumentedTest {
             if ($responseDelay > 0) setTimeout(() => resolve(result), $responseDelay); else resolve(result);
         }));
     """.trimIndent()
+
+    private fun prioritySource(
+        name: String,
+        reportedQuality: String,
+        responseDelay: Int = 0,
+        unavailable: Boolean = false,
+    ): String = """
+        // @name $name
+        // @version 1
+        lx.send('inited', {sources: {kw: {
+            name: 'fixture', actions: ['musicUrl'], qualitys: ['flac24bit', 'flac', '320k', '128k']
+        }}});
+        let musicUrlCalls = 0;
+        lx.on('request', ({info}) => {
+            if (info.type === 'probe_count') return 'calls:' + musicUrlCalls;
+            musicUrlCalls++;
+            const result = ${if (unavailable) "null" else "{url: 'https://example.test/$name-' + info.type + '.flac', type: ${JSONObject.quote(reportedQuality)}}"};
+            if ($responseDelay > 0) return new Promise(resolve => setTimeout(() => resolve(result), $responseDelay));
+            return Promise.resolve(result);
+        });
+    """.trimIndent()
+
+    private fun chapterSong(songmid: String) = OnlineSong(JSONObject(song.raw.toString())
+        .put("songmid", songmid).put("isBookChapter", true))
 
     private class FixtureContext(base: Context) : ContextWrapper(base) {
         val root = File(base.cacheDir, "isolated-resolution-tests").apply { mkdirs() }
