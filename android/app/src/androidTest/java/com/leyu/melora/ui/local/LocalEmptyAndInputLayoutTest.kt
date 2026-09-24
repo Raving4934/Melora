@@ -22,6 +22,11 @@ import com.leyu.melora.playback.local.LocalSortField
 import com.leyu.melora.ui.common.LocalSongListState
 import com.leyu.melora.ui.common.SongListState
 import com.leyu.melora.ui.common.SongSelectionState
+import androidx.compose.ui.test.junit4.StateRestorationTester
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.assertTextContains
 import org.junit.After
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -36,6 +41,27 @@ class LocalEmptyAndInputLayoutTest {
     private val shared = SongListState(mutableStateOf(emptyList<LocalSong>()), mutableStateOf(false), mutableStateOf(null))
     @After fun restore() { MeloraSettings.blurTopBar.value = previousBlur }
 
+    @Test fun searchRouteAndQueryRestoreTogetherAndReopeningStartsEmpty() {
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent {
+            MaterialTheme {
+                CompositionLocalProvider(LocalSongListState provides shared) {
+                    LocalSongsPage(onOpenDrawer = {})
+                }
+            }
+        }
+        compose.onNodeWithContentDescription("搜索本地歌曲").performClick()
+        compose.onNode(hasSetTextAction()).performTextInput("恢复关键词")
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNode(hasSetTextAction()).assertTextContains("恢复关键词")
+        compose.onNodeWithText("取消").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("搜索本地歌曲").performClick()
+        compose.waitUntil(5_000) {
+            runCatching { compose.onNodeWithText("在 0 首歌曲中搜索").assertIsDisplayed() }.isSuccess
+        }
+    }
+
     @Test fun emptyStateIsBelowTheWholeFixedHeaderWithAndWithoutBlur() {
         lateinit var list: LazyListState
         var minimumPadding = 0
@@ -45,7 +71,7 @@ class LocalEmptyAndInputLayoutTest {
             MaterialTheme {
                 CompositionLocalProvider(LocalSongListState provides shared) {
                     LocalSongsListContent(
-                        songs = emptyList(), sortField = LocalSortField.FileName, ascending = true,
+                        songs = emptyList(), sections = emptyMap(),
                         selection = SongSelectionState(), listState = list,
                         onOpenDrawer = {}, onOpenSearch = {}, onOpenSortSheet = {}, onMore = {},
                         onDeleteSelection = {}, onAddToPlaylist = {}, pullEnabled = true,

@@ -66,6 +66,8 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -122,11 +124,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.withContext
 
-/** 每次打开搜索都创建新实例；退出中的实例继续持有 query 直到退场完成。 */
-internal class LocalSearchPageTarget {
-    var query by mutableStateOf("")
-}
-
 /**
  * 本地歌曲页：列表 + 批量管理 + 搜索页（连续平移）+ 排序抽屉。
  * 取消搜索时保留离场内容，列表页从左侧平移恢复。
@@ -143,7 +140,7 @@ internal fun LocalSongsPage(
 
     val sortField by MeloraSettings.localSortField.collectAsStateWithLifecycle()
     val ascending by MeloraSettings.localSortAscending.collectAsStateWithLifecycle()
-    var searchPage by remember { mutableStateOf<LocalSearchPageTarget?>(null) }
+    var searchPage by rememberSaveable { mutableStateOf<String?>(null) }
     var showSortSheet by remember { mutableStateOf(false) }
     var moreSong by remember { mutableStateOf<LocalSong?>(null) }
     var pendingDelete by remember { mutableStateOf<List<LocalDeletionTarget>?>(null) }
@@ -252,7 +249,14 @@ internal fun LocalSongsPage(
         if (granted) launchScan() else permissionLauncher.launch(permission)
     }
 
-    val ordered = remember(songs, sortField, ascending) { sortLocalSongs(songs, sortField, ascending) }
+    // 排序和字母索引在后台一起完成；保留旧结果，取消旧任务后只发布最新的一整份快照。
+    val content by produceState(emptyList<LocalSong>() to emptyMap<String, Int>(), songs, sortField, ascending) {
+        value = withContext(Dispatchers.Default) {
+            val sorted = sortLocalSongs(songs, sortField, ascending)
+            sorted to localSongSectionStarts(sorted, sortField)
+        }
+    }
+    val (ordered, sections) = if (songs.isEmpty()) emptyList<LocalSong>() to emptyMap<String, Int>() else content
 
     BackHandler(enabled = searchPage != null) { searchPage = null }
     // 非搜索态：返回先退出批量管理，有父级回调则回退
@@ -262,12 +266,13 @@ internal fun LocalSongsPage(
 
     DetailPageHost(
         target = searchPage,
+        contentKey = { "local-search" },
         modifier = Modifier.fillMaxSize(),
         detail = { page ->
             LocalSearchPage(
-                songs = ordered,
-                query = page.query,
-                onQueryChange = { page.query = it },
+                songs = ordered.ifEmpty { songs },
+                query = page,
+                onQueryChange = { searchPage = it },
                 onCancel = { searchPage = null },
                 selection = selection,
                 onOpenSortSheet = { showSortSheet = true },
@@ -279,13 +284,13 @@ internal fun LocalSongsPage(
         content = {
             LocalSongsListContent(
                 songs = ordered,
-                sortField = sortField,
-                ascending = ascending,
+                sourceSongs = ordered.ifEmpty { songs },
+                sections = sections,
                 selection = selection,
                 listState = listState,
                 onOpenDrawer = onOpenDrawer,
                 onBack = onBack,
-                onOpenSearch = { searchPage = LocalSearchPageTarget() },
+                onOpenSearch = { searchPage = "" },
                 onOpenSortSheet = { showSortSheet = true },
                 onMore = { moreSong = it },
                 onDeleteSelection = { requestDeleteConfirmation(it) },
@@ -360,8 +365,7 @@ internal fun LocalSongsPage(
 @Composable
 internal fun LocalSongsListContent(
     songs: List<LocalSong>,
-    sortField: LocalSortField,
-    ascending: Boolean,
+    sections: Map<String, Int>,
     selection: SongSelectionState,
     listState: LazyListState,
     onOpenDrawer: () -> Unit,
@@ -374,11 +378,11 @@ internal fun LocalSongsListContent(
     pullEnabled: Boolean,
     refreshing: Boolean,
     onRefresh: () -> Unit,
+    sourceSongs: List<LocalSong> = songs,
 ) {
     val context = LocalContext.current
     val scrollToTop = rememberFastScrollToTop(listState)
     val playingLocalId = rememberPlayingLocalId()
-    val sections = remember(songs, sortField) { localSongSectionStarts(songs, sortField) }
     val currentSection by remember(sections, listState) {
         derivedStateOf {
             sections.entries.lastOrNull { it.value <= listState.firstVisibleItemIndex }?.key
@@ -429,15 +433,15 @@ internal fun LocalSongsListContent(
                     }
                 }
                 Box(Modifier.fillMaxWidth().height(46.dp)) {
-                    if (songs.isNotEmpty()) {
+                    if (sourceSongs.isNotEmpty()) {
                         LocalListHeader(
-                            count = songs.size,
-                            songs = songs,
+                            count = sourceSongs.size,
+                            songs = sourceSongs,
                             selection = selection,
                             onPlayShuffle = {
                                 PlaybackController.playQueue(
                                     context,
-                                    songs.shuffled().map { it.toOnlineSong() }.toUiTracks(),
+                                    sourceSongs.shuffled().map { it.toOnlineSong() }.toUiTracks(),
                                     0,
                                     "local.songs",
                                 )
@@ -452,43 +456,25 @@ internal fun LocalSongsListContent(
         bottomBar = {
             LocalBatchActionsBar(
                 selection = selection,
-                songs = songs,
+                songs = sourceSongs,
                 onDelete = onDeleteSelection,
                 onAddToPlaylist = onAddToPlaylist,
             )
         },
     ) {
-        if (songs.isEmpty()) {
-            // 空态也放进 LazyColumn：保证空列表同样可以下拉刷新
-            PullRefreshContainer(
-                enabled = pullEnabled,
-                refreshing = refreshing,
-                onRefresh = onRefresh,
-                canPull = true,
-            ) {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = chromeContentPadding(PaddingValues(top = 24.dp, bottom = 60.dp)),
-                ) {
-                    item { EmptyLocalState(Modifier.fillMaxWidth()) }
-                }
-            }
-            return@ChromeScaffold
-        }
-
         PullRefreshContainer(
             enabled = pullEnabled,
             refreshing = refreshing,
             onRefresh = onRefresh,
-            canPull = !listState.canScrollBackward,
+            canPull = sourceSongs.isEmpty() || !listState.canScrollBackward,
         ) {
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
+                contentPadding = chromeContentPadding(if (sourceSongs.isEmpty()) PaddingValues(top = 24.dp, bottom = 60.dp) else PaddingValues(bottom = 24.dp)),
             ) {
-                itemsIndexed(songs, key = { _, song -> song.id }) { index, song ->
+                if (sourceSongs.isEmpty()) item { EmptyLocalState(Modifier.fillMaxWidth()) }
+                else itemsIndexed(songs, key = { _, song -> song.id }) { index, song ->
                     LocalSongRow(
                         song = song,
                         selectionMode = selection.active,

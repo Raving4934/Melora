@@ -105,6 +105,7 @@ private fun sortLocalSongsByName(
     songs: List<LocalSong>,
     field: LocalSortField,
 ): List<LocalSong> {
+    val keys = HashMap<String, CollationKey>()
     val entries = songs.map { song ->
         val primary = if (field == LocalSortField.FileName) song.title else song.artist
         val secondary = if (field == LocalSortField.FileName) song.artist else song.title
@@ -113,21 +114,13 @@ private fun sortLocalSongsByName(
         LocalTextSortEntry(
             song = song,
             sectionRank = localSongSectionRank(localSongSectionForValue(primaryValue)),
-            primaryKey = localSongCollator.getCollationKey(primaryValue),
-            secondaryKey = localSongCollator.getCollationKey(secondaryValue),
+            primaryKey = keys.getOrPut(primaryValue) { localSongCollator.getCollationKey(primaryValue) },
+            secondaryKey = keys.getOrPut(secondaryValue) { localSongCollator.getCollationKey(secondaryValue) },
         )
     }
 
-    return entries.sortedWith(Comparator { left, right ->
-        val sectionComparison = left.sectionRank - right.sectionRank
-        if (sectionComparison != 0) {
-            sectionComparison
-        } else {
-            val primaryComparison = left.primaryKey.compareTo(right.primaryKey)
-            if (primaryComparison != 0) primaryComparison
-            else left.secondaryKey.compareTo(right.secondaryKey)
-        }
-    }).map { it.song }
+    return entries.sortedWith(compareBy<LocalTextSortEntry> { it.sectionRank }
+        .thenBy { it.primaryKey }.thenBy { it.secondaryKey }).map { it.song }
 }
 
 private fun localSongSectionForValue(value: String): String {

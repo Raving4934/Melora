@@ -55,9 +55,11 @@ class LocalSongsNavigationInstrumentedTest {
             list = rememberLazyListState()
             MaterialTheme {
                 CompositionLocalProvider(LocalSongListState provides shared) {
+                val ordered = sortLocalSongs(songs.value, field.value, ascending = true)
                 LocalSongsListContent(
-                    songs = sortLocalSongs(songs.value, field.value, ascending = true),
-                    sortField = field.value, ascending = true, selection = selection,
+                    songs = ordered,
+                    sections = localSongSectionStarts(ordered, field.value),
+                    selection = selection,
                     listState = list, onOpenDrawer = {}, onOpenSearch = {}, onOpenSortSheet = {},
                     onMore = { moreSongs += it.id }, onDeleteSelection = {}, onAddToPlaylist = {},
                     pullEnabled = true, refreshing = false, onRefresh = { refreshes++ },
@@ -102,10 +104,12 @@ class LocalSongsNavigationInstrumentedTest {
     @Test
     fun moreButtonKeepsItsPositionAndReceivesTouchesBesideTheRail() {
         showPage()
-        val more = compose.onAllNodesWithContentDescription("更多")[3]
+        compose.waitForIdle()
+        compose.onNodeWithTag("local-song-index").assertIsDisplayed()
+        val more = compose.onAllNodesWithContentDescription("更多")[3].assertIsDisplayed()
         val originalCenter = more.fetchSemanticsNode().boundsInRoot.center.x
         val rail = compose.onNodeWithTag("local-song-index").fetchSemanticsNode().boundsInRoot
-        assertTrue("更多图标中心不能落入字母触摸区", originalCenter < rail.left)
+        assertTrue("更多图标中心不能落入字母触摸区: center=$originalCenter rail=$rail", originalCenter < rail.left)
         more.performTouchInput { click(center) }
         compose.runOnIdle { assertEquals(1, moreSongs.size) }
         // 非字母排序时索引消失，但操作列不能左右跳动。
@@ -128,4 +132,38 @@ class LocalSongsNavigationInstrumentedTest {
         compose.onNodeWithTag("local-song-index").assertDoesNotExist()
         compose.onNodeWithText("还没有本地歌曲").assertIsDisplayed()
     }
+    @Test
+    fun preparingSortKeepsKnownLibraryAndBatchActionsWithoutFalseEmptyState() {
+        val published = mutableStateOf(emptyList<LocalSong>())
+        var deleted = emptyList<LocalSong>()
+        val known = songs.value.take(2)
+        compose.setContent {
+            list = rememberLazyListState()
+            MaterialTheme {
+                CompositionLocalProvider(LocalSongListState provides shared) {
+                    LocalSongsListContent(
+                        songs = published.value, sourceSongs = published.value.ifEmpty { known },
+                        sections = localSongSectionStarts(published.value, field.value),
+                        selection = selection,
+                        listState = list, onOpenDrawer = {}, onOpenSearch = {}, onOpenSortSheet = {},
+                        onMore = {}, onDeleteSelection = { deleted = it }, onAddToPlaylist = {},
+                        pullEnabled = true, refreshing = false, onRefresh = {},
+                    )
+                }
+            }
+        }
+        compose.onNodeWithText("还没有本地歌曲").assertDoesNotExist()
+        compose.onNodeWithTag("local-song-index").assertDoesNotExist()
+        compose.runOnIdle { selection.start() }
+        compose.onNodeWithText("全选").performClick()
+        compose.onNodeWithText("永久删除").performClick()
+        compose.runOnIdle {
+            assertEquals(known, deleted)
+            selection.finish()
+            published.value = known
+        }
+        compose.onNodeWithText(known.first().title).assertIsDisplayed()
+        compose.onNodeWithText("还没有本地歌曲").assertDoesNotExist()
+    }
+
 }
