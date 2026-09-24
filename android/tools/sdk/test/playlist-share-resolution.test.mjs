@@ -44,6 +44,8 @@ test('QQ resolves only supported playlist routes and QQ short links', async () =
 
   assert.equal(await api.getListId('7217720898'), '7217720898')
   assert.equal(await api.getListId('https://y.qq.com/n/yqq/playlist/42.html'), '42')
+  assert.equal(await api.getListId('https://y.qq.com/w/taoge.html?id=42'), '42')
+  assert.equal(await api.getListId('https://y.qq.com/w/taoge.html?from=share&id=43#share'), '43')
   assert.equal(await api.getListId('https://i.y.qq.com/n2/m/share/details/taoge.html?platform=11&id=43'), '43')
   assert.equal(await api.getListId('https://i.y.qq.com/n/m/detail/taoge/index.html?share=1&id=44'), '44')
   assert.equal(await api.getListId('https://y.qq.com/musicmac/v6/playlist/detail.html?foo=x&id=45'), '45')
@@ -54,6 +56,8 @@ test('QQ resolves only supported playlist routes and QQ short links', async () =
     'https://y.qq.com/n/ryqq/songDetail/42?id=42',
     'https://y.qq.com/n/ryqq/albumDetail/42?id=42',
     'https://outside.test/playlist/42',
+    'https://y.qq.com/w/taoge.html?id=not-a-number',
+    'https://y.qq.com/w/song.html?id=42',
   ]) await assert.rejects(api.getListId(url), /无法识别/)
 })
 

@@ -182,6 +182,7 @@ export default {
           '/n/m/share/details/taoge.html',
           '/share/details/taoge.html',
           '/taoge.html',
+          '/w/taoge.html',
           '/n/m/detail/taoge/index.html',
           '/n3/other/pages/details/playlist.html',
           '/musicmac/v6/playlist/detail.html',

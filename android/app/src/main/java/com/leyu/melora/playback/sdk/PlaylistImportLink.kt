@@ -109,6 +109,7 @@ data class PlaylistImportLink(val source: String, val value: String) {
                 path.equals("/n2/m/share/details/taoge.html", ignoreCase = true) ||
                 path.equals("/n/m/share/details/taoge.html", ignoreCase = true) ||
                 path.equals("/share/details/taoge.html", ignoreCase = true) ||
+                path.equals("/w/taoge.html", ignoreCase = true) ||
                 path.equals("/taoge.html", ignoreCase = true)
             return idSharePath && hasNumericParam(uri, "id")
         }
