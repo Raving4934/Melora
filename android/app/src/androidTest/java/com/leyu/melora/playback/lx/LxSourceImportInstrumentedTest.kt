@@ -5,19 +5,26 @@ import android.content.ContextWrapper
 import android.content.SharedPreferences
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.leyu.melora.playback.BackupRestoreTransaction
+import com.leyu.melora.playback.BackupScript
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.Closeable
 import java.net.InetAddress
 import java.net.ServerSocket
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
@@ -176,11 +183,108 @@ class LxSourceImportInstrumentedTest {
         }
     }
 
-    private class ScriptServer(initial: String) : Closeable {
+    @Test
+    fun inFlightOriginUpdateCannotOverwriteBackupRestore() = runBlocking<Unit> {
+        val remoteCode = "const remoteUpdate = true;"
+        ScriptServer(remoteCode, holdResponse = true).use { server ->
+            val original = store.import("restore-race.js", "const original = true;", server.url)
+            store.setEnabled(original.id, true)
+            val update = async(Dispatchers.IO) { runCatching { importer().updateFromOrigin(original) } }
+            assertTrue("remote request should reach the response barrier", server.awaitRequest())
+
+            val restoredCode = "const restoredBackup = true;"
+            val restoredOrigin = "https://backup.example.test/restore-race.js"
+            BackupRestoreTransaction.run(fixtureContext, {}) {
+                store.restoreBackup(
+                    listOf(BackupScript(original.id, restoredCode, enabled = false, originUrl = restoredOrigin)),
+                ) {}
+            }
+
+            server.releaseResponse()
+            assertTrue("an update prepared before restore must be rejected", update.await().isFailure)
+            val restored = store.list().single()
+            assertEquals(restoredCode, store.code(original.id))
+            assertEquals(restoredOrigin, restored.originUrl)
+            assertFalse(restored.enabled)
+        }
+    }
+
+    @Test
+    fun inFlightOriginUpdateRejectsReplacementAndDeletion() = runBlocking<Unit> {
+        ScriptServer("const staleResponse = true;", holdResponse = true).use { server ->
+            val original = store.import("replacement-race.js", "const original = true;", server.url)
+            val update = async(Dispatchers.IO) { runCatching { importer().updateFromOrigin(original) } }
+            assertTrue(server.awaitRequest())
+
+            val replacementOrigin = "https://local.example.test/replacement.js"
+            store.import(original.id, "const original = true;", replacementOrigin)
+            server.releaseResponse()
+            assertTrue("a local source relink must invalidate the pending update", update.await().isFailure)
+            assertEquals("const original = true;", store.code(original.id))
+            assertEquals(replacementOrigin, store.list().single { it.id == original.id }.originUrl)
+        }
+
+        ScriptServer("const staleResponse = true;", holdResponse = true).use { server ->
+            val originalCode = "const original = true;"
+            val original = store.import("another-update-race.js", originalCode, server.url)
+            val update = async(Dispatchers.IO) { runCatching { importer().updateFromOrigin(original) } }
+            assertTrue(server.awaitRequest())
+
+            val interveningCode = "const interveningUpdate = true;"
+            store.import(original.id, interveningCode, server.url, expectedCode = originalCode)
+            server.releaseResponse()
+            assertTrue("an intervening source update must invalidate the older response", update.await().isFailure)
+            assertEquals(interveningCode, store.code(original.id))
+            assertEquals(server.url, store.list().single { it.id == original.id }.originUrl)
+        }
+
+        ScriptServer("const staleResponse = true;", holdResponse = true).use { server ->
+            val original = store.import("deletion-race.js", "const original = true;", server.url)
+            val update = async(Dispatchers.IO) { runCatching { importer().updateFromOrigin(original) } }
+            assertTrue(server.awaitRequest())
+
+            store.remove(original.id)
+            server.releaseResponse()
+            assertTrue("a deleted script must not be recreated by a pending update", update.await().isFailure)
+            assertNull(store.code(original.id))
+        }
+    }
+
+    @Test
+    fun enableChangeDoesNotInvalidateUnchangedOriginAndNoUpdateDoesNotWrite() = runBlocking<Unit> {
+        val code = "const unchanged = true;"
+        ScriptServer(code, holdResponse = true).use { server ->
+            val original = store.import("unchanged-race.js", code, server.url)
+            val file = File(fixtureContext.filesDir, "${LxScriptStore.DIRECTORY}/${original.id}")
+            assertTrue(file.setLastModified(1_000L))
+            val modifiedAt = file.lastModified()
+            val update = async(Dispatchers.IO) { importer().updateFromOrigin(original) }
+            assertTrue(server.awaitRequest())
+
+            store.setEnabled(original.id, true)
+            server.releaseResponse()
+            val result = update.await()
+
+            assertFalse(result.updated)
+            assertTrue(result.script.enabled)
+            assertTrue(store.list().single { it.id == original.id }.enabled)
+            assertEquals(code, store.code(original.id))
+            assertEquals(modifiedAt, file.lastModified())
+        }
+    }
+
+    private class ScriptServer(initial: String, private val holdResponse: Boolean = false) : Closeable {
         val body = AtomicReference(initial)
         val requestCount = AtomicInteger()
+        private val requestArrived = CountDownLatch(1)
+        private val responseReleased = CountDownLatch(1)
         private val server = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
         val url = "http://127.0.0.1:${server.localPort}/fixture.js"
+
+        fun awaitRequest(): Boolean = requestArrived.await(5, TimeUnit.SECONDS)
+
+        fun releaseResponse() { responseReleased.countDown() }
+
         private val worker = thread(name = "source-import-fixture", isDaemon = true) {
             while (!server.isClosed) {
                 val socket = try { server.accept() } catch (_: java.io.IOException) { break }
@@ -190,6 +294,8 @@ class LxSourceImportInstrumentedTest {
                     val reader = it.getInputStream().bufferedReader()
                     while (!reader.readLine().isNullOrEmpty()) Unit
                     val bytes = body.get().toByteArray(Charsets.UTF_8)
+                    requestArrived.countDown()
+                    if (holdResponse) responseReleased.await()
                     val headers = "HTTP/1.1 200 OK\r\nContent-Type: application/javascript; charset=utf-8\r\n" +
                         "Content-Length: ${bytes.size}\r\nConnection: close\r\n\r\n"
                     it.getOutputStream().apply { write(headers.toByteArray()); write(bytes); flush() }
@@ -197,6 +303,7 @@ class LxSourceImportInstrumentedTest {
             }
         }
         override fun close() {
+            releaseResponse()
             server.close()
             worker.join(2_000)
         }

@@ -35,17 +35,7 @@ class LxScriptStore(context: Context) {
 
     fun list(): List<LxScript> = synchronized(enabledStateLock) { dir
         .listFiles { file -> file.isFile && file.name.endsWith(".js") }
-        ?.map { file ->
-            val meta = parseLxScriptMetadata(file.readText())
-            LxScript(
-                id = file.name,
-                name = meta["name"].orEmpty().ifEmpty { "未命名脚本" },
-                description = meta["description"].orEmpty(),
-                version = meta["version"].orEmpty(),
-                enabled = prefs.getBoolean(file.name, false),
-                originUrl = prefs.getString(originKey(file.name), null),
-            )
-        }
+        ?.map { file -> script(file.name, file.readText()) }
         ?.sortedBy { it.name }
         ?: emptyList()
     }
@@ -56,24 +46,33 @@ class LxScriptStore(context: Context) {
 
     fun code(id: String): String? = synchronized(enabledStateLock) { dir.resolve(id).takeIf { it.isFile }?.readText() }
 
-    fun import(name: String, code: String, originUrl: String? = null): LxScript = synchronized(enabledStateLock) {
-        validateImportedScriptCode(code)
-        val normalizedOriginUrl = originUrl?.let { LxSourceUrlPolicy.validate(it).toString() }
-        val file = File(dir, backupScriptId(name))
-        writeTextAtomically(file, code)
-        prefs.edit {
-            if (!prefs.contains(file.name)) putBoolean(file.name, false)
-            if (normalizedOriginUrl == null) remove(originKey(file.name))
-            else putString(originKey(file.name), normalizedOriginUrl)
+    fun import(name: String, code: String, originUrl: String? = null, expectedCode: String? = null): LxScript =
+        synchronized(enabledStateLock) {
+            validateImportedScriptCode(code)
+            val normalizedOriginUrl = originUrl?.let { LxSourceUrlPolicy.validate(it).toString() }
+            val file = File(dir, backupScriptId(name))
+            val currentCode = file.takeIf { it.isFile }?.readText()
+            check(expectedCode == null || (currentCode == expectedCode &&
+                prefs.getString(originKey(file.name), null) == normalizedOriginUrl)) {
+                "音源在更新期间已更改或删除，请重新检查后重试"
+            }
+            if (currentCode != code) writeTextAtomically(file, code)
+            prefs.edit {
+                if (!prefs.contains(file.name)) putBoolean(file.name, false)
+                if (normalizedOriginUrl == null) remove(originKey(file.name)) else putString(originKey(file.name), normalizedOriginUrl)
+            }
+            script(file.name, code)
         }
+
+    private fun script(id: String, code: String): LxScript {
         val meta = parseLxScriptMetadata(code)
-        LxScript(
-            id = file.name,
+        return LxScript(
+            id = id,
             name = meta["name"].orEmpty().ifEmpty { "未命名脚本" },
             description = meta["description"].orEmpty(),
             version = meta["version"].orEmpty(),
-            enabled = prefs.getBoolean(file.name, false),
-            originUrl = normalizedOriginUrl,
+            enabled = prefs.getBoolean(id, false),
+            originUrl = prefs.getString(originKey(id), null),
         )
     }
 

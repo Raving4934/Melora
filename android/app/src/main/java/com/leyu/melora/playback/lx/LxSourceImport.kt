@@ -139,15 +139,15 @@ internal class LxSourceImporter(
 
     suspend fun updateFromOrigin(script: LxScript): LxSourceUpdate = withContext(Dispatchers.IO) {
         val originUrl = script.originUrl ?: error("此音源不是通过链接导入的")
+        val expectedCode = store.code(script.id) ?: error("本地音源已更改或删除，请重新检查")
         val payload = downloader.download(originUrl)
         val entries = parseLxSourceDocument(payload.code, payload.fileName, MAX_IMPORTED_SCRIPT_BYTES)
         val remote = entries.firstOrNull { (name, _) -> backupScriptId(name) == script.id }
             ?: entries.singleOrNull()
             ?: error("远端音源包中未找到「${script.name}」")
-        val currentCode = store.code(script.id) ?: error("本地音源脚本不存在")
-        if (currentCode == remote.second) return@withContext LxSourceUpdate(script, updated = false)
         currentCoroutineContext().ensureActive()
-        LxSourceUpdate(store.import(script.id, remote.second, payload.originUrl), updated = true)
+        val current = store.import(script.id, remote.second, originUrl, expectedCode = expectedCode)
+        LxSourceUpdate(current, updated = expectedCode != remote.second)
     }
 
     private suspend fun importDocument(

@@ -6,6 +6,7 @@ import android.content.ContextWrapper
 import android.content.Intent
 import android.content.SharedPreferences
 import android.net.Uri
+import android.provider.Settings as AndroidSettings
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.leyu.melora.playback.local.LocalSortField
@@ -137,6 +138,10 @@ class BackupRoundTripTest {
 
     @Test
     fun desktopLyricsPersistReloadAndRestoreThroughBackupImport() = runBlocking<Unit> {
+        assertTrue(
+            "该持久化用例需要测试目标包已获 overlay 授权：${context.packageName}",
+            AndroidSettings.canDrawOverlays(context),
+        )
         MeloraSettings.updateShowDesktopLyrics(true)
         MeloraSettings.updateLockLyrics(true)
         MeloraSettings.updateSingleLine(true)
@@ -550,6 +555,7 @@ class BackupRoundTripTest {
         override fun getFilesDir(): File = File(root, "files").apply { mkdirs() }
         override fun getCacheDir(): File = File(root, "cache").apply { mkdirs() }
         override fun startService(service: Intent): ComponentName? = service.component
+        override fun startForegroundService(service: Intent): ComponentName? = service.component
         override fun stopService(name: Intent): Boolean = true
         override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
             val real = super.getSharedPreferences("isolated-backup-tests.$name", mode)
