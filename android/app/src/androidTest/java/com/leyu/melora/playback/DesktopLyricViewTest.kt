@@ -21,6 +21,27 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class DesktopLyricViewTest {
     @Test
+    fun repeatedLyricsAndTranslationsKeepTheSameNaturalWidth() = onMain {
+        val unique = listOf(
+            LyricLine(0, "短句", translation = "a longer translated line"),
+            LyricLine(1000, "另一句\n第二行", translation = "短译文"),
+        )
+        for (limit in listOf(1, 4)) {
+            val view = DesktopLyricViewport(testContext())
+            view.configure(20f, limit, Gravity.CENTER, Color.WHITE)
+            view.submit(unique, 0, "歌曲", animate = false)
+            layoutAutomaticViewport(view, 360)
+            val width = view.width
+            val height = view.height
+            view.submit(List(3000) { unique[it % unique.size] }, 0, "歌曲", animate = false)
+            layoutAutomaticViewport(view, 360)
+            assertEquals(width, view.width)
+            assertEquals(height, view.height)
+            assertTrue("只保留当前句附近的有界行", view.childCount <= 9)
+        }
+    }
+
+    @Test
     fun automaticWidthFitsTheSongAndDoesNotResizeOnSentenceChanges() = onMain {
         val viewport = DesktopLyricViewport(testContext())
         val lines = listOf(LyricLine(0, "短句"), LyricLine(1000, "稍微长一点的歌词"))
