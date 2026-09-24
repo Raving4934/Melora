@@ -42,6 +42,18 @@ Self-hosted music streaming service & standalone Android local music player
 
 ---
 
+## 📱 Screenshots & Preview
+
+<p align="center">
+  <img src="assets/screenshots/preview-screens.jpg" alt="Android Interface & Features Preview" width="100%" />
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/preview-player.jpg" alt="Player & Word-by-Word Timed Lyrics Preview" width="100%" />
+</p>
+
+---
+
 ## 🌟 Key Features
 
 ### 📱 Android Client

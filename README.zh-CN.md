@@ -42,6 +42,18 @@
 
 ---
 
+## 📱 界面预览
+
+<p align="center">
+  <img src="assets/screenshots/preview-screens.jpg" alt="主要界面与功能概览" width="100%" />
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/preview-player.jpg" alt="播放界面与逐字时序歌词" width="100%" />
+</p>
+
+---
+
 ## 🌟 主要功能
 
 ### 📱 Android 客户端
