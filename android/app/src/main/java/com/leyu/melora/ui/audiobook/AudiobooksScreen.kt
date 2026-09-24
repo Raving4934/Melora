@@ -23,6 +23,8 @@ import androidx.compose.material.icons.outlined.WorkspacePremium
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -70,10 +72,32 @@ private val Shortcuts = listOf(
     Shortcut("15", "畅销榜", Icons.AutoMirrored.Outlined.TrendingUp, listOf(Color(0xFFFF6456), Color(0xFFFF5252))),
 )
 
-private sealed interface BookDetail {
+internal sealed interface BookDetail {
     data class Album(val playlist: OnlinePlaylist) : BookDetail
     class Search : BookDetail
 }
+
+internal val BookDetailSaver = listSaver<BookDetail?, String>(
+    save = { when (it) {
+        null -> emptyList()
+        is BookDetail.Search -> listOf("search")
+        is BookDetail.Album -> with(it.playlist) { listOf("album", source, id, name, author, img.orEmpty()) }
+    } },
+    restore = { when (it.firstOrNull()) {
+        "search" -> BookDetail.Search()
+        "album" -> BookDetail.Album(OnlinePlaylist(JSONObject()
+            .put("id", it[2]).put("name", it[3]).put("source", it[1])
+            .put("kind", "book").put("author", it[4]).put("img", it[5])))
+        else -> null
+    } },
+)
+
+internal val BookRankTabSaver = listSaver<KwBookApi.BookRankTab?, String>(
+    save = { rank -> rank?.let { listOf(it.id, it.name) + it.tags.flatMap { tag -> listOf(tag.id, tag.name) } }.orEmpty() },
+    restore = { saved -> if (saved.isEmpty()) null else KwBookApi.BookRankTab(
+        saved[0], saved[1], saved.drop(2).chunked(2).map { KwBookApi.BookTag(it[0], it[1]) },
+    ) },
+)
 
 @Composable
 fun AudiobooksScreen(
@@ -87,8 +111,8 @@ fun AudiobooksScreen(
     var ranks by remember {
         mutableStateOf(OnlineCache.peek<List<KwBookApi.BookRankTab>>("book.ranks")?.takeIf { it.isNotEmpty() } ?: DefaultRanks)
     }
-    var rankPage by remember { mutableStateOf<KwBookApi.BookRankTab?>(null) }
-    var detail by remember { mutableStateOf<BookDetail?>(null) }
+    var rankPage by rememberSaveable(stateSaver = BookRankTabSaver) { mutableStateOf<KwBookApi.BookRankTab?>(null) }
+    var detail by rememberSaveable(stateSaver = BookDetailSaver) { mutableStateOf<BookDetail?>(null) }
     val recentChapter = remember(recentSongs) { recentSongs.firstOrNull(OnlineSong::isBookChapter) }
     val recentPlaylist = remember(recentChapter) { recentChapter?.asPlaylist() }
 
@@ -134,9 +158,7 @@ fun AudiobooksScreen(
             target = rankPage,
             modifier = Modifier.fillMaxSize(),
             contentKey = { it.id },
-            detail = { rank ->
-                RankPage(rank, onBack = { rankPage = null }, onOpen = { detail = BookDetail.Album(it) })
-            },
+            detail = { rank -> RankPage(rank, onBack = { rankPage = null }, onOpen = { detail = BookDetail.Album(it) }) },
         ) {
             // 首页始终展示热播榜；打开其他榜单不能换掉仍参与过渡的首页数据。
             val homeTab = ranks.firstOrNull { it.id == "13" } ?: DefaultRanks.first()
@@ -180,6 +202,8 @@ internal data class BookCatalogSnapshot(
     )
 }
 
+private enum class BookLoad { Idle, Initial, Refresh, More }
+
 /** 首页、榜单与创作者作品各自持有状态，共用加载/分页/卡片渲染链路。 */
 @Composable
 private fun BookCatalogContent(
@@ -197,14 +221,12 @@ private fun BookCatalogContent(
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     var snapshot by remember { mutableStateOf(OnlineCache.peek<BookCatalogSnapshot>(cacheKey) ?: BookCatalogSnapshot()) }
-    var loading by remember { mutableStateOf(snapshot.page == 0) }
-    var refreshing by remember { mutableStateOf(false) }
-    var loadingMore by remember { mutableStateOf(false) }
+    var loadState by remember { mutableStateOf(if (snapshot.page == 0) BookLoad.Initial else BookLoad.Idle) }
     var error by remember { mutableStateOf<String?>(null) }
     FastScrollToTopEffect(scrollToTopRequest, listState)
 
     suspend fun load(number: Int) {
-        val skeletonSince = if (loading && snapshot.items.isEmpty() && error == null) SystemClock.uptimeMillis() else null
+        val skeletonSince = if (loadState in setOf(BookLoad.Initial, BookLoad.Refresh) && snapshot.items.isEmpty() && error == null) SystemClock.uptimeMillis() else null
         try {
             val result = runCatchingCancellable { loadPage(number) }
             // 首次空白页骨架至少完整显示300ms；缓存刷新不延迟、不清空已有卡片。
@@ -219,26 +241,23 @@ private fun BookCatalogContent(
                     else PlaybackController.postMessage(context, it.message ?: "听书内容同步失败")
                 }
         } finally {
-            loading = false
-            refreshing = false
-            loadingMore = false
+            loadState = BookLoad.Idle
         }
     }
     fun refresh() {
-        if (loading || refreshing || loadingMore) return
-        refreshing = true
-        loading = snapshot.items.isEmpty()
+        if (loadState != BookLoad.Idle) return
+        loadState = BookLoad.Refresh
         scope.launch { load(1) }
     }
     fun loadMore() {
-        if (loading || refreshing || loadingMore || !snapshot.hasMore) return
-        loadingMore = true
+        if (loadState != BookLoad.Idle || !snapshot.hasMore) return
+        loadState = BookLoad.More
         scope.launch { load(snapshot.page + 1) }
     }
     LaunchedEffect(Unit) {
         val cached = OnlineCache.get<BookCatalogSnapshot>(cacheKey, LIST_TTL)
-        if (cached != null) { snapshot = cached; loading = false } else {
-            loading = true
+        if (cached != null) { snapshot = cached; loadState = BookLoad.Idle } else {
+            loadState = BookLoad.Initial
             load(1)
         }
     }
@@ -247,8 +266,8 @@ private fun BookCatalogContent(
         expectedTopBarHeight = 64.dp,
         topBar = { primaryHeader(listState) },
     ) {
-        PullRefreshContainer(enabled = pullEnabled, refreshing = refreshing, onRefresh = ::refresh, modifier = Modifier.fillMaxSize()) {
-            BookGrid(listState, snapshot.items, loading, error, snapshot.hasMore, loadingMore,
+        PullRefreshContainer(enabled = pullEnabled, refreshing = loadState == BookLoad.Refresh, onRefresh = ::refresh, modifier = Modifier.fillMaxSize()) {
+            BookGrid(listState, snapshot.items, loadState == BookLoad.Initial || loadState == BookLoad.Refresh, error, snapshot.hasMore, loadState == BookLoad.More,
                 ::refresh, ::loadMore, onOpen, padding = padding, emptyMessage = emptyMessage) { before(snapshot.items.size) }
         }
     }
@@ -306,7 +325,7 @@ private fun SectionTitle(count: Int) {
 @Composable
 private fun RankPage(tab: KwBookApi.BookRankTab, onBack: () -> Unit, onOpen: (OnlinePlaylist) -> Unit) {
     BackHandler(onBack = onBack)
-    var selectedTag by remember { mutableIntStateOf(0) }
+    var selectedTag by rememberSaveable(tab.id) { mutableIntStateOf(0) }
     val tag = tab.tags.getOrElse(selectedTag) { tab.tags.first() }
     var showCategories by remember { mutableStateOf(false) }
     val hasCategories = tab.tags.size > 1

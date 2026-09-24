@@ -83,6 +83,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -308,7 +309,7 @@ fun MeloraApp(initialTab: Int = 5) {
     val context = LocalContext.current
 
     // 当前选中的 Tab，默认停留在“本地歌曲” (索引 5)
-    var currentTab by remember { mutableIntStateOf(initialTab.coerceIn(0, tabs.lastIndex)) }
+    var currentTab by rememberSaveable { mutableIntStateOf(initialTab.coerceIn(0, tabs.lastIndex)) }
     // 搜索页分类状态 (歌曲/歌单/听书)
     var searchCategory by remember { mutableStateOf(SearchCategory.Song) }
 
@@ -565,7 +566,7 @@ fun MeloraApp(initialTab: Int = 5) {
                             )
                             1 -> LeaderboardScreen(primaryHeader = primaryHeader, scrollToTopRequest = primaryScrollToTopRequest)
                             2 -> {
-                                var catalog by remember { mutableStateOf<DiscoverCatalog?>(null) }
+                                var catalog by rememberSaveable { mutableStateOf<DiscoverCatalog?>(null) }
                                 DetailPageHost(
                                     target = catalog,
                                     detail = { destination ->
