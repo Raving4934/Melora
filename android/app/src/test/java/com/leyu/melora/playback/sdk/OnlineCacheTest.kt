@@ -326,7 +326,7 @@ class OnlineCacheTest {
             assertEquals(listOf("b-new"), b.await())
             releaseOldA.complete(Unit)
             withTimeout(2_000) { oldALoaderFinished.await() }
-            assertTrue(withTimeout(2_000) { oldA.await() }.isEmpty())
+            assertEquals(listOf("a-late"), withTimeout(2_000) { oldA.await() })
 
             assertEquals(listOf("a-new"), OnlineCache.peek<List<String>>("a"))
             assertEquals(listOf("b-new"), OnlineCache.peek<List<String>>("b"))

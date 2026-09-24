@@ -151,7 +151,8 @@ object OnlineCache {
     suspend fun <T : Any> refresh(key: String, ttlMs: Long, force: Boolean = false, load: suspend () -> T): T {
         val request = synchronized(lock) {
             if (!force) get<T>(key, ttlMs)?.let { return it }
-            else refreshing.remove(key)?.cancel()
+            // 匹配缓存也被播放解析共享：强刷只撤销旧任务的回填资格，不取消已有读取者。
+            else refreshing.remove(key)
             refreshing[key] ?: run {
                 val previous = store[key]
                 lateinit var task: Deferred<Any>
