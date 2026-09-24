@@ -75,4 +75,24 @@ class PlaylistImportLinkTest {
             PlaylistImportLink.parse("https://y.qq.com/n/yqq/playlist/1.html https://music.163.com/#/playlist?id=2")
         }
     }
+    @Test
+    fun acceptsNeteaseMobilePlaylistSharesWithAttributionParameters() {
+        val mobile = "https://y.music.163.com/m/playlist?id=123456&userid=700001&creatorId=700002"
+        val parsed = PlaylistImportLink.parse("我分享的歌单：$mobile")
+        assertEquals("wy", parsed.source)
+        assertEquals(mobile, parsed.value)
+        assertEquals("wy", PlaylistImportLink.parse("https://y.music.163.com/m/playlist?id=123456").source)
+    }
+
+    @Test
+    fun mobileHostStillRejectsSongsAlbumsAndLookalikeDomains() {
+        listOf(
+            "https://y.music.163.com/m/song?id=123456",
+            "https://y.music.163.com/m/album?id=123456",
+            "https://y.music.163.com.attacker.example/m/playlist?id=123456",
+        ).forEach { url ->
+            assertThrows(IllegalArgumentException::class.java) { PlaylistImportLink.parse(url) }
+        }
+    }
+
 }

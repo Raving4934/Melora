@@ -22,7 +22,7 @@ data class PlaylistImportLink(val source: String, val value: String) {
             "kw" to setOf("kuwo.cn", "www.kuwo.cn", "m.kuwo.cn", "h5.kuwo.cn", "h5app.kuwo.cn"),
             "kg" to setOf("kugou.com", "www.kugou.com", "m.kugou.com", "t.kugou.com", "t1.kugou.com", "m3ws.kugou.com"),
             "tx" to setOf("y.qq.com", "i.y.qq.com", "c.y.qq.com"),
-            "wy" to setOf("music.163.com", "163cn.tv"),
+            "wy" to setOf("music.163.com", "y.music.163.com", "163cn.tv"),
             "mg" to setOf("music.migu.cn", "m.music.migu.cn", "h5.nf.migu.cn", "c.migu.cn"),
         )
 

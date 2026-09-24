@@ -169,3 +169,13 @@ test('Netease short song link cannot be mistaken for a playlist with the same nu
     finalUrl: 'https://music.163.com/#/song?id=42', raw: Buffer.from('').toString('base64') })
   await assert.rejects(api.getListId('https://163cn.tv/fixture'), /不是网易云歌单/)
 })
+
+test('Netease mobile shares extract playlist ID rather than userid or creatorId without HTTP', async () => {
+  const api = await platform('wy')
+  for (const url of [
+    'https://y.music.163.com/m/playlist?id=42&userid=700001&creatorId=700002',
+    'https://y.music.163.com/m/playlist?userid=700001&id=42&creatorId=700002',
+  ]) {
+    assert.equal((await api.getListId(url)).id, '42')
+  }
+})
