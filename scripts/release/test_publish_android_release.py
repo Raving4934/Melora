@@ -72,8 +72,11 @@ class FakeApi:
         raise AssertionError(f"unexpected POST {path}")
 
     def patch(self, path: str, payload: dict[str, Any]) -> Any:
-        if "make_latest" in payload and payload["make_latest"] != "false":
-            raise AssertionError("GitHub make_latest must use the string enum false")
+        if "make_latest" in payload:
+            if payload["make_latest"] not in ("true", "false", "legacy"):
+                raise AssertionError("GitHub make_latest must use a string enum")
+            if payload["make_latest"] == "true" and (payload.get("draft") or payload.get("prerelease")):
+                raise AssertionError("Drafts and prereleases cannot become latest")
         self.patches.append(payload)
         self.release.update(payload)
         return self.release
@@ -155,6 +158,7 @@ class PublishAndroidReleaseTest(unittest.TestCase):
         with self.assertRaisesRegex(ReleaseError, "different"):
             ReleasePublisher(api, self.plan()).run()
         self.assertEqual(api.uploaded, [])
+        self.assertEqual(api.patches, [])
 
     def test_unapproved_public_asset_is_rejected(self) -> None:
         api = FakeApi(
@@ -173,7 +177,7 @@ class PublishAndroidReleaseTest(unittest.TestCase):
             ReleasePublisher(api, self.plan()).run()
         self.assertEqual(api.uploaded, [])
 
-    def test_0_1_0_rerun_is_idempotent_and_does_not_promote_android_to_latest(self) -> None:
+    def test_stable_publish_promotes_latest_once_and_rerun_does_not_reclaim_it(self) -> None:
         api = FakeApi()
         plan = self.plan()
         ReleasePublisher(api, plan).run()
@@ -181,7 +185,8 @@ class PublishAndroidReleaseTest(unittest.TestCase):
         self.assertEqual(len(api.uploaded), 2)
         self.assertEqual(len(api.posts), 1)
         self.assertEqual(api.posts[0]["target_commitish"], plan.expected_commit)
-        self.assertEqual(api.patches, [{"draft": False, "prerelease": False, "make_latest": "false"}])
+        self.assertEqual(api.posts[0]["make_latest"], "false")
+        self.assertEqual(api.patches, [{"draft": False, "prerelease": False, "make_latest": "true"}])
 
     def test_tag_mismatch_fails_before_any_release_mutation(self) -> None:
         api = FakeApi(tag_sha="b" * 40)

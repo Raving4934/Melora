@@ -80,9 +80,14 @@ class ReleasePublisher:
         self._validate_remote_assets(release)
         self._prepare_tag()  # Recheck after uploads, before making anything public.
         if release.get("draft") is True:
+            # 只在首次公开时提升正式版；重跑旧版本不会抢回 Latest。
             release = self.api.patch(
                 f"{self.repo_path}/releases/{release['id']}",
-                {"draft": False, "prerelease": self.plan.prerelease, "make_latest": "false"},
+                {
+                    "draft": False,
+                    "prerelease": self.plan.prerelease,
+                    "make_latest": "false" if self.plan.prerelease else "true",
+                },
             )
         self._validate_release_metadata(release)
         self._validate_remote_assets(release)
