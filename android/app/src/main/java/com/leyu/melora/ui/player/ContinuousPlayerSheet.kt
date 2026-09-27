@@ -118,6 +118,7 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
 
     BoxWithConstraints(modifier.fillMaxSize().clipToBounds()) {
         val twoPanes = playerUsesTwoPanes(maxWidth.value, maxHeight.value)
+        val expandedLayout = playerUsesExpandedLayout(maxWidth.value, maxHeight.value)
         val screenHeightPx = with(density) { maxHeight.toPx() }
         val screenWidthPx = with(density) { maxWidth.toPx() }
         val miniBarContentHeight = 64.dp
@@ -139,8 +140,8 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
             { sheetState.offset.takeIf(Float::isFinite)?.coerceIn(0f, travel) ?: travel }
         }
         val progress = remember(offset, travel) { { playerSheetProgress(offset(), travel) } }
-        val playbackPage = remember(verticalPagerState, twoPanes) {
-            { twoPanes || (verticalPagerState.currentPage == 0 && abs(verticalPagerState.currentPageOffsetFraction) < 0.001f) }
+        val playbackPage = remember(verticalPagerState, twoPanes, expandedLayout) {
+            { (twoPanes && !expandedLayout) || (verticalPagerState.currentPage == 0 && abs(verticalPagerState.currentPageOffsetFraction) < 0.001f) }
         }
         val expanded by remember(progress) { derivedStateOf { progress() >= 0.99f } }
         val collapsed by remember(progress, sheetState) {
@@ -262,6 +263,10 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
                         state = state,
                         immersive = immersive,
                         onImmersiveChange = { immersive = it },
+                        onCollapse = { scope.launch {
+                            verticalPagerState.scrollToPage(0)
+                            sheetState.animateTo(PlayerSheetAnchor.Collapsed, fluidSpec)
+                        } },
                         lyricPosition = lyricPosition,
                         motionEnabled = playerMotionEnabled && expanded && (twoPanes || verticalPagerState.currentPage == 0),
                         lyricFrame = lyricFrameState,

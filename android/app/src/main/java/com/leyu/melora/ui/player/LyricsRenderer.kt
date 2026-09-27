@@ -234,12 +234,13 @@ internal fun LyricsViewport(
     val forceCenter = immersive || centered || config.isCentered
     val alignment = if (forceCenter) Alignment.CenterHorizontally else Alignment.Start
     val fontSize = when {
-        mini -> config.fontSizeSp.coerceIn(12f, 16f)
+        mini -> config.fontSizeSp.coerceIn(12f, 26f)
         immersive -> IMMERSIVE_LYRICS_FONT_SIZE_SP
         else -> config.fontSizeSp
     }
     val lineHeightMultiplier = if (immersiveMode) IMMERSIVE_LYRICS_LINE_HEIGHT_MULTIPLIER else 1.3f
-    val style = baseStyle.copy(fontSize = fontSize.sp, lineHeight = (if (mini) 24f else fontSize * lineHeightMultiplier).sp,
+    val miniLineHeight = maxOf(24f, fontSize * 1.5f).sp
+    val style = baseStyle.copy(fontSize = fontSize.sp, lineHeight = if (mini) miniLineHeight else (fontSize * lineHeightMultiplier).sp,
         fontWeight = when {
             immersive && !mini -> FontWeight.Bold
             config.isBold -> FontWeight.ExtraBold
@@ -257,7 +258,7 @@ internal fun LyricsViewport(
         ) {
             val cache = mutableMapOf<Int, Int>();
             { index: Int -> cache.getOrPut(index) {
-                if (mini) with(density) { 24.sp.roundToPx() }
+                if (mini) with(density) { miniLineHeight.roundToPx() }
                 else {
                     val line = lines[index]
                     measurer.measure(line.text, style, constraints = Constraints(maxWidth = width)).size.height +
@@ -341,7 +342,7 @@ internal fun LyricsViewport(
                             renderEffect = blurEffect
                         }) {
                         TimedLyricText(line, position, active, ink, style,
-                            modifier = if (mini) Modifier.fillMaxWidth().height(with(density) { 24.sp.toDp() }) else Modifier.fillMaxWidth(),
+                            modifier = if (mini) Modifier.fillMaxWidth().height(with(density) { miniLineHeight.toDp() }) else Modifier.fillMaxWidth(),
                             maxLines = if (mini) 1 else Int.MAX_VALUE,
                             mutedColor = if (mini) null else muted, marquee = mini && active && motionEnabled,
                             inactiveAlpha = if (mini) { if (distance == 1) 0.47f else 0.27f } else if (config.isBlurEnabled) 0.24f else 0.36f)

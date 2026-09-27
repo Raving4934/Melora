@@ -86,6 +86,18 @@ class PlayerSheetMotionTest {
     }
 
     @Test
+    fun expandedPlayerDependsOnAvailableWindowNotDeviceOrientation() {
+        assertTrue(playerUsesExpandedLayout(1280f, 800f))
+        assertTrue(playerUsesExpandedLayout(900f, 1280f))
+        assertTrue(playerUsesTwoPanes(900f, 1280f))
+        assertTrue(playerUsesExpandedLayout(840f, 480f))
+        assertFalse(playerUsesExpandedLayout(839f, 800f))
+        assertFalse(playerUsesExpandedLayout(1280f, 479f))
+        assertFalse(playerUsesExpandedLayout(360f, 800f))
+        assertFalse(playerUsesExpandedLayout(800f, 360f))
+    }
+
+    @Test
     fun skipBurstAllowsThreeImmediateTapsThenRejectsTheFourth() {
         val gate = PlayerSkipBurstGate()
 

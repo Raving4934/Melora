@@ -40,8 +40,12 @@ internal fun playerMotionPhase(progress: Float, start: Float, end: Float): Float
 internal fun playerArtworkBounds(mini: Rect, full: Rect, progress: Float): Rect =
     lerp(mini, full, progress.coerceIn(0f, 1f))
 
+/** 展开窗口给歌词独立阅读栏；紧凑横屏仍保留原有手机布局。 */
+internal fun playerUsesExpandedLayout(widthDp: Float, heightDp: Float): Boolean =
+    widthDp >= 840f && heightDp >= 480f
+
 internal fun playerUsesTwoPanes(widthDp: Float, heightDp: Float): Boolean =
-    widthDp > heightDp
+    widthDp > heightDp || playerUsesExpandedLayout(widthDp, heightDp)
 
 /** 翻页视口和单页始终等宽，内距只用于页内内容；横屏内侧由两栏间距负责。 */
 internal fun playerPaneContentPadding(twoPanes: Boolean, controls: Boolean): PaddingValues = PaddingValues(

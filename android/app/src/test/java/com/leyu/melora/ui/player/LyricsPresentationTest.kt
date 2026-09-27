@@ -30,6 +30,13 @@ class LyricsPresentationTest {
     }
 
     @Test
+    fun tabletCoverHasAReadingFriendlyCapWithoutChangingPhoneSizing() {
+        assertEquals(441.6f, playerCoverSideDp(800f, 1000f, 148f), 0.01f)
+        assertEquals(496.8f, playerCoverSideDp(540f, 900f, 148f), 0.01f)
+        assertEquals(0f, playerCoverSideDp(800f, 100f, 150f), 0f)
+    }
+
+    @Test
     fun hidingPreviewReleasesItsSpaceWithoutChangingTheCoverScale() {
         assertEquals(276f, playerCoverSideDp(440f, 300f, 0f), 0.001f)
         assertEquals(0f, playerCoverSideDp(440f, 100f, 150f), 0f)
