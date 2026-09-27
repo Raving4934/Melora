@@ -787,7 +787,9 @@ internal class SingleFlight<K : Any, V : Any>(
             if (restart) requests.remove(key)?.let { old ->
                 if (cancelReplaced) old.task.cancel(FlightFencedException())
             }
-            (requests[key] ?: run {
+            // await may observe completion before invokeOnCompletion acquires this lock.
+            // Only share unfinished work; a completed failure/empty result must allow retry.
+            (requests[key]?.takeUnless { it.task.isCompleted } ?: run {
                 lateinit var next: Pending<V>
                 val task = scope.async(start = CoroutineStart.LAZY) { block() }
                 next = Pending(task, cancelWhenUnobserved)
