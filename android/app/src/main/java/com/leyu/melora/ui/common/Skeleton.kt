@@ -266,9 +266,9 @@ fun SkeletonPreviewRows(modifier: Modifier = Modifier, rows: Int = 3) {
     }
 }
 
-/** 排行榜主页骨架：镜像官方榜标题、三张无标题主榜卡与三列垂类方卡。 */
+/** 排行榜主页骨架：镜像官方榜标题、三张无标题主榜卡与自适应垂类方卡。 */
 @Composable
-fun SkeletonLeaderboard(modifier: Modifier = Modifier) {
+fun SkeletonLeaderboard(modifier: Modifier = Modifier, genreColumns: Int = 3) {
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -345,8 +345,11 @@ fun SkeletonLeaderboard(modifier: Modifier = Modifier) {
 
         Spacer(Modifier.height(16.dp))
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            repeat(3) { SkeletonGenreCard(Modifier.weight(1f)) }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            repeat(genreColumns.coerceIn(3, 6)) { SkeletonGenreCard(Modifier.weight(1f)) }
         }
     }
 }
@@ -366,4 +369,3 @@ private fun SkeletonGenreCard(modifier: Modifier = Modifier) {
         )
     }
 }
-

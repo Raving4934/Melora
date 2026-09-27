@@ -21,6 +21,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -68,6 +69,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -171,6 +173,16 @@ private val genreTagColors = listOf(
     Color(0xFF059669), Color(0xFF7C3AED), Color(0xFFDB2777),
     Color(0xFF2563EB), Color(0xFFD97706), Color(0xFF4B5563),
 )
+private const val GENRE_BOARD_MIN_CARD_WIDTH_DP = 132f
+private const val GENRE_BOARD_SPACING_DP = 8f
+
+internal fun leaderboardGenreColumnCount(availableWidthDp: Float): Int {
+    val minCardWidth = GENRE_BOARD_MIN_CARD_WIDTH_DP
+    val spacing = GENRE_BOARD_SPACING_DP
+    return ((availableWidthDp.coerceAtLeast(0f) + spacing) / (minCardWidth + spacing))
+        .toInt()
+        .coerceIn(3, 6)
+}
 
 @Composable
 fun LeaderboardScreen(
@@ -293,15 +305,23 @@ fun LeaderboardScreen(
                 },
                 modifier = Modifier.fillMaxSize(),
             ) {
-                Column(
+                BoxWithConstraints(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(horizontal = 16.dp),
                 ) {
+                    // 直接使用扣除侧栏与页面内边距后的内容约束，不用整窗宽度推测列数。
+                    val genreColumns = leaderboardGenreColumnCount(maxWidth.value)
+                    val genreCardWidth = ((maxWidth - GENRE_BOARD_SPACING_DP.dp * (genreColumns - 1)) / genreColumns).coerceAtLeast(0.dp)
                     SkeletonCrossfade(
                         visible = loading,
                         modifier = Modifier.fillMaxSize(),
-                        skeleton = { SkeletonLeaderboard(modifier = Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current)) },
+                        skeleton = {
+                            SkeletonLeaderboard(
+                                modifier = Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current),
+                                genreColumns = genreColumns,
+                            )
+                        },
                     ) {
                         when {
                             error != null -> ErrorState(error!!, onRetry = { retryKey++ }, modifier = Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current))
@@ -376,25 +396,19 @@ fun LeaderboardScreen(
                                     }
 
                                     items(
-                                        items = boards.drop(3).chunked(3),
+                                        items = boards.drop(3).chunked(genreColumns),
                                         key = { rowItems -> rowItems.joinToString("|") { it.id } },
                                     ) { rowItems ->
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        ) {
+                                        Row(horizontalArrangement = Arrangement.spacedBy(GENRE_BOARD_SPACING_DP.dp)) {
                                             rowItems.forEach { board ->
                                                 val tagColor = genreTagColors[(boards.indexOf(board)) % genreTagColors.size]
                                                 GenreBoardCard(
                                                     platform = platform.id,
                                                     board = board,
                                                     tagColor = tagColor,
-                                                    modifier = Modifier.weight(1f),
+                                                    modifier = Modifier.width(genreCardWidth),
                                                     onClick = { selectedBoard = board },
                                                 )
-                                            }
-                                            repeat(3 - rowItems.size) {
-                                                Spacer(Modifier.weight(1f))
                                             }
                                         }
                                     }
