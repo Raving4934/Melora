@@ -7,6 +7,11 @@ plugins {
     alias(libs.plugins.baselineprofile)
 }
 
+val meloraDebugAbi = providers.gradleProperty("melora.debugAbi").orNull
+require(meloraDebugAbi == null || meloraDebugAbi == "x86_64") {
+    "melora.debugAbi currently supports only x86_64."
+}
+
 android {
     namespace = "com.leyu.melora"
     compileSdk = 37
@@ -19,9 +24,6 @@ android {
         versionCode = 12
         versionName = "0.1.4"
         testInstrumentationRunner = "com.leyu.melora.IsolatedTestRunner"
-        ndk {
-            abiFilters += listOf("arm64-v8a")
-        }
     }
 
     // 仅显式提供正式密钥时签名，绝不退回 debug key。CI 发布前校验四项环境变量。
@@ -48,6 +50,11 @@ android {
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
+    }
+
+    // defaultConfig 与 buildType 的 ABI 会合并；在同一层选择，避免模拟器包混入 ARM 库。
+    buildTypes.configureEach {
+        ndk.abiFilters += if (name == "debug") meloraDebugAbi ?: "arm64-v8a" else "arm64-v8a"
     }
 
     compileOptions {
