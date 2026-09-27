@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-09-27
+
+### 安卓客户端
+
+【大屏导航】
+- 平板及较宽窗口支持常驻侧栏，直接切换搜索、排行榜、发现、歌单、听书、本地歌曲、我的列表和设置；窄窗口继续使用抽屉导航。
+- 侧栏入口支持滚动，大字体或较矮窗口中也能找到后面的页面；保留设置中的退出按钮开关。
+
+【大屏播放器】
+- 较宽窗口采用封面与阅读区双栏布局，右侧可在歌词和歌曲信息之间滑动切换；窄窗口保留原有分页布局。
+- 沉浸播放适配双栏布局；大屏歌词区域滚动不再带动整张播放器下拉，封面区域仍可下拉收起。
+- 平板竖屏的迷你歌词字号与可视空间自适应，减少控制区上方的多余空白，并对齐歌词设置与播放操作栏。
+
+【卡片与布局】
+- 排行榜按实际内容区宽度调整卡片列数，骨架与真实卡片保持一致；限制大屏听书快捷卡片尺寸，避免过度拉伸。
+- 统一歌单、听书、搜索和发现网格的宽度计算，扣除常驻侧栏、页面边距及卡片间距，修复大屏内容区变窄后仍排过多列的问题；常见手机竖屏继续保持双列。
+
+### 提交追溯（安卓版）
+
+> 仅发布 Android 0.1.5；Web / NAS、FPK 与 Docker 维持 0.1.1。完整提交区间：[android-v0.1.4...android-v0.1.5][Android 0.1.5]。
+
+- 常驻侧栏与宽窄窗口导航：[`bef0179`](https://github.com/Raving4934/Melora/commit/bef0179219ec5e16534449b90e5c62a2e1b588ec)。
+- 大屏双栏播放器、歌词空间与手势：[`ced4872`](https://github.com/Raving4934/Melora/commit/ced48725d01ebd5b2ee53354ac643b95ce7369c1)。
+- 榜单和听书快捷卡片尺寸：[`e0b1a26`](https://github.com/Raving4934/Melora/commit/e0b1a26904d707e4f07dc2994c4f1fd5d9b0f86a)、[`bbde6bc`](https://github.com/Raving4934/Melora/commit/bbde6bc40b05f1d9d8e575089511aff8df86cda8)。
+- 网格实际内容宽度与回归测试：[`3b64b93`](https://github.com/Raving4934/Melora/commit/3b64b9341e1dd5ea6866c4641054e66d77c212af)。
+- 独立 x86_64 模拟器 Debug 构建：[`73976a0`](https://github.com/Raving4934/Melora/commit/73976a0542a4b8a99b5df6a6591ca2b4baca2cef)。
+- 安卓正式版发布后设为 Latest：[`bc5c431`](https://github.com/Raving4934/Melora/commit/bc5c431e3d64caa07041d1343085a2e6068e090a)。
+
+### 安卓安装包
+
+- [下载 Android 0.1.5 APK（arm64-v8a）](https://github.com/Raving4934/Melora/releases/download/android-v0.1.5/melora-android-v0.1.5-arm64-v8a.apk)
+- 适用于 Android 8.0 及以上的 ARM64 设备；正式签名保持不变，可直接覆盖安装。
+
 ## [0.1.4] - 2026-09-24
 
 ### 安卓客户端
@@ -200,9 +233,11 @@
 
 **Docker 镜像：** `ghcr.io/raving4934/melora:0.1.0`（支持 `linux/amd64`、`linux/arm64`）。
 
-[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.4...HEAD
-[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.4...HEAD
+[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.5...HEAD
+[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.5...HEAD
 [Web Unreleased]: https://github.com/Raving4934/Melora/compare/v0.1.1...HEAD
+[0.1.5]: https://github.com/Raving4934/Melora/compare/android-v0.1.4...android-v0.1.5
+[Android 0.1.5]: https://github.com/Raving4934/Melora/compare/android-v0.1.4...android-v0.1.5
 [0.1.4]: https://github.com/Raving4934/Melora/compare/android-v0.1.3...android-v0.1.4
 [Android 0.1.4]: https://github.com/Raving4934/Melora/compare/android-v0.1.3...android-v0.1.4
 [0.1.3]: https://github.com/Raving4934/Melora/compare/android-v0.1.2...android-v0.1.3
