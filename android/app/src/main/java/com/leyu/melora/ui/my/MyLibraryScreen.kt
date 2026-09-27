@@ -189,7 +189,7 @@ private enum class MyPage {
 @Composable
 fun MyLibraryScreen(
     modifier: Modifier = Modifier,
-    onOpenDrawer: () -> Unit = {},
+    onOpenDrawer: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val hubListState = rememberLazyListState()
@@ -387,8 +387,10 @@ fun MyLibraryScreen(
                         Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        IconButton(onClick = onOpenDrawer) {
-                            Icon(Icons.Rounded.Menu, "打开侧栏", tint = TextMain)
+                        if (onOpenDrawer != null) {
+                            IconButton(onClick = onOpenDrawer) {
+                                Icon(Icons.Rounded.Menu, "打开侧栏", tint = TextMain)
+                            }
                         }
                         Box(
                             Modifier.weight(1f).height(64.dp).padding(start = 4.dp)

@@ -77,7 +77,7 @@ internal val QualityOptions = listOf(
 @Composable
 internal fun SettingsPageContent(
     subPage: SettingsSubPage,
-    onOpenDrawer: () -> Unit,
+    onOpenDrawer: (() -> Unit)?,
     onNavigate: (SettingsSubPage) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -160,7 +160,7 @@ private data class SettingsMenuEntry(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun SettingsMainMenu(
-    onOpenDrawer: () -> Unit,
+    onOpenDrawer: (() -> Unit)?,
     onNavigate: (SettingsSubPage) -> Unit,
 ) {
     val primaryEntries = listOf(
@@ -181,8 +181,10 @@ internal fun SettingsMainMenu(
             windowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
             colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
             navigationIcon = {
-                IconButton(onClick = onOpenDrawer) {
-                    Icon(Icons.Rounded.Menu, contentDescription = "打开侧栏", tint = SettingsTextMain)
+                if (onOpenDrawer != null) {
+                    IconButton(onClick = onOpenDrawer) {
+                        Icon(Icons.Rounded.Menu, contentDescription = "打开侧栏", tint = SettingsTextMain)
+                    }
                 }
             },
             title = {

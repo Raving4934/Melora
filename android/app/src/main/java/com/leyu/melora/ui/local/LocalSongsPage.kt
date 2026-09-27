@@ -131,7 +131,7 @@ import kotlinx.coroutines.withContext
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun LocalSongsPage(
-    onOpenDrawer: () -> Unit,
+    onOpenDrawer: (() -> Unit)?,
     onBack: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
@@ -368,7 +368,7 @@ internal fun LocalSongsListContent(
     sections: Map<String, Int>,
     selection: SongSelectionState,
     listState: LazyListState,
-    onOpenDrawer: () -> Unit,
+    onOpenDrawer: (() -> Unit)?,
     onBack: (() -> Unit)? = null,
     onOpenSearch: () -> Unit,
     onOpenSortSheet: () -> Unit,
@@ -408,7 +408,7 @@ internal fun LocalSongsListContent(
                         IconButton(onClick = onBack) {
                             Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = TextMain)
                         }
-                    } else {
+                    } else if (onOpenDrawer != null) {
                         IconButton(onClick = onOpenDrawer) {
                             Icon(Icons.Rounded.Menu, contentDescription = "打开侧栏", tint = TextMain)
                         }

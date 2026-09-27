@@ -20,6 +20,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
@@ -85,6 +86,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -97,8 +99,10 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -151,6 +155,9 @@ private val TextGray: Color get() = MeloraAppearance.textSub
 // 侧栏便当卡片：统一使用发丝微描边，彻底消除单向物理阴影带来的发脏不均
 private val DrawerCardColor: Color get() = if (MeloraAppearance.isDark) Color(0xFF1E232C) else Color.White
 private val DrawerSelectedFill: Color get() = if (MeloraAppearance.isDark) Color(0xFF2A313C) else MeloraAppearance.softFill
+
+internal fun shouldUsePersistentDrawer(windowWidth: Dp, windowHeight: Dp): Boolean =
+    windowWidth >= 600.dp && windowHeight >= 480.dp
 
 @Composable
 private fun DrawerSurface(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
@@ -307,11 +314,13 @@ fun MeloraApp(initialTab: Int = 5) {
     val playerState by PlaybackController.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val showExitButton by MeloraSettings.showExitButton.collectAsStateWithLifecycle()
+    val exitApp = { (context as? android.app.Activity)?.finishAffinity(); Unit }
 
     // 当前选中的 Tab，默认停留在“本地歌曲” (索引 5)
     var currentTab by rememberSaveable { mutableIntStateOf(initialTab.coerceIn(0, tabs.lastIndex)) }
     // 搜索页分类状态 (歌曲/歌单/听书)
-    var searchCategory by remember { mutableStateOf(SearchCategory.Song) }
+    var searchCategory by rememberSaveable { mutableStateOf(SearchCategory.Song) }
 
     // 侧栏跳转设置主菜单；设置页的“关于乐屿”仍从设置内部进入。
     var settingsNavTarget by remember { mutableStateOf<SettingsSubPage?>(null) }
@@ -327,8 +336,11 @@ fun MeloraApp(initialTab: Int = 5) {
     val drawerWidth = 208.dp
     val drawerWidthPx = with(density) { drawerWidth.toPx() }
     val windowSize = LocalWindowInfo.current.containerSize
+    val windowWidth = with(density) { windowSize.width.toDp() }
+    val windowHeight = with(density) { windowSize.height.toDp() }
+    val isPersistentDrawer = shouldUsePersistentDrawer(windowWidth, windowHeight)
     val isCompactLandscape = windowSize.width > windowSize.height &&
-        with(density) { windowSize.height.toDp() } < 600.dp
+        windowHeight < 600.dp
 
     // 侧栏横向位移：0f=关闭，drawerWidthPx=完全拉出
     val drawerOffset = remember { Animatable(0f) }
@@ -346,6 +358,21 @@ fun MeloraApp(initialTab: Int = 5) {
     fun closeDrawer() {
         pendingDrawerTab = null
         scope.launch { drawerOffset.animateTo(0f, drawerSpring) }
+    }
+    androidx.compose.runtime.LaunchedEffect(isPersistentDrawer) {
+        if (isPersistentDrawer) {
+            pendingDrawerTab = null
+            drawerOffset.snapTo(0f)
+        }
+    }
+    fun prepareTabNavigation(index: Int) {
+        if (index == 7) {
+            settingsNavTarget = null
+            settingsNavSeq++
+        }
+    }
+    val openDrawer: (() -> Unit)? = if (isPersistentDrawer) null else {
+        { scope.launch { drawerOffset.animateTo(drawerWidthPx, drawerSpring) } }
     }
 
     // 与播放层使用同一状态，清空后同时撤销底栏占位和所有旧曲目展示。
@@ -383,7 +410,7 @@ fun MeloraApp(initialTab: Int = 5) {
     }
 
     // 侧栏打开时的系统返回拦截
-    if (drawerOpen) {
+    if (drawerOpen && !isPersistentDrawer) {
         BackHandler { closeDrawer() }
     }
 
@@ -409,15 +436,18 @@ fun MeloraApp(initialTab: Int = 5) {
         Column(
             modifier = Modifier
                 .width(drawerWidth)
+                .then(if (isPersistentDrawer) Modifier.testTag("main-navigation-drawer") else Modifier)
                 .fillMaxHeight()
                 .graphicsLayer {
-                    translationX = drawerOffset.value - drawerWidthPx
+                    translationX = if (isPersistentDrawer) 0f else drawerOffset.value - drawerWidthPx
                 }
-                .drawerSwipeable(
-                    drawerOffset = drawerOffset,
-                    drawerWidthPx = drawerWidthPx,
-                    drawerSpring = drawerSpring,
-                    scope = scope,
+                .then(
+                    if (isPersistentDrawer) Modifier else Modifier.drawerSwipeable(
+                        drawerOffset = drawerOffset,
+                        drawerWidthPx = drawerWidthPx,
+                        drawerSpring = drawerSpring,
+                        scope = scope,
+                    ),
                 )
                 .padding(
                     start = 12.dp,
@@ -462,13 +492,13 @@ fun MeloraApp(initialTab: Int = 5) {
                         tabs.forEachIndexed { index, item ->
                             DrawerItemEntry(
                                 item = item,
+                                modifier = Modifier.testTag("main-navigation-item-$index"),
                                 selected = currentTab == index,
                                 onClick = {
-                                    if (index == 7) {
-                                        settingsNavTarget = null
-                                        settingsNavSeq++
-                                    }
-                                    if (index == currentTab) {
+                                    prepareTabNavigation(index)
+                                    if (isPersistentDrawer) {
+                                        navigateToTab(index)
+                                    } else if (index == currentTab) {
                                         closeDrawer()
                                     } else {
                                         // 页面首次组合/布局先完成，不能让耗时吃掉收回动画的开头。
@@ -482,14 +512,13 @@ fun MeloraApp(initialTab: Int = 5) {
                 }
             }
 
-            if (MeloraSettings.showExitButton.collectAsStateWithLifecycle().value) {
+            if (showExitButton) {
                 DrawerSurface(Modifier.fillMaxWidth()) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable {
-                                (context as? android.app.Activity)?.finishAffinity()
-                            }
+                            .testTag("main-navigation-exit")
+                            .clickable(onClick = exitApp)
                             .padding(horizontal = 16.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -511,20 +540,23 @@ fun MeloraApp(initialTab: Int = 5) {
             }
         }
 
-        // --- 2. 主页面（同一底色，向右平推让位，右划跟手展开侧栏） ---
+        // --- 2. 主页面；窄窗口沿用抽屉推页，宽窗口在同一内容树旁显示常驻导航 ---
         ChromeScaffold(
             containerColor = Color.Transparent,
             expectedTopBarHeight = 0.dp,
             modifier = Modifier
                 .fillMaxSize()
+                .padding(start = if (isPersistentDrawer) drawerWidth else 0.dp)
                 .graphicsLayer {
-                    translationX = drawerOffset.value
+                    translationX = if (isPersistentDrawer) 0f else drawerOffset.value
                 }
-                .drawerSwipeable(
-                    drawerOffset = drawerOffset,
-                    drawerWidthPx = drawerWidthPx,
-                    drawerSpring = drawerSpring,
-                    scope = scope,
+                .then(
+                    if (isPersistentDrawer) Modifier else Modifier.drawerSwipeable(
+                        drawerOffset = drawerOffset,
+                        drawerWidthPx = drawerWidthPx,
+                        drawerSpring = drawerSpring,
+                        scope = scope,
+                    ),
                 ),
             bottomBar = {
                 if (hasActivePlayback) {
@@ -536,7 +568,11 @@ fun MeloraApp(initialTab: Int = 5) {
                 }
             },
         ) {
-            Box(modifier = Modifier.fillMaxSize()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .testTag("main-navigation-content"),
+            ) {
                 CompositionLocalProvider(LocalPageActive provides (!drawerOpen)) {
                     // 同级切换由抽屉收回提供唯一运动，不再叠加横移/交叉淡化。
                     key(currentTab) {
@@ -544,94 +580,90 @@ fun MeloraApp(initialTab: Int = 5) {
                         Box(Modifier.fillMaxSize().onGloballyPositioned {
                             if (pendingDrawerTab == visibleTab && currentTab == visibleTab) closeDrawer()
                         }) {
-                        val menuIcon: @Composable () -> Unit = {
-                            IconButton(onClick = {
-                                scope.launch {
-                                    drawerOffset.animateTo(if (drawerOffset.value > 10f) 0f else drawerWidthPx, drawerSpring)
-                                }
-                            }) { Icon(Icons.Rounded.Menu, contentDescription = "打开侧栏", tint = TextDark) }
-                        }
-                        val primaryHeader: @Composable () -> Unit = {
-                            MainPageHeader(
-                                tab = visibleTab,
-                                onTitleClick = { primaryScrollToTopRequest++ },
-                                navigationIcon = menuIcon,
-                            )
-                        }
-                        when (visibleTab) {
-                            0 -> SearchScreen(
-                                category = searchCategory,
-                                onCategoryChange = { searchCategory = it },
-                                navigationIcon = menuIcon,
-                            )
-                            1 -> LeaderboardScreen(primaryHeader = primaryHeader, scrollToTopRequest = primaryScrollToTopRequest)
-                            2 -> {
-                                var catalog by rememberSaveable { mutableStateOf<DiscoverCatalog?>(null) }
-                                DetailPageHost(
-                                    target = catalog,
-                                    detail = { destination ->
-                                        // 先登记目录层返回，内部歌单详情和平台选择仍优先消费Back。
-                                        PageBackHandler { catalog = null }
-                                        var scrollRequest by remember { mutableIntStateOf(0) }
-                                        val backIcon: @Composable () -> Unit = {
-                                            IconButton(onClick = { catalog = null }) {
-                                                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回发现", tint = TextDark)
-                                            }
+                            val menuIcon: @Composable () -> Unit = {
+                                if (!isPersistentDrawer) {
+                                    IconButton(onClick = {
+                                        scope.launch {
+                                            drawerOffset.animateTo(if (drawerOffset.value > 10f) 0f else drawerWidthPx, drawerSpring)
                                         }
-                                        val header: @Composable () -> Unit = {
-                                            MainPageHeader(
-                                                tab = destination.tab,
-                                                onTitleClick = { scrollRequest++ },
-                                                navigationIcon = backIcon,
-                                            )
-                                        }
-                                        when (destination) {
-                                            DiscoverCatalog.Playlists -> PlaylistsScreen(primaryHeader = header, scrollToTopRequest = scrollRequest)
-                                            DiscoverCatalog.Leaderboards -> LeaderboardScreen(primaryHeader = header, scrollToTopRequest = scrollRequest)
-                                            DiscoverCatalog.Audiobooks -> AudiobooksScreen(
-                                                scrollToTopRequest = scrollRequest,
-                                                primaryHeader = { onSearch ->
-                                                    MainPageHeader(4, { scrollRequest++ }, backIcon, onSearch)
-                                                },
-                                            )
-                                        }
-                                    },
-                                ) {
-                                    DiscoverScreen(
-                                        primaryHeader = primaryHeader,
-                                        onNavigateToTab = { target ->
-                                            val destination = DiscoverCatalog.fromTab(target)
-                                            if (destination != null) catalog = destination else navigateToTab(target)
-                                        },
-                                        scrollToTopRequest = primaryScrollToTopRequest,
-                                    )
+                                    }) { Icon(Icons.Rounded.Menu, contentDescription = "打开侧栏", tint = TextDark) }
                                 }
                             }
-                            3 -> PlaylistsScreen(primaryHeader = primaryHeader, scrollToTopRequest = primaryScrollToTopRequest)
-                            4 -> AudiobooksScreen(
-                                scrollToTopRequest = primaryScrollToTopRequest,
-                                primaryHeader = { onSearch ->
-                                    MainPageHeader(4, { primaryScrollToTopRequest++ }, menuIcon, onSearch)
-                                },
-                            )
-                            5 -> LocalSongsPage(
-                                onOpenDrawer = {
-                                    scope.launch { drawerOffset.animateTo(drawerWidthPx, drawerSpring) }
-                                },
-                            )
-                            6 -> MyLibraryScreen(
-                                onOpenDrawer = {
-                                    scope.launch { drawerOffset.animateTo(drawerWidthPx, drawerSpring) }
-                                },
-                            )
-                            7 -> SettingsMasterScreen(
-                                onOpenDrawer = {
-                                    scope.launch { drawerOffset.animateTo(drawerWidthPx, drawerSpring) }
-                                },
-                                requestedSubPage = settingsNavTarget,
-                                requestSeq = settingsNavSeq,
-                            )
-                        }
+                            val primaryHeader: @Composable () -> Unit = {
+                                MainPageHeader(
+                                    tab = visibleTab,
+                                    onTitleClick = { primaryScrollToTopRequest++ },
+                                    navigationIcon = menuIcon,
+                                )
+                            }
+                            when (visibleTab) {
+                                0 -> SearchScreen(
+                                    category = searchCategory,
+                                    onCategoryChange = { searchCategory = it },
+                                    navigationIcon = menuIcon,
+                                )
+                                1 -> LeaderboardScreen(primaryHeader = primaryHeader, scrollToTopRequest = primaryScrollToTopRequest)
+                                2 -> {
+                                    var catalog by rememberSaveable { mutableStateOf<DiscoverCatalog?>(null) }
+                                    DetailPageHost(
+                                        target = catalog,
+                                        detail = { destination ->
+                                            // 先登记目录层返回，内部歌单详情和平台选择仍优先消费Back。
+                                            PageBackHandler { catalog = null }
+                                            var scrollRequest by remember { mutableIntStateOf(0) }
+                                            val backIcon: @Composable () -> Unit = {
+                                                IconButton(onClick = { catalog = null }) {
+                                                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回发现", tint = TextDark)
+                                                }
+                                            }
+                                            val header: @Composable () -> Unit = {
+                                                MainPageHeader(
+                                                    tab = destination.tab,
+                                                    onTitleClick = { scrollRequest++ },
+                                                    navigationIcon = backIcon,
+                                                )
+                                            }
+                                            when (destination) {
+                                                DiscoverCatalog.Playlists -> PlaylistsScreen(primaryHeader = header, scrollToTopRequest = scrollRequest)
+                                                DiscoverCatalog.Leaderboards -> LeaderboardScreen(primaryHeader = header, scrollToTopRequest = scrollRequest)
+                                                DiscoverCatalog.Audiobooks -> AudiobooksScreen(
+                                                    scrollToTopRequest = scrollRequest,
+                                                    primaryHeader = { onSearch ->
+                                                        MainPageHeader(4, { scrollRequest++ }, backIcon, onSearch)
+                                                    },
+                                                )
+                                            }
+                                        },
+                                    ) {
+                                        DiscoverScreen(
+                                            primaryHeader = primaryHeader,
+                                            onNavigateToTab = { target ->
+                                                val destination = DiscoverCatalog.fromTab(target)
+                                                if (destination != null) catalog = destination else navigateToTab(target)
+                                            },
+                                            scrollToTopRequest = primaryScrollToTopRequest,
+                                        )
+                                    }
+                                }
+                                3 -> PlaylistsScreen(primaryHeader = primaryHeader, scrollToTopRequest = primaryScrollToTopRequest)
+                                4 -> AudiobooksScreen(
+                                    scrollToTopRequest = primaryScrollToTopRequest,
+                                    primaryHeader = { onSearch ->
+                                        MainPageHeader(4, { primaryScrollToTopRequest++ }, menuIcon, onSearch)
+                                    },
+                                )
+                                5 -> LocalSongsPage(
+                                    onOpenDrawer = openDrawer,
+                                )
+                                6 -> MyLibraryScreen(
+                                    onOpenDrawer = openDrawer,
+                                )
+                                7 -> SettingsMasterScreen(
+                                    onOpenDrawer = openDrawer,
+                                    requestedSubPage = settingsNavTarget,
+                                    requestSeq = settingsNavSeq,
+                                )
+                            }
                         }
                     }
                 }
@@ -639,7 +671,7 @@ fun MeloraApp(initialTab: Int = 5) {
         }
 
         // --- 3. 抽屉展开时覆盖在主页面上的点击遮罩 ---
-        if (drawerOpen) {
+        if (drawerOpen && !isPersistentDrawer) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -803,14 +835,14 @@ private fun LeaderboardPlatformFilter(onOpenPlatformPicker: () -> Unit) {
 
 // 侧栏列表项：精致微徽标设计
 @Composable
-private fun DrawerItemEntry(item: MainTabItem, selected: Boolean, onClick: () -> Unit) {
+private fun DrawerItemEntry(item: MainTabItem, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .background(
                 if (selected) DrawerSelectedFill else Color.Transparent,
             )
-            .clickable(onClick = onClick)
+            .selectable(selected = selected, role = Role.Tab, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

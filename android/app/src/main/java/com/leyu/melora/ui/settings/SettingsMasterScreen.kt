@@ -31,7 +31,7 @@ internal fun initialSettingsSubPage(requested: SettingsSubPage?, requestSeq: Int
 @Composable
 fun SettingsMasterScreen(
     modifier: Modifier = Modifier,
-    onOpenDrawer: () -> Unit = {},
+    onOpenDrawer: (() -> Unit)? = null,
     requestedSubPage: SettingsSubPage? = null,
     requestSeq: Int = 0,
 ) {
