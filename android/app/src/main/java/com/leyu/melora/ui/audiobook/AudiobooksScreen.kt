@@ -31,6 +31,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -390,24 +392,36 @@ private fun RankCategorySheet(tab: KwBookApi.BookRankTab, selectedTag: String, o
     }
 }
 
+// 只限制大屏快捷卡宽度；手机竖屏和紧凑横屏仍按原有两列等分。
+internal fun bookShortcutCardWidth(availableWidthDp: Float, recentWidthDp: Float, shortestWindowSideDp: Float): Float =
+    ((availableWidthDp - recentWidthDp - 20f) / 2f).coerceIn(0f, if (shortestWindowSideDp >= 600f) 160f else Float.MAX_VALUE)
+
 @Composable
 private fun BookBento(
     recent: OnlinePlaylist?, chapter: OnlineSong?, ranks: List<KwBookApi.BookRankTab>,
     onRecent: () -> Unit, onRecentPlay: () -> Unit, onRank: (String) -> Unit,
 ) {
-    Row(Modifier.fillMaxWidth().height(190.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        RecentCard(recent, chapter, onRecent, onRecentPlay, Modifier.width(138.dp))
-        Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Shortcuts.chunked(2).forEach { shortcuts ->
-                Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    shortcuts.forEach { shortcut ->
-                        WatermarkGradientCard(
-                            title = shortcut.label,
-                            icon = shortcut.icon,
-                            gradient = Brush.linearGradient(shortcut.colors),
-                            onClick = { onRank(ranks.firstOrNull { it.id == shortcut.tabId }?.id ?: shortcut.tabId) },
-                            modifier = Modifier.weight(1f).fillMaxHeight(),
-                        )
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val recentWidth = minOf(138.dp, maxWidth)
+        val spacing = 10.dp
+        val window = LocalWindowInfo.current.containerSize
+        val shortestSide = with(LocalDensity.current) { minOf(window.width, window.height).toDp() }
+        val shortcutWidth = bookShortcutCardWidth(maxWidth.value, recentWidth.value, shortestSide.value).dp
+        val shortcutGroupWidth = shortcutWidth * 2 + spacing
+        Row(Modifier.fillMaxWidth().height(190.dp), horizontalArrangement = Arrangement.spacedBy(spacing)) {
+            RecentCard(recent, chapter, onRecent, onRecentPlay, Modifier.width(recentWidth))
+            Column(Modifier.width(shortcutGroupWidth).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(spacing)) {
+                Shortcuts.chunked(2).forEach { shortcuts ->
+                    Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(spacing)) {
+                        shortcuts.forEach { shortcut ->
+                            WatermarkGradientCard(
+                                title = shortcut.label,
+                                icon = shortcut.icon,
+                                gradient = Brush.linearGradient(shortcut.colors),
+                                onClick = { onRank(ranks.firstOrNull { it.id == shortcut.tabId }?.id ?: shortcut.tabId) },
+                                modifier = Modifier.weight(1f).fillMaxHeight(),
+                            )
+                        }
                     }
                 }
             }
