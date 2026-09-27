@@ -28,10 +28,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leyu.melora.playback.PlaybackController
@@ -63,17 +62,12 @@ fun playOnlinePlaylist(context: android.content.Context, playlist: OnlinePlaylis
     }
 }
 
-/**
- * 歌单/听书网格自适应列数：
- * 手机竖屏 2 列；横屏与平板大屏自适应 4 列（宽屏平板可到 5-6 列）。
- * 基于 LocalWindowInfo 同帧直接计算，不引入二次测量重排或闪烁抖动。
- */
-@Composable
-fun responsiveGridColumns(minCardWidth: androidx.compose.ui.unit.Dp = 180.dp): Int {
-    val containerWidth = LocalWindowInfo.current.containerSize.width
-    val screenWidth = with(LocalDensity.current) { containerWidth.toDp() }
-    return (screenWidth / minCardWidth).toInt().coerceIn(2, 6)
-}
+/** 使用网格实际可用宽度（已扣除外部边距），列间距与卡片共同占宽；窄屏保留双列。 */
+fun responsiveGridColumns(
+    availableWidth: Dp,
+    minCardWidth: Dp = 180.dp,
+    horizontalSpacing: Dp = 12.dp,
+): Int = ((availableWidth + horizontalSpacing) / (minCardWidth + horizontalSpacing)).toInt().coerceIn(2, 6)
 
 /** 歌单/专辑双列网格卡（全幅封面版）：封面铺满整卡，标题/作者叠在底部渐变上。 */
 @Composable

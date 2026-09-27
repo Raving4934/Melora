@@ -6,6 +6,7 @@ import com.leyu.melora.ui.common.LocalChromeTopInset
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -78,7 +79,15 @@ internal fun SearchResultsContent(
     onPlaySong: (OnlineSong) -> Unit,
 ) {
     when {
-        loading -> SearchResultsSkeleton(category = category, modifier = Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current))
+        loading -> BoxWithConstraints(
+            modifier = Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current),
+        ) {
+            SearchResultsSkeleton(
+                category = category,
+                availableWidth = maxWidth,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
         error != null -> ErrorState(error, onRetry = { onRetry() }, modifier = Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current))
         category == SearchCategory.Playlist || category == SearchCategory.Audiobook -> {
             if (playlists.isEmpty()) {
@@ -87,53 +96,55 @@ internal fun SearchResultsContent(
                     Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current),
                 )
             } else {
-                val columns = responsiveGridColumns()
-                val rows = playlists.chunked(columns)
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
-                ) {
-                    item {
-                        Text(
-                            text = if (category == SearchCategory.Audiobook) {
-                                "有声专辑 · 来自【酷我】 · ${playlists.size} 个"
-                            } else {
-                                "歌单结果 · 来自【${sourceAliasDisplay(selectedPlatform.id, selectedPlatform.label)}】 · ${playlists.size} 个"
-                            },
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = TextSub,
-                            modifier = Modifier.padding(vertical = 4.dp),
-                        )
-                    }
-                    itemsIndexed(rows) { rowIndex, rowItems ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            rowItems.forEach { playlist ->
-                                if (category == SearchCategory.Audiobook) {
-                                    OnlineAudiobookCard(
-                                        playlist = playlist,
-                                        onClick = { onOpenPlaylist(playlist) },
-                                        modifier = Modifier.weight(1f),
-                                    )
+                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                    val columns = responsiveGridColumns(maxWidth, horizontalSpacing = 10.dp)
+                    val rows = playlists.chunked(columns)
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
+                    ) {
+                        item {
+                            Text(
+                                text = if (category == SearchCategory.Audiobook) {
+                                    "有声专辑 · 来自【酷我】 · ${playlists.size} 个"
                                 } else {
-                                    OnlinePlaylistCard(
-                                        playlist = playlist,
-                                        onClick = { onOpenPlaylist(playlist) },
-                                        modifier = Modifier.weight(1f),
-                                    )
+                                    "歌单结果 · 来自【${sourceAliasDisplay(selectedPlatform.id, selectedPlatform.label)}】 · ${playlists.size} 个"
+                                },
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = TextSub,
+                                modifier = Modifier.padding(vertical = 4.dp),
+                            )
+                        }
+                        itemsIndexed(rows) { rowIndex, rowItems ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                rowItems.forEach { playlist ->
+                                    if (category == SearchCategory.Audiobook) {
+                                        OnlineAudiobookCard(
+                                            playlist = playlist,
+                                            onClick = { onOpenPlaylist(playlist) },
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                    } else {
+                                        OnlinePlaylistCard(
+                                            playlist = playlist,
+                                            onClick = { onOpenPlaylist(playlist) },
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                    }
+                                }
+                                repeat(columns - rowItems.size) {
+                                    Spacer(Modifier.weight(1f))
                                 }
                             }
-                            repeat(columns - rowItems.size) {
-                                Spacer(Modifier.weight(1f))
+                            if (rowIndex == rows.lastIndex && hasMore) {
+                                LoadMoreFooter(loadingMore) { onLoadMore() }
                             }
-                        }
-                        if (rowIndex == rows.lastIndex && hasMore) {
-                            LoadMoreFooter(loadingMore) { onLoadMore() }
                         }
                     }
                 }
@@ -182,6 +193,7 @@ internal fun SearchResultsContent(
 @Composable
 private fun SearchResultsSkeleton(
     category: SearchCategory,
+    availableWidth: Dp,
     modifier: Modifier = Modifier,
 ) {
     if (category == SearchCategory.Song) {
@@ -190,7 +202,7 @@ private fun SearchResultsSkeleton(
             SkeletonSongList()
         }
     } else {
-        val columns = responsiveGridColumns()
+        val columns = responsiveGridColumns(availableWidth, horizontalSpacing = 10.dp)
         Column(
             modifier = modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(10.dp),

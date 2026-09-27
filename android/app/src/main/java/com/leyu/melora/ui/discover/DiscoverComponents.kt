@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -60,6 +61,7 @@ import com.leyu.melora.ui.common.chromeHeaderColor
 import com.leyu.melora.ui.common.EmptyState
 import com.leyu.melora.ui.common.ErrorState
 import com.leyu.melora.ui.common.rememberFastScrollToTop
+import com.leyu.melora.ui.common.responsiveGridColumns
 import com.leyu.melora.ui.common.titleScrollToTop
 import com.leyu.melora.ui.common.LoadMoreOnScroll
 import com.leyu.melora.ui.common.ShimmerBox
@@ -227,12 +229,12 @@ internal fun MillionPlaylistsPage(
             }
         },
     ) {
-        Column(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 16.dp),
         ) {
-            val columns = com.leyu.melora.ui.common.responsiveGridColumns()
+            val columns = responsiveGridColumns(maxWidth)
             when {
                 waitingForFirstPage -> if (showLoading) LoadingState(
                     text = "正在加载歌单…",

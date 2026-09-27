@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -56,6 +57,7 @@ import com.leyu.melora.ui.common.SkeletonSongList
 import com.leyu.melora.ui.common.TextMain
 import com.leyu.melora.ui.common.TextMuted
 import com.leyu.melora.ui.common.TextSub
+import com.leyu.melora.ui.common.responsiveGridColumns
 import com.leyu.melora.ui.common.sourceAliasDisplay
 import com.leyu.melora.ui.theme.MeloraAppearance
 
@@ -376,25 +378,34 @@ internal fun SearchIdleContent(
                             color = TextMain,
                             modifier = Modifier.padding(bottom = 8.dp),
                         )
-                        val columns = com.leyu.melora.ui.common.responsiveGridColumns()
-                        SkeletonCrossfade(
-                            visible = recommendBooks.isEmpty() && recommendBooksLoading,
-                            skeleton = { SkeletonGrid(columns = columns, cards = columns * 2, spacing = 10.dp, modifier = Modifier.fillMaxWidth()) },
-                        ) {
-                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                recommendBooks.chunked(columns).forEach { rowItems ->
-                                    Row(
+                        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                            val columns = responsiveGridColumns(maxWidth, horizontalSpacing = 10.dp)
+                            SkeletonCrossfade(
+                                visible = recommendBooks.isEmpty() && recommendBooksLoading,
+                                skeleton = {
+                                    SkeletonGrid(
+                                        columns = columns,
+                                        cards = columns * 2,
+                                        spacing = 10.dp,
                                         modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                    ) {
-                                        rowItems.forEach { book ->
-                                            OnlineAudiobookCard(
-                                                playlist = book,
-                                                onClick = { onOpenPlaylist(book) },
-                                                modifier = Modifier.weight(1f),
-                                            )
+                                    )
+                                },
+                            ) {
+                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    recommendBooks.chunked(columns).forEach { rowItems ->
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                        ) {
+                                            rowItems.forEach { book ->
+                                                OnlineAudiobookCard(
+                                                    playlist = book,
+                                                    onClick = { onOpenPlaylist(book) },
+                                                    modifier = Modifier.weight(1f),
+                                                )
+                                            }
+                                            repeat(columns - rowItems.size) { Spacer(Modifier.weight(1f)) }
                                         }
-                                        repeat(columns - rowItems.size) { Spacer(Modifier.weight(1f)) }
                                     }
                                 }
                             }

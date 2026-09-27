@@ -32,6 +32,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -467,25 +468,29 @@ private fun BookGrid(
     padding: PaddingValues = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
     emptyMessage: String = "暂无相关内容", before: LazyListScope.() -> Unit = {},
 ) {
-    val columns = responsiveGridColumns()
-    if (playlists.isNotEmpty()) LoadMoreOnScroll(state, hasMore, loadingMore, onLoadMore = onLoadMore)
-    LazyColumn(state = state, modifier = modifier.fillMaxSize(), contentPadding = chromeContentPadding(padding), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        before()
-        when {
-            error != null && playlists.isEmpty() -> item("error") { Box(Modifier.fillMaxWidth().height(360.dp)) { ErrorState(error, modifier = Modifier.fillMaxSize(), onRetry = onRetry, retrying = loading) } }
-            loading && playlists.isEmpty() -> item("loading") { SkeletonGrid(columns = columns, cards = columns * 2, spacing = 10.dp) }
-            playlists.isEmpty() -> item("empty") { Box(Modifier.fillMaxWidth().height(360.dp)) { EmptyState(if (hasMore) "当前页暂无匹配作品，点击下方继续加载" else emptyMessage, Modifier.fillMaxSize()) } }
-            else -> itemsIndexed(playlists.chunked(columns), key = { _, row -> row.joinToString(":") { it.id } }) { _, row ->
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    row.forEach { book -> OnlineAudiobookCard(book, { onOpen(book) }, Modifier.weight(1f)) }
-                    repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
+    BoxWithConstraints(modifier.fillMaxSize()) {
+        val direction = LocalLayoutDirection.current
+        val contentWidth = maxWidth - padding.calculateLeftPadding(direction) - padding.calculateRightPadding(direction)
+        val columns = responsiveGridColumns(contentWidth, horizontalSpacing = 10.dp)
+        if (playlists.isNotEmpty()) LoadMoreOnScroll(state, hasMore, loadingMore, onLoadMore = onLoadMore)
+        LazyColumn(state = state, modifier = Modifier.fillMaxSize(), contentPadding = chromeContentPadding(padding), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            before()
+            when {
+                error != null && playlists.isEmpty() -> item("error") { Box(Modifier.fillMaxWidth().height(360.dp)) { ErrorState(error, modifier = Modifier.fillMaxSize(), onRetry = onRetry, retrying = loading) } }
+                loading && playlists.isEmpty() -> item("loading") { SkeletonGrid(columns = columns, cards = columns * 2, spacing = 10.dp) }
+                playlists.isEmpty() -> item("empty") { Box(Modifier.fillMaxWidth().height(360.dp)) { EmptyState(if (hasMore) "当前页暂无匹配作品，点击下方继续加载" else emptyMessage, Modifier.fillMaxSize()) } }
+                else -> itemsIndexed(playlists.chunked(columns), key = { _, row -> row.joinToString(":") { it.id } }) { _, row ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        row.forEach { book -> OnlineAudiobookCard(book, { onOpen(book) }, Modifier.weight(1f)) }
+                        repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
+                    }
                 }
             }
-        }
-        if (hasMore) item("more") {
-            Box(Modifier.fillMaxWidth().padding(vertical = 16.dp), contentAlignment = Alignment.Center) {
-                if (loadingMore) CircularProgressIndicator(Modifier.size(18.dp), color = BrandBlue, strokeWidth = 1.7.dp)
-                else Text("点击加载更多", fontSize = 13.sp, color = BrandBlue, modifier = Modifier.clickable(onClick = onLoadMore).padding(8.dp))
+            if (hasMore) item("more") {
+                Box(Modifier.fillMaxWidth().padding(vertical = 16.dp), contentAlignment = Alignment.Center) {
+                    if (loadingMore) CircularProgressIndicator(Modifier.size(18.dp), color = BrandBlue, strokeWidth = 1.7.dp)
+                    else Text("点击加载更多", fontSize = 13.sp, color = BrandBlue, modifier = Modifier.clickable(onClick = onLoadMore).padding(8.dp))
+                }
             }
         }
     }

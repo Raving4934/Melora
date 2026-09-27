@@ -7,6 +7,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -275,14 +276,13 @@ fun PlaylistsScreen(
         },
                 modifier = Modifier.fillMaxSize(),
             ) {
-                        Column(
+                BoxWithConstraints(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 16.dp),
+                        .padding(horizontal = 16.dp)
+                        .padding(top = 8.dp),
                 ) {
-                    Spacer(Modifier.height(8.dp))
-
-                    val columns = responsiveGridColumns()
+                    val columns = responsiveGridColumns(maxWidth)
                     SkeletonCrossfade(
                         visible = loading,
                         modifier = Modifier.fillMaxSize(),
