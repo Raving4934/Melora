@@ -2397,7 +2397,7 @@ internal fun PlaylistEditSheet(
             Spacer(Modifier.height(20.dp))
 
             PlaylistSheetActions(
-                onDismiss = onDismiss,
+                onSecondary = onDismiss,
                 onConfirm = submit,
                 confirmText = if (isRename) "保存修改" else "立即创建",
                 confirmEnabled = canSubmit,

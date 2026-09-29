@@ -1,5 +1,10 @@
 package com.leyu.melora.ui.my
 
+import android.graphics.Bitmap
+import java.io.File
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.test.platform.app.InstrumentationRegistry
+import com.leyu.melora.ui.awaitStable
 import androidx.compose.runtime.*
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createComposeRule
@@ -32,6 +37,13 @@ class PlaylistImportDuplicateSheetTest {
     private var savedName = ""
     private var updatedId = ""
 
+    private fun captureDuplicateSheet() {
+        compose.awaitStable("playlist-import-submit")
+        val bitmap = compose.onNode(isDialog()).captureToImage().asAndroidBitmap()
+        File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir, "qa-import-duplicate.png")
+            .outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
+
     private fun show(race: Boolean = false, warning: String? = null) {
         if (race) library.value = emptyList()
         compose.setContent {
@@ -61,15 +73,18 @@ class PlaylistImportDuplicateSheetTest {
                 )
             }
         }
+        compose.awaitStable("playlist-import-link")
         compose.onNodeWithTag("playlist-import-link").performTextInput(alias.value)
-        compose.onNodeWithTag("playlist-import-submit").performScrollTo().performClick()
+        compose.awaitStable("playlist-import-submit")
+        compose.onNodeWithTag("playlist-import-submit").performClick()
         compose.waitUntil(5_000) { compose.onAllNodesWithTag("playlist-import-name").fetchSemanticsNodes().isNotEmpty() }
     }
 
     @Test fun duplicateRoutesToActualUpdateSheetAndOnlyDiffConfirmationUpdates() {
         show()
+        captureDuplicateSheet()
         compose.onNodeWithText("已导入此来源").assertExists()
-        compose.onNodeWithTag("playlist-import-submit").performScrollTo().assertIsEnabled().performClick()
+        compose.onNodeWithTag("playlist-import-submit").assertIsEnabled().performClick()
         compose.onNodeWithTag("playlist-import-sheet").assertDoesNotExist()
         compose.onNodeWithTag("playlist-sync-sheet").assertExists()
         assertEquals(0, creates.get()); assertEquals(0, commits.get())
@@ -82,10 +97,25 @@ class PlaylistImportDuplicateSheetTest {
         assertEquals(0, imports.get()); assertEquals(0, creates.get()); assertEquals(1, commits.get())
     }
 
+    @Test fun duplicateActionsAreGroupedAndRefreshBelongsToTheSource() {
+        show()
+        compose.onNodeWithText("重新读取").assertDoesNotExist()
+        compose.onNodeWithContentDescription("重新读取").assertIsDisplayed().assertIsEnabled()
+        compose.onNodeWithContentDescription("关闭导入歌单").assertIsDisplayed().assertIsEnabled()
+        val copy = compose.onNodeWithTag("playlist-import-copy").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val update = compose.onNodeWithTag("playlist-import-submit").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        val source = compose.onNodeWithTag("playlist-import-link-preview").fetchSemanticsNode().boundsInRoot
+        val refresh = compose.onNodeWithContentDescription("重新读取").fetchSemanticsNode().boundsInRoot
+        assertEquals(copy.top, update.top, 1f)
+        assertEquals(copy.height, update.height, 1f)
+        assertTrue(source.contains(refresh.center))
+        assertEquals(0, creates.get()); assertEquals(0, commits.get())
+    }
+
     @Test fun explicitCopyKeepsEditedNameAndDoesNotUpdateExisting() {
         show()
         compose.onNodeWithTag("playlist-import-name").performScrollTo().performTextReplacement("我的副本")
-        compose.onNodeWithTag("playlist-import-copy").performScrollTo().performClick()
+        compose.onNodeWithTag("playlist-import-copy").performClick()
         compose.waitUntil(5_000) { imports.get() == 1 }
         assertTrue(savedAsCopy); assertEquals("我的副本", savedName)
         assertEquals(1, creates.get()); assertEquals(0, updates.get()); assertEquals(0, commits.get())
@@ -93,7 +123,7 @@ class PlaylistImportDuplicateSheetTest {
 
     @Test fun cancelDuplicateCreatesNothing() {
         show()
-        compose.onNodeWithText("取消").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("关闭导入歌单").performClick()
         compose.onNodeWithTag("playlist-import-sheet").assertDoesNotExist()
         assertEquals(0, creates.get()); assertEquals(0, commits.get())
     }
@@ -103,7 +133,7 @@ class PlaylistImportDuplicateSheetTest {
         show()
         compose.onNodeWithTag("playlist-import-submit").assertIsNotEnabled()
         compose.onNodeWithTag("playlist-import-target-second").performScrollTo().performClick()
-        compose.onNodeWithTag("playlist-import-submit").performScrollTo().assertIsEnabled().performClick()
+        compose.onNodeWithTag("playlist-import-submit").assertIsEnabled().performClick()
         compose.onNodeWithTag("playlist-sync-submit").performClick()
         compose.waitUntil(5_000) { compose.onAllNodesWithTag("playlist-sync-preview").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("确认更新").performClick()
@@ -111,14 +141,33 @@ class PlaylistImportDuplicateSheetTest {
         assertEquals("second", updatedId); assertEquals(0, creates.get())
     }
 
+    @Test fun manySameNameTargetsRemainReachableAndDistinguishableWithoutShowingIds() {
+        library.value = (1..8).map { index ->
+            original.copy(
+                id = "copy-$index",
+                songs = original.songs + if (index == 1) emptyList() else listOf(song("extra-$index")),
+            )
+        }
+        show()
+        compose.onNodeWithTag("playlist-import-submit").assertIsNotEnabled()
+        compose.onNodeWithText("手改名称 · 副本1").assertExists()
+        compose.onNodeWithText("手改名称 · 副本2").assertExists()
+        compose.onNodeWithText("copy-1").assertDoesNotExist()
+
+        (1..8).forEach { index ->
+            compose.onNodeWithTag("playlist-import-target-copy-$index").performScrollTo().assertIsDisplayed()
+        }
+        compose.onNodeWithTag("playlist-import-copy").assertIsDisplayed()
+    }
+
     @Test fun duplicateDiscoveredAtSaveKeepsPreviewAndOffersUpdateInsteadOfSuccess() {
         show(race = true)
         compose.onNodeWithTag("playlist-import-name").performScrollTo().performTextReplacement("race draft")
-        compose.onNodeWithTag("playlist-import-submit").performScrollTo().performClick()
+        compose.onNodeWithTag("playlist-import-submit").performClick()
         compose.waitUntil(5_000) { compose.onAllNodesWithText("已导入此来源").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("playlist-import-name").assertTextEquals("race draft")
         assertEquals(0, imports.get()); assertEquals(1, creates.get())
-        compose.onNodeWithTag("playlist-import-submit").performScrollTo().performClick()
+        compose.onNodeWithTag("playlist-import-submit").performClick()
         compose.onNodeWithTag("playlist-sync-sheet").assertExists()
         compose.onNodeWithText("取消").performClick()
         assertEquals(0, commits.get()); assertEquals(0, updates.get())
@@ -126,7 +175,7 @@ class PlaylistImportDuplicateSheetTest {
 
     @Test fun changedSourceAfterRoutingCannotBecomeAnUpdateOfAnotherRemotePlaylist() {
         show()
-        compose.onNodeWithTag("playlist-import-submit").performScrollTo().performClick()
+        compose.onNodeWithTag("playlist-import-submit").performClick()
         compose.runOnIdle {
             library.value = listOf(original.copy(importSource = PlaylistImportLink.parse("https://music.163.com/playlist?id=999")))
         }
@@ -147,8 +196,8 @@ class PlaylistImportDuplicateSheetTest {
 
     @Test fun partialCopyIsExplicitAndDuplicateUpdateStillRejectsPartialReads() {
         show(warning = "分页未完整")
-        compose.onNodeWithTag("playlist-import-copy").assertTextContains("仅将已获取的 1 首另存为副本")
-        compose.onNodeWithTag("playlist-import-submit").performScrollTo().performClick()
+        compose.onNodeWithTag("playlist-import-copy").assertTextContains("另存已获取的 1 首")
+        compose.onNodeWithTag("playlist-import-submit").performClick()
         compose.onNodeWithTag("playlist-sync-submit").performClick()
         compose.waitUntil(5_000) { compose.onAllNodesWithTag("playlist-sync-error").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("playlist-sync-preview").assertDoesNotExist()

@@ -7,11 +7,16 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -65,6 +70,7 @@ internal fun PlaylistImportSheet(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var text by rememberSaveable { mutableStateOf("") }
+    var sourceExpanded by rememberSaveable { mutableStateOf(true) }
     var name by rememberSaveable { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
     var showProgress by remember { mutableStateOf(false) }
@@ -136,6 +142,7 @@ internal fun PlaylistImportSheet(
                     selectedId = null
                     duplicateSeen = coordinator.choices(loaded, null).matches.isNotEmpty()
                     error = null
+                    sourceExpanded = false
                 }, onFailure = { failure ->
                     error = (if (result != null) "读取失败，保留上次预览。" else "") +
                         (failure.message?.takeIf(String::isNotBlank)?.take(200) ?: "读取失败，请检查歌单链接后重试。")
@@ -185,44 +192,77 @@ internal fun PlaylistImportSheet(
         // 输入框属于抽屉窗口，键盘控制器也从这个窗口取，不能使用背后页面的控制器。
         val keyboard = LocalSoftwareKeyboardController.current
         LaunchedEffect(Unit) { keyboard?.hide() }
+        val duplicateNameCounts = choices.matches.groupingBy { it.name }.eachCount()
         Column(
-            Modifier.fillMaxWidth().testTag("playlist-import-sheet").heightIn(max = 520.dp)
-                .verticalScroll(rememberScrollState()).imePadding()
-                .padding(start = 20.dp, end = 20.dp, bottom = 24.dp),
+            Modifier.fillMaxWidth().imePadding().heightIn(max = 440.dp).fillMaxHeight()
+                .testTag("playlist-import-sheet").padding(start = 20.dp, end = 20.dp, bottom = 16.dp),
         ) {
-            PlaylistSheetHeader(Icons.Outlined.Link, "导入歌单", "网易云 / QQ音乐 / 酷我 / 酷狗 / 咪咕")
-            Spacer(Modifier.height(12.dp))
-            Row(Modifier.fillMaxWidth().height(36.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("歌单分享链接", color = TextSub, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                TextButton(onClick = {
-                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                    val pasted = clipboard?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
-                    if (pasted.isNullOrBlank()) error = "剪贴板没有可粘贴的文字。" else edit(pasted)
-                }, enabled = !busy, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)) {
-                    Text("粘贴", color = if (busy) TextSub else BrandBlue, fontSize = 13.sp)
+            Row(Modifier.fillMaxWidth().padding(bottom = 16.dp).testTag("playlist-import-header"),
+                verticalAlignment = Alignment.Top) {
+                Box(Modifier.weight(1f)) {
+                    PlaylistSheetHeader(Icons.Outlined.Link, "导入歌单", "粘贴分享链接，收藏整张歌单")
+                }
+                IconButton(onClick = dismiss, enabled = !saving) {
+                    Icon(Icons.Outlined.Close, "关闭导入歌单", tint = TextSub, modifier = Modifier.size(20.dp))
                 }
             }
-            Surface(shape = RoundedCornerShape(16.dp), color = MeloraAppearance.card, border = MeloraAppearance.cardBorder) {
-                BasicTextField(
-                    value = text, onValueChange = { edit(it) }, enabled = !busy,
-                    textStyle = TextStyle(color = TextMain, fontSize = 14.sp, lineHeight = 21.sp),
-                    cursorBrush = SolidColor(BrandBlue),
-                    modifier = Modifier.fillMaxWidth().height(84.dp).padding(12.dp).testTag("playlist-import-link"),
-                    decorationBox = { field ->
-                        Box {
-                            if (text.isBlank()) Text("粘贴链接或整段分享文字", color = MeloraAppearance.textMuted, fontSize = 14.sp, lineHeight = 21.sp)
-                            field()
+            Column(
+                Modifier.weight(1f).fillMaxWidth()
+                    .verticalScroll(rememberScrollState()).testTag("playlist-import-body"),
+            ) {
+                val expanded = result == null || sourceExpanded
+                Surface(shape = RoundedCornerShape(16.dp), color = MeloraAppearance.card,
+                    border = MeloraAppearance.cardBorder,
+                    modifier = Modifier.fillMaxWidth().then(if (!expanded) Modifier.testTag("playlist-import-link-preview") else Modifier)) {
+                    Column {
+                        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = 12.dp, end = 4.dp)
+                            .testTag("playlist-import-progress-slot"), verticalAlignment = Alignment.CenterVertically) {
+                            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                                if (showProgress) {
+                                    CircularProgressIndicator(Modifier.size(16.dp).testTag("playlist-import-progress"), color = BrandBlue, strokeWidth = 1.5.dp)
+                                    Spacer(Modifier.width(8.dp))
+                                }
+                                Text(if (showProgress) progress?.let {
+                                    "已读取 ${it.loaded}${it.total?.let { total -> " / $total" }.orEmpty()} 首"
+                                } ?: "正在读取歌单…" else if (expanded) "分享链接" else text,
+                                    color = TextSub, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            if (expanded) {
+                                TextButton(onClick = {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                    val pasted = clipboard?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
+                                    if (pasted.isNullOrBlank()) error = "剪贴板没有可粘贴的文字。" else edit(pasted)
+                                }, enabled = !busy, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                                    Text("粘贴", color = if (busy) TextSub else BrandBlue, fontSize = 13.sp)
+                                }
+                            }
+                            if (result != null) {
+                                IconButton(onClick = { keyboard?.hide(); sourceExpanded = !sourceExpanded }, enabled = !busy,
+                                    modifier = Modifier.testTag(if (expanded) "playlist-import-collapse-link" else "playlist-import-edit-link")) {
+                                    Icon(if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.Edit,
+                                        if (expanded) "收起链接" else "编辑链接", tint = TextSub, modifier = Modifier.size(19.dp))
+                                }
+                                IconButton(onClick = { keyboard?.hide(); read() }, enabled = !busy) {
+                                    Icon(Icons.Outlined.Refresh, "重新读取", tint = if (busy) TextSub else BrandBlue, modifier = Modifier.size(21.dp))
+                                }
+                            }
                         }
-                    },
-                )
-            }
-            Spacer(Modifier.height(16.dp))
-            // 紧凑固定状态区：保留旧内容，长错误可滚动；状态切换不顶动操作栏。
-            Column(Modifier.fillMaxWidth().height(136.dp).testTag("playlist-import-status")) {
-                Column(
-                    Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
+                        if (expanded) BasicTextField(
+                            value = text, onValueChange = { edit(it) }, enabled = !busy, maxLines = 3,
+                            textStyle = TextStyle(color = TextMain, fontSize = 14.sp, lineHeight = 21.sp),
+                            cursorBrush = SolidColor(BrandBlue),
+                            modifier = Modifier.fillMaxWidth().height(84.dp).padding(horizontal = 12.dp, vertical = 8.dp).testTag("playlist-import-link"),
+                            decorationBox = { field ->
+                                Box {
+                                    if (text.isBlank()) Text("粘贴链接或整段分享文字", color = MeloraAppearance.textMuted, fontSize = 14.sp, lineHeight = 21.sp)
+                                    field()
+                                }
+                            },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+                Column(Modifier.fillMaxWidth().testTag("playlist-import-status"), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     val ready = result
                     if (ready != null) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -243,18 +283,32 @@ internal fun PlaylistImportSheet(
                         }
                         if (duplicate) {
                             Text("已导入此来源", color = TextMain, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                            Text(if (choices.matches.isEmpty()) "已有歌单已不可用，请重新读取后再操作。" else "选择已有歌单，读取差异后确认更新。",
-                                color = TextSub, fontSize = 12.sp, lineHeight = 18.sp)
-                            choices.matches.forEach { candidate ->
-                                Row(Modifier.fillMaxWidth().heightIn(min = 48.dp)
-                                    .testTag("playlist-import-target-${candidate.id}")
-                                    .clickable(enabled = !busy, role = Role.RadioButton) { selectedId = candidate.id },
-                                    verticalAlignment = Alignment.CenterVertically) {
-                                    RadioButton(selected = choices.target?.id == candidate.id, onClick = null, enabled = !busy)
+                            val targetMessage = when {
+                                choices.matches.isEmpty() -> "已有歌单已不可用，请重新读取后再操作。"
+                                choices.matches.size == 1 -> "更新前会再次读取并展示差异，不会直接覆盖。"
+                                else -> "选择一个已有歌单，读取差异后再确认更新。"
+                            }
+                            Text(targetMessage, color = TextSub, fontSize = 12.sp, lineHeight = 18.sp)
+                            choices.matches.forEachIndexed { index, candidate ->
+                                val candidateTitle = if ((duplicateNameCounts[candidate.name] ?: 0) > 1) {
+                                    "${candidate.name} · 副本${index + 1}"
+                                } else candidate.name
+                                val selected = choices.target?.id == candidate.id
+                                Row(
+                                    Modifier.fillMaxWidth().heightIn(min = 56.dp).clip(RoundedCornerShape(12.dp))
+                                        .background(if (selected) MeloraAppearance.tintBlue else Color.Transparent)
+                                        .testTag("playlist-import-target-${candidate.id}")
+                                        .selectable(selected = selected, enabled = !busy, role = Role.RadioButton) { selectedId = candidate.id }
+                                        .padding(horizontal = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    RadioButton(selected = selected, onClick = null, enabled = !busy,
+                                        colors = RadioButtonDefaults.colors(selectedColor = BrandBlue, unselectedColor = TextSub))
                                     Spacer(Modifier.width(8.dp))
                                     Column(Modifier.weight(1f)) {
-                                        Text(candidate.name, color = TextMain, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                        Text("${candidate.songs.size} 首 · ${candidate.id}", color = TextSub, fontSize = 11.sp)
+                                        Text(candidateTitle, color = TextMain, fontSize = 13.sp,
+                                            maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                        Text("${candidate.songs.size} 首", color = TextSub, fontSize = 11.sp)
                                     }
                                 }
                             }
@@ -267,8 +321,8 @@ internal fun PlaylistImportSheet(
                             Text("此链接暂仅按原链接精确防重，不会跨短链或别名合并。", color = TextSub, fontSize = 12.sp, lineHeight = 18.sp)
                         }
                     } else if (error == null) {
-                        Text("支持公开的个人歌单", color = TextMain, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                        Text("不登录平台，不读取私密歌单。仅导入歌曲信息，播放与下载仍需可用音源。",
+                        Text("支持五大平台的公开歌单", color = TextMain, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Text("网易云、QQ音乐、酷我、酷狗、咪咕。无需登录，仅导入歌曲信息；播放与下载仍需可用音源。",
                             color = TextSub, fontSize = 12.sp, lineHeight = 18.sp)
                     }
                     error?.let {
@@ -279,33 +333,11 @@ internal fun PlaylistImportSheet(
                             color = TextSub, fontSize = 12.sp, lineHeight = 18.sp)
                     }
                 }
-                Row(Modifier.fillMaxWidth().height(32.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                        if (showProgress) {
-                            CircularProgressIndicator(Modifier.size(14.dp).testTag("playlist-import-progress"), color = BrandBlue, strokeWidth = 1.5.dp)
-                            Spacer(Modifier.width(8.dp))
-                            Text(progress?.let { "已读取 ${it.loaded}${it.total?.let { total -> " / $total" }.orEmpty()} 首" } ?: "正在读取歌单…",
-                                color = TextSub, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                    }
-                    if (result != null) {
-                        TextButton(onClick = { keyboard?.hide(); read() }, enabled = !busy,
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
-                            Text("重新读取", color = if (busy) TextSub else BrandBlue, fontSize = 12.sp)
-                        }
-                    }
-                }
             }
-            Spacer(Modifier.height(12.dp))
-            if (duplicate && result != null) {
-                TextButton(onClick = { keyboard?.hide(); save(allowCopy = true) }, enabled = !busy && name.isNotBlank(),
-                    modifier = Modifier.align(Alignment.End).testTag("playlist-import-copy")) {
-                    Text(if (result!!.warning == null) "另存为副本" else "仅将已获取的 ${result!!.songs.size} 首另存为副本",
-                        color = TextSub, fontSize = 12.sp)
-                }
-            }
+            Spacer(Modifier.height(16.dp))
+            val copyAvailable = duplicate && result != null
             PlaylistSheetActions(
-                onDismiss = dismiss, onConfirm = {
+                onSecondary = { keyboard?.hide(); if (copyAvailable) save(allowCopy = true) else dismiss() }, onConfirm = {
                     keyboard?.hide()
                     if (result == null) read() else if (duplicate) updateExisting() else save()
                 },
@@ -319,7 +351,12 @@ internal fun PlaylistImportSheet(
                     else -> "读取歌单"
                 },
                 confirmEnabled = if (result == null) text.isNotBlank() else if (duplicate) choices.target != null else name.isNotBlank(),
-                busy = busy, cancelEnabled = !saving,
+                busy = busy, secondaryEnabled = if (copyAvailable) !busy && name.isNotBlank() else !saving,
+                secondaryText = if (copyAvailable) {
+                    if (result!!.warning == null) "另存为副本" else "另存已获取的 ${result!!.songs.size} 首"
+                } else "取消",
+                secondaryTag = if (copyAvailable) "playlist-import-copy" else "playlist-import-cancel",
+                modifier = Modifier.testTag("playlist-import-actions"),
             )
         }
     }
@@ -368,25 +405,37 @@ internal fun PlaylistSheetHeader(
 
 @Composable
 internal fun PlaylistSheetActions(
-    onDismiss: () -> Unit,
+    onSecondary: () -> Unit,
     onConfirm: () -> Unit,
     confirmText: String,
     confirmEnabled: Boolean,
     modifier: Modifier = Modifier,
     busy: Boolean = false,
-    cancelEnabled: Boolean = true,
+    secondaryEnabled: Boolean = true,
+    secondaryText: String = "取消",
+    submitTag: String = "playlist-import-submit",
+    secondaryTag: String = "playlist-import-cancel",
 ) {
-    Row(modifier = modifier.fillMaxWidth().height(44.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Surface(onClick = onDismiss, enabled = cancelEnabled, shape = RoundedCornerShape(22.dp), color = MeloraAppearance.softFill,
-            border = MeloraAppearance.chipBorder, modifier = Modifier.weight(1f).fillMaxHeight()) {
-            Box(contentAlignment = Alignment.Center) { Text("取消", color = TextSub, fontSize = 14.sp) }
-        }
-        Surface(onClick = onConfirm, enabled = confirmEnabled && !busy, shape = RoundedCornerShape(22.dp),
-            color = BrandBlue.copy(alpha = if (confirmEnabled) 1f else 0.35f),
-            modifier = Modifier.weight(1.6f).fillMaxHeight().testTag("playlist-import-submit")) {
+    val submitEnabled = confirmEnabled && !busy
+    Row(
+        modifier = modifier.fillMaxWidth().height(IntrinsicSize.Max).heightIn(min = 48.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Surface(onClick = onSecondary, enabled = secondaryEnabled, shape = RoundedCornerShape(24.dp),
+            color = MeloraAppearance.card, border = MeloraAppearance.cardBorder,
+            modifier = Modifier.weight(1f).fillMaxHeight().testTag(secondaryTag)) {
             Box(contentAlignment = Alignment.Center) {
-                Text(confirmText, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium,
-                    maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 8.dp))
+                Text(secondaryText, color = if (secondaryEnabled) TextMain else MeloraAppearance.textMuted, fontSize = 14.sp, lineHeight = 18.sp, maxLines = 2,
+                    overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+            }
+        }
+        Surface(onClick = onConfirm, enabled = submitEnabled, shape = RoundedCornerShape(24.dp),
+            color = if (submitEnabled) BrandBlue else MeloraAppearance.softFill,
+            modifier = Modifier.weight(1.6f).fillMaxHeight().testTag(submitTag)) {
+            Box(contentAlignment = Alignment.Center) {
+                Text(confirmText, color = if (submitEnabled) Color.White else TextSub, fontSize = 14.sp,
+                    lineHeight = 18.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
             }
         }
     }

@@ -19,6 +19,7 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -42,6 +43,7 @@ import com.leyu.melora.playback.sdk.PlaylistImportResult
 import com.leyu.melora.playback.sdk.PlaylistImporter
 import com.leyu.melora.ui.common.BrandBlue
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.SongArtwork
 import com.leyu.melora.ui.common.TextMain
 import com.leyu.melora.ui.common.TextSub
 import com.leyu.melora.ui.theme.MeloraAppearance
@@ -100,78 +102,82 @@ internal fun PlaylistUpdateSheet(
                 }
             }
         }
-        // Only the body scrolls. IME insets reduce its available height, not the action bar.
-        // fill=false lets short/no-change content wrap instead of reserving a tall empty panel.
-        Column(Modifier.fillMaxWidth().imePadding().heightIn(max = 640.dp)
+        // 固定标题与操作区，正文独立滚动；状态卡保留最小高度，避免读取/完成时跳位。
+        Column(Modifier.fillMaxWidth().imePadding().heightIn(max = 600.dp)
             .padding(horizontal = 20.dp).testTag("playlist-sync-sheet")) {
-            Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Icon(Icons.Outlined.Refresh, null, tint = BrandBlue, modifier = Modifier.size(24.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(if (bound) "从原歌单更新" else "绑定来源并更新", color = TextMain,
-                        fontSize = 17.sp, fontWeight = FontWeight.Medium)
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(playlist.name, color = TextSub, fontSize = 12.sp, maxLines = 1,
-                            overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                        source?.let { Text(it.platformName, color = BrandBlue, fontSize = 12.sp, maxLines = 1) }
-                    }
-                }
-            }
+            PlaylistSheetHeader(Icons.Outlined.Refresh, if (bound) "从原歌单更新" else "绑定来源并更新",
+                "先预览变化，再确认保存")
+            Spacer(Modifier.height(20.dp))
             LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false).testTag("playlist-sync-content"),
                 state = contentState,
-                verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 4.dp)) {
-                state.error?.let { error ->
-                    item("error") {
-                        Surface(color = MeloraAppearance.tintRed, shape = RoundedCornerShape(12.dp)) {
-                            Text(error, color = MeloraAppearance.accent, fontSize = 13.sp, lineHeight = 19.sp,
-                                modifier = Modifier.fillMaxWidth().padding(12.dp).testTag("playlist-sync-error"))
+                verticalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(bottom = 4.dp)) {
+                item("playlist") {
+                    Row(Modifier.fillMaxWidth().testTag("playlist-sync-summary"),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        SongArtwork(playlist.songs.firstOrNull()?.img, seed = playlist.name,
+                            modifier = Modifier.size(56.dp).clip(RoundedCornerShape(12.dp)))
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(playlist.name, color = TextMain, fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
+                                maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Text("${source?.platformName ?: "本地歌单"} · ${playlist.songs.size} 首",
+                                color = TextSub, fontSize = 12.sp)
                         }
                     }
                 }
-                if (state.busy) {
-                    item("progress") {
-                        Row(Modifier.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            CircularProgressIndicator(Modifier.size(18.dp), color = BrandBlue, strokeWidth = 2.dp)
-                            Text(if (state.saving) "正在保存更新，请稍候…" else state.progress?.let {
-                                "第 ${it.page} 页 · 已读取 ${it.loaded}${it.total?.let { total -> " / $total" }.orEmpty()} 首"
-                            } ?: "正在读取完整歌单…", color = TextSub, fontSize = 13.sp)
-                        }
-                    }
-                }
-                if (preview != null) {
-                    item("preview") {
-                        Surface(shape = RoundedCornerShape(14.dp), color = MeloraAppearance.card,
-                            border = MeloraAppearance.cardBorder, modifier = Modifier.testTag("playlist-sync-preview")) {
-                            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                if (!preview.hasChanges) {
+                item("status") {
+                    Surface(shape = RoundedCornerShape(16.dp),
+                        color = if (state.error != null) MeloraAppearance.tintRed else MeloraAppearance.card,
+                        modifier = Modifier.fillMaxWidth().then(if (preview != null) Modifier.testTag("playlist-sync-preview") else Modifier)) {
+                        Column(Modifier.heightIn(min = 100.dp).padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically)) {
+                            when {
+                                state.busy -> {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        CircularProgressIndicator(Modifier.size(18.dp), color = BrandBlue, strokeWidth = 2.dp)
+                                        Text(if (state.saving) "正在保存更新" else "正在对比原歌单", color = TextMain,
+                                            fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                                    }
+                                    Text(if (state.saving) "请稍候，保存完成后自动关闭。" else state.progress?.let {
+                                        "第 ${it.page} 页 · 已读取 ${it.loaded}${it.total?.let { total -> " / $total" }.orEmpty()} 首"
+                                    } ?: "读取完成后会展示变化，不会直接修改本地歌单。", color = TextSub, fontSize = 12.sp, lineHeight = 18.sp)
+                                }
+                                state.error != null -> {
+                                    Text("暂未完成更新", color = TextMain, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                                    Text(state.error!!, color = MeloraAppearance.accent, fontSize = 12.sp, lineHeight = 18.sp,
+                                        modifier = Modifier.testTag("playlist-sync-error"))
+                                }
+                                preview == null -> {
+                                    Text("查看这次有哪些变化", color = TextMain, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                                    Text("读取原歌单，预览新增和移除的歌曲，再决定是否更新。", color = TextSub, fontSize = 12.sp, lineHeight = 18.sp)
+                                }
+                                !preview.hasChanges -> {
                                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Icon(Icons.Outlined.CheckCircle, null, tint = BrandBlue, modifier = Modifier.size(20.dp))
-                                        Text("歌单已是最新", color = TextMain, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                                        Icon(Icons.Outlined.CheckCircle, null, tint = BrandBlue, modifier = Modifier.size(22.dp))
+                                        Text("歌单已是最新", color = TextMain, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                                     }
-                                    Text("无需更新，可直接完成。", color = TextSub, fontSize = 12.sp)
-                                } else {
-                                    Text("更新预览", color = TextMain, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                                        Text("新增 ${preview.added.size} 首", color = BrandBlue, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                                        Text("移除 ${preview.removed.size} 首", color = MeloraAppearance.accent, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                                    Text("与原歌单一致，无需更新。", color = TextSub, fontSize = 12.sp)
+                                }
+                                else -> {
+                                    Text("更新预览 · 更新后 ${preview.updated.songs.size} 首", color = TextMain,
+                                        fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                                    Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                                        Text("新增 ${preview.added.size} 首", color = BrandBlue, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                                        Text("移除 ${preview.removed.size} 首", color = if (preview.removed.isEmpty()) TextSub else MeloraAppearance.accent,
+                                            fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                                     }
-                                    Text("更新后 ${preview.updated.songs.size} 首", color = TextSub, fontSize = 12.sp)
                                     if (preview.added.isEmpty() && preview.removed.isEmpty()) {
-                                        Text("歌曲数量未变，将更新顺序、歌曲信息或来源基线。", color = TextSub, fontSize = 12.sp)
+                                        Text("歌曲数量未变，将更新顺序、歌曲信息或来源基线。", color = TextSub, fontSize = 12.sp, lineHeight = 18.sp)
                                     }
                                 }
                             }
                         }
                     }
-                    if (preview.firstBinding) {
-                        item("binding-note") {
-                            Text("首次绑定保留全部现有歌曲，仅合并远端内容；不会猜测旧歌单中哪些歌曲已被原平台删除。",
-                                color = TextSub, fontSize = 12.sp, lineHeight = 18.sp)
-                        }
+                }
+                if (preview?.firstBinding == true) {
+                    item("binding-note") {
+                        Text("首次绑定保留全部现有歌曲，仅合并远端内容；不会猜测旧歌单中哪些歌曲已被原平台删除。",
+                            color = TextSub, fontSize = 12.sp, lineHeight = 18.sp)
                     }
-                } else if (!state.busy && state.error == null && bound) {
-                    item("ready") { Text("读取原歌单，对比后再确认更新。", color = TextSub, fontSize = 13.sp) }
                 }
                 if (!bound) {
                     item("link-input") {
@@ -195,7 +201,7 @@ internal fun PlaylistUpdateSheet(
                     }
                 }
                 item("rules") {
-                    Text(PLAYLIST_UPDATE_RULES, color = TextSub, fontSize = 12.sp, lineHeight = 18.sp,
+                    Text(PLAYLIST_UPDATE_RULES, color = TextSub, fontSize = 12.sp, lineHeight = 20.sp,
                         modifier = Modifier.testTag("playlist-sync-rules-detail"))
                 }
                 if (source != null) {
@@ -230,25 +236,13 @@ internal fun PlaylistUpdateSheet(
                     }
                 }
             }
-            // Local actions deliberately leave the import sheet's shared actions unchanged.
-            Row(Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 20.dp).height(48.dp)
-                .testTag("playlist-sync-actions"), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Surface(onClick = { act(actions.secondary) }, enabled = actions.secondaryEnabled,
-                    shape = RoundedCornerShape(24.dp), color = MeloraAppearance.softFill,
-                    border = MeloraAppearance.chipBorder, modifier = Modifier.weight(1f).fillMaxHeight()) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(actions.secondaryLabel, color = if (actions.secondaryEnabled) TextSub else MeloraAppearance.textMuted, fontSize = 14.sp)
-                    }
-                }
-                Surface(onClick = { act(actions.primary) }, enabled = actions.primaryEnabled,
-                    shape = RoundedCornerShape(24.dp), color = BrandBlue.copy(alpha = if (actions.primaryEnabled) 1f else 0.35f),
-                    modifier = Modifier.weight(1.6f).fillMaxHeight().testTag("playlist-sync-submit")) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(actions.primaryLabel, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium,
-                            maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 8.dp))
-                    }
-                }
-            }
+            PlaylistSheetActions(
+                onSecondary = { act(actions.secondary) }, onConfirm = { act(actions.primary) },
+                confirmText = actions.primaryLabel, confirmEnabled = actions.primaryEnabled,
+                secondaryEnabled = actions.secondaryEnabled, secondaryText = actions.secondaryLabel,
+                submitTag = "playlist-sync-submit",
+                modifier = Modifier.padding(top = 16.dp, bottom = 20.dp).testTag("playlist-sync-actions"),
+            )
         }
     }
 }
@@ -263,7 +257,9 @@ private fun UpdateDisclosure(title: String, expanded: Boolean, onToggle: () -> U
             Icon(if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null,
                 tint = TextSub, modifier = Modifier.size(18.dp))
         }
-        if (expanded) Column(Modifier.padding(bottom = 8.dp), content = content)
+        if (expanded) Surface(color = MeloraAppearance.card, shape = RoundedCornerShape(12.dp)) {
+            Column(Modifier.fillMaxWidth().padding(12.dp), content = content)
+        }
     }
 }
 

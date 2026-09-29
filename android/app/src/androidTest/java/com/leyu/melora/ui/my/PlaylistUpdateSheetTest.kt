@@ -2,6 +2,12 @@ package com.leyu.melora.ui.my
 
 import android.content.ClipboardManager
 import android.content.Context
+import android.graphics.Bitmap
+import java.io.File
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
+import com.leyu.melora.ui.awaitStable
 import androidx.compose.runtime.*
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createComposeRule
@@ -31,20 +37,32 @@ class PlaylistUpdateSheetTest {
     private val dismissed = AtomicInteger()
     private fun show(
         playlist: UserLibrary.UserPlaylist = local,
+        compact: Boolean = false,
         read: suspend () -> PlaylistImportResult = { result },
         save: suspend (PlaylistSyncPreview) -> UserLibrary.UserPlaylist = { it.updated },
     ) {
         compose.setContent {
             var open by remember { mutableStateOf(true) }
-            MeloraTheme {
+            CompositionLocalProvider(LocalDensity provides if (compact) Density(5f, 1.3f) else LocalDensity.current) {
+              MeloraTheme {
                 if (open) PlaylistUpdateSheet(playlist, onDismiss = { open = false; dismissed.incrementAndGet() },
                     onUpdated = { open = false }, currentPlaylist = { playlist },
                     readPlaylist = { _, _, _ -> reads.incrementAndGet(); read() },
                     commit = { commits.incrementAndGet(); save(it) })
+              }
             }
         }
     }
-    private fun clickRead() = compose.onNodeWithTag("playlist-sync-submit").performClick()
+    private fun clickRead() {
+        compose.awaitStable("playlist-sync-submit")
+        compose.onNodeWithTag("playlist-sync-submit").performClick()
+    }
+    private fun captureSheet(name: String) {
+        compose.awaitStable("playlist-sync-sheet")
+        val bitmap = compose.onNode(isDialog()).captureToImage().asAndroidBitmap()
+        File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir, "qa-sync-$name.png")
+            .outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
     private fun scrollToText(text: String) = compose.onNodeWithTag("playlist-sync-content").performScrollToNode(hasText(text))
     private fun waitPreview() = compose.waitUntil(5_000) {
         compose.onAllNodesWithTag("playlist-sync-preview").fetchSemanticsNodes().isNotEmpty()
@@ -80,6 +98,7 @@ class PlaylistUpdateSheetTest {
         val gate = CompletableDeferred<PlaylistImportResult>()
         show(read = { gate.await() }); clickRead()
         compose.waitUntil(5_000) { reads.get() == 1 }
+        compose.awaitStable("playlist-sync-submit")
         compose.onNodeWithTag("playlist-sync-submit").assertIsNotEnabled().performClick()
         assertEquals(1, reads.get())
         compose.onNodeWithText("取消").performClick()
@@ -103,6 +122,7 @@ class PlaylistUpdateSheetTest {
         show(read = { result.copy(songs = local.songs, reportedTotal = 1) })
         clickRead(); waitPreview()
         compose.onNodeWithText("歌单已是最新").assertIsDisplayed()
+        captureSheet("unchanged")
         compose.onNodeWithText("取消").assertDoesNotExist()
         compose.onNodeWithText("完成").assertIsEnabled().performClick()
         compose.waitUntil(5_000) { dismissed.get() == 1 }
@@ -170,4 +190,41 @@ class PlaylistUpdateSheetTest {
         compose.waitUntil(5_000) { commits.get() == 2 }
         assertEquals(1, reads.get())
     }
+    @Test fun readingAndUnchangedResultKeepFooterStableAndShowNameOnlyOnce() {
+        val gate = CompletableDeferred<PlaylistImportResult>()
+        show(read = { gate.await() })
+        compose.awaitStable("playlist-sync-sheet")
+        compose.onAllNodesWithText(local.name).assertCountEquals(1)
+        compose.onNodeWithTag("playlist-sync-summary").assertIsDisplayed()
+        compose.onNodeWithText(link.value).assertDoesNotExist()
+        captureSheet("ready")
+        val initial = compose.onNodeWithTag("playlist-sync-submit").fetchSemanticsNode().boundsInRoot
+        clickRead()
+        compose.waitUntil(5_000) { reads.get() == 1 }
+        compose.awaitStable("playlist-sync-submit")
+        val loading = compose.onNodeWithTag("playlist-sync-submit").fetchSemanticsNode().boundsInRoot
+        gate.complete(result.copy(songs = local.songs, reportedTotal = 1))
+        waitPreview()
+        compose.awaitStable("playlist-sync-submit")
+        val complete = compose.onNodeWithTag("playlist-sync-submit").fetchSemanticsNode().boundsInRoot
+        assertEquals(initial.top, loading.top, 2f)
+        assertEquals(initial.top, complete.top, 2f)
+        assertEquals(initial.height, complete.height, 1f)
+        compose.onNodeWithText("完成").assertIsDisplayed().assertIsEnabled()
+        assertEquals(0, commits.get())
+    }
+
+    @Test fun compactLargeFontKeepsActionsReachableWhileDiffAndSourceScroll() {
+        show(compact = true)
+        clickRead(); waitPreview()
+        scrollToText("来源详情")
+        compose.onNodeWithText("来源详情").performClick()
+        scrollToText("复制链接")
+        compose.onNodeWithText("复制链接").assertIsDisplayed()
+        scrollToText("− 旧歌曲")
+        compose.onNodeWithText("确认更新").assertIsDisplayed().assertIsEnabled()
+        captureSheet("compact")
+        assertEquals(0, commits.get())
+    }
+
 }
