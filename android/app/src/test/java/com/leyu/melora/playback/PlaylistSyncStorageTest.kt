@@ -363,6 +363,71 @@ class PlaylistSyncStorageTest {
         }
     }
 
+    @Test fun failedRenameKeepsPublishedPlaylistAndDiskUnchanged() = isolated { file ->
+        val playlist = UserLibrary.createPlaylist("原名称", listOf(song("a")))
+        val primary = file.readBytes()
+        val backup = File(file.parentFile, "${file.name}.bak").readBytes()
+        val blocker = File(file.parentFile, "${file.name}.tmp").apply { check(mkdir()) }
+        try {
+            assertThrows(java.io.IOException::class.java) { UserLibrary.renamePlaylist(playlist.id, "未保存的名称") }
+            assertSame(playlist, UserLibrary.playlists.value.single())
+            assertArrayEquals(primary, file.readBytes())
+            assertArrayEquals(backup, File(file.parentFile, "${file.name}.bak").readBytes())
+        } finally { blocker.delete() }
+    }
+
+    @Test fun failedFavoriteWriteKeepsPublishedSongsAndDerivedIdsUnchanged() = isolated { file ->
+        UserLibrary.setFavorites(listOf(song("a")), true)
+        val before = UserLibrary.exportSnapshot()
+        val primary = file.readBytes()
+        val blocker = File(file.parentFile, "${file.name}.tmp").apply { check(mkdir()) }
+        try {
+            assertThrows(java.io.IOException::class.java) { UserLibrary.setFavorites(listOf(song("b")), true) }
+            assertEquals(before, UserLibrary.exportSnapshot())
+            assertEquals(setOf("wy_a"), UserLibrary.favoriteUids.value)
+            assertArrayEquals(primary, file.readBytes())
+        } finally { blocker.delete() }
+    }
+
+    @Test fun failedOrdinaryMutationsNeverEmitTransientStateAndCanRetry() = isolated { file ->
+        kotlinx.coroutines.runBlocking {
+            val playlist = UserLibrary.createPlaylist("列表", listOf(song("a")))
+            UserLibrary.markPlayed(song("a"))
+            UserLibrary.addSearchKeyword("旧搜索")
+            val before = UserLibrary.exportSnapshot()
+            val bytes = file.readBytes()
+            val emissions = mutableListOf<List<UserLibrary.UserPlaylist>>()
+            val observer = launch(kotlinx.coroutines.Dispatchers.Unconfined) {
+                UserLibrary.playlists.collect { emissions += it }
+            }
+            val blocker = File(file.parentFile, "${file.name}.tmp").apply { check(mkdir()) }
+            try {
+                val writes: List<() -> Unit> = listOf(
+                    { UserLibrary.deletePlaylist(playlist.id) },
+                    { UserLibrary.addToPlaylist(playlist.id, song("b")) },
+                    { UserLibrary.removeFromPlaylist(playlist.id, "wy_a") },
+                    { UserLibrary.markPlayed(song("b")) },
+                    { UserLibrary.clearRecents() },
+                    { UserLibrary.addSearchKeyword("未保存搜索") },
+                    { UserLibrary.clearSearchHistory() },
+                )
+                writes.forEach { write ->
+                    blocker.mkdirs() // 原子写入的 finally 会清理本次临时路径。
+                    assertThrows(java.io.IOException::class.java) { write() }
+                    assertEquals(before, UserLibrary.exportSnapshot())
+                    assertArrayEquals(bytes, file.readBytes())
+                }
+                assertEquals(1, emissions.size)
+            } finally { blocker.delete(); observer.cancel() }
+            UserLibrary.addToPlaylist(playlist.id, song("b"))
+            UserLibrary.addToPlaylist(playlist.id, song("b"))
+            val committed = UserLibrary.exportSnapshot()
+            UserLibrary.replaceFromBackup(committed)
+            assertEquals(committed, UserLibrary.exportSnapshot())
+            assertEquals(listOf("wy_a", "wy_b"), UserLibrary.playlists.value.single().songs.map { it.uid })
+        }
+    }
+
     private fun <T> isolated(block: (File) -> T): T {
         val field = UserLibrary::class.java.getDeclaredField("file").apply { isAccessible = true }
         val previous = field.get(UserLibrary)

@@ -89,6 +89,36 @@ object UserLibrary {
     val recentContainers = MutableStateFlow<List<RecentContainer>>(emptyList())
     val searchHistory = MutableStateFlow<List<String>>(emptyList())
 
+    /** 事务内的候选值：变换只改这个快照，写盘成功后才向观察者发布。 */
+    private class Snapshot {
+        var favoriteUids = UserLibrary.favoriteUids.value
+            private set
+        var favorites: List<OnlineSong> = UserLibrary.favorites.value
+            set(value) {
+                field = value
+                favoriteUids = value.mapTo(linkedSetOf()) { it.uid }
+            }
+        var recents: List<OnlineSong> = UserLibrary.recents.value
+        var playlists: List<UserPlaylist> = UserLibrary.playlists.value
+        var favoritePlaylists: List<OnlinePlaylist> = UserLibrary.favoritePlaylists.value
+        var favoriteAlbums: List<FavoriteAlbum> = UserLibrary.favoriteAlbums.value
+        var favoriteArtists: List<FavoriteArtist> = UserLibrary.favoriteArtists.value
+        var recentContainers: List<RecentContainer> = UserLibrary.recentContainers.value
+        var searchHistory: List<String> = UserLibrary.searchHistory.value
+    }
+
+    private fun publish(snapshot: Snapshot) {
+        favorites.value = snapshot.favorites
+        recents.value = snapshot.recents
+        favoriteUids.value = snapshot.favoriteUids
+        favoritePlaylists.value = snapshot.favoritePlaylists
+        favoriteAlbums.value = snapshot.favoriteAlbums
+        favoriteArtists.value = snapshot.favoriteArtists
+        recentContainers.value = snapshot.recentContainers
+        searchHistory.value = snapshot.searchHistory
+        playlists.value = snapshot.playlists
+    }
+
     fun init(context: Context) {
         if (::file.isInitialized) return
         file = File(context.applicationContext.filesDir, "user-library.json")
@@ -128,13 +158,13 @@ object UserLibrary {
     }
 
     private fun applyRoot(root: JSONObject) {
-        favorites.value = parseSongs(root.optJSONArray("favorites"))
-        recents.value = parseSongs(root.optJSONArray("recents"))
-        favoriteUids.value = favorites.value.mapTo(linkedSetOf()) { it.uid }
-        favoritePlaylists.value = root.optJSONArray("favoritePlaylists")?.let { array ->
+        val snapshot = Snapshot()
+        snapshot.favorites = parseSongs(root.optJSONArray("favorites"))
+        snapshot.recents = parseSongs(root.optJSONArray("recents"))
+        snapshot.favoritePlaylists = root.optJSONArray("favoritePlaylists")?.let { array ->
             (0 until array.length()).mapNotNull { OnlinePlaylist.from(array.optJSONObject(it)) }
         }.orEmpty()
-        favoriteAlbums.value = root.optJSONArray("favoriteAlbums")?.let { array ->
+        snapshot.favoriteAlbums = root.optJSONArray("favoriteAlbums")?.let { array ->
             (0 until array.length()).mapNotNull { index ->
                 val node = array.optJSONObject(index) ?: return@mapNotNull null
                 val name = node.optString("name")
@@ -146,7 +176,7 @@ object UserLibrary {
                 )
             }
         }.orEmpty()
-        favoriteArtists.value = root.optJSONArray("favoriteArtists")?.let { array ->
+        snapshot.favoriteArtists = root.optJSONArray("favoriteArtists")?.let { array ->
             (0 until array.length()).mapNotNull { index ->
                 val node = array.optJSONObject(index) ?: return@mapNotNull null
                 val name = node.optString("name")
@@ -157,7 +187,7 @@ object UserLibrary {
                 )
             }
         }.orEmpty().distinctBy { it.key }
-        recentContainers.value = root.optJSONArray("recentContainers")?.let { array ->
+        snapshot.recentContainers = root.optJSONArray("recentContainers")?.let { array ->
             (0 until array.length()).mapNotNull { index ->
                 val node = array.optJSONObject(index) ?: return@mapNotNull null
                 val id = node.optString("id")
@@ -174,24 +204,25 @@ object UserLibrary {
                 )
             }
         }.orEmpty()
-        searchHistory.value = root.optJSONArray("searchHistory")?.let { array ->
+        snapshot.searchHistory = root.optJSONArray("searchHistory")?.let { array ->
             (0 until array.length()).mapNotNull { array.optString(it).takeIf(String::isNotBlank) }
         }.orEmpty()
-        playlists.value = root.optJSONArray("playlists")?.let { array ->
+        snapshot.playlists = root.optJSONArray("playlists")?.let { array ->
             (0 until array.length()).mapNotNull { index ->
                 val node = array.optJSONObject(index) ?: return@mapNotNull null
                 playlistFromJson(node)
             }
         }.orEmpty()
+        publish(snapshot)
     }
 
-    private fun buildRoot(playlistSnapshot: List<UserPlaylist> = playlists.value): JSONObject = JSONObject()
-        .put("favorites", songsToJson(favorites.value))
-        .put("recents", songsToJson(recents.value))
-        .put("searchHistory", JSONArray().apply { searchHistory.value.forEach(::put) })
-        .put("favoritePlaylists", JSONArray().apply { favoritePlaylists.value.forEach { put(it.raw) } })
+    private fun buildRoot(snapshot: Snapshot = Snapshot()): JSONObject = JSONObject()
+        .put("favorites", songsToJson(snapshot.favorites))
+        .put("recents", songsToJson(snapshot.recents))
+        .put("searchHistory", JSONArray().apply { snapshot.searchHistory.forEach(::put) })
+        .put("favoritePlaylists", JSONArray().apply { snapshot.favoritePlaylists.forEach { put(it.raw) } })
         .put("favoriteAlbums", JSONArray().apply {
-            favoriteAlbums.value.forEach { album ->
+            snapshot.favoriteAlbums.forEach { album ->
                 put(
                     JSONObject()
                         .put("name", album.name)
@@ -202,7 +233,7 @@ object UserLibrary {
             }
         })
         .put("favoriteArtists", JSONArray().apply {
-            favoriteArtists.value.forEach { artist ->
+            snapshot.favoriteArtists.forEach { artist ->
                 put(
                     JSONObject()
                         .put("name", artist.name)
@@ -212,7 +243,7 @@ object UserLibrary {
             }
         })
         .put("recentContainers", JSONArray().apply {
-            recentContainers.value.forEach { container ->
+            snapshot.recentContainers.forEach { container ->
                 put(
                     JSONObject()
                         .put("kind", container.kind)
@@ -227,7 +258,7 @@ object UserLibrary {
             }
         })
         .put("playlists", JSONArray().apply {
-            playlistSnapshot.forEach { playlist ->
+            snapshot.playlists.forEach { playlist ->
                 put(playlist.toJson())
             }
         })
@@ -239,10 +270,14 @@ object UserLibrary {
 
     private inline fun <T> mutate(
         shouldPersist: (T) -> Boolean = { true },
-        change: () -> T,
+        change: Snapshot.() -> T,
     ): T = synchronized(lock) {
-        val result = change()
-        if (shouldPersist(result)) writeTextAtomically(file, buildRoot().toString())
+        val snapshot = Snapshot()
+        val result = snapshot.change()
+        if (shouldPersist(result)) {
+            writeTextAtomically(file, buildRoot(snapshot).toString())
+            publish(snapshot)
+        }
         result
     }
 
@@ -254,15 +289,14 @@ object UserLibrary {
 
     /** 批量设置而非逐首反转，一次持久化；重复取消不会意外重新收藏。 */
     fun setFavorites(songs: List<OnlineSong>, favorite: Boolean): Int = mutate {
-        val before = favorites.value
+        val before = favorites
         val after = updatedFavoriteSongs(before, songs, favorite)
-        favorites.value = after
-        favoriteUids.value = after.mapTo(linkedSetOf()) { it.uid }
+        favorites = after
         kotlin.math.abs(after.size - before.size)
     }
 
     fun markPlayed(song: OnlineSong) = mutate {
-        recents.value = (listOf(song) + recents.value.filterNot { it.uid == song.uid }).take(MAX_RECENTS)
+        recents = (listOf(song) + recents.filterNot { it.uid == song.uid }).take(MAX_RECENTS)
     }
 
     /**
@@ -280,22 +314,21 @@ object UserLibrary {
                     currentIndex[song.songmid]?.let { song.withLocalSong(it) }
                         ?: song.takeUnless { pruneMissing }
                 }
-                val newFavorites = refreshed(favorites.value)
-                val newRecents = refreshed(recents.value)
-                val newPlaylists = playlists.value.map { it.copy(songs = refreshed(it.songs)) }
+                val newFavorites = refreshed(favorites)
+                val newRecents = refreshed(recents)
+                val newPlaylists = playlists.map { it.copy(songs = refreshed(it.songs)) }
                 val newFavoriteUids = newFavorites.mapTo(linkedSetOf()) { it.uid }
                 if (
-                    newFavorites == favorites.value &&
-                    newRecents == recents.value &&
-                    newPlaylists == playlists.value &&
-                    newFavoriteUids == favoriteUids.value
+                    newFavorites == favorites &&
+                    newRecents == recents &&
+                    newPlaylists == playlists &&
+                    newFavoriteUids == favoriteUids
                 ) {
                     return@mutate false
                 }
-                favorites.value = newFavorites
-                favoriteUids.value = newFavoriteUids
-                recents.value = newRecents
-                playlists.value = newPlaylists
+                favorites = newFavorites
+                recents = newRecents
+                playlists = newPlaylists
                 true
             }
         }
@@ -321,8 +354,8 @@ object UserLibrary {
     }
 
     fun clearRecents() = mutate {
-        recents.value = emptyList()
-        recentContainers.value = emptyList()
+        recents = emptyList()
+        recentContainers = emptyList()
     }
 
     /** 记录最近播放的容器（歌单/专辑/榜单/听书专辑/推荐），按容器去重后置顶。 */
@@ -338,13 +371,13 @@ object UserLibrary {
             updatedAt = System.currentTimeMillis(),
             artist = container.artist,
         )
-        recentContainers.value = (listOf(entry) + recentContainers.value.filterNot { it.key == entry.key }).take(30)
+        recentContainers = (listOf(entry) + recentContainers.filterNot { it.key == entry.key }).take(30)
     }
 
     /** 容器封面缺失/不满意时补齐（不改变排序）。 */
     fun updateContainerCover(key: String, img: String) = mutate {
         if (img.isBlank()) return@mutate
-        recentContainers.value = recentContainers.value.map {
+        recentContainers = recentContainers.map {
             if (it.key == key && it.img != img) it.copy(img = img) else it
         }
     }
@@ -354,40 +387,40 @@ object UserLibrary {
     fun isFavoriteAlbum(key: String): Boolean = favoriteAlbums.value.any { it.key == key }
 
     fun toggleFavoriteAlbum(album: FavoriteAlbum) = mutate {
-        favoriteAlbums.value = if (isFavoriteAlbum(album.key)) {
-            favoriteAlbums.value.filterNot { it.key == album.key }
+        favoriteAlbums = if (isFavoriteAlbum(album.key)) {
+            favoriteAlbums.filterNot { it.key == album.key }
         } else {
-            listOf(album) + favoriteAlbums.value.filterNot { it.key == album.key }
+            listOf(album) + favoriteAlbums.filterNot { it.key == album.key }
         }
     }
 
     fun isFavoriteArtist(key: String): Boolean = favoriteArtists.value.any { it.key == key }
 
     fun toggleFavoriteArtist(artist: FavoriteArtist) = mutate {
-        favoriteArtists.value = if (isFavoriteArtist(artist.key)) {
-            favoriteArtists.value.filterNot { it.key == artist.key }
+        favoriteArtists = if (isFavoriteArtist(artist.key)) {
+            favoriteArtists.filterNot { it.key == artist.key }
         } else {
-            listOf(artist) + favoriteArtists.value.filterNot { it.key == artist.key }
+            listOf(artist) + favoriteArtists.filterNot { it.key == artist.key }
         }
     }
 
     fun toggleFavoritePlaylist(playlist: OnlinePlaylist) = mutate {
         val key = "${playlist.source}_${playlist.id}"
-        favoritePlaylists.value = if (isFavoritePlaylist(key)) {
-            favoritePlaylists.value.filterNot { "${it.source}_${it.id}" == key }
+        favoritePlaylists = if (isFavoritePlaylist(key)) {
+            favoritePlaylists.filterNot { "${it.source}_${it.id}" == key }
         } else {
-            listOf(playlist) + favoritePlaylists.value
+            listOf(playlist) + favoritePlaylists
         }
     }
 
     fun addSearchKeyword(word: String) {
         val trimmed = word.trim()
         if (trimmed.isNotEmpty()) mutate {
-            searchHistory.value = (listOf(trimmed) + searchHistory.value.filterNot { it == trimmed }).take(12)
+            searchHistory = (listOf(trimmed) + searchHistory.filterNot { it == trimmed }).take(12)
         }
     }
 
-    fun clearSearchHistory() = mutate { searchHistory.value = emptyList() }
+    fun clearSearchHistory() = mutate { searchHistory = emptyList() }
 
     fun createPlaylist(name: String, songs: List<OnlineSong> = emptyList()): UserPlaylist =
         createPlaylistSnapshot(UserPlaylist("", name, songs))
@@ -424,8 +457,8 @@ object UserLibrary {
         }
     }
 
-    private fun createPlaylistSnapshot(draft: UserPlaylist): UserPlaylist = synchronized(lock) {
-        val currentPlaylists = playlists.value
+    private fun createPlaylistSnapshot(draft: UserPlaylist): UserPlaylist = mutate {
+        val currentPlaylists = playlists
         val existingIds = currentPlaylists.mapTo(hashSetOf()) { it.id }
         var timestamp = System.currentTimeMillis()
         while ("pl_$timestamp" in existingIds) timestamp++
@@ -436,8 +469,7 @@ object UserLibrary {
             songs = draft.songs.distinctBy { it.uid },
         )
         val candidatePlaylists = currentPlaylists + playlist
-        writeTextAtomically(file, buildRoot(candidatePlaylists).toString())
-        playlists.value = candidatePlaylists
+        playlists = candidatePlaylists
         playlist
     }
 
@@ -447,36 +479,34 @@ object UserLibrary {
         caller.ensureActive()
         return withContext(NonCancellable) {
             withContext(Dispatchers.IO) {
-                synchronized(lock) {
+                mutate {
                     caller.ensureActive()
-                    val current = playlists.value.firstOrNull { it.id == preview.expected.id }
+                    val current = playlists.firstOrNull { it.id == preview.expected.id }
                     check(current === preview.expected && current.toJson().toString() == preview.expectedSnapshot) {
                         "歌单已被修改或删除，请重新读取后确认。"
                     }
                     val updated = preview.snapshotForCommit()
-                    val candidates = playlists.value.map { if (it.id == current.id) updated else it }
-                    writeTextAtomically(file, buildRoot(candidates).toString())
-                    playlists.value = candidates
+                    playlists = playlists.map { if (it.id == current.id) updated else it }
                     updated
                 }
             }
         }
     }
 
-    fun deletePlaylist(id: String) = mutate { playlists.value = playlists.value.filterNot { it.id == id } }
+    fun deletePlaylist(id: String) = mutate { playlists = playlists.filterNot { it.id == id } }
 
     fun renamePlaylist(id: String, name: String) = mutate {
-        playlists.value = playlists.value.map { if (it.id == id) it.copy(name = name.ifBlank { it.name }) else it }
+        playlists = playlists.map { if (it.id == id) it.copy(name = name.ifBlank { it.name }) else it }
     }
 
     fun addToPlaylist(id: String, song: OnlineSong) = mutate {
-        playlists.value = playlists.value.map {
+        playlists = playlists.map {
             if (it.id == id && it.songs.none { item -> item.uid == song.uid }) it.copy(songs = it.songs + song) else it
         }
     }
 
     fun removeFromPlaylist(id: String, uid: String) = mutate {
-        playlists.value = playlists.value.map {
+        playlists = playlists.map {
             if (it.id == id) it.copy(songs = it.songs.filterNot { item -> item.uid == uid }) else it
         }
     }
