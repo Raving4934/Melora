@@ -115,20 +115,27 @@ internal fun LocalMusicSettingsSubPage(onBack: () -> Unit) {
         ActivityResultContracts.OpenDocumentTree(),
     ) { uri ->
         if (uri != null) {
-            runCatching {
+            val permissionPersisted = try {
                 context.contentResolver.takePersistableUriPermission(
                     uri,
                     Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
                 )
+                true
+            } catch (_: Exception) {
+                false
             }
-            val current = folders
-            if (uri.toString() !in current) {
-                MeloraSettings.updateLocalFolders(current + uri.toString())
+            if (permissionPersisted) {
+                val current = folders
+                if (uri.toString() !in current) {
+                    MeloraSettings.updateLocalFolders(current + uri.toString())
+                }
+                // 使用自定义文件夹后自动关闭安卓媒体库
+                MeloraSettings.updateLocalUseMediaStore(false)
+                PlaybackController.postMessage(context, "已添加自定义文件夹，安卓媒体库已关闭")
+                startScan()
+            } else {
+                PlaybackController.postMessage(context, "无法保留所选文件夹权限，请重新选择目录")
             }
-            // 使用自定义文件夹后自动关闭安卓媒体库
-            MeloraSettings.updateLocalUseMediaStore(false)
-            PlaybackController.postMessage(context, "已添加自定义文件夹，安卓媒体库已关闭")
-            startScan()
         }
     }
 
