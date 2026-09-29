@@ -20,6 +20,7 @@ import com.leyu.melora.playback.DownloadCenter
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.UserLibrary
+import com.leyu.melora.playback.local.LocalTagFiller
 import com.leyu.melora.playback.local.LocalMediaStore
 import com.leyu.melora.playback.lx.LxScriptStore
 import com.leyu.melora.playback.sdk.LxScriptPool
@@ -65,6 +66,7 @@ class MeloraApplication : Application(), SingletonImageLoader.Factory {
         // Activity 等待统一屏障后再首次组合，避免先渲染空列表再整体闪变。
         startupScope.launch {
             try {
+                runStartupStep("标签写入恢复") { LocalTagFiller.recoverInterruptedWrites(this@MeloraApplication) }
                 coroutineScope {
                     listOf(
                         async { runStartupStep("用户库") { UserLibrary.init(this@MeloraApplication) } },

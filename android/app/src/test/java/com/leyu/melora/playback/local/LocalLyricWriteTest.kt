@@ -103,16 +103,104 @@ class LocalLyricWriteTest {
         assertEquals(sourceLines, embedded?.parse())
     }
 
+    @Test fun killedWriterRestoresOriginalOnNextProcessAndRecoveryIsIdempotent() {
+        val root = java.nio.file.Files.createTempDirectory("tag-process-death").toFile()
+        try {
+            val target = java.io.File(root, "audio").apply { writeText("original audio bytes") }
+            val journal = java.io.File(root, "journal").apply { mkdir() }
+            val classpath = listOf(ContentTagCrashProcess::class.java, ContentTagWrite::class.java, Unit::class.java)
+                .map { java.io.File(requireNotNull(it.protectionDomain).codeSource.location.toURI()).path }
+                .distinct().joinToString(java.io.File.pathSeparator)
+            fun child(mode: String): String {
+                val process = ProcessBuilder(
+                    "${System.getProperty("java.home")}/bin/java", "-cp", classpath,
+                    ContentTagCrashProcess::class.java.name, mode, journal.path, target.path,
+                ).redirectErrorStream(true).start()
+                if (!process.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)) {
+                    process.destroyForcibly()
+                    throw AssertionError("bounded child must exit")
+                }
+                val output = process.inputStream.bufferedReader().readText()
+                assertEquals(output, 0, process.exitValue())
+                return output
+            }
+            child("interrupt")
+            assertEquals("new", target.readText())
+            assertTrue(java.io.File(journal, "pending").isFile)
+            child("recover")
+            assertEquals("original audio bytes", target.readText())
+            assertFalse(journal.exists())
+            child("recover")
+            assertEquals("original audio bytes", target.readText())
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test fun completedWriteIsNotRolledBackWhenProcessEndsBeforeCleanup() {
+        val directory = java.nio.file.Files.createTempDirectory("tag-committed").toFile()
+        try {
+            val transaction = ContentTagWrite(directory)
+            transaction.original.writeText("old audio")
+            transaction.rewritten.writeText("new tags")
+            val target = java.io.ByteArrayOutputStream()
+            transaction.overwrite("content://fixture/audio") { target }
+            assertFalse(transaction.pending)
+            // 故意不close，模拟成功提交后、清理事务目录前进程退出。
+            ContentTagWrite(directory).use { it.recover { error("committed write must not be restored") } }
+            assertEquals("new tags", target.toString("UTF-8"))
+            assertFalse(directory.exists())
+        } finally { directory.deleteRecursively() }
+    }
+
+    @Test fun unavailableRecoveryKeepsJournalAndOriginalUntilPermissionReturns() {
+        val root = java.nio.file.Files.createTempDirectory("tag-recovery").toFile()
+        try {
+            val transaction = ContentTagWrite(root)
+            transaction.original.writeText("original audio")
+            transaction.rewritten.writeText("updated")
+            org.junit.Assert.assertThrows(java.io.IOException::class.java) {
+                transaction.overwrite("content://fixture/audio") { throw java.io.IOException("provider died") }
+            }
+            transaction.close()
+            assertTrue(transaction.pending)
+            org.junit.Assert.assertThrows(SecurityException::class.java) {
+                ContentTagWrite(root).use { it.recover { throw SecurityException("grant expired") } }
+            }
+            assertTrue(transaction.original.exists())
+            assertTrue(transaction.pending)
+            val output = java.io.ByteArrayOutputStream()
+            ContentTagWrite(root).use { it.recover { uri ->
+                assertEquals("content://fixture/audio", uri)
+                output
+            } }
+            assertEquals("original audio", output.toString("UTF-8"))
+            assertFalse(root.exists())
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test fun missingOriginalNeverTruncatesTargetDuringRecovery() {
+        val directory = java.nio.file.Files.createTempDirectory("tag-missing-original").toFile()
+        try {
+            java.io.File(directory, "pending").writeText("content://fixture/audio")
+            var opened = false
+            org.junit.Assert.assertThrows(java.io.FileNotFoundException::class.java) {
+                ContentTagWrite(directory).use { it.recover { opened = true; java.io.ByteArrayOutputStream() } }
+            }
+            assertFalse(opened)
+            assertTrue(java.io.File(directory, "pending").exists())
+        } finally { directory.deleteRecursively() }
+    }
+
     @Test fun contentWriteFailureAndCancellationRestoreOriginalBytes() {
         for (failure in listOf(java.io.IOException("write failed"), kotlinx.coroutines.CancellationException("cancelled"))) {
             val directory = java.nio.file.Files.createTempDirectory("lyric-rollback").toFile()
             try {
-                val original = java.io.File(directory, "original").apply { writeText("original audio bytes") }
-                val rewritten = java.io.File(directory, "edited").apply { writeText("new tags and original audio bytes") }
+                val transaction = ContentTagWrite(directory)
+            val original = transaction.original.apply { writeText("original audio bytes") }
+                val rewritten = transaction.rewritten.apply { writeText("new tags and original audio bytes") }
                 var bytes = byteArrayOf()
                 var opens = 0
                 val thrown = org.junit.Assert.assertThrows(failure.javaClass) {
-                    overwriteContentWithRollback(original, rewritten) {
+                    transaction.overwrite("content://fixture/audio") {
                         val attempt = ++opens
                         bytes = byteArrayOf()
                         object : java.io.OutputStream() {
@@ -134,16 +222,17 @@ class LocalLyricWriteTest {
     @Test fun refusedInitialAccessDoesNotTryToWriteAgainAndFailedRestoreKeepsBackupReference() {
         val directory = java.nio.file.Files.createTempDirectory("lyric-restore-failure").toFile()
         try {
-            val original = java.io.File(directory, "original").apply { writeText("original audio") }
-            val rewritten = java.io.File(directory, "edited").apply { writeText("new") }
+            val transaction = ContentTagWrite(directory)
+            val original = transaction.original.apply { writeText("original audio") }
+            val rewritten = transaction.rewritten.apply { writeText("new") }
             var opens = 0
             org.junit.Assert.assertThrows(SecurityException::class.java) {
-                overwriteContentWithRollback(original, rewritten) { opens++; throw SecurityException("denied") }
+                transaction.overwrite("content://fixture/audio") { opens++; throw SecurityException("denied") }
             }
             assertEquals(1, opens)
             opens = 0
             val thrown = org.junit.Assert.assertThrows(java.io.IOException::class.java) {
-                overwriteContentWithRollback(original, rewritten) {
+                transaction.overwrite("content://fixture/audio") {
                     opens++
                     object : java.io.OutputStream() {
                         override fun write(value: Int) { throw java.io.IOException("provider unavailable") }
@@ -188,4 +277,34 @@ class LocalLyricWriteTest {
         addedAt = 1,
         folder = "Music",
     )
+}
+
+/** 真正终止独立 JVM，跳过 catch/finally；只操作测试创建的临时文件。 */
+internal object ContentTagCrashProcess {
+    @JvmStatic fun main(args: Array<String>) {
+        val directory = java.io.File(args[1])
+        val target = java.io.File(args[2])
+        if (args[0] == "recover") {
+            ContentTagWrite(directory).use { it.recover { target.outputStream() } }
+            return
+        }
+        ContentTagWrite(directory).use { transaction ->
+            target.copyTo(transaction.original)
+            transaction.rewritten.writeText("new audio tags")
+            transaction.overwrite(target.toURI().toString()) {
+                val output = target.outputStream()
+                object : java.io.OutputStream() {
+                    private var written = 0
+                    override fun write(value: Int) {
+                        output.write(value)
+                        if (++written == 3) {
+                            output.fd.sync()
+                            Runtime.getRuntime().halt(0)
+                        }
+                    }
+                    override fun close() = output.close()
+                }
+            }
+        }
+    }
 }

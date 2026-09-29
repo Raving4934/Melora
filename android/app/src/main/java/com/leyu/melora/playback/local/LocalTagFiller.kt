@@ -23,7 +23,10 @@ import com.leyu.melora.playback.recoverableOrNull
 import com.leyu.melora.playback.sdk.CoverLoader
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.sdk.SourceResolver
+import java.io.Closeable
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.io.IOException
 import java.io.OutputStream
 import java.util.Locale
@@ -322,17 +325,8 @@ object LocalTagFiller {
             ?: return TagWriteOutcome.Failed(IllegalArgumentException("不支持的音频容器"))
         val local = LocalMediaStore.find(request.local.id) ?: request.local
         val uri = local.uri.toUri()
-        // 保留数据是普通读，允许与其它读并发；真正的底层写入从排他租约开始。
-        val preserveCover = when {
-            request.manual -> null
-            request.gaps.cover -> request.coverBytes
-            else -> LocalTagReader.embeddedPicture(context, local.uri) ?: readCachedCover(context, local.coverUri)
-        }
-        val preserveLyric = if (request.gaps.lyric) {
-            request.lyric
-        } else {
-            LocalTagReader.embeddedLyrics(context, local.uri, local.mimeType)
-        }
+        // file 分支在写租约前读取；content 分支必须等恢复后从独立原件读取，不能嵌套获取目标读锁。
+        val prepared = if (uri.scheme == "file") request.preservingContent(context, local, local.uri) else request
         return LocalMediaIoCoordinator.withExclusive(context, uri) {
             // 写租约本身保证起播不能与物理写入交错；此检查只用于减少无意义写入。
             val queuedManual = pendingWrites[local.id]?.takeIf { it.manual }
@@ -347,15 +341,13 @@ object LocalTagFiller {
                 return@withExclusive TagWriteOutcome.Deferred
             }
             when (uri.scheme) {
-                "file" -> writeFileTags(context, local, uri, extension, request, preserveCover, preserveLyric)
+                "file" -> writeFileTags(context, local, uri, extension, prepared)
                 "content" -> writeContentTags(
                     context,
                     local,
                     uri,
                     extension,
                     request,
-                    preserveCover,
-                    preserveLyric,
                     allowAuthorization,
                 )
                 else -> TagWriteOutcome.Failed(IllegalArgumentException("不支持的媒体 URI: ${uri.scheme}"))
@@ -369,12 +361,10 @@ object LocalTagFiller {
         uri: Uri,
         extension: String,
         request: PendingTagWrite,
-        cover: ByteArray?,
-        lyric: EmbeddedLyrics?,
     ): TagWriteOutcome = try {
         val file = uri.path?.let(::File)?.takeIf { it.isFile && it.canWrite() }
             ?: error("文件不存在或不可写")
-        writeMetadata(file, extension, local, request, cover, lyric)
+        writeMetadata(file, extension, local, request)
         TagWriteOutcome.Written(refreshStorageState(context, local))
     } catch (cancelled: CancellationException) {
         throw cancelled
@@ -388,52 +378,81 @@ object LocalTagFiller {
         uri: Uri,
         extension: String,
         request: PendingTagWrite,
-        cover: ByteArray?,
-        lyric: EmbeddedLyrics?,
         allowAuthorization: Boolean,
     ): TagWriteOutcome {
-        val original = runCatching { File.createTempFile("melora-tag-original-", extension, context.cacheDir) }
-            .getOrElse { return TagWriteOutcome.Failed(it) }
-        val temp = runCatching { File.createTempFile("melora-tag-", extension, context.cacheDir) }
-            .getOrElse {
-                runCatching { original.delete() }
-                return TagWriteOutcome.Failed(it)
+        val root = File(context.filesDir, "local-tag-writes")
+        val transaction = try {
+            // 上次恢复未获授权时保留原件；同一 URI 再次写入前必须先恢复，不能备份损坏文件。
+            ContentTagWrite.recover(root, uri.toString()) { target ->
+                context.contentResolver.openOutputStream(target.toUri(), "rwt") ?: error("无法恢复媒体文件")
             }
-        var keepBackup = false
+            root.mkdirs()
+            ContentTagWrite(Files.createTempDirectory(root.toPath(), "write-").toFile())
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            if (error is SecurityException && allowAuthorization) return TagWriteOutcome.NeedsAuthorization(error)
+            return TagWriteOutcome.Failed(error)
+        }
         try {
             context.contentResolver.openInputStream(uri)?.use { input ->
-                original.outputStream().use { input.copyTo(it) }
+                transaction.original.outputStream().use { output ->
+                    input.copyTo(output)
+                    output.fd.sync()
+                }
             } ?: error("无法读取媒体文件")
-            original.inputStream().use { input -> temp.outputStream().use { input.copyTo(it) } }
-            writeMetadata(temp, extension, local, request, cover, lyric)
-            overwriteContentWithRollback(original, temp) {
+            transaction.original.copyTo(transaction.rewritten)
+            writeMetadata(transaction.rewritten, extension, local,
+                request.preservingContent(context, local, transaction.original.toURI().toString()))
+            transaction.overwrite(uri.toString()) {
                 context.contentResolver.openOutputStream(uri, "rwt") ?: error("无法打开媒体文件写入流")
             }
             return TagWriteOutcome.Written(refreshStorageState(context, local))
         } catch (error: Throwable) {
-            val failedRestore = error.suppressed.filterIsInstance<ContentUriRestoreFailure>().firstOrNull()
-            keepBackup = failedRestore != null
             if (error is CancellationException) {
-                if (keepBackup) PlaybackController.postMessage(context,
-                    "本地标签写入取消且原文件恢复失败；原始备份保留在 ${original.absolutePath}")
+                if (transaction.pending) PlaybackController.postMessage(context,
+                    "本地标签写入取消且原文件恢复失败；原始备份保留在 ${transaction.original.absolutePath}")
                 throw error
             }
-            if (keepBackup) return TagWriteOutcome.Failed(error, original)
+            if (transaction.pending) return TagWriteOutcome.Failed(error, transaction.original)
             if (error is SecurityException && allowAuthorization) return TagWriteOutcome.NeedsAuthorization(error)
             return TagWriteOutcome.Failed(error)
         } finally {
-            runCatching { temp.delete() }
-            if (!keepBackup) runCatching { original.delete() }
+            transaction.close()
         }
     }
+
+    /** 只在 IO 启动屏障内执行；无未完成事务时不读取任何音频。 */
+    internal fun recoverInterruptedWrites(context: Context) {
+        val root = File(context.filesDir, "local-tag-writes")
+        root.listFiles()?.filter(File::isDirectory)?.forEach { directory ->
+            try {
+                ContentTagWrite(directory).use { transaction ->
+                    transaction.recover { target ->
+                        context.contentResolver.openOutputStream(target.toUri(), "rwt")
+                            ?: error("无法恢复媒体文件")
+                    }
+                }
+            } catch (error: Exception) {
+                // 失效的 SAF 授权不能封锁整个应用，更不能删除唯一原件。
+                Log.e(TAG, "标签恢复待重试，原始文件保留在 ${directory.absolutePath}", error)
+            }
+        }
+    }
+
+    private fun PendingTagWrite.preservingContent(context: Context, local: LocalSong, readUri: String) = copy(
+        coverBytes = when {
+            manual -> null
+            gaps.cover -> coverBytes
+            else -> LocalTagReader.embeddedPicture(context, readUri) ?: readCachedCover(context, local.coverUri)
+        },
+        lyric = if (gaps.lyric) lyric else LocalTagReader.embeddedLyrics(context, readUri, local.mimeType),
+    )
 
     private fun writeMetadata(
         file: File,
         extension: String,
         local: LocalSong,
         request: PendingTagWrite,
-        cover: ByteArray?,
-        lyric: EmbeddedLyrics?,
     ) {
         DownloadMetadataWriter.write(
             file = file,
@@ -441,8 +460,8 @@ object LocalTagFiller {
             title = if (request.manual) "" else local.title.ifBlank { request.matched?.name.orEmpty() },
             artist = if (request.manual) "" else local.artist.ifBlank { request.matched?.singer.orEmpty() },
             album = if (request.manual) "" else local.album.ifBlank { request.matched?.albumName.orEmpty() },
-            cover = if (request.manual) null else cover,
-            lyric = lyric,
+            cover = request.coverBytes,
+            lyric = request.lyric,
             year = if (request.manual) null else local.year.takeIf { it in 1900..2100 } ?: request.matched?.year,
         )
     }
@@ -653,18 +672,64 @@ internal fun shouldDeferTagWriteForQueuedManual(
     sameRequest: Boolean,
 ): Boolean = queuedIsManual && (!requestIsManual || !sameRequest)
 
-/** 唯一 content 覆写事务；回滚失败只附加错误，原始备份由上层保留。 */
-internal fun overwriteContentWithRollback(original: File, rewritten: File, openOutput: () -> OutputStream) {
-    val output = openOutput() // 未获得写流时不能贸然申请第二次写入或触发恢复。
-    try {
-        output.use { target -> rewritten.inputStream().use { it.copyTo(target) } }
-    } catch (error: Throwable) {
-        try {
-            openOutput().use { target -> original.inputStream().use { it.copyTo(target) } }
-        } catch (restore: Throwable) {
-            error.addSuppressed(ContentUriRestoreFailure(original, restore))
+/** 一个原件、一份持久化 URI 日志；普通异常和进程中断走同一恢复路径。 */
+internal class ContentTagWrite(private val directory: File) : Closeable {
+    val original = File(directory, "original")
+    val rewritten = File(directory, "rewritten")
+    private val journal = File(directory, "pending")
+    val pending: Boolean get() = journal.exists()
+
+    fun overwrite(uri: String, openOutput: () -> OutputStream) {
+        val ready = File(directory, "ready")
+        ready.outputStream().use { output ->
+            output.write(uri.toByteArray(Charsets.UTF_8))
+            output.fd.sync()
         }
-        throw error
+        Files.move(ready.toPath(), journal.toPath(), StandardCopyOption.ATOMIC_MOVE)
+        val output = try {
+            openOutput()
+        } catch (error: Throwable) {
+            // 尚未拿到写流，不立即尝试第二次写入；系统授权仍由原入口处理。
+            if (error is SecurityException) {
+                try { Files.delete(journal.toPath()) } catch (cleanup: Exception) { error.addSuppressed(cleanup) }
+            }
+            throw error
+        }
+        try {
+            output.use { target -> rewritten.inputStream().use { it.copyTo(target) } }
+            Files.delete(journal.toPath())
+        } catch (error: Throwable) {
+            try {
+                recover { openOutput() }
+            } catch (restore: Throwable) {
+                error.addSuppressed(ContentUriRestoreFailure(original, restore))
+            }
+            throw error
+        }
+    }
+
+    fun recover(openOutput: (String) -> OutputStream) {
+        if (!pending) return
+        // 先打开并确认原件可读，再申请可能截断目标的写流。
+        original.inputStream().use { input ->
+            openOutput(journal.readText()).use { target -> input.copyTo(target) }
+        }
+        Files.delete(journal.toPath())
+    }
+
+    override fun close() {
+        if (!pending) directory.deleteRecursively()
+    }
+
+    companion object {
+        fun recover(root: File, uri: String, openOutput: (String) -> OutputStream) {
+            root.listFiles()?.filter(File::isDirectory)?.forEach { directory ->
+                val transaction = ContentTagWrite(directory)
+                if (transaction.pending && transaction.journal.readText() == uri) {
+                    transaction.use { it.recover(openOutput) }
+                }
+            }
+        }
     }
 }
 

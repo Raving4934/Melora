@@ -50,6 +50,52 @@ class LocalTagReaderTest {
     }
 
     @Test
+    fun interruptedProviderOverwriteRetriesStartupRecoveryWithoutLosingLyrics() {
+        val provider = android.net.Uri.parse(
+            "content://${InstrumentationRegistry.getInstrumentation().context.packageName}.backup-fixture/document",
+        )
+        val resolver = context.contentResolver
+        val root = File(filesRoot, "local-tag-writes/write-fixture").apply { mkdirs() }
+        val rich = "<tt><body><div><p begin=\"1s\">rich</p></div></body></tt>"
+        val original = id3Tag(
+            id3Frame("USLT", usltBody("plain lyrics")),
+            id3Frame("TXXX", txxxBody("LYRICS_TTML", rich)),
+        )
+        resolver.call(provider, "reset", null, null)
+        try {
+            requireNotNull(resolver.openOutputStream(provider, "rwt")).use { it.write(original) }
+            ContentTagWrite(root).use { transaction ->
+                transaction.original.writeBytes(original)
+                transaction.rewritten.writeText("replacement")
+                resolver.call(provider, "failNextWrite", null, null)
+                org.junit.Assert.assertThrows(java.io.FileNotFoundException::class.java) {
+                    transaction.overwrite(provider.toString()) {
+                        requireNotNull(resolver.openOutputStream(provider, "rwt"))
+                    }
+                }
+            }
+            assertTrue(File(root, "pending").isFile)
+            val fromOriginal = requireNotNull(LocalTagReader.embeddedLyrics(
+                context, File(root, "original").toURI().toString(), "audio/mpeg",
+            ))
+            assertEquals("plain lyrics", fromOriginal.plain)
+            assertEquals(rich, fromOriginal.ttml)
+            resolver.call(provider, "failNextWrite", null, null)
+            LocalTagFiller.recoverInterruptedWrites(context)
+            assertTrue("提供器暂不可用时不能删除原件", File(root, "original").isFile)
+            assertTrue(File(root, "pending").isFile)
+            LocalTagFiller.recoverInterruptedWrites(context)
+            LocalTagFiller.recoverInterruptedWrites(context)
+            val restored = requireNotNull(resolver.openInputStream(provider)).use { it.readBytes() }
+            org.junit.Assert.assertArrayEquals(original, restored)
+            assertFalse(root.exists())
+            val lyrics = requireNotNull(LocalTagReader.embeddedLyricsFromBytes(restored, "audio/mpeg"))
+            assertEquals("plain lyrics", lyrics.plain)
+            assertEquals(rich, lyrics.ttml)
+        } finally { resolver.call(provider, "reset", null, null) }
+    }
+
+    @Test
     fun id3ScansUsltAndTheNamedTxxxFrameWithoutEarlyReturn() {
         val rich = "<tt><body><div><p begin=\"1s\">rich</p></div></body></tt>"
         val bytes = id3Tag(
