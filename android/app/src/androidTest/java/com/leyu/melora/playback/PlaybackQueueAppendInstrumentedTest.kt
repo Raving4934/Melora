@@ -37,11 +37,16 @@ import org.junit.runner.RunWith
 class PlaybackQueueAppendInstrumentedTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
-    private val prefs get() = context.getSharedPreferences("melora-queue", 0)
+    private val testContext = object : ContextWrapper(context) {
+        override fun getApplicationContext(): Context = this
+        override fun getSharedPreferences(name: String, mode: Int): SharedPreferences =
+            instrumentation.context.getSharedPreferences("queue-fixture.$name", mode)
+    }
+    private val prefs get() = testContext.getSharedPreferences("melora-queue", 0)
     private fun track(id: String) = UiTrack(id, "同名歌曲", "测试歌手", "测试专辑")
 
     @Test fun batchAppendPreservesPausedPositionAndDeduplicatesInPlaylistOrder() = withPlayer { player, _ ->
-        main { PlaybackController.addToQueue(context, listOf(track("b"), track("c"), track("c"), track("d"))) }
+        main { PlaybackController.addToQueue(testContext, listOf(track("b"), track("c"), track("c"), track("d"))) }
         await { player.mediaItemCount == 4 }
         main {
             assertEquals(listOf("a", "b", "c", "d"), uids(player))
@@ -49,7 +54,7 @@ class PlaybackQueueAppendInstrumentedTest {
             assertTrue("追加后位置=${player.currentPosition}", player.currentPosition in 11_800L..12_200L)
             assertFalse(player.playWhenReady)
             assertEquals("已加入播放队列 2 首", PlaybackController.state.value.message)
-            PlaybackController.addToQueue(context, listOf(track("b"), track("c")))
+            PlaybackController.addToQueue(testContext, listOf(track("b"), track("c")))
             assertEquals("歌曲已在播放队列中", PlaybackController.state.value.message)
         }
         val saved = JSONArray(prefs.getString("queue", "[]"))
@@ -60,7 +65,7 @@ class PlaybackQueueAppendInstrumentedTest {
         main { controller.play() }
         await { player.isPlaying }
         val before = main { player.currentPosition }
-        main { PlaybackController.addToQueue(context, listOf(track("c"), track("d"))) }
+        main { PlaybackController.addToQueue(testContext, listOf(track("c"), track("d"))) }
         await { player.mediaItemCount == 4 }
         main {
             assertTrue(player.isPlaying)
@@ -70,7 +75,7 @@ class PlaybackQueueAppendInstrumentedTest {
     }
 
     @Test fun emptyQueueAppendNeverStartsPlaybackAndKeepsDifferentIdentities() = withPlayer(empty = true) { player, _ ->
-        main { PlaybackController.addToQueue(context, listOf(track("quality128"), track("qualityHR"), track("quality128"))) }
+        main { PlaybackController.addToQueue(testContext, listOf(track("quality128"), track("qualityHR"), track("quality128"))) }
         await { player.mediaItemCount == 2 }
         main {
             assertEquals(listOf("quality128", "qualityHR"), uids(player))
@@ -82,7 +87,7 @@ class PlaybackQueueAppendInstrumentedTest {
     @Test fun appendRestoresSavedQueueBeforeAddingWithoutAutoplay() = withPlayer(empty = true, listen = true) { player, _ ->
         val saved = JSONArray().put(JSONObject().put("uid", "saved-a")).put(JSONObject().put("uid", "saved-b"))
         prefs.edit().putString("queue", saved.toString()).putInt("index", 1).commit()
-        main { PlaybackController.addToQueue(context, listOf(track("c"))) }
+        main { PlaybackController.addToQueue(testContext, listOf(track("c"))) }
         await { player.mediaItemCount == 3 }
         main {
             assertEquals(listOf("saved-a", "saved-b", "c"), uids(player))
@@ -93,10 +98,10 @@ class PlaybackQueueAppendInstrumentedTest {
 
     @Test fun emptyInputAndDisconnectedServiceDoNotReportSuccess() = withPlayer { player, _ ->
         main {
-            PlaybackController.addToQueue(context, emptyList())
+            PlaybackController.addToQueue(testContext, emptyList())
             assertEquals("没有可加入的歌曲", PlaybackController.state.value.message)
             field("controller").set(PlaybackController, null)
-            PlaybackController.addToQueue(context, listOf(track("c")))
+            PlaybackController.addToQueue(testContext, listOf(track("c")))
             assertEquals("播放服务尚未就绪，请稍后重试", PlaybackController.state.value.message)
             assertEquals(listOf("a", "b"), uids(player))
         }
@@ -104,7 +109,7 @@ class PlaybackQueueAppendInstrumentedTest {
 
     @Test fun clearQueueRemovesSavedQueueAndAppendCannotResurrectIt() = withPlayer(listen = true) { player, _ ->
         main {
-            PlaybackController.addToQueue(context, listOf(track("c")))
+            PlaybackController.addToQueue(testContext, listOf(track("c")))
             assertTrue(prefs.contains("queue"))
             PlaybackController.clearQueue()
             assertNull(PlaybackController.state.value.current)
@@ -112,14 +117,14 @@ class PlaybackQueueAppendInstrumentedTest {
             assertFalse(prefs.contains("queue"))
         }
         await { player.mediaItemCount == 0 }
-        main { PlaybackController.addToQueue(context, listOf(track("new"))) }
+        main { PlaybackController.addToQueue(testContext, listOf(track("new"))) }
         await { player.mediaItemCount == 1 }
         main { assertEquals(listOf("new"), uids(player)) }
     }
 
     @Test fun serviceExitClearsSavedQueueEvenWithoutConnectedUi() = withPlayer { player, _ ->
         main {
-            PlaybackController.addToQueue(context, listOf(track("c")))
+            PlaybackController.addToQueue(testContext, listOf(track("c")))
             assertNotNull(PlaybackController.state.value.current)
             field("controller").set(PlaybackController, null)
             // 通知栏使用服务端Player，不能依赖界面控制器仍然连接。
@@ -133,7 +138,7 @@ class PlaybackQueueAppendInstrumentedTest {
     }
 
     @Test fun serviceExitDoesNotRestoreOldTracksOnNextQueueUse() = withPlayer(listen = true) { player, controller ->
-        main { PlaybackController.addToQueue(context, listOf(track("c"))) }
+        main { PlaybackController.addToQueue(testContext, listOf(track("c"))) }
         // 先让已保存队列真正到达服务端，再模拟通知栏退出命令。
         await { player.mediaItemCount == 3 }
         main {
@@ -145,26 +150,73 @@ class PlaybackQueueAppendInstrumentedTest {
         main {
             assertFalse(prefs.contains("queue"))
             assertNull(PlaybackController.state.value.current)
-            PlaybackController.addToQueue(context, listOf(track("new")))
+            PlaybackController.addToQueue(testContext, listOf(track("new")))
         }
         await { player.mediaItemCount == 1 }
         main { assertEquals(listOf("new"), uids(player)) }
     }
 
     @Test fun externalTimelineClearIsPersistedAfterCallbacksSettle() = withPlayer(listen = true) { player, controller ->
-        main { PlaybackController.addToQueue(context, listOf(track("c"))) }
+        main { PlaybackController.addToQueue(testContext, listOf(track("c"))) }
         await { player.mediaItemCount == 3 }
-        main { player.clearMediaItems() }
+        val lyricJob = Job()
+        val lyricState = field("_lyric").get(PlaybackController) as MutableStateFlow<PlayerLyric?>
+        main {
+            field("lyricJob").set(PlaybackController, lyricJob)
+            lyricState.value = PlayerLyric("a", "a", "artist", listOf(LyricLine(0, "old")), "test")
+            player.clearMediaItems()
+        }
         await { controller.mediaItemCount == 0 && PlaybackController.state.value.current == null }
         instrumentation.waitForIdleSync()
+        main {
+            assertTrue(lyricJob.isCancelled)
+            assertNull(field("lyricJob").get(PlaybackController))
+            assertNull(field("detailUid").get(PlaybackController))
+            assertNull(lyricState.value)
+        }
         assertFalse("外部清空不能留下待恢复的旧队列", prefs.contains("queue"))
     }
 
+    @Test fun removingLastQueueItemCancelsCurrentLyricLoadThroughPublish() = withPlayer(listen = true) { _, _ ->
+        val lyricJob = Job()
+        val lyricState = field("_lyric").get(PlaybackController) as MutableStateFlow<PlayerLyric?>
+        main {
+            field("lyricJob").set(PlaybackController, lyricJob)
+            lyricState.value = PlayerLyric("a", "a", "artist", listOf(LyricLine(0, "old")), "test")
+            PlaybackController.removeFromQueue(1)
+            PlaybackController.removeFromQueue(0)
+        }
+        await {
+            PlaybackController.state.value.current == null &&
+                lyricJob.isCancelled && field("lyricJob").get(PlaybackController) == null &&
+                field("detailUid").get(PlaybackController) == null && lyricState.value == null
+        }
+        main {
+            // 空队列重复发布/清理应幂等，不得重新挂起旧身份。
+            PlaybackController.javaClass.getDeclaredMethod("publish").apply { isAccessible = true }
+                .invoke(PlaybackController)
+            PlaybackController.clearQueue()
+            assertTrue(lyricJob.isCancelled)
+            assertNull(field("lyricJob").get(PlaybackController))
+            assertNull(field("detailUid").get(PlaybackController))
+            assertNull(lyricState.value)
+        }
+    }
+
     @Test fun disconnectInvalidatesControllerButKeepsSavedQueueForRecovery() = withPlayer(listen = true) { _, controller ->
-        main { PlaybackController.addToQueue(context, listOf(track("c"))) }
+        main { PlaybackController.addToQueue(testContext, listOf(track("c"))) }
         val saved = prefs.getString("queue", null)
+        val positionJob = main {
+            assertFalse("fixture stays paused", controller.isPlaying)
+            (field("positionJob").get(PlaybackController) as? Job)
+                ?: error("connected controller should own a position sampler")
+        }
+        assertTrue("sampling remains active while paused", positionJob.isActive)
         main { controller.release() }
-        await { field("controller").get(PlaybackController) == null }
+        await {
+            field("controller").get(PlaybackController) == null &&
+                field("positionJob").get(PlaybackController) == null && positionJob.isCancelled
+        }
         main {
             assertNull(field("controllerFuture").get(PlaybackController))
             assertFalse(PlaybackController.state.value.ready)
@@ -380,17 +432,23 @@ class PlaybackQueueAppendInstrumentedTest {
                 .setListener(field("controllerListener").get(PlaybackController) as MediaController.Listener)
                 .buildAsync()
         }.get(5, TimeUnit.SECONDS)
-        val fields = listOf("controller", "controllerFuture", "bookQueue", "appContext", "lastQueueFingerprint", "detailUid", "currentQueueId", "playbackPreflight", "queueLoadJob", "pendingPlayback").associateWith(::field)
+        val fields = listOf("controller", "controllerFuture", "bookQueue", "appContext", "lastQueueFingerprint", "detailUid", "currentQueueId", "playbackPreflight", "queueLoadJob", "pendingPlayback", "lyricJob", "positionJob").associateWith(::field)
         val previous = main { fields.mapValues { it.value.get(PlaybackController) } }
         @Suppress("UNCHECKED_CAST")
         val state = field("_state").get(PlaybackController) as MutableStateFlow<PlayerUiState>
         val previousState = state.value
+        @Suppress("UNCHECKED_CAST")
+        val lyricState = field("_lyric").get(PlaybackController) as MutableStateFlow<PlayerLyric?>
+        val previousLyric = lyricState.value
+        val previousController = previous["controller"] as? MediaController
         val savedPreferences = prefs.all
         prefs.edit().clear().commit()
         try {
             main {
+                (fields.getValue("positionJob").get(PlaybackController) as? Job)?.cancel()
+                fields.getValue("positionJob").set(PlaybackController, null)
                 fields.getValue("controller").set(PlaybackController, controller)
-                fields.getValue("appContext").set(PlaybackController, context.applicationContext)
+                fields.getValue("appContext").set(PlaybackController, testContext.applicationContext)
                 fields.getValue("detailUid").set(PlaybackController, if (empty) "quality128" else "a")
                 if (!empty) {
                     TrackRegistry.registerAll(listOf(track("a"), track("b")))
@@ -412,8 +470,19 @@ class PlaybackQueueAppendInstrumentedTest {
             main {
                 (field("playbackPreflight").get(PlaybackController) as? Job)?.cancel()
                 (field("queueLoadJob").get(PlaybackController) as? Job)?.cancel()
-                fields.forEach { (name, field) -> field.set(PlaybackController, previous[name]) }
+                (fields.getValue("lyricJob").get(PlaybackController) as? Job)
+                    ?.takeIf { it !== previous["lyricJob"] }?.cancel()
+                (fields.getValue("positionJob").get(PlaybackController) as? Job)?.cancel()
+                fields.forEach { (name, field) ->
+                    if (name != "positionJob") field.set(PlaybackController, previous[name])
+                }
+                fields.getValue("positionJob").set(PlaybackController, null)
                 state.value = previousState
+                lyricState.value = previousLyric
+                if (previousController?.isConnected == true) {
+                    PlaybackController.javaClass.getDeclaredMethod("attach", MediaController::class.java)
+                        .apply { isAccessible = true }.invoke(PlaybackController, previousController)
+                }
                 controller.release(); session.release(); player.release()
             }
             prefs.edit().clear().apply {

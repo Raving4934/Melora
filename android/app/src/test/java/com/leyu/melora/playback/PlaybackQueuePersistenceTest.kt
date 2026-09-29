@@ -64,20 +64,32 @@ class PlaybackQueuePersistenceTest {
     }
 
     @Test
-    fun clearAndStopCancelPendingPlaybackEvenBeforeControllerConnects() {
+    fun clearAndStopCancelPendingPlaybackAndLyricsEvenBeforeControllerConnects() {
         // 直接构造冷连接待处理状态，不为测试向生产入口增加适配器或setter。
         val owner = PlaybackController
         val jobField = owner.javaClass.getDeclaredField("queueLoadJob").apply { isAccessible = true }
+        val lyricJobField = owner.javaClass.getDeclaredField("lyricJob").apply { isAccessible = true }
         val actionField = owner.javaClass.getDeclaredField("pendingPlayback").apply { isAccessible = true }
+        val detailUidField = owner.javaClass.getDeclaredField("detailUid").apply { isAccessible = true }
         val stateField = owner.javaClass.getDeclaredField("_state").apply { isAccessible = true }
+        val lyricStateField = owner.javaClass.getDeclaredField("_lyric").apply { isAccessible = true }
         @Suppress("UNCHECKED_CAST")
         val state = stateField.get(owner) as MutableStateFlow<PlayerUiState>
+        @Suppress("UNCHECKED_CAST")
+        val lyricState = lyricStateField.get(owner) as MutableStateFlow<PlayerLyric?>
         val previous = state.value
+        val previousLyric = lyricState.value
+        val previousLyricJob = lyricJobField.get(owner)
+        val previousDetailUid = detailUidField.get(owner)
         try {
             for (end in listOf(owner::clearQueue, { owner.stop() })) {
                 val pending = Job()
+                val lyricJob = Job()
                 jobField.set(owner, pending)
+                lyricJobField.set(owner, lyricJob)
                 actionField.set(owner, PendingPlaybackSelection(listOf(track("pending")), insertSingle = true))
+                detailUidField.set(owner, "old")
+                lyricState.value = PlayerLyric("old", "old", "artist", listOf(LyricLine(0, "old")), "test")
                 state.value = previous.copy(
                     current = track("old"), queue = listOf(track("old")),
                     playing = true, pendingQueueId = "same-queue",
@@ -85,8 +97,12 @@ class PlaybackQueuePersistenceTest {
                 end()
                 end() // 重复停止/清空必须幂等。
                 assertTrue(pending.isCancelled)
+                assertTrue(lyricJob.isCancelled)
                 assertNull(jobField.get(owner))
+                assertNull(lyricJobField.get(owner))
                 assertNull(actionField.get(owner))
+                assertNull(detailUidField.get(owner))
+                assertNull(lyricState.value)
                 assertNull(state.value.pendingQueueId)
                 assertNull(state.value.current)
                 assertTrue(state.value.queue.isEmpty())
@@ -94,8 +110,11 @@ class PlaybackQueuePersistenceTest {
             }
         } finally {
             jobField.set(owner, null)
+            lyricJobField.set(owner, previousLyricJob)
             actionField.set(owner, null)
+            detailUidField.set(owner, previousDetailUid)
             state.value = previous
+            lyricState.value = previousLyric
         }
     }
 

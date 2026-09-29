@@ -66,16 +66,16 @@ object PlaybackController {
     private val controllerListener = object : MediaController.Listener {
         override fun onDisconnected(disconnected: MediaController) {
             if (controller !== disconnected) return
+            positionJob?.cancel()
+            positionJob = null
             controller = null
             controllerFuture = null
             bookQueue?.stop()
             bookQueue = null
             interruptRecovery()
             cancelPendingPlayback()
-            lyricJob?.cancel()
+            clearCurrentTrackLyrics()
             artworkJob?.cancel()
-            detailUid = null
-            _lyric.value = null
             // 断连不等于用户清空：保留磁盘队列供下次连接恢复，但不能再操作失效控制器。
             val previous = _state.value
             _state.value = PlayerUiState(mode = previous.mode, speed = previous.speed,
@@ -202,14 +202,6 @@ object PlaybackController {
             },
             MoreExecutors.directExecutor(),
         )
-        if (positionJob == null) {
-            positionJob = scope.launch {
-                while (true) {
-                    refreshPosition()
-                    delay(500)
-                }
-            }
-        }
     }
 
     private fun attach(player: MediaController) {
@@ -276,6 +268,13 @@ object PlaybackController {
         )
         // init在恢复队列/处理待播请求后统一发布，不先暴露一个临时空队列。
         updateRecentPlayback(player)
+        positionJob?.cancel()
+        positionJob = scope.launch {
+            while (controller === player && player.isConnected) {
+                refreshPosition()
+                delay(500)
+            }
+        }
     }
 
     /** 只展示实际选中的音频轨，不误把未选中的第一个格式当成播放规格。 */
@@ -362,13 +361,11 @@ object PlaybackController {
             queueId = currentQueueId.takeIf { hasItems },
         )
         // 曲目变化（含启动恢复队列、切歌、自动连播）即加载详情与歌词，不再只依赖过渡事件
-        if (currentTrack?.uid != detailUid) {
-            detailUid = currentTrack?.uid
-            if (currentTrack != null) {
-                loadTrackDetails()
-            } else {
-                _lyric.value = null
-            }
+        if (currentTrack == null) {
+            clearCurrentTrackLyrics()
+        } else if (currentTrack.uid != detailUid) {
+            detailUid = currentTrack.uid
+            loadTrackDetails()
         }
     }
 
@@ -490,6 +487,14 @@ object PlaybackController {
         }
     }
 
+    /** 当前曲目消失时统一结束歌词读取并清空身份，重复调用安全。 */
+    private fun clearCurrentTrackLyrics() {
+        lyricJob?.cancel()
+        lyricJob = null
+        detailUid = null
+        _lyric.value = null
+    }
+
     private fun loadTrackDetails() {
         val snapshot = _state.value
         val track = snapshot.current
@@ -497,8 +502,7 @@ object PlaybackController {
         ensureCurrentArtwork()
         appContext?.let { LocalTagFiller.consider(it, track) }
         if (track == null) {
-            lyricJob?.cancel()
-            _lyric.value = null
+            clearCurrentTrackLyrics()
             return
         }
 
@@ -1140,10 +1144,8 @@ object PlaybackController {
         currentQueueId = null
         errorRecovery.reset()
         consecutiveErrors = 0
-        lyricJob?.cancel()
+        clearCurrentTrackLyrics()
         artworkJob?.cancel()
-        detailUid = null
-        _lyric.value = null
         // 不依赖异步MediaController回调，也不在无控制器时遗留旧曲目。
         val previous = _state.value
         _state.value = PlayerUiState(
