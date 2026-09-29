@@ -2,6 +2,59 @@
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-09-29
+
+### 安卓客户端
+
+【歌单手动更新】
+- 自建歌单支持“从原歌单更新”：记录导入来源，先读取并预览新增、移除的歌曲，再由用户确认保存；仅手动更新，不定时自动同步。
+- 更新保留本地歌单名称和额外添加的歌曲，按原歌单顺序整理；在本地删除但原歌单仍有的歌曲会恢复。旧歌单可绑定原链接，首次绑定保留全部现有歌曲并合并远端内容。
+- 增强同一来源歌单的重复导入识别：可选择更新已有歌单，或明确另存为副本；存在多个本地副本时需选择更新目标。
+- 歌单来源和同步基线随备份保存与恢复；读取不完整、跨页重叠、来源不符或本地歌单发生冲突时拒绝更新，避免误改已有数据。
+
+【歌单弹窗】
+- 整理导入与更新弹窗的信息层级，增加歌单封面摘要与清晰的读取、预览、异常状态；无变化时可直接“完成”，不执行多余写入。
+- 导入链接支持折叠，编辑和重新读取集中在链接栏；重复导入时，“另存为副本”与“更新已有歌单”组成底部操作组，关闭入口置于右上角。
+- 正文独立滚动、底部操作保持可达，改善长链接、多副本、大字号及键盘弹出时的布局；候选歌单不再展示内部 ID。
+
+【返回与通知】
+- 应用主界面增加连续两次返回退出确认；内部页面、侧栏和播放器仍按层级返回，并加强播放器转场期间的返回处理，避免穿透退出。
+- 开启通知歌词后，媒体通知标题同时显示歌曲名与歌手，歌词独立显示；关闭后恢复常规媒体标题。
+
+【数据保存与文件恢复】
+- 统一收藏、历史记录和歌单修改的保存流程：写入成功后才更新界面状态，避免写盘失败后界面与重启结果不一致。
+- 本地歌曲标签覆写前保存持久原件和恢复记录；进程中断后可在下次启动恢复，授权暂不可用时保留原件，等待重新授权重试。
+- 本地歌曲索引改为原子写入成功后再更新内存，移除吞错和原位覆盖旧文件的备用路径；保留无变化时的快速返回与索引映射复用。
+- 自定义目录未取得持久访问权限时，不保存目录、不切换扫描模式、不启动扫描，并给出明确提示。
+
+【音源与播放稳定性】
+- 为音源脚本的同步执行、Promise、HTTP、初始化、协议检查和状态读取统一执行时限，修复慢脚本不能及时取消的问题；超时或取消后运行时仍可继续使用。
+- 修复 HTTP 请求的超时与取消上下文未正确传递到 QuickJS 执行线程的问题，并同步等待 Promise 任务退出，避免旧任务影响后续请求。
+- 清空播放队列或移除最后一首歌曲时，统一取消旧歌词加载任务；播放服务断连后停止无效进度轮询，正常连接时保留暂停和后台刷新行为。
+
+【质量验证】
+- 补充写盘失败、进程中断恢复、目录授权、脚本超时取消及队列生命周期回归测试。
+- 修正基准导航在侧栏动画期间点击旧坐标的问题，统一基准与性能配置采集的导航流程，并完成冷启动、主页面切换、详情往返三项实机基准验证。
+
+### 提交追溯（安卓版）
+
+> 本版本仅更新 Android 客户端至 0.1.6；Web / NAS、FPK 与 Docker 维持 0.1.1。完整提交区间：[android-v0.1.5...android-v0.1.6][Android 0.1.6]。
+
+- 歌单来源、手动更新、防重与备份兼容，以及返回和通知交互：[`548e96d`](https://github.com/Raving4934/Melora/commit/548e96d3ab9d1dd9b27b0bc072dbc5162accfa00)。
+- 歌单导入/更新弹窗、统一操作组与布局回归测试：[`460e2d9`](https://github.com/Raving4934/Melora/commit/460e2d933ef4cb4f9c7aa88a9d27a235759dc9b3)。
+- 用户库保存事务：[`c6b546b`](https://github.com/Raving4934/Melora/commit/c6b546befcd259382f49cbbb59609267ce8b5cea)。
+- 本地标签中断恢复：[`34725a1`](https://github.com/Raving4934/Melora/commit/34725a154dea706e400e86ce5425b8e7b2941919)。
+- 本地索引原子保存：[`fc75cd6`](https://github.com/Raving4934/Melora/commit/fc75cd6750277a7dc77b59927b841662c2626f28)。
+- 歌词与进度任务生命周期：[`7a1ad44`](https://github.com/Raving4934/Melora/commit/7a1ad44c73dcdc569ec1e88e65dd9796fb24c0ed)。
+- QuickJS 统一时限与取消：[`bbd3e2e`](https://github.com/Raving4934/Melora/commit/bbd3e2ee36838505a14da175fe08ae9b66ed9000)。
+- 目录持久授权失败处理：[`d4d044a`](https://github.com/Raving4934/Melora/commit/d4d044aa7b150512e6929daf1e734fd038f557c2)。
+- 基准导航稳定性：[`1e23ca8`](https://github.com/Raving4934/Melora/commit/1e23ca8a8dfdbc2979fe95db31f7128565029481)。
+
+### 安卓安装包
+
+- 正式发布后下载：[Android 0.1.6 APK（arm64-v8a）](https://github.com/Raving4934/Melora/releases/download/android-v0.1.6/melora-android-v0.1.6-arm64-v8a.apk)。
+- 适用于 Android 8.0 及以上的 ARM64 设备；请使用正式签名安装包覆盖升级，无需卸载或清空数据。
+
 ## [0.1.5] - 2026-09-27
 
 ### 安卓客户端
@@ -233,9 +286,11 @@
 
 **Docker 镜像：** `ghcr.io/raving4934/melora:0.1.0`（支持 `linux/amd64`、`linux/arm64`）。
 
-[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.5...HEAD
-[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.5...HEAD
+[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.6...HEAD
+[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.6...HEAD
 [Web Unreleased]: https://github.com/Raving4934/Melora/compare/v0.1.1...HEAD
+[0.1.6]: https://github.com/Raving4934/Melora/compare/android-v0.1.5...android-v0.1.6
+[Android 0.1.6]: https://github.com/Raving4934/Melora/compare/android-v0.1.5...android-v0.1.6
 [0.1.5]: https://github.com/Raving4934/Melora/compare/android-v0.1.4...android-v0.1.5
 [Android 0.1.5]: https://github.com/Raving4934/Melora/compare/android-v0.1.4...android-v0.1.5
 [0.1.4]: https://github.com/Raving4934/Melora/compare/android-v0.1.3...android-v0.1.4
