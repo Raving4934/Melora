@@ -10,6 +10,24 @@ internal const val PlayerMiniFadeEnd = 0.16f
 
 internal enum class PlayerSheetAnchor { Collapsed, Expanded }
 
+internal enum class PlayerSheetBackAction { PassThrough, Consume, ReturnToPlayer, Collapse }
+
+/** 只有迷你条完全归位才把返回交还底页，不能复用视觉上的展开/收起阈值。 */
+internal fun playerSheetBackAction(
+    settled: PlayerSheetAnchor,
+    target: PlayerSheetAnchor,
+    progress: Float,
+    animationRunning: Boolean = false,
+    backInProgress: Boolean = false,
+    queueVisible: Boolean = false,
+): PlayerSheetBackAction = when {
+    animationRunning || backInProgress -> PlayerSheetBackAction.Consume
+    settled == PlayerSheetAnchor.Collapsed && target == PlayerSheetAnchor.Collapsed && progress <= 0f ->
+        PlayerSheetBackAction.PassThrough
+    progress >= 0.99f && queueVisible -> PlayerSheetBackAction.ReturnToPlayer
+    else -> PlayerSheetBackAction.Collapse
+}
+
 /** 到达收起终点才释放详情，轻拖回弹或队列翻页都不是退出。 */
 internal fun playerSheetIsCollapsed(settled: PlayerSheetAnchor, target: PlayerSheetAnchor, progress: Float): Boolean =
     settled == PlayerSheetAnchor.Collapsed && target == PlayerSheetAnchor.Collapsed && progress <= 0.001f

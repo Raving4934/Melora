@@ -147,6 +147,8 @@ private fun validateBackupLibrary(root: JSONObject) {
         val item = node(value); required(item, "id"); required(item, "name")
         require(item.has("songs")) { "自建歌单缺少歌曲列表" }
         songs(item, "songs")
+        playlistSyncMetadata(item)
+        array(item, "lastSyncedUids") { require(it is String && it.isNotBlank()) { "同步基线歌曲标识无效" } }
     }
 }
 

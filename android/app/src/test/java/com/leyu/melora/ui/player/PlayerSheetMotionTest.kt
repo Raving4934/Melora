@@ -16,6 +16,59 @@ import org.junit.Test
 
 class PlayerSheetMotionTest {
     @Test
+    fun sheetBackIsOwnedUntilTheExactCollapsedEndpointIncludingPartialDrags() {
+        for (settled in PlayerSheetAnchor.entries) {
+            for (target in PlayerSheetAnchor.entries) {
+                for (progress in listOf(0f, 0.0005f, 0.2f, 0.5f, 0.98f, 1f)) {
+                    val fullyCollapsed = settled == PlayerSheetAnchor.Collapsed &&
+                        target == PlayerSheetAnchor.Collapsed && progress == 0f
+                    assertEquals(
+                        "settled=$settled target=$target progress=$progress",
+                        if (fullyCollapsed) PlayerSheetBackAction.PassThrough else PlayerSheetBackAction.Collapse,
+                        playerSheetBackAction(settled, target, progress),
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
+    fun backDuringSheetAnimationOrPendingBackIsConsumedWithoutRestarting() {
+        for (settled in PlayerSheetAnchor.entries) {
+            for (target in PlayerSheetAnchor.entries) {
+                for (progress in listOf(0f, 0.0005f, 0.5f, 0.995f, 1f)) {
+                    for ((animating, pending) in listOf(true to false, false to true, true to true)) {
+                        assertEquals(
+                            PlayerSheetBackAction.Consume,
+                            playerSheetBackAction(settled, target, progress, animating, pending),
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun expandedQueueReturnsToPlayerBeforeCollapsingButPartialQueueCollapses() {
+        assertEquals(
+            PlayerSheetBackAction.ReturnToPlayer,
+            playerSheetBackAction(PlayerSheetAnchor.Expanded, PlayerSheetAnchor.Expanded, 1f, queueVisible = true),
+        )
+        assertEquals(
+            PlayerSheetBackAction.Collapse,
+            playerSheetBackAction(PlayerSheetAnchor.Expanded, PlayerSheetAnchor.Expanded, 0.5f, queueVisible = true),
+        )
+        assertEquals(
+            PlayerSheetBackAction.Consume,
+            playerSheetBackAction(PlayerSheetAnchor.Expanded, PlayerSheetAnchor.Expanded, 1f, backInProgress = true, queueVisible = true),
+        )
+        assertEquals(
+            PlayerSheetBackAction.PassThrough,
+            playerSheetBackAction(PlayerSheetAnchor.Collapsed, PlayerSheetAnchor.Collapsed, 0f, queueVisible = true),
+        )
+    }
+
+    @Test
     fun detailScopeIsReleasedOnlyAtTheSettledCollapsedEndpoint() {
         assertTrue(playerSheetIsCollapsed(PlayerSheetAnchor.Collapsed, PlayerSheetAnchor.Collapsed, 0f))
         assertFalse(playerSheetIsCollapsed(PlayerSheetAnchor.Expanded, PlayerSheetAnchor.Collapsed, 0f))

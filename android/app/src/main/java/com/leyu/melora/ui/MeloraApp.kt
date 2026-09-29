@@ -2,7 +2,6 @@ package com.leyu.melora.ui
 
 import android.content.pm.PackageManager
 import android.os.Build
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -27,7 +26,9 @@ import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.Box
@@ -114,6 +115,7 @@ import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.UserLibrary
 import com.leyu.melora.ui.common.PageBackHandler
 import com.leyu.melora.ui.common.LocalPageActive
+import com.leyu.melora.ui.common.LocalResetRootBack
 import com.leyu.melora.ui.common.PlatformChoice
 import com.leyu.melora.ui.common.PlatformUnderlineRow
 import com.leyu.melora.ui.common.SourceAliasProvider
@@ -136,6 +138,7 @@ import com.leyu.melora.ui.common.ChromeScaffold
 import com.leyu.melora.ui.common.DetailPageHost
 import com.leyu.melora.ui.common.chromeHeaderColor
 import com.leyu.melora.ui.player.ContinuousPlayerSheet
+import com.leyu.melora.ui.player.rememberPlayerSheetBackState
 import com.leyu.melora.ui.theme.SystemBarsAppearance
 import com.leyu.melora.ui.search.SearchCategory
 import com.leyu.melora.ui.search.SearchScreen
@@ -308,12 +311,15 @@ private fun Modifier.drawerSwipeable(
 )
 
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun MeloraApp(initialTab: Int = 5) {
     val playerState by PlaybackController.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val resetRootBack = LocalResetRootBack.current
+    val imeVisible = WindowInsets.isImeVisible
+    androidx.compose.runtime.SideEffect { if (imeVisible) resetRootBack() }
     val showExitButton by MeloraSettings.showExitButton.collectAsStateWithLifecycle()
     val exitApp = { (context as? android.app.Activity)?.finishAffinity(); Unit }
 
@@ -327,6 +333,7 @@ fun MeloraApp(initialTab: Int = 5) {
     var settingsNavSeq by remember { mutableIntStateOf(0) }
     var primaryScrollToTopRequest by remember { mutableIntStateOf(0) }
     fun navigateToTab(target: Int) {
+        resetRootBack()
         val next = target.coerceIn(0, tabs.lastIndex)
         currentTab = next
     }
@@ -377,6 +384,8 @@ fun MeloraApp(initialTab: Int = 5) {
 
     // 与播放层使用同一状态，清空后同时撤销底栏占位和所有旧曲目展示。
     val hasActivePlayback = playerState.current != null
+    val playerSheetBackState = if (hasActivePlayback) rememberPlayerSheetBackState() else null
+    val playerOwnsBack = playerSheetBackState?.ownsBack == true
 
     // 全局提示消息：显示 2.4 秒后自动消费
     androidx.compose.runtime.LaunchedEffect(playerState.message) {
@@ -406,12 +415,13 @@ fun MeloraApp(initialTab: Int = 5) {
 
     // 记住停留页面：下次启动回到上次的 Tab（搜索/发现/歌单…）
     androidx.compose.runtime.LaunchedEffect(currentTab) {
+        resetRootBack()
         MeloraSettings.updateLastTab(currentTab)
     }
 
     // 侧栏打开时的系统返回拦截
     if (drawerOpen && !isPersistentDrawer) {
-        BackHandler { closeDrawer() }
+        PageBackHandler(enabled = !playerOwnsBack) { closeDrawer() }
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -573,7 +583,8 @@ fun MeloraApp(initialTab: Int = 5) {
                     .fillMaxSize()
                     .testTag("main-navigation-content"),
             ) {
-                CompositionLocalProvider(LocalPageActive provides (!drawerOpen)) {
+                // 底页可能晚于 mini 播放器注册返回，不能依赖 dispatcher 的注册顺序。
+                CompositionLocalProvider(LocalPageActive provides (!drawerOpen && !playerOwnsBack)) {
                     // 同级切换由抽屉收回提供唯一运动，不再叠加横移/交叉淡化。
                     key(currentTab) {
                         val visibleTab = currentTab
@@ -774,10 +785,11 @@ fun MeloraApp(initialTab: Int = 5) {
         }
 
         // --- 5. 一体化持久播放层 ---
-        if (hasActivePlayback) {
+        if (playerSheetBackState != null) {
             ContinuousPlayerSheet(
                 state = playerState,
                 modifier = Modifier.align(Alignment.BottomCenter),
+                backState = playerSheetBackState,
             )
         } else {
             SystemBarsAppearance(darkStatusIcons = androidx.compose.material3.MaterialTheme.colorScheme.surface.luminance() > 0.5f)

@@ -31,7 +31,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leyu.melora.playback.UserLibrary
-import com.leyu.melora.playback.sdk.OnlineSong
+import com.leyu.melora.playback.PlaylistSyncPreview
+import com.leyu.melora.playback.sdk.identity
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.StateFlow
 import com.leyu.melora.playback.sdk.PlaylistImportProgress
 import com.leyu.melora.playback.sdk.PlaylistImportResult
 import com.leyu.melora.playback.sdk.PlaylistImporter
@@ -42,11 +45,9 @@ import com.leyu.melora.ui.common.TextMain
 import com.leyu.melora.ui.common.TextSub
 import com.leyu.melora.ui.theme.MeloraAppearance
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 private const val IMPORT_FEEDBACK_DELAY_MS = 300L
 
@@ -55,10 +56,11 @@ private const val IMPORT_FEEDBACK_DELAY_MS = 300L
 internal fun PlaylistImportSheet(
     onDismiss: () -> Unit,
     onImported: (UserLibrary.UserPlaylist) -> Unit,
+    onUpdated: (UserLibrary.UserPlaylist) -> Unit = onImported,
+    library: StateFlow<List<UserLibrary.UserPlaylist>> = UserLibrary.playlists,
     readPlaylist: suspend (Context, String, (PlaylistImportProgress) -> Unit) -> PlaylistImportResult = PlaylistImporter::load,
-    savePlaylist: suspend (String, List<OnlineSong>) -> UserLibrary.UserPlaylist = { name, songs ->
-        withContext(Dispatchers.IO) { UserLibrary.createPlaylist(name, songs) }
-    },
+    savePlaylist: suspend (String, PlaylistImportResult, Boolean) -> UserLibrary.UserPlaylist = UserLibrary::saveImportedPlaylist,
+    commitUpdate: suspend (PlaylistSyncPreview) -> UserLibrary.UserPlaylist = UserLibrary::commitPlaylistSync,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -71,6 +73,25 @@ internal fun PlaylistImportSheet(
     var progress by remember { mutableStateOf<PlaylistImportProgress?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var job by remember { mutableStateOf<Job?>(null) }
+    var selectedId by remember { mutableStateOf<String?>(null) }
+    var duplicateSeen by remember { mutableStateOf(false) }
+    var updateTarget by remember { mutableStateOf<UserLibrary.UserPlaylist?>(null) }
+    val available by library.collectAsStateWithLifecycle()
+    val coordinator = remember(library, savePlaylist) { PlaylistImportCoordinator({ library.value }, savePlaylist) }
+    val choices = remember(available, result, selectedId, coordinator) {
+        result?.let { coordinator.choices(it, selectedId) } ?: PlaylistImportChoices(emptyList(), null)
+    }
+    val duplicate = duplicateSeen || choices.matches.isNotEmpty()
+    LaunchedEffect(choices.matches) { if (choices.matches.isNotEmpty()) duplicateSeen = true }
+    // Use the full-read/diff/explicit-confirmation sheet, never commit the import preview.
+    updateTarget?.let { target ->
+        PlaylistUpdateSheet(
+            playlist = target, onDismiss = onDismiss, onUpdated = onUpdated,
+            currentPlaylist = { result?.let { coordinator.updateTarget(it, target.id) } },
+            readPlaylist = readPlaylist, commit = commitUpdate,
+        )
+        return
+    }
     val busy = loading || saving
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true, confirmValueChange = { !saving })
     val dismiss = { if (!saving) { job?.cancel(); onDismiss() } }
@@ -78,6 +99,8 @@ internal fun PlaylistImportSheet(
         if (loading || saving) return
         text = value
         result = null
+        selectedId = null
+        duplicateSeen = false
         error = null
         progress = null
     }
@@ -110,6 +133,8 @@ internal fun PlaylistImportSheet(
                 outcome.fold(onSuccess = { loaded ->
                     name = loaded.name
                     result = loaded
+                    selectedId = null
+                    duplicateSeen = coordinator.choices(loaded, null).matches.isNotEmpty()
                     error = null
                 }, onFailure = { failure ->
                     error = (if (result != null) "读取失败，保留上次预览。" else "") +
@@ -122,20 +147,35 @@ internal fun PlaylistImportSheet(
             }
         }
     }
-    fun save() {
+    fun save(allowCopy: Boolean = false) {
         val ready = result ?: return
         if (loading || saving || name.isBlank()) return
         saving = true
         error = null
         job = scope.launch {
             try {
-                val playlist = savePlaylist(name.trim(), ready.songs)
-                onImported(playlist)
+                when (val outcome = coordinator.save(name.trim(), ready, allowCopy)) {
+                    is PlaylistImportSave.Created -> onImported(outcome.playlist)
+                    is PlaylistImportSave.Duplicate -> {
+                        duplicateSeen = true
+                        error = "此来源已有 ${outcome.matches.size} 个歌单，请选择更新，或另存为副本。"
+                    }
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
                 error = "保存失败，原有歌单未覆盖。${failure.message.orEmpty().take(100)}"
             } finally { saving = false }
+        }
+    }
+    fun updateExisting() {
+        if (busy) return
+        val ready = result ?: return
+        val id = choices.target?.id ?: return
+        try {
+            updateTarget = coordinator.updateTarget(ready, id)
+        } catch (failure: IllegalStateException) {
+            error = failure.message
         }
     }
     MeloraBottomSheet(
@@ -190,7 +230,7 @@ internal fun PlaylistImportSheet(
                                 modifier = Modifier.size(52.dp).clip(RoundedCornerShape(12.dp)))
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
-                                Text("歌单名称 · 可修改", fontSize = 11.sp, color = TextSub)
+                                Text(if (duplicate) "副本名称 · 可修改" else "歌单名称 · 可修改", fontSize = 11.sp, color = TextSub)
                                 BasicTextField(
                                     value = name, onValueChange = { name = it }, singleLine = true, enabled = !busy,
                                     textStyle = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Medium, color = TextMain),
@@ -201,9 +241,30 @@ internal fun PlaylistImportSheet(
                                     fontSize = 12.sp, color = TextSub)
                             }
                         }
-                        if (error == null) {
-                            Text(ready.warning ?: "保存为独立歌单，不覆盖已有歌单，也不随原平台同步。",
+                        if (duplicate) {
+                            Text("已导入此来源", color = TextMain, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            Text(if (choices.matches.isEmpty()) "已有歌单已不可用，请重新读取后再操作。" else "选择已有歌单，读取差异后确认更新。",
+                                color = TextSub, fontSize = 12.sp, lineHeight = 18.sp)
+                            choices.matches.forEach { candidate ->
+                                Row(Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                                    .testTag("playlist-import-target-${candidate.id}")
+                                    .clickable(enabled = !busy, role = Role.RadioButton) { selectedId = candidate.id },
+                                    verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(selected = choices.target?.id == candidate.id, onClick = null, enabled = !busy)
+                                    Spacer(Modifier.width(8.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(candidate.name, color = TextMain, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                        Text("${candidate.songs.size} 首 · ${candidate.id}", color = TextSub, fontSize = 11.sp)
+                                    }
+                                }
+                            }
+                            ready.warning?.let { Text(it, color = MeloraAppearance.accent, fontSize = 12.sp, lineHeight = 18.sp) }
+                        } else if (error == null) {
+                            Text(ready.warning ?: "保存为独立歌单并记录来源，可从歌单菜单手动更新；不会自动同步。",
                                 color = if (ready.warning == null) TextSub else MeloraAppearance.accent, fontSize = 12.sp, lineHeight = 18.sp)
+                        }
+                        if (ready.importSource?.identity()?.isCanonical == false) {
+                            Text("此链接暂仅按原链接精确防重，不会跨短链或别名合并。", color = TextSub, fontSize = 12.sp, lineHeight = 18.sp)
                         }
                     } else if (error == null) {
                         Text("支持公开的个人歌单", color = TextMain, fontSize = 13.sp, fontWeight = FontWeight.Medium)
@@ -236,17 +297,28 @@ internal fun PlaylistImportSheet(
                 }
             }
             Spacer(Modifier.height(12.dp))
+            if (duplicate && result != null) {
+                TextButton(onClick = { keyboard?.hide(); save(allowCopy = true) }, enabled = !busy && name.isNotBlank(),
+                    modifier = Modifier.align(Alignment.End).testTag("playlist-import-copy")) {
+                    Text(if (result!!.warning == null) "另存为副本" else "仅将已获取的 ${result!!.songs.size} 首另存为副本",
+                        color = TextSub, fontSize = 12.sp)
+                }
+            }
             PlaylistSheetActions(
-                onDismiss = dismiss, onConfirm = { keyboard?.hide(); if (result == null) read() else save() },
+                onDismiss = dismiss, onConfirm = {
+                    keyboard?.hide()
+                    if (result == null) read() else if (duplicate) updateExisting() else save()
+                },
                 confirmText = when {
                     saving -> "保存中…"
                     showProgress -> "读取中…"
+                    duplicate -> if (choices.target == null) "选择要更新的歌单" else "更新已有歌单"
                     result?.warning != null -> "仅导入已获取的 ${result!!.songs.size} 首"
                     result != null -> "导入 ${result!!.songs.size} 首"
                     error != null -> "重试读取"
                     else -> "读取歌单"
                 },
-                confirmEnabled = if (result == null) text.isNotBlank() else name.isNotBlank(),
+                confirmEnabled = if (result == null) text.isNotBlank() else if (duplicate) choices.target != null else name.isNotBlank(),
                 busy = busy, cancelEnabled = !saving,
             )
         }

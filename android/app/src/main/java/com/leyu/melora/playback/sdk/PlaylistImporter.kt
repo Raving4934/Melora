@@ -17,6 +17,7 @@ internal data class PlaylistImportResult(
     val reportedTotal: Int?,
     val duplicates: Int,
     val warning: String?,
+    val importSource: PlaylistImportLink? = null,
 )
 
 /** 只读取元数据，确认保存前不创建歌单，不解析播放地址。 */
@@ -48,6 +49,8 @@ internal object PlaylistImporter {
         var unavailable = 0
         var duplicates = 0
         var warning: String? = null
+        val integrityWarnings = linkedSetOf<String>()
+        var pagination: Triple<Int, Int, Int>? = null
         for (page in 1..MAX_PAGES) {
             currentCoroutineContext().ensureActive()
             onProgress(PlaylistImportProgress(page, songs.size, total.takeIf { it > 0 }))
@@ -61,10 +64,24 @@ internal object PlaylistImporter {
                 break
             }
             currentCoroutineContext().ensureActive()
+            val metadata = Triple(result.total, result.allPage, result.pageSize)
+            if (pagination != null && pagination != metadata) {
+                integrityWarnings += "平台分页的 total/allPage/pageSize 在读取期间发生变化，尚未确认完整歌单。"
+            }
+            pagination = pagination ?: metadata
+            if (result.page != page || result.total < 0 || result.allPage < 0 || result.pageSize <= 0 ||
+                (result.allPage > 0 && result.allPage < page)) {
+                integrityWarnings += "平台返回的分页元数据矛盾，尚未确认完整歌单。"
+            }
             name = name ?: result.playlistName?.takeIf(String::isNotBlank)
             cover = cover ?: result.playlistCover
             total = maxOf(total, result.total)
             val previousSize = songs.size
+            // 页内重复可以是合法的重复曲目；跨页重叠则无法区分它与分页漂移造成的漏项。
+            // 继续读取供首次导入明确保存，但更新必须通过 warning 拒绝此不可信快照。
+            if (result.list.any { it.uid in songs }) {
+                integrityWarnings += "平台分页存在跨页重复歌曲，尚未确认完整歌单。"
+            }
             for (song in result.list) {
                 if (song.uid in songs) duplicates++
                 else if (songs.size < MAX_SONGS) songs[song.uid] = song
@@ -98,12 +115,17 @@ internal object PlaylistImporter {
         }
         currentCoroutineContext().ensureActive()
         check(songs.isNotEmpty()) { "未获取到歌曲。歌单可能为空、私密，或当前无法访问。" }
+        // total 对应原始条目（允许页内重复），不能与去重后的歌曲数直接比较。
+        if (total > 0 && received > total) {
+            integrityWarnings += "平台声明 $total 首，但返回了 $received 条歌曲信息，数量矛盾，尚未确认完整歌单。"
+        }
         if (unavailable > 0) {
             warning = listOfNotNull(warning, "有 $unavailable 条歌曲信息不可用，未包含在结果中。").joinToString("\n")
         }
+        warning = (listOfNotNull(warning) + integrityWarnings).takeIf { it.isNotEmpty() }?.joinToString("\n")
         return PlaylistImportResult(
             link.platformName, name ?: "${link.platformName}导入歌单", cover,
-            songs.values.toList(), total.takeIf { it > 0 }, duplicates, warning,
+            songs.values.toList(), total.takeIf { it > 0 }, duplicates, warning, link,
         )
     }
 }

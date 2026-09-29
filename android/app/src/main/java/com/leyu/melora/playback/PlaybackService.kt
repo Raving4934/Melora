@@ -22,6 +22,7 @@ import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.ForwardingAudioSink
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.CommandButton
+import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionCommand
@@ -58,6 +59,11 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         if ((application as? com.leyu.melora.MeloraApplication)?.restoreFailure != null) return
+        // 旧版通知默认只读 title；与新版系统媒体卡片的 displayTitle 优先规则保持一致。
+        setMediaNotificationProvider(object : DefaultMediaNotificationProvider(this) {
+            override fun getNotificationContentTitle(mediaMetadata: MediaMetadata): CharSequence? =
+                notificationContentTitle(mediaMetadata)
+        })
         // 播放与下载共享唯一音频缓存，避免同一首歌重复联网与缓存目录多实例冲突。
         isRunning = true
         val cacheDataSourceFactory = AudioCacheStore.playbackDataSourceFactory(this)
@@ -291,6 +297,10 @@ class PlaybackService : MediaSessionService() {
     }
 }
 
+/** 通知展示层优先采用展示标题，不修改供曲目识别/蓝牙读取的原始 title。 */
+internal fun notificationContentTitle(metadata: MediaMetadata): CharSequence? =
+    metadata.displayTitle ?: metadata.title
+
 /**
  * 仅由播放服务传入实际ExoPlayer。按播放器的当前索引和位置生成通知字段，
  * 不采用UI快照中的当前曲目，也不重建URI、缓存key、音质或裁剪配置。
@@ -310,9 +320,16 @@ internal fun syncNotificationMetadata(
         val artist = if (index == currentIndex) {
             notificationLyricLine(lyricsEnabled, item.mediaId, positionMs, lyric) ?: track.artist
         } else track.artist
+        // Android 13+ 系统媒体卡片直接读取会话，不能只改 NotificationProvider。
+        // 展示标题与原始歌名分离；读取标准 TITLE 的蓝牙客户端仍得到歌名。
+        // displayTitle 也会用于锁屏；无歌词时保留原有 artist 回退，不更改歌词行策略。
+        val displayTitle = if (index == currentIndex && lyricsEnabled && track.artist.isNotBlank()) {
+            "${track.title} - ${track.artist}"
+        } else null
         val artwork = playableArtworkUri(track.artwork, coverEnabled)
         val metadata = item.mediaMetadata
         if (metadata.title?.toString() == track.title &&
+            metadata.displayTitle?.toString() == displayTitle &&
             metadata.artist?.toString() == artist &&
             metadata.albumTitle?.toString() == track.album &&
             metadata.artworkUri?.toString() == artwork
@@ -322,6 +339,7 @@ internal fun syncNotificationMetadata(
             item.buildUpon().setMediaMetadata(
                 metadata.buildUpon()
                     .setTitle(track.title)
+                    .setDisplayTitle(displayTitle)
                     .setArtist(artist)
                     .setAlbumTitle(track.album)
                     .setArtworkUri(artwork?.toUri())

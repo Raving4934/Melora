@@ -214,6 +214,7 @@ fun MyLibraryScreen(
     var showCreateSheet by remember { mutableStateOf(false) }
     var showImportSheet by remember { mutableStateOf(false) }
     var playlistToRename by remember { mutableStateOf<UserLibrary.UserPlaylist?>(null) }
+    var playlistToUpdate by remember { mutableStateOf<UserLibrary.UserPlaylist?>(null) }
     var playlistToDelete by remember { mutableStateOf<UserLibrary.UserPlaylist?>(null) }
 
     val openContainer: (UserLibrary.RecentContainer) -> Unit = { container ->
@@ -272,6 +273,21 @@ fun MyLibraryScreen(
                 showImportSheet = false
                 PlaybackController.postMessage(context, "已导入「${playlist.name}」· ${playlist.songs.size} 首")
             },
+            onUpdated = { playlist ->
+                showImportSheet = false
+                PlaybackController.postMessage(context, "已更新「${playlist.name}」· ${playlist.songs.size} 首")
+            },
+        )
+    }
+
+    playlistToUpdate?.let { target ->
+        PlaylistUpdateSheet(
+            playlist = target,
+            onDismiss = { playlistToUpdate = null },
+            onUpdated = { updated ->
+                playlistToUpdate = null
+                PlaybackController.postMessage(context, "已更新「${updated.name}」· ${updated.songs.size} 首")
+            },
         )
     }
 
@@ -306,6 +322,7 @@ fun MyLibraryScreen(
             is LibraryDetail.Playlist -> PlaylistDetailContent(target.value, onBack = { detail = null })
             is LibraryDetail.UserPlaylist -> UserPlaylistDetail(
                 playlist = target.value, onBack = { detail = null }, onRename = { playlistToRename = it },
+                onUpdate = { playlistToUpdate = it },
                 onDelete = { playlistToDelete = it; detail = null },
             )
             is LibraryDetail.Collection -> SongsCollectionPage(target.value, onBack = { detail = null })
@@ -375,6 +392,7 @@ fun MyLibraryScreen(
                     onCreate = { showCreateSheet = true },
                     onImport = { showImportSheet = true },
                     onRename = { playlistToRename = it },
+                    onUpdate = { playlistToUpdate = it },
                     onDelete = { playlistToDelete = it },
                 )
                 MyPage.Downloads -> DownloadsPage(onBack = { page = null })
@@ -2399,6 +2417,7 @@ internal fun PlaylistMoreSheet(
     onAddToQueue: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
+    onUpdate: (() -> Unit)? = null,
 ) {
     val sheetState = rememberModalBottomSheetState()
     MeloraBottomSheet(
@@ -2506,6 +2525,13 @@ internal fun PlaylistMoreSheet(
                     label = "重命名歌单",
                     subtitle = "修改该歌单的显示名称",
                     onClick = { onDismiss(); onRename() },
+                )
+                if (onUpdate != null) SheetAction(
+                    icon = Icons.Outlined.Refresh,
+                    tint = BrandBlue,
+                    label = if (playlist.importSource != null) "从原歌单更新" else "绑定来源并更新",
+                    subtitle = "先读取完整歌单，预览差异后确认",
+                    onClick = { onDismiss(); onUpdate() },
                 )
                 SheetAction(
                     icon = Icons.Outlined.DeleteOutline,
@@ -2628,6 +2654,7 @@ private fun UserPlaylistsPage(
     onCreate: () -> Unit,
     onImport: () -> Unit,
     onRename: (UserLibrary.UserPlaylist) -> Unit,
+    onUpdate: (UserLibrary.UserPlaylist) -> Unit,
     onDelete: (UserLibrary.UserPlaylist) -> Unit,
 ) {
     val context = LocalContext.current
@@ -2716,6 +2743,7 @@ private fun UserPlaylistsPage(
             },
             onAddToQueue = { PlaybackController.addToQueue(context, target.songs.toUiTracks()) },
             onRename = { onRename(target) },
+            onUpdate = { onUpdate(target) },
             onDelete = { onDelete(target) },
         )
     }
@@ -2745,6 +2773,7 @@ private fun UserPlaylistDetail(
     playlist: UserLibrary.UserPlaylist,
     onBack: () -> Unit,
     onRename: (UserLibrary.UserPlaylist) -> Unit,
+    onUpdate: (UserLibrary.UserPlaylist) -> Unit,
     onDelete: (UserLibrary.UserPlaylist) -> Unit,
 ) {
     val context = LocalContext.current
@@ -2856,6 +2885,7 @@ private fun UserPlaylistDetail(
             },
             onAddToQueue = { PlaybackController.addToQueue(context, songs.toUiTracks()) },
             onRename = { onRename(current) },
+            onUpdate = { onUpdate(current) },
             onDelete = {
                 onDelete(current)
             },

@@ -28,6 +28,8 @@ import kotlin.math.roundToInt
 
 /** 离场页与不可见底页保留列表位置，但不能争抢返回或点击。 */
 internal val LocalPageActive = compositionLocalOf { true }
+/** 页面接管返回或发生导航时，废弃根页面的旧退出确认。 */
+internal val LocalResetRootBack = compositionLocalOf<() -> Unit> { {} }
 private val PageEnterEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 private val PageReturnEasing = CubicBezierEasing(0.4f, 0f, 0.2f, 1f)
 
@@ -45,7 +47,13 @@ internal fun pageReturnInProgress(targetExists: Boolean, retainedExists: Boolean
 
 @Composable
 internal fun PageBackHandler(enabled: Boolean = true, onBack: () -> Unit) {
-    BackHandler(enabled = enabled && LocalPageActive.current, onBack = onBack)
+    val active = enabled && LocalPageActive.current
+    val resetRootBack = LocalResetRootBack.current
+    SideEffect { if (active) resetRootBack() }
+    BackHandler(enabled = active) {
+        resetRootBack()
+        onBack()
+    }
 }
 
 private fun Modifier.pageInput(active: Boolean): Modifier = if (active) this else

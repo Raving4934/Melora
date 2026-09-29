@@ -36,6 +36,19 @@ class PlaylistMoreSheetTest {
         }
     }
 
+    @Test fun updateEntryClosesMenuBeforeOpeningUpdate() {
+        compose.setContent {
+            MeloraTheme {
+                PlaylistMoreSheet(UserLibrary.UserPlaylist("fixture", "测试歌单", emptyList(),
+                    com.leyu.melora.playback.sdk.PlaylistImportLink.parse("https://music.163.com/#/playlist?id=123")),
+                    onDismiss = { actions += "dismiss" }, onPlayAll = {}, onAddToQueue = {}, onRename = {}, onDelete = {},
+                    onUpdate = { actions += "update" })
+            }
+        }
+        compose.onNodeWithText("从原歌单更新").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(listOf("dismiss", "update"), actions) }
+    }
+
     @Test fun appendActionFollowsPlayAllAndDoesNotPlayOrEditPlaylist() {
         show()
         compose.waitForIdle()

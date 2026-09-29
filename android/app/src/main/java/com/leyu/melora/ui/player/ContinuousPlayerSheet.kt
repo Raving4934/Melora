@@ -1,6 +1,6 @@
 package com.leyu.melora.ui.player
 
-import androidx.activity.compose.BackHandler
+import com.leyu.melora.ui.common.PageBackHandler as BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
@@ -10,7 +10,6 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.AnchoredDraggableDefaults
-import androidx.compose.foundation.gestures.AnchoredDraggableState
 import androidx.compose.foundation.gestures.DraggableAnchors
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.anchoredDraggable
@@ -60,6 +59,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.PlayerUiState
+import com.leyu.melora.ui.common.LocalPageActive
 import com.leyu.melora.ui.theme.SystemBarsAppearance
 import com.leyu.melora.ui.theme.LocalForceHideStatusBar
 import kotlinx.coroutines.launch
@@ -72,7 +72,11 @@ private fun formatClockMs(ms: Long): String {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
+internal fun ContinuousPlayerSheet(
+    state: PlayerUiState,
+    modifier: Modifier = Modifier,
+    backState: PlayerSheetBackState = rememberPlayerSheetBackState(),
+) {
     // 迷你条、过渡封面和全屏共用当前曲目；空队列不能保留已失效的旧封面。
     val track = state.current ?: return
     // loading 保留上一幅环境背景；loader 统一发布新图+色调，失败/无封面才清空。
@@ -97,11 +101,17 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
     val displayLyricLines = remember(state.current, lyricLines) { fullPlayerLyricsOrFallback(state.current, lyricLines) }
     val lyricFrameState = rememberLyricFrame(displayLyricLines, lyricPosition)
     val lyricFrame by lyricFrameState
-    val sheetState = rememberSaveable(saver = AnchoredDraggableState.Saver<PlayerSheetAnchor>()) {
-        AnchoredDraggableState(PlayerSheetAnchor.Collapsed)
-    }
+    val sheetState = backState.sheet
     val swipeOffset = remember { Animatable(0f) }
     val verticalPagerState = rememberPagerState(pageCount = { 2 })
+    fun launchTransition(block: suspend () -> Unit) {
+        if (backState.pending) return
+        // 同步占有返回，不能等协程/动画首帧或展开回调才停用底页。
+        backState.pending = true
+        scope.launch {
+            try { block() } finally { backState.pending = false }
+        }
+    }
     var pageShowsCover by remember { mutableStateOf(true) }
     var pageBlocksCollapse by remember { mutableStateOf(false) }
     var pageIsLight by remember(playerIsDark) { mutableStateOf(!playerIsDark) }
@@ -185,10 +195,25 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
                     else Velocity.Zero
             }
         }
-        if (expanded && verticalPagerState.currentPage == 1) {
-            BackHandler { scope.launch { verticalPagerState.animateScrollToPage(0) } }
-        } else if (expanded) {
-            BackHandler { scope.launch { sheetState.animateTo(PlayerSheetAnchor.Collapsed, fluidSpec) } }
+        // 返回所有权覆盖整个可见转场，不跟随用于渲染的 expanded 阈值开关。
+        val backAction = remember(backState, verticalPagerState) {
+            {
+                backState.action(
+                    pagerScrolling = verticalPagerState.isScrollInProgress,
+                    queueVisible = verticalPagerState.currentPage == 1,
+                )
+            }
+        }
+        val currentBackAction by remember(backAction) { derivedStateOf { backAction() } }
+        BackHandler(enabled = currentBackAction != PlayerSheetBackAction.PassThrough) {
+            // 点击时重读状态；先同步占有返回，再启动协程，堵住动画首帧前的重复返回。
+            val action = backAction()
+            if (action == PlayerSheetBackAction.Collapse || action == PlayerSheetBackAction.ReturnToPlayer) {
+                launchTransition {
+                    if (action == PlayerSheetBackAction.ReturnToPlayer) verticalPagerState.animateScrollToPage(0)
+                    else sheetState.animateTo(PlayerSheetAnchor.Collapsed, fluidSpec)
+                }
+            }
         }
 
         val baseIsLight = miniColors.surface.luminance() > 0.5f
@@ -242,7 +267,12 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
                 .anchoredDraggable(sheetState, Orientation.Vertical, enabled = canDrag, flingBehavior = fling)
                 .background(miniColors.surface),
         ) {
-            CompositionLocalProvider(LocalForceHideStatusBar provides (immersive && expanded)) {
+            CompositionLocalProvider(
+                LocalForceHideStatusBar provides (immersive && expanded),
+                // 静止展开时保留内部弹窗/歌词/详情的返回优先级；转场时只由外层消费。
+                LocalPageActive provides (LocalPageActive.current && expanded &&
+                    currentBackAction != PlayerSheetBackAction.Consume),
+            ) {
             PlayerAppearanceProvider(
                 dark = playerIsDark,
                 artworkColor = playerBackdropEntry?.representativeColor,
@@ -263,7 +293,7 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
                         state = state,
                         immersive = immersive,
                         onImmersiveChange = { immersive = it },
-                        onCollapse = { scope.launch {
+                        onCollapse = { launchTransition {
                             verticalPagerState.scrollToPage(0)
                             sheetState.animateTo(PlayerSheetAnchor.Collapsed, fluidSpec)
                         } },
@@ -274,7 +304,7 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
                         isCollapsed = collapsed,
                         isVisible = expanded && (twoPanes || verticalPagerState.currentPage == 0),
                         queuePagerState = verticalPagerState,
-                        onOpenQueue = { scope.launch { verticalPagerState.animateScrollToPage(1) } },
+                        onOpenQueue = { launchTransition { verticalPagerState.animateScrollToPage(1) } },
                         onArtworkPositioned = { child ->
                             val parent = sheetCoordinates
                             if (parent != null && parent.isAttached && child.isAttached && pageShowsCover) {
@@ -324,7 +354,7 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
                                     indication = null,
                                     interactionSource = remember { MutableInteractionSource() },
                                 ) {
-                                    scope.launch { sheetState.animateTo(PlayerSheetAnchor.Expanded, fluidSpec) }
+                                    launchTransition { sheetState.animateTo(PlayerSheetAnchor.Expanded, fluidSpec) }
                                 }
                                 .draggable(
                                     enabled = showMini,
@@ -422,7 +452,7 @@ fun ContinuousPlayerSheet(state: PlayerUiState, modifier: Modifier = Modifier) {
                             )
                         }
                         IconButton(enabled = showMini, onClick = {
-                            scope.launch {
+                            launchTransition {
                                 verticalPagerState.scrollToPage(1)
                                 sheetState.animateTo(PlayerSheetAnchor.Expanded, fluidSpec)
                             }

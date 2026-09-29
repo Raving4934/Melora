@@ -36,7 +36,7 @@ class PlaylistImportSheetTest {
     private fun result(warning: String? = null) = PlaylistImportResult(
         "网易云音乐", "我的测试歌单", null,
         listOf(OnlineSong(JSONObject().put("source", "wy").put("songmid", "fixture").put("name", "测试单曲"))),
-        1, 0, warning,
+        1, 0, warning, com.leyu.melora.playback.sdk.PlaylistImportLink.parse("https://music.163.com/#/playlist?id=123"),
     )
     private fun show(
         read: suspend (Context, String, (PlaylistImportProgress) -> Unit) -> PlaylistImportResult = { _, _, _ -> result() },
@@ -53,10 +53,14 @@ class PlaylistImportSheetTest {
                     onDismiss = { open = false; dismissed.set(true) },
                     onImported = { open = false },
                     readPlaylist = { context, text, progress -> reads.incrementAndGet(); read(context, text, progress) },
-                    savePlaylist = { name, songs ->
+                    library = kotlinx.coroutines.flow.MutableStateFlow(emptyList()),
+                    savePlaylist = { name, loaded, allowCopy ->
+                        assertFalse(allowCopy)
                         saves.incrementAndGet()
                         if (saveFails) error("fixture storage failure")
-                        UserLibrary.UserPlaylist("fixture", name, songs)
+                        assertEquals(result().importSource, loaded.importSource)
+                        UserLibrary.UserPlaylist("fixture", name, loaded.songs, loaded.importSource,
+                            loaded.songs.mapTo(linkedSetOf()) { it.uid })
                     },
                 )
               }

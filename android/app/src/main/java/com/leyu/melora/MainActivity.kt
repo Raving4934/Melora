@@ -5,17 +5,27 @@ import android.app.AlertDialog
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.os.SystemClock
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
 import android.text.style.RelativeSizeSpan
 import android.util.Log
 import android.util.TypedValue
+import android.view.KeyEvent
+import android.view.KeyboardShortcutGroup
+import android.view.Menu
+import android.view.MotionEvent
+import android.view.Window
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -25,10 +35,31 @@ import com.leyu.melora.playback.lx.LxInspector
 import com.leyu.melora.playback.lx.LxScriptStore
 import com.leyu.melora.ui.MeloraApp
 import com.leyu.melora.ui.common.SongListStateProvider
+import com.leyu.melora.ui.common.LocalResetRootBack
+import com.leyu.melora.ui.common.RootBackCallback
+import com.leyu.melora.ui.common.shouldResetRootBackOnKeyEvent
 import com.leyu.melora.ui.theme.MeloraTheme
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
+    private var backHint: Toast? = null
+    private val rootBackCallback = RootBackCallback(
+        nowMillis = SystemClock::elapsedRealtime,
+        showHint = {
+            backHint?.cancel()
+            backHint = Toast.makeText(this, "再按一次返回桌面", Toast.LENGTH_SHORT).also { it.show() }
+        },
+        moveTaskToBack = {
+            backHint?.cancel()
+            moveTaskToBack(true)
+        },
+        dismissKeyboard = {
+            val decor = window.decorView
+            val visible = ViewCompat.getRootWindowInsets(decor)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+            if (visible) WindowInsetsControllerCompat(window, decor).hide(WindowInsetsCompat.Type.ime())
+            visible
+        },
+    )
     private var recoveryDialog: AlertDialog? = null
     private var launchedLocalTagAuthorizationId: Long? = null
     private val localTagWriteLauncher = registerForActivityResult(
@@ -43,6 +74,27 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        // 使用公开的 Window.Callback，不覆盖 AndroidX 限制访问的 dispatchKeyEvent。
+        // onUserInteraction 也会收到 BACK/触摸 DOWN，不能用它重置二次返回。
+        val originalWindowCallback = window.callback
+        window.callback = object : Window.Callback by originalWindowCallback {
+            override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+                if (shouldResetRootBackOnKeyEvent(event.action, event.keyCode)) {
+                    resetRootBackConfirmation()
+                }
+                return originalWindowCallback.dispatchKeyEvent(event)
+            }
+
+            // Kotlin 的接口委托不转发 Java default 方法，需显式保留原窗口行为。
+            override fun onPointerCaptureChanged(hasCapture: Boolean) =
+                originalWindowCallback.onPointerCaptureChanged(hasCapture)
+
+            override fun onProvideKeyboardShortcuts(
+                data: MutableList<KeyboardShortcutGroup>, menu: Menu?, deviceId: Int,
+            ) = originalWindowCallback.onProvideKeyboardShortcuts(data, menu, deviceId)
+        }
+        // 在 setContent 之前登记：Compose 页面、侧栏与播放器回调后入栈，始终先返回。
+        onBackPressedDispatcher.addCallback(this, rootBackCallback)
         requestHighRefreshRate()
         observeLocalTagWriteAuthorization()
         val app = application as MeloraApplication
@@ -56,6 +108,7 @@ class MainActivity : ComponentActivity() {
                     // 全局关闭系统"整屏拉伸"（橡皮筋）：纵向/横向滚动都到边即停，手感统一
                     androidx.compose.runtime.CompositionLocalProvider(
                         androidx.compose.foundation.LocalOverscrollFactory provides null,
+                        LocalResetRootBack provides ::resetRootBackConfirmation,
                     ) {
                         SongListStateProvider {
                             MeloraApp(initialTab = initialTab)
@@ -128,16 +181,40 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        resetRootBackConfirmation()
         recoveryDialog?.dismiss()
         super.onDestroy()
     }
 
     override fun onResume() {
         super.onResume()
+        resetRootBackConfirmation()
         lifecycleScope.launch {
             (application as MeloraApplication).awaitStartup()
             com.leyu.melora.playback.PlaybackController.checkLocalQueue(this@MainActivity)
         }
+    }
+
+    private fun resetRootBackConfirmation() {
+        rootBackCallback.reset()
+        backHint?.cancel()
+        backHint = null
+    }
+
+    override fun onPause() {
+        resetRootBackConfirmation()
+        super.onPause()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus) resetRootBackConfirmation()
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        // 只重置完成的应用内触摸；系统边缘返回会 CANCEL，不能把第二次返回手势清掉。
+        if (event.actionMasked == MotionEvent.ACTION_UP) resetRootBackConfirmation()
+        return super.dispatchTouchEvent(event)
     }
 
     private fun observeLocalTagWriteAuthorization() {

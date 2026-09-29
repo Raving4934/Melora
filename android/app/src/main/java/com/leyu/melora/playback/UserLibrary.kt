@@ -5,7 +5,14 @@ import com.leyu.melora.playback.local.LocalMediaStore
 import com.leyu.melora.playback.local.LocalSong
 import com.leyu.melora.playback.sdk.OnlinePlaylist
 import com.leyu.melora.playback.sdk.OnlineSong
+import com.leyu.melora.playback.sdk.PlaylistImportLink
+import com.leyu.melora.playback.sdk.PlaylistImportResult
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -15,7 +22,14 @@ import java.nio.file.StandardCopyOption
 
 /** 用户库（收藏 / 最近播放 / 自建歌单）：所有状态变更与 JSON 快照写入共用同一临界区。 */
 object UserLibrary {
-    data class UserPlaylist(val id: String, val name: String, val songs: List<OnlineSong>)
+    data class UserPlaylist(
+        val id: String,
+        val name: String,
+        val songs: List<OnlineSong>,
+        val importSource: PlaylistImportLink? = null,
+        /** null means no known remote baseline, not an empty remote playlist. */
+        val lastSyncedUids: Set<String>? = null,
+    )
 
     /** 收藏的音乐专辑（聚合页实体）：无平台专辑 id，按 名称+歌手+平台 作为唯一键。 */
     data class FavoriteAlbum(
@@ -88,7 +102,7 @@ object UserLibrary {
     internal fun backupSnapshot(): String = synchronized(lock) {
         val entries = favorites.value.size.toLong() + recents.value.size + favoritePlaylists.value.size +
             favoriteAlbums.value.size + favoriteArtists.value.size + recentContainers.value.size + searchHistory.value.size +
-            playlists.value.sumOf { it.songs.size.toLong() + 1 }
+            playlists.value.sumOf { it.songs.size.toLong() + 1 + (it.lastSyncedUids?.size ?: 0) }
         require(entries <= 50_000) { "用户库超过50000条备份限制" }
         boundedBackupJson(buildRoot())
     }
@@ -166,7 +180,7 @@ object UserLibrary {
         playlists.value = root.optJSONArray("playlists")?.let { array ->
             (0 until array.length()).mapNotNull { index ->
                 val node = array.optJSONObject(index) ?: return@mapNotNull null
-                UserPlaylist(node.optString("id"), node.optString("name"), parseSongs(node.optJSONArray("songs")))
+                playlistFromJson(node)
             }
         }.orEmpty()
     }
@@ -214,7 +228,7 @@ object UserLibrary {
         })
         .put("playlists", JSONArray().apply {
             playlistSnapshot.forEach { playlist ->
-                put(JSONObject().put("id", playlist.id).put("name", playlist.name).put("songs", songsToJson(playlist.songs)))
+                put(playlist.toJson())
             }
         })
 
@@ -375,21 +389,78 @@ object UserLibrary {
 
     fun clearSearchHistory() = mutate { searchHistory.value = emptyList() }
 
-    fun createPlaylist(name: String, songs: List<OnlineSong> = emptyList()): UserPlaylist = synchronized(lock) {
+    fun createPlaylist(name: String, songs: List<OnlineSong> = emptyList()): UserPlaylist =
+        createPlaylistSnapshot(UserPlaylist("", name, songs))
+
+    /** Default import is atomic check-and-create; only an explicit UI copy action may opt out. */
+    internal fun createImportedPlaylist(
+        name: String,
+        result: PlaylistImportResult,
+        allowCopy: Boolean = false,
+    ): UserPlaylist = synchronized(lock) {
+        val source = requireNotNull(result.importSource) { "缺少可信歌单来源，请重新读取" }
+        require(PlaylistImportLink.parse(source.value) == source) { "歌单来源无效" }
+        require(result.songs.isNotEmpty()) { "未获取到歌曲" }
+        val matches = matchingImportedPlaylists(playlists.value, source)
+        if (!allowCopy && matches.isNotEmpty()) throw PlaylistAlreadyImportedException(matches)
+        createPlaylistSnapshot(UserPlaylist("", name, result.songs, source, result.songs.mapTo(linkedSetOf()) { it.uid }))
+    }
+
+    /** Cancel before entering the commit boundary, never misreport a persisted creation as cancelled. */
+    internal suspend fun saveImportedPlaylist(
+        name: String,
+        result: PlaylistImportResult,
+        allowCopy: Boolean = false,
+    ): UserPlaylist {
+        val caller = currentCoroutineContext()
+        caller.ensureActive()
+        return withContext(NonCancellable) {
+            withContext(Dispatchers.IO) {
+                synchronized(lock) {
+                    caller.ensureActive()
+                    createImportedPlaylist(name, result, allowCopy)
+                }
+            }
+        }
+    }
+
+    private fun createPlaylistSnapshot(draft: UserPlaylist): UserPlaylist = synchronized(lock) {
         val currentPlaylists = playlists.value
         val existingIds = currentPlaylists.mapTo(hashSetOf()) { it.id }
         var timestamp = System.currentTimeMillis()
         while ("pl_$timestamp" in existingIds) timestamp++
 
-        val playlist = UserPlaylist(
+        val playlist = draft.copy(
             id = "pl_$timestamp",
-            name = name.ifBlank { "新建歌单" },
-            songs = songs.distinctBy { it.uid },
+            name = draft.name.ifBlank { "新建歌单" },
+            songs = draft.songs.distinctBy { it.uid },
         )
         val candidatePlaylists = currentPlaylists + playlist
         writeTextAtomically(file, buildRoot(candidatePlaylists).toString())
         playlists.value = candidatePlaylists
         playlist
+    }
+
+    /** 检查取消/并发修改后，提交阶段不可取消：不会已落盘却向调用者报告取消或失败。 */
+    internal suspend fun commitPlaylistSync(preview: PlaylistSyncPreview): UserPlaylist {
+        val caller = currentCoroutineContext()
+        caller.ensureActive()
+        return withContext(NonCancellable) {
+            withContext(Dispatchers.IO) {
+                synchronized(lock) {
+                    caller.ensureActive()
+                    val current = playlists.value.firstOrNull { it.id == preview.expected.id }
+                    check(current === preview.expected && current.toJson().toString() == preview.expectedSnapshot) {
+                        "歌单已被修改或删除，请重新读取后确认。"
+                    }
+                    val updated = preview.snapshotForCommit()
+                    val candidates = playlists.value.map { if (it.id == current.id) updated else it }
+                    writeTextAtomically(file, buildRoot(candidates).toString())
+                    playlists.value = candidates
+                    updated
+                }
+            }
+        }
     }
 
     fun deletePlaylist(id: String) = mutate { playlists.value = playlists.value.filterNot { it.id == id } }

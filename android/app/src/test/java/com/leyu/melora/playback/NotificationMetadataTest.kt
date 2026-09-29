@@ -16,6 +16,71 @@ class NotificationMetadataTest {
     @After fun cleanup() = TrackRegistry.clear()
 
     @Test
+    fun lyricModeAddsArtistToDisplayTitleWithoutChangingCanonicalTitle() {
+        val queue = Queue("a")
+        val registered = requireNotNull(TrackRegistry.get("a"))
+
+        syncNotificationMetadata(queue.player, lyric("a"), true, false)
+
+        assertEquals("Title a - Artist a", queue.items.single().mediaMetadata.displayTitle)
+        assertEquals("Title a", queue.items.single().mediaMetadata.title)
+        assertEquals("A line 1", queue.items.single().mediaMetadata.artist)
+        assertSame(registered, TrackRegistry.get("a"))
+        assertEquals("Title a", registered.title)
+    }
+
+    @Test
+    fun blankArtistsDoNotAddATitleSeparator() {
+        for (artist in listOf("", "  \t\n")) {
+            val queue = Queue("a")
+            TrackRegistry.register(requireNotNull(TrackRegistry.get("a")).copy(artist = artist))
+
+            syncNotificationMetadata(queue.player, lyric("a"), true, false)
+
+            val metadata = queue.items.single().mediaMetadata
+            assertEquals("Title a", metadata.displayTitle ?: metadata.title)
+            assertEquals("A line 1", metadata.artist)
+        }
+    }
+
+    @Test
+    fun notificationContentUsesDisplayTitleAndFallsBackToCanonicalTitle() {
+        val queue = Queue("a")
+        syncNotificationMetadata(queue.player, lyric("a"), true, false)
+        assertEquals("Title a - Artist a", notificationContentTitle(queue.items.single().mediaMetadata))
+
+        syncNotificationMetadata(queue.player, lyric("a"), false, false)
+        assertEquals("Title a", notificationContentTitle(queue.items.single().mediaMetadata))
+        assertEquals(null, notificationContentTitle(MediaMetadata.EMPTY))
+    }
+
+    @Test
+    fun lyricModeKeepsTheArtistInTitleWithoutAnAvailableLyricLine() {
+        val missingLines = listOf(
+            null,
+            lyric("a").copy(lines = emptyList()),
+            lyric("a").copy(lines = listOf(LyricLine(0, "  "))),
+            lyric("a").copy(lines = listOf(LyricLine(1_000, "Not started"))),
+            lyric("other"),
+        )
+        for (lyric in missingLines) {
+            val queue = Queue("a")
+            // 没有歌词时 artist 不变，开关仍须单独触发展示标题的写入和清除。
+            syncNotificationMetadata(queue.player, lyric, true, false)
+            assertEquals("Title a - Artist a", notificationContentTitle(queue.items.single().mediaMetadata))
+            assertEquals("Artist a", queue.items.single().mediaMetadata.artist)
+            repeat(3) { syncNotificationMetadata(queue.player, lyric, true, false) }
+            assertEquals(listOf(0), queue.edits)
+
+            syncNotificationMetadata(queue.player, lyric, false, false)
+            assertEquals("Title a", notificationContentTitle(queue.items.single().mediaMetadata))
+            assertEquals(null, queue.items.single().mediaMetadata.displayTitle)
+            assertEquals("Artist a", queue.items.single().mediaMetadata.artist)
+            assertEquals(listOf(0, 0), queue.edits)
+        }
+    }
+
+    @Test
     fun notificationUpdateKeepsRealCurrentItemAndPositionInsteadOfJumpingToFirst() {
         val queue = Queue("a", "b", "c")
         queue.currentIndex = 1
@@ -30,6 +95,9 @@ class NotificationMetadataTest {
         assertEquals("Artist a", queue.items[0].mediaMetadata.artist)
         assertEquals("B line 2", queue.items[1].mediaMetadata.artist)
         assertEquals("Title b", queue.items[1].mediaMetadata.title)
+        assertEquals("Title b - Artist b", notificationContentTitle(queue.items[1].mediaMetadata))
+        assertEquals(null, queue.items[0].mediaMetadata.displayTitle)
+        assertEquals(null, queue.items[2].mediaMetadata.displayTitle)
     }
 
     @Test
@@ -45,6 +113,7 @@ class NotificationMetadataTest {
             assertEquals(mode, queue.mode)
         }
         assertEquals(listOf(1), queue.edits)
+        assertEquals("Title b - Artist b", notificationContentTitle(queue.items[1].mediaMetadata))
     }
 
     @Test
@@ -56,6 +125,9 @@ class NotificationMetadataTest {
         syncNotificationMetadata(queue.player, lyric("a"), true, false)
         assertEquals("Artist a", queue.items[0].mediaMetadata.artist)
         assertEquals("Artist b", queue.items[1].mediaMetadata.artist)
+        assertEquals(null, queue.items[0].mediaMetadata.displayTitle)
+        assertEquals("Title a", notificationContentTitle(queue.items[0].mediaMetadata))
+        assertEquals("Title b - Artist b", notificationContentTitle(queue.items[1].mediaMetadata))
         syncNotificationMetadata(queue.player, lyric("b"), true, false)
         assertEquals("B line 1", queue.items[1].mediaMetadata.artist)
         assertEquals("b", queue.player.currentMediaItem!!.mediaId)
@@ -69,10 +141,14 @@ class NotificationMetadataTest {
         syncNotificationMetadata(queue.player, lyric("a"), true, false)
         assertEquals("Artist a", queue.items[0].mediaMetadata.artist)
         assertEquals("A line 1", queue.items[2].mediaMetadata.artist)
+        assertEquals(null, queue.items[0].mediaMetadata.displayTitle)
+        assertEquals("Title a - Artist a", notificationContentTitle(queue.items[2].mediaMetadata))
         queue.currentIndex = 0
         syncNotificationMetadata(queue.player, lyric("a"), true, false)
         assertEquals("A line 1", queue.items[0].mediaMetadata.artist)
         assertEquals("Artist a", queue.items[2].mediaMetadata.artist)
+        assertEquals("Title a - Artist a", notificationContentTitle(queue.items[0].mediaMetadata))
+        assertEquals(null, queue.items[2].mediaMetadata.displayTitle)
     }
 
     @Test
@@ -84,8 +160,13 @@ class NotificationMetadataTest {
         queue.positionMs = 500
         syncNotificationMetadata(queue.player, lyric("a"), true, false)
         assertEquals("A line 1", queue.items[0].mediaMetadata.artist)
+        assertEquals("Title a - Artist a", notificationContentTitle(queue.items[0].mediaMetadata))
         syncNotificationMetadata(queue.player, lyric("a"), false, false)
         assertEquals("Artist a", queue.items[0].mediaMetadata.artist)
+        assertEquals("Title a", notificationContentTitle(queue.items[0].mediaMetadata))
+        assertEquals(null, queue.items[0].mediaMetadata.displayTitle)
+        syncNotificationMetadata(queue.player, lyric("a"), true, false)
+        assertEquals("Title a - Artist a", notificationContentTitle(queue.items[0].mediaMetadata))
     }
 
     @Test
@@ -104,6 +185,8 @@ class NotificationMetadataTest {
         assertEquals("kept", updated.mediaMetadata.description)
         assertSame(registered, TrackRegistry.get("a"))
         assertEquals("Artist a", registered.artist)
+        assertEquals("Title a", registered.title)
+        assertEquals("Title a", updated.mediaMetadata.title)
     }
 
     @Test
