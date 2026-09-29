@@ -46,7 +46,7 @@ class LocalEmptyAndInputLayoutTest {
         restoration.setContent {
             MaterialTheme {
                 CompositionLocalProvider(LocalSongListState provides shared) {
-                    LocalSongsPage(onOpenDrawer = {})
+                    LocalSongsPage(content = LocalSongsContent(), onOpenDrawer = {})
                 }
             }
         }
@@ -62,6 +62,24 @@ class LocalEmptyAndInputLayoutTest {
         }
     }
 
+    @Test fun openingSearchBeforeSortFinishesNeverReportsAnEmptyLibrary() {
+        val content = mutableStateOf<LocalSongsContent?>(null)
+        compose.setContent {
+            MaterialTheme {
+                CompositionLocalProvider(LocalSongListState provides shared) {
+                    LocalSongsPage(content = content.value, onOpenDrawer = {})
+                }
+            }
+        }
+        compose.onNodeWithText("还没有本地歌曲").assertDoesNotExist()
+        compose.onNodeWithContentDescription("搜索本地歌曲").performClick()
+        compose.onNodeWithText("在 0 首歌曲中搜索").assertDoesNotExist()
+        compose.onNode(hasSetTextAction()).performTextInput("测试")
+        compose.onNodeWithText("未找到与「测试」相关的歌曲").assertDoesNotExist()
+        compose.runOnIdle { content.value = LocalSongsContent() }
+        compose.onNodeWithText("未找到与「测试」相关的歌曲").assertIsDisplayed()
+    }
+
     @Test fun emptyStateIsBelowTheWholeFixedHeaderWithAndWithoutBlur() {
         lateinit var list: LazyListState
         var minimumPadding = 0
@@ -71,7 +89,7 @@ class LocalEmptyAndInputLayoutTest {
             MaterialTheme {
                 CompositionLocalProvider(LocalSongListState provides shared) {
                     LocalSongsListContent(
-                        songs = emptyList(), sections = emptyMap(),
+                        content = LocalSongsContent(),
                         selection = SongSelectionState(), listState = list,
                         onOpenDrawer = {}, onOpenSearch = {}, onOpenSortSheet = {}, onMore = {},
                         onDeleteSelection = {}, onAddToPlaylist = {}, pullEnabled = true,
@@ -101,7 +119,7 @@ class LocalEmptyAndInputLayoutTest {
                     LocalSongListState provides shared,
                 ) {
                     LocalSearchPage(
-                        songs = emptyList(), query = "", onQueryChange = {}, onCancel = {},
+                        content = LocalSongsContent(), query = "", onQueryChange = {}, onCancel = {},
                         selection = SongSelectionState(), onOpenSortSheet = {}, onMore = {},
                         onDeleteSelection = {}, onAddToPlaylist = {},
                     )

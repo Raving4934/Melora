@@ -126,6 +126,8 @@ import com.leyu.melora.ui.audiobook.AudiobooksScreen
 import com.leyu.melora.ui.discover.DiscoverScreen
 import com.leyu.melora.ui.leaderboard.LeaderboardScreen
 import com.leyu.melora.ui.leaderboard.boardPlatforms
+import com.leyu.melora.ui.local.rememberLocalSongsContent
+import com.leyu.melora.ui.common.LocalSongListState
 import com.leyu.melora.ui.local.LocalSongsPage
 import com.leyu.melora.ui.my.MyLibraryScreen
 import com.leyu.melora.ui.playlist.PlaylistTopBarFilter
@@ -314,6 +316,11 @@ private fun Modifier.drawerSwipeable(
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun MeloraApp(initialTab: Int = 5) {
+    val localSongsContent = rememberLocalSongsContent(
+        songs = LocalSongListState.current.localSongs.value,
+        sortField = MeloraSettings.localSortField.collectAsStateWithLifecycle().value,
+        ascending = MeloraSettings.localSortAscending.collectAsStateWithLifecycle().value,
+    )
     val playerState by PlaybackController.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -664,6 +671,7 @@ fun MeloraApp(initialTab: Int = 5) {
                                     },
                                 )
                                 5 -> LocalSongsPage(
+                                    content = localSongsContent,
                                     onOpenDrawer = openDrawer,
                                 )
                                 6 -> MyLibraryScreen(

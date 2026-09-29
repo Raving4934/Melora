@@ -90,7 +90,7 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun LocalSearchPage(
-    songs: List<LocalSong>,
+    content: LocalSongsContent?,
     query: String,
     onQueryChange: (String) -> Unit,
     onCancel: () -> Unit,
@@ -100,6 +100,7 @@ internal fun LocalSearchPage(
     onDeleteSelection: (List<LocalSong>) -> Unit,
     onAddToPlaylist: (List<OnlineSong>) -> Unit,
 ) {
+    val songs = content?.songs.orEmpty()
     val context = LocalContext.current
     val playingLocalId = rememberPlayingLocalId()
     val listState = rememberLazyListState()
@@ -149,7 +150,7 @@ internal fun LocalSearchPage(
                                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
                                     if (query.isEmpty()) {
                                         Text(
-                                            "在 ${songs.size} 首歌曲中搜索",
+                                            if (content == null) "搜索本地歌曲" else "在 ${songs.size} 首歌曲中搜索",
                                             style = inputStyle.copy(color = TextMuted),
                                             maxLines = 1,
                                         )
@@ -218,6 +219,7 @@ internal fun LocalSearchPage(
         },
     ) {
         when {
+            content == null -> Box(Modifier.fillMaxSize())
             query.isBlank() -> {
                 Column(
                     modifier = Modifier.fillMaxSize(),

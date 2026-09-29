@@ -63,6 +63,7 @@ import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -124,19 +125,41 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.withContext
 
-/**
- * 本地歌曲页：列表 + 批量管理 + 搜索页（连续平移）+ 排序抽屉。
- * 取消搜索时保留离场内容，列表页从左侧平移恢复。
- */
+/** 歌曲、数量和字母索引共享一份展示快照。 */
+internal data class LocalSongsContent(
+    val songs: List<LocalSong> = emptyList(),
+    val sections: Map<String, Int> = emptyMap(),
+)
+
+/** 由主导航持有，切页不重建；歌曲和索引只发布同一份后台计算结果。 */
+@Composable
+internal fun rememberLocalSongsContent(
+    songs: List<LocalSong>,
+    sortField: LocalSortField,
+    ascending: Boolean,
+): LocalSongsContent? = key(songs.isEmpty()) {
+    // 清空库立即撤掉旧行；重新入库从未就绪开始，不能短暂复活已删除的行。
+    val content by produceState<LocalSongsContent?>(
+        if (songs.isEmpty()) LocalSongsContent() else null, songs, sortField, ascending,
+    ) {
+        value = withContext(Dispatchers.Default) {
+            val sorted = sortLocalSongs(songs, sortField, ascending)
+            LocalSongsContent(sorted, localSongSectionStarts(sorted, sortField))
+        }
+    }
+    content
+}
+
+/** 本地列表与搜索共用完整快照；首次排序未完成不冒充空库。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun LocalSongsPage(
+    content: LocalSongsContent?,
     onOpenDrawer: (() -> Unit)?,
     onBack: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val songs by LocalMediaStore.songs.collectAsStateWithLifecycle()
 
     val sortField by MeloraSettings.localSortField.collectAsStateWithLifecycle()
     val ascending by MeloraSettings.localSortAscending.collectAsStateWithLifecycle()
@@ -249,15 +272,6 @@ internal fun LocalSongsPage(
         if (granted) launchScan() else permissionLauncher.launch(permission)
     }
 
-    // 排序和字母索引在后台一起完成；保留旧结果，取消旧任务后只发布最新的一整份快照。
-    val content by produceState(emptyList<LocalSong>() to emptyMap<String, Int>(), songs, sortField, ascending) {
-        value = withContext(Dispatchers.Default) {
-            val sorted = sortLocalSongs(songs, sortField, ascending)
-            sorted to localSongSectionStarts(sorted, sortField)
-        }
-    }
-    val (ordered, sections) = if (songs.isEmpty()) emptyList<LocalSong>() to emptyMap<String, Int>() else content
-
     BackHandler(enabled = searchPage != null) { searchPage = null }
     // 非搜索态：返回先退出批量管理，有父级回调则回退
     BackHandler(enabled = searchPage == null && (selection.active || onBack != null)) {
@@ -270,7 +284,7 @@ internal fun LocalSongsPage(
         modifier = Modifier.fillMaxSize(),
         detail = { page ->
             LocalSearchPage(
-                songs = ordered.ifEmpty { songs },
+                content = content,
                 query = page,
                 onQueryChange = { searchPage = it },
                 onCancel = { searchPage = null },
@@ -283,9 +297,7 @@ internal fun LocalSongsPage(
         },
         content = {
             LocalSongsListContent(
-                songs = ordered,
-                sourceSongs = ordered.ifEmpty { songs },
-                sections = sections,
+                content = content,
                 selection = selection,
                 listState = listState,
                 onOpenDrawer = onOpenDrawer,
@@ -364,8 +376,7 @@ internal fun LocalSongsPage(
 }
 @Composable
 internal fun LocalSongsListContent(
-    songs: List<LocalSong>,
-    sections: Map<String, Int>,
+    content: LocalSongsContent?,
     selection: SongSelectionState,
     listState: LazyListState,
     onOpenDrawer: (() -> Unit)?,
@@ -378,9 +389,10 @@ internal fun LocalSongsListContent(
     pullEnabled: Boolean,
     refreshing: Boolean,
     onRefresh: () -> Unit,
-    sourceSongs: List<LocalSong> = songs,
 ) {
     val context = LocalContext.current
+    val songs = content?.songs.orEmpty()
+    val sections = content?.sections.orEmpty()
     val scrollToTop = rememberFastScrollToTop(listState)
     val playingLocalId = rememberPlayingLocalId()
     val currentSection by remember(sections, listState) {
@@ -433,15 +445,15 @@ internal fun LocalSongsListContent(
                     }
                 }
                 Box(Modifier.fillMaxWidth().height(46.dp)) {
-                    if (sourceSongs.isNotEmpty()) {
+                    if (songs.isNotEmpty()) {
                         LocalListHeader(
-                            count = sourceSongs.size,
-                            songs = sourceSongs,
+                            count = songs.size,
+                            songs = songs,
                             selection = selection,
                             onPlayShuffle = {
                                 PlaybackController.playQueue(
                                     context,
-                                    sourceSongs.shuffled().map { it.toOnlineSong() }.toUiTracks(),
+                                    songs.shuffled().map { it.toOnlineSong() }.toUiTracks(),
                                     0,
                                     "local.songs",
                                 )
@@ -456,7 +468,7 @@ internal fun LocalSongsListContent(
         bottomBar = {
             LocalBatchActionsBar(
                 selection = selection,
-                songs = sourceSongs,
+                songs = songs,
                 onDelete = onDeleteSelection,
                 onAddToPlaylist = onAddToPlaylist,
             )
@@ -466,14 +478,14 @@ internal fun LocalSongsListContent(
             enabled = pullEnabled,
             refreshing = refreshing,
             onRefresh = onRefresh,
-            canPull = sourceSongs.isEmpty() || !listState.canScrollBackward,
+            canPull = songs.isEmpty() || !listState.canScrollBackward,
         ) {
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = chromeContentPadding(if (sourceSongs.isEmpty()) PaddingValues(top = 24.dp, bottom = 60.dp) else PaddingValues(bottom = 24.dp)),
+                contentPadding = chromeContentPadding(if (songs.isEmpty()) PaddingValues(top = 24.dp, bottom = 60.dp) else PaddingValues(bottom = 24.dp)),
             ) {
-                if (sourceSongs.isEmpty()) item { EmptyLocalState(Modifier.fillMaxWidth()) }
+                if (songs.isEmpty() && content != null) item { EmptyLocalState(Modifier.fillMaxWidth()) }
                 else itemsIndexed(songs, key = { _, song -> song.id }) { index, song ->
                     LocalSongRow(
                         song = song,
