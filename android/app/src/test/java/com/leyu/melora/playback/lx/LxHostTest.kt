@@ -32,11 +32,11 @@ import java.util.zip.Deflater
 class LxHostTest {
     @Test
     fun outerRequestDeadlineCapsEveryHostHttpCall() {
-        assertEquals(15_000, effectiveHttpTimeoutMs(15_000, Long.MAX_VALUE, nowMs = 10_000))
-        assertEquals(700, effectiveHttpTimeoutMs(15_000, deadlineMs = 10_700, nowMs = 10_000))
-        assertEquals(400, effectiveHttpTimeoutMs(15_000, deadlineMs = 10_400, nowMs = 10_000))
-        assertEquals(0, effectiveHttpTimeoutMs(15_000, deadlineMs = 10_000, nowMs = 10_001))
-        assertEquals(100, effectiveHttpTimeoutMs(1, Long.MAX_VALUE, nowMs = 10_000))
+        assertEquals(15_000, effectiveHttpTimeoutMs(15_000, Long.MAX_VALUE))
+        assertEquals(700, effectiveHttpTimeoutMs(15_000, 700))
+        assertEquals(400, effectiveHttpTimeoutMs(15_000, 400))
+        assertEquals(0, effectiveHttpTimeoutMs(15_000, -1))
+        assertEquals(100, effectiveHttpTimeoutMs(1, Long.MAX_VALUE))
     }
 
     @Test
@@ -49,7 +49,7 @@ class LxHostTest {
         val token = host.newRequestToken()
         host.cancelRequest(token)
 
-        val result = JSONObject(host.withinRequestTimeout(token, 5_000) { host.http(requestPayload()) })
+        val result = JSONObject(host.withinRequestDeadline(token, monotonicDeadlineAfter(5_000)) { host.http(requestPayload()) })
 
         assertEquals(0, calls.get())
         assertTrue(result.getString("error").contains("取消"))
@@ -72,7 +72,7 @@ class LxHostTest {
         val executor = Executors.newSingleThreadExecutor()
         try {
             val future = executor.submit<String> {
-                host.withinRequestTimeout(token, 5_000) { host.http(requestPayload()) }
+                host.withinRequestDeadline(token, monotonicDeadlineAfter(5_000)) { host.http(requestPayload()) }
             }
             assertTrue(entered.await(1, TimeUnit.SECONDS))
 
@@ -96,7 +96,7 @@ class LxHostTest {
         val result = JSONObject(LxHost(clientReturning(body)).http(JSONObject(requestPayload()).put("maxResponseBytes", 64).toString()))
         assertFalse(result.has("error"))
         assertEquals(64, Base64.getDecoder().decode(result.getString("raw")).size)
-        assertEquals(800, effectiveHttpTimeoutMs(800, Long.MAX_VALUE, 0))
+        assertEquals(800, effectiveHttpTimeoutMs(800, Long.MAX_VALUE))
     }
 
     @Test

@@ -16,6 +16,8 @@ public class QuickJS implements Closeable {
     volatile boolean released;
     final long runtimePtr;
     final EventQueue quickJSNative;
+    private final Object interruptLifecycleLock = new Object();
+    private boolean closing;
     static final Map<Long, JSContext> sContextMap = Collections.synchronizedMap(new HashMap<>());
 
     private QuickJS(long runtimePtr, HandlerThread handlerThread) {
@@ -29,6 +31,11 @@ public class QuickJS implements Closeable {
 
     public void postEventQueue(Runnable event) {
         quickJSNative.postVoid(event, false);
+    }
+
+    /** Runs on the owning runtime queue and returns only after the event has completed. */
+    public void runOnEventQueue(Runnable event) {
+        quickJSNative.postVoid(event);
     }
 
     private static int sId = 0;
@@ -113,20 +120,49 @@ public class QuickJS implements Closeable {
     }
 
 
-    public void close() {
-        quickJSNative.postVoid(() -> {
-            if (QuickJS.this.released) {
-                return;
+    /** Starts one interruptible operation; only the QuickJS interrupt callback observes this state. */
+    public long beginInterruptibleExecution(long deadlineNanos) {
+        synchronized (interruptLifecycleLock) {
+            if (closing || released) throw new IllegalStateException("QuickJS runtime is closing");
+            return QuickJSNativeImpl._beginInterruptibleExecution(runtimePtr, deadlineNanos);
+        }
+    }
+
+    /** Signals a ticket from any thread without calling QuickJS APIs or touching JS handles. */
+    public void interruptExecution(long ticket) {
+        synchronized (interruptLifecycleLock) {
+            if (!released && ticket != 0) {
+                QuickJSNativeImpl._interruptExecution(runtimePtr, ticket);
             }
+        }
+    }
+
+    /** Clears a completed operation's state; stale tickets cannot affect a later operation. */
+    public void endInterruptibleExecution(long ticket) {
+        synchronized (interruptLifecycleLock) {
+            if (!released && ticket != 0) {
+                QuickJSNativeImpl._endInterruptibleExecution(runtimePtr, ticket);
+            }
+        }
+    }
+
+    public void close() {
+        synchronized (interruptLifecycleLock) {
+            if (closing || released) return;
+            closing = true;
+        }
+        quickJSNative.postVoid(() -> {
+            if (QuickJS.this.released) return;
             JSContext[] values = new JSContext[sContextMap.size()];
             sContextMap.values().toArray(values);
             for (JSContext context : values) {
-                if (context.getQuickJS() == QuickJS.this) {
-                    context.close();
-                }
+                if (context.getQuickJS() == QuickJS.this) context.close();
             }
-            getNative()._releaseRuntime(runtimePtr);
-            QuickJS.this.released = true;
+            synchronized (interruptLifecycleLock) {
+                if (QuickJS.this.released) return;
+                getNative()._releaseRuntime(runtimePtr);
+                QuickJS.this.released = true;
+            }
             quickJSNative.interrupt();
         });
     }

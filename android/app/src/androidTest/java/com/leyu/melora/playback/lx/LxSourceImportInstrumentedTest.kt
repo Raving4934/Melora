@@ -87,13 +87,14 @@ class LxSourceImportInstrumentedTest {
 
     @Test
     fun manualInspectStillRejectsUninitializedAndProtocolInvalidScripts() {
-        assertThrows(Exception::class.java) {
+        val initializationFailure = assertThrows(Exception::class.java) {
             runBlocking {
                 LxScriptEngine(fixtureContext).use { engine ->
                     engine.inspectSource("const sourceThatNeverInitializes = true;", "no-init.js", timeoutMs = 500)
                 }
             }
         }
+        assertEquals("脚本未按音源协议完成初始化", initializationFailure.message)
         assertThrows(Exception::class.java) {
             runBlocking {
                 LxScriptEngine(fixtureContext).use { engine ->

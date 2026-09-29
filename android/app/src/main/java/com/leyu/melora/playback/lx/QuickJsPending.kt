@@ -9,8 +9,8 @@ object QuickJsPending {
 
     external fun executePendingNative(runtimePtr: Long, contextPtr: Long): Int
 
-    /** Promise任务必须与JS求值/关闭处于同一runtime线程；下一条同步JS调用充当队列屏障。 */
+    /** 等待runtime线程上的Promise任务全部退出，再允许调用方归还本次执行budget。 */
     fun executePending(runtime: QuickJS, runtimePtr: Long, contextPtr: Long) {
-        runtime.postEventQueue { executePendingNative(runtimePtr, contextPtr) }
+        runtime.runOnEventQueue { executePendingNative(runtimePtr, contextPtr) }
     }
 }

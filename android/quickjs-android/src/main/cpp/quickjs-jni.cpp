@@ -1,6 +1,10 @@
 #include <jni.h>
 #include <string>
 #include <quickjs/quickjs.h>
+#include <atomic>
+#include <cstdint>
+#include <new>
+#include <time.h>
 #include <vector>
 
 #if INTPTR_MAX >= INT64_MAX
@@ -67,6 +71,41 @@ jfieldID js_value_u_float64_id;
 jfieldID js_value_u_ptr_id;
 
 void initES6Module(JSRuntime *rt);
+
+struct RuntimeInterruptState {
+    // begin/interrupt/end/release are serialized by QuickJS.interruptLifecycleLock.
+    uint64_t next_ticket = 0;
+    std::atomic<uint64_t> active_ticket{0};
+    std::atomic<uint64_t> cancelled_ticket{0};
+    std::atomic<int64_t> deadline_nanos{0};
+};
+
+static uint64_t monotonicNanos() {
+    struct timespec now{};
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0;
+    return static_cast<uint64_t>(now.tv_sec) * 1000000000ULL +
+           static_cast<uint64_t>(now.tv_nsec);
+}
+
+static int interruptQuickJS(JSRuntime *, void *opaque) {
+    auto *state = static_cast<RuntimeInterruptState *>(opaque);
+    if (state == nullptr) return 0;
+    const uint64_t active = state->active_ticket.load(std::memory_order_acquire);
+    if (active == 0) return 0;
+    if (state->cancelled_ticket.load(std::memory_order_acquire) == active) return 1;
+    const int64_t deadline = state->deadline_nanos.load(std::memory_order_relaxed);
+    return deadline > 0 && monotonicNanos() >= static_cast<uint64_t>(deadline);
+}
+
+static RuntimeInterruptState *runtimeInterruptState(JSRuntime *runtime) {
+    return runtime == nullptr ? nullptr :
+        static_cast<RuntimeInterruptState *>(JS_GetRuntimeOpaque(runtime));
+}
+
+static void throwIllegalState(JNIEnv *env, const char *message) {
+    jclass exceptionClass = env->FindClass("java/lang/IllegalStateException");
+    if (exceptionClass != nullptr) env->ThrowNew(exceptionClass, message);
+}
 
 bool JS_Equals(JSValue v1, JSValue v2) {
 #if defined(JS_NAN_BOXING)
@@ -282,8 +321,62 @@ Java_com_quickjs_QuickJSNativeImpl__1createRuntime(JNIEnv *env, jclass clazz) {
         env->ThrowNew(exceptionClass, "Unable to allocate QuickJS runtime");
         return 0;
     }
+    auto *interrupt_state = new (std::nothrow) RuntimeInterruptState();
+    if (interrupt_state == nullptr) {
+        JS_FreeRuntime(runtime);
+        jclass exceptionClass = env->FindClass("java/lang/OutOfMemoryError");
+        if (exceptionClass != nullptr) env->ThrowNew(exceptionClass, "Unable to allocate QuickJS interrupt state");
+        return 0;
+    }
+    JS_SetRuntimeOpaque(runtime, interrupt_state);
+    JS_SetInterruptHandler(runtime, interruptQuickJS, interrupt_state);
     initES6Module(runtime);
     return reinterpret_cast<jlong>(runtime);
+}
+extern "C"
+JNIEXPORT jlong JNICALL
+Java_com_quickjs_QuickJSNativeImpl__1beginInterruptibleExecution(
+        JNIEnv *env, jclass, jlong runtime_ptr, jlong deadline_nanos) {
+    auto *runtime = reinterpret_cast<JSRuntime *>(runtime_ptr);
+    auto *state = runtimeInterruptState(runtime);
+    if (state == nullptr) {
+        throwIllegalState(env, "QuickJS interrupt state is unavailable");
+        return 0;
+    }
+    if (state->active_ticket.load(std::memory_order_relaxed) != 0) {
+        throwIllegalState(env, "QuickJS runtime already has an active execution");
+        return 0;
+    }
+    uint64_t ticket = ++state->next_ticket;
+    if (ticket == 0) ticket = ++state->next_ticket;
+    state->cancelled_ticket.store(0, std::memory_order_relaxed);
+    state->deadline_nanos.store(static_cast<int64_t>(deadline_nanos), std::memory_order_relaxed);
+    state->active_ticket.store(ticket, std::memory_order_release);
+    return static_cast<jlong>(ticket);
+}
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_quickjs_QuickJSNativeImpl__1interruptExecution(
+        JNIEnv *env, jclass, jlong runtime_ptr, jlong ticket_value) {
+    auto *state = runtimeInterruptState(reinterpret_cast<JSRuntime *>(runtime_ptr));
+    if (state == nullptr || ticket_value == 0) return;
+    const uint64_t ticket = static_cast<uint64_t>(ticket_value);
+    if (state->active_ticket.load(std::memory_order_relaxed) == ticket) {
+        state->cancelled_ticket.store(ticket, std::memory_order_release);
+    }
+}
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_quickjs_QuickJSNativeImpl__1endInterruptibleExecution(
+        JNIEnv *env, jclass, jlong runtime_ptr, jlong ticket_value) {
+    auto *state = runtimeInterruptState(reinterpret_cast<JSRuntime *>(runtime_ptr));
+    if (state == nullptr || ticket_value == 0) return;
+    const uint64_t ticket = static_cast<uint64_t>(ticket_value);
+    if (state->active_ticket.load(std::memory_order_relaxed) == ticket) {
+        state->cancelled_ticket.store(0, std::memory_order_relaxed);
+        state->deadline_nanos.store(0, std::memory_order_relaxed);
+        state->active_ticket.store(0, std::memory_order_release);
+    }
 }
 extern "C"
 JNIEXPORT jlong JNICALL
@@ -307,7 +400,12 @@ Java_com_quickjs_QuickJSNativeImpl__1createContext(JNIEnv *env, jclass clazz, jl
 JNIEXPORT void JNICALL
 Java_com_quickjs_QuickJSNativeImpl__1releaseRuntime(JNIEnv *env, jclass clazz, jlong runtime_ptr) {
     auto *runtime = reinterpret_cast<JSRuntime *>(runtime_ptr);
+    if (runtime == nullptr) return;
+    auto *interrupt_state = runtimeInterruptState(runtime);
+    JS_SetInterruptHandler(runtime, nullptr, nullptr);
+    JS_SetRuntimeOpaque(runtime, nullptr);
     JS_FreeRuntime(runtime);
+    delete interrupt_state;
 }extern "C"
 JNIEXPORT void JNICALL
 Java_com_quickjs_QuickJSNativeImpl__1releaseContext(JNIEnv *env, jclass clazz, jlong context_ptr) {

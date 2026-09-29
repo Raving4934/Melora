@@ -8,9 +8,13 @@ import com.quickjs.QuickJS
 import org.json.JSONObject
 import java.io.Closeable
 import java.util.concurrent.CancellationException
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+
+private class LxScriptTimeoutException(message: String, cause: Throwable? = null) :
+    IllegalStateException(message, cause)
 
 // 每个实例对应一个音源脚本的沙箱上下文；所有调用串行执行，Promise 由原生任务泵驱动。
 class LxScriptEngine(private val context: Context) : Closeable {
@@ -54,16 +58,23 @@ class LxScriptEngine(private val context: Context) : Closeable {
         }
     }
 
-    fun load(code: String, fileName: String) {
-        // 部分脚本在顶层读取 lx.currentScriptInfo.version，先注入脚本真实元信息再执行
+    fun load(code: String, fileName: String, timeoutMs: Long = 3_000) {
+        executeWithBudget(host.newRequestToken(), timeoutMs, "脚本加载超时") {
+            evaluateScript(code, fileName)
+        }
+    }
+
+    private fun evaluateScript(code: String, fileName: String) {
+        // 部分脚本在顶层读取 lx.currentScriptInfo.version，先注入脚本真实元信息再执行。
         jsContext.executeVoidScript("globalThis.lx.currentScriptInfo = ${JSONObject(parseLxScriptMetadata(code))}", null)
         jsContext.executeVoidScript(code, fileName)
     }
 
-    fun inited(): JSONObject? {
-        val raw = jsContext.executeStringScript("JSON.stringify(globalThis.__lxInited || null)", null)
-        return raw?.takeIf { it.isNotEmpty() && it != "null" }?.let { JSONObject(it) }
-    }
+    fun inited(timeoutMs: Long = 3_000): JSONObject? =
+        executeWithBudget(host.newRequestToken(), timeoutMs, "脚本状态读取超时") {
+            val raw = jsContext.executeStringScript("JSON.stringify(globalThis.__lxInited || null)", null)
+            raw?.takeIf { it.isNotEmpty() && it != "null" }?.let { JSONObject(it) }
+        }
 
     /** 初始化与媒体请求共用同一取消边界，不在胜出源返回后等待慢源的定时器或 HTTP。 */
     internal suspend fun <T> withCancellation(block: suspend (LxRequestToken) -> T): T = coroutineScope {
@@ -72,38 +83,68 @@ class LxScriptEngine(private val context: Context) : Closeable {
         try {
             task.await()
         } finally {
-            // 只取消宿主 Call；由执行线程退出 JNI，再由 coroutineScope 等待释放运行时。
+            // 取消只写原子中断标志；实际JS执行与runtime关闭仍由QuickJS线程串行处理。
             host.cancelRequest(token)
+            token.runtimeTicket.get().takeIf { it != 0L }?.let(quickJs::interruptExecution)
         }
     }
 
     suspend fun initialize(code: String, fileName: String, timeoutMs: Long = 3_000): JSONObject? =
         withCancellation { token ->
-            host.withinRequestTimeout(token, timeoutMs) {
-                ensureActive(token)
-                val started = System.nanoTime()
-                load(code, fileName)
-                val remaining = timeoutMs - (System.nanoTime() - started) / 1_000_000
-                pumpUntil("globalThis.__lxInited && JSON.stringify(globalThis.__lxInited)", remaining, token)
-                    ?.let(::JSONObject)
+            try {
+                executeWithBudget(token, timeoutMs, "脚本初始化超时") { deadlineNanos ->
+                    initializeScript(code, fileName, deadlineNanos, token)
+                }
+            } catch (_: LxScriptTimeoutException) {
+                null
             }
         }
 
-    /** 手动“检查脚本”时执行并检查音源协议；不以文件名、注释或lx字样猜测脚本有效性。 */
-    internal suspend fun inspectSource(code: String, fileName: String, timeoutMs: Long = 8_000): JSONObject {
-        val initialized = initialize(code, fileName, timeoutMs)
-            ?: error("脚本未按音源协议完成初始化")
-        check(initialized.opt("status") != false) { "脚本报告初始化失败" }
-        val sources = initialized.optJSONObject("sources") ?: error("脚本未声明音源")
-        val platforms = setOf("kw", "kg", "tx", "wy", "mg", "local")
-        val actions = setOf("musicUrl", "lyric", "pic")
-        check(sources.keys().asSequence().any { id ->
-            val declared = sources.optJSONObject(id)?.optJSONArray("actions")
-            id in platforms && declared != null && (0 until declared.length()).any { declared.opt(it) in actions }
-        }) { "脚本未声明有效的平台和请求动作" }
-        check(jsContext.executeBooleanScript("globalThis.__lxHasRequestHandler()", null)) { "脚本未注册 request 处理器" }
-        return sources
+    private fun initializeScript(
+        code: String,
+        fileName: String,
+        deadlineNanos: Long,
+        token: LxRequestToken,
+    ): JSONObject {
+        ensureActive(token)
+        evaluateScript(code, fileName)
+        return JSONObject(pumpUntil(
+            "globalThis.__lxInited && JSON.stringify(globalThis.__lxInited)",
+            deadlineNanos,
+            token,
+            "脚本初始化超时",
+        ))
     }
+
+    /** 手动“检查脚本”时执行并检查音源协议；初始化及协议检查共享一个总budget。 */
+    internal suspend fun inspectSource(code: String, fileName: String, timeoutMs: Long = 8_000): JSONObject =
+        withCancellation { token ->
+            var initializationComplete = false
+            try {
+                executeWithBudget(token, timeoutMs, "脚本检查超时") { deadlineNanos ->
+                    val initialized = initializeScript(code, fileName, deadlineNanos, token)
+                    initializationComplete = true
+                    check(initialized.opt("status") != false) { "脚本报告初始化失败" }
+                    val sources = initialized.optJSONObject("sources") ?: error("脚本未声明音源")
+                    val platforms = setOf("kw", "kg", "tx", "wy", "mg", "local")
+                    val actions = setOf("musicUrl", "lyric", "pic")
+                    check(sources.keys().asSequence().any { id ->
+                        val declared = sources.optJSONObject(id)?.optJSONArray("actions")
+                        id in platforms && declared != null && (0 until declared.length()).any { declared.opt(it) in actions }
+                    }) { "脚本未声明有效的平台和请求动作" }
+                    ensureActive(token)
+                    check(jsContext.executeBooleanScript("globalThis.__lxHasRequestHandler()", null)) {
+                        "脚本未注册 request 处理器"
+                    }
+                    sources
+                }
+            } catch (timeout: LxScriptTimeoutException) {
+                if (!initializationComplete) {
+                    throw IllegalStateException("脚本未按音源协议完成初始化", timeout)
+                }
+                throw timeout
+            }
+        }
 
     // 解析一次 musicUrl/lyric/pic 请求；同步等待 Promise 链完成。
     // 非池化调用保留原 API，但仍走同一条可取消请求链路。
@@ -116,43 +157,47 @@ class LxScriptEngine(private val context: Context) : Closeable {
         action: String,
         info: JSONObject,
         timeoutMs: Long = 20_000,
-    ): Any {
+    ): Any = executeWithBudget(token, timeoutMs, "脚本解析超时") { deadlineNanos ->
         val payload = JSONObject()
             .put("source", source)
             .put("action", action)
             .put("info", info)
             .toString()
-        return host.withinRequestTimeout(token, timeoutMs) {
-            ensureActive(token)
-            jsContext.executeVoidScript("globalThis.__lxInvoke(${JSONObject.quote(payload)})", null)
-            ensureActive(token)
-            val raw = pumpUntil("globalThis.__lxTakeResult()", timeoutMs, token)
-                ?: throw IllegalStateException("脚本解析超时")
-            ensureActive(token)
-            val parsed = JSONObject(raw)
-            if (!parsed.optBoolean("ok", false)) {
-                throw IllegalStateException(parsed.optString("error", "脚本执行失败"))
-            }
-            parsed.opt("data") ?: ""
+        ensureActive(token)
+        jsContext.executeVoidScript("globalThis.__lxInvoke(${JSONObject.quote(payload)})", null)
+        ensureActive(token)
+        val parsed = JSONObject(pumpUntil(
+            "globalThis.__lxTakeResult()",
+            deadlineNanos,
+            token,
+            "脚本解析超时",
+        ))
+        ensureActive(token)
+        if (!parsed.optBoolean("ok", false)) {
+            throw IllegalStateException(parsed.optString("error", "脚本执行失败"))
         }
+        parsed.opt("data") ?: ""
     }
 
     // 调用内置 musicSdk 协议：__meloraInvoke / __meloraTake。
     fun sdkCall(action: String, source: String, params: JSONObject, timeoutMs: Long = 25_000): JSONObject {
         val token = host.newRequestToken()
-        val payload = JSONObject()
-            .put("action", action)
-            .put("source", source)
-            .put("params", params)
-            .toString()
-        return host.withinRequestTimeout(token, timeoutMs) {
+        return executeWithBudget(token, timeoutMs, "目录请求超时") { deadlineNanos ->
+            val payload = JSONObject()
+                .put("action", action)
+                .put("source", source)
+                .put("params", params)
+                .toString()
             ensureActive(token)
             jsContext.executeVoidScript("globalThis.__meloraInvoke(${JSONObject.quote(payload)})", null)
             ensureActive(token)
-            val raw = pumpUntil("globalThis.__meloraTake()", timeoutMs, token)
-                ?: throw IllegalStateException("目录请求超时")
+            val parsed = JSONObject(pumpUntil(
+                "globalThis.__meloraTake()",
+                deadlineNanos,
+                token,
+                "目录请求超时",
+            ))
             ensureActive(token)
-            val parsed = JSONObject(raw)
             if (!parsed.optBoolean("ok", false)) {
                 throw IllegalStateException(parsed.optString("error", "目录请求失败"))
             }
@@ -160,24 +205,67 @@ class LxScriptEngine(private val context: Context) : Closeable {
         }
     }
 
+    private fun <T> executeWithBudget(
+        token: LxRequestToken,
+        timeoutMs: Long,
+        timeoutMessage: String,
+        block: (Long) -> T,
+    ): T {
+        val deadlineNanos = monotonicDeadlineAfter(timeoutMs)
+        val ticket = quickJs.beginInterruptibleExecution(deadlineNanos)
+        token.runtimeTicket.set(ticket)
+        try {
+            if (token.cancelled.get()) quickJs.interruptExecution(ticket)
+            return host.withinRequestDeadline(token, deadlineNanos) {
+                try {
+                    ensureActive(token)
+                    val result = block(deadlineNanos)
+                    ensureActive(token)
+                    if (System.nanoTime() >= deadlineNanos) throw LxScriptTimeoutException(timeoutMessage)
+                    result
+                } catch (failure: Throwable) {
+                    if (token.cancelled.get()) {
+                        throw CancellationException("脚本请求已取消").also { it.initCause(failure) }
+                    }
+                    if (System.nanoTime() >= deadlineNanos) {
+                        throw LxScriptTimeoutException(timeoutMessage, failure)
+                    }
+                    throw failure
+                }
+            }
+        } finally {
+            token.runtimeTicket.compareAndSet(ticket, 0)
+            quickJs.endInterruptibleExecution(ticket)
+        }
+    }
+
     private fun ensureActive(token: LxRequestToken) {
         if (token.cancelled.get()) throw CancellationException("脚本请求已取消")
     }
 
-    // 驱动 Promise 微任务与 JS 定时器，直到表达式返回非空结果。
-    private fun pumpUntil(expression: String, timeoutMs: Long, token: LxRequestToken): String? {
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (System.currentTimeMillis() < deadline) {
+    // 驱动Promise微任务与JS定时器；同步JS及整个泵共享同一个单调deadline。
+    private fun pumpUntil(
+        expression: String,
+        deadlineNanos: Long,
+        token: LxRequestToken,
+        timeoutMessage: String,
+    ): String {
+        while (true) {
             ensureActive(token)
+            if (System.nanoTime() >= deadlineNanos) throw LxScriptTimeoutException(timeoutMessage)
             QuickJsPending.executePending(quickJs, runtimePtr, contextPtr)
+            ensureActive(token)
+            if (System.nanoTime() >= deadlineNanos) throw LxScriptTimeoutException(timeoutMessage)
             runCatching { jsContext.executeVoidScript("globalThis.__lxTick && globalThis.__lxTick()", null) }
             ensureActive(token)
+            if (System.nanoTime() >= deadlineNanos) throw LxScriptTimeoutException(timeoutMessage)
             val raw = jsContext.executeStringScript(expression, null)
+            ensureActive(token)
             if (!raw.isNullOrEmpty()) return raw
-            Thread.sleep(4)
+            val remainingNanos = deadlineNanos - System.nanoTime()
+            if (remainingNanos <= 0L) throw LxScriptTimeoutException(timeoutMessage)
+            Thread.sleep(minOf(4L, TimeUnit.NANOSECONDS.toMillis(remainingNanos).coerceAtLeast(1L)))
         }
-        ensureActive(token)
-        return null
     }
 
     override fun close() {

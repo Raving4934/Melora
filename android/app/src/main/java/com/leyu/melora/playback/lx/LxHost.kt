@@ -20,6 +20,7 @@ import java.security.SecureRandom
 import java.security.spec.X509EncodedKeySpec
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import java.util.Base64 as JavaBase64
 import java.util.zip.DataFormatException
@@ -35,11 +36,12 @@ private const val MAX_ZLIB_OUTPUT_BYTES = 16 * 1024 * 1024
 internal class LxRequestToken {
     internal val cancelled = AtomicBoolean(false)
     internal val currentCall = AtomicReference<Call?>(null)
+    internal val runtimeTicket = AtomicLong(0)
 }
 
 private data class LxRequestContext(
     val token: LxRequestToken,
-    val deadlineMs: Long,
+    val deadlineNanos: Long,
 )
 
 // 提供给音源脚本的同步宿主能力；运行在脚本引擎线程，网络调用串行执行。
@@ -53,7 +55,9 @@ class LxHost internal constructor(
         .build(),
 ) {
     private val random = SecureRandom()
-    private val requestContext = ThreadLocal<LxRequestContext?>()
+    // JS JavaCallbacks run on QuickJS's event thread, not the IO caller that starts the request.
+    // One engine serializes executions, so this per-host context is shared across that queue hop.
+    @Volatile private var requestContext: LxRequestContext? = null
 
     internal fun newRequestToken(): LxRequestToken = LxRequestToken()
 
@@ -66,29 +70,20 @@ class LxHost internal constructor(
         token.currentCall.get()?.cancel()
     }
 
-    /** 让脚本内部每次同步 HTTP 都共享外层解析预算，避免单次网络阻塞穿透播放器超时。 */
-    internal fun <T> withinRequestTimeout(
+    /** 媒体脚本的JS执行与宿主HTTP共享调用方创建的同一单调时钟deadline。 */
+    internal fun <T> withinRequestDeadline(
         token: LxRequestToken,
-        timeoutMs: Long,
+        deadlineNanos: Long,
         block: () -> T,
     ): T {
-        val previous = requestContext.get()
-        requestContext.set(
-            LxRequestContext(
-                token = token,
-                deadlineMs = System.currentTimeMillis() + timeoutMs.coerceAtLeast(1L),
-            ),
-        )
+        val previous = requestContext
+        requestContext = LxRequestContext(token, deadlineNanos)
         return try {
             block()
         } finally {
-            requestContext.set(previous)
+            requestContext = previous
         }
     }
-
-    /** 兼容非池化调用；正式池化调用会传入可取消 token。 */
-    internal fun <T> withinRequestTimeout(timeoutMs: Long, block: () -> T): T =
-        withinRequestTimeout(newRequestToken(), timeoutMs, block)
 
     @JavascriptInterface
     fun log(message: String) {
@@ -97,7 +92,7 @@ class LxHost internal constructor(
 
     @JavascriptInterface
     fun http(payloadJson: String): String = try {
-        val context = requestContext.get()
+        val context = requestContext
         val token = context?.token
         if (token?.cancelled?.get() == true) throw IOException("脚本请求已取消")
         val payload = JSONObject(payloadJson)
@@ -120,11 +115,14 @@ class LxHost internal constructor(
             else -> null
         }
         builder.method(method, body)
-        val timeout = effectiveHttpTimeoutMs(
-            requestedMs = payload.optInt("timeout", 15000),
-            deadlineMs = context?.deadlineMs ?: Long.MAX_VALUE,
-            nowMs = System.currentTimeMillis(),
-        )
+        val timeout = if (context == null) {
+            effectiveHttpTimeoutMs(payload.optInt("timeout", 15000), Long.MAX_VALUE)
+        } else {
+            effectiveHttpTimeoutMs(
+                requestedMs = payload.optInt("timeout", 15000),
+                remainingMs = TimeUnit.NANOSECONDS.toMillis(context.deadlineNanos - System.nanoTime()),
+            )
+        }
         if (timeout <= 0) throw IOException("http 请求超时")
         if (token?.cancelled?.get() == true) throw IOException("脚本请求已取消")
         val callClient = client.newBuilder().callTimeout(timeout.toLong(), TimeUnit.MILLISECONDS).build()
@@ -253,12 +251,16 @@ class LxHost internal constructor(
     }
 }
 
-internal fun effectiveHttpTimeoutMs(requestedMs: Int, deadlineMs: Long, nowMs: Long): Int {
+internal fun effectiveHttpTimeoutMs(requestedMs: Int, remainingMs: Long): Int {
     val configured = requestedMs.coerceIn(100, 60_000)
-    if (deadlineMs == Long.MAX_VALUE) return configured
-    val remaining = deadlineMs - nowMs
-    if (remaining <= 0L) return 0
-    return minOf(configured.toLong(), remaining).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+    if (remainingMs <= 0L) return 0
+    return minOf(configured.toLong(), remainingMs).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+}
+
+internal fun monotonicDeadlineAfter(timeoutMs: Long): Long {
+    val now = System.nanoTime()
+    val duration = TimeUnit.MILLISECONDS.toNanos(timeoutMs.coerceAtLeast(1L))
+    return if (duration > 0L && now > Long.MAX_VALUE - duration) Long.MAX_VALUE else now + duration
 }
 
 internal fun decodeBase64Limited(dataBase64: String, maxBytes: Int): ByteArray {
