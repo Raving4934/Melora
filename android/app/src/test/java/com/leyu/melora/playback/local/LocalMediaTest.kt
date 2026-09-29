@@ -1,10 +1,15 @@
 package com.leyu.melora.playback.local
 
+import android.content.Context
+import android.content.ContextWrapper
 import com.leyu.melora.playback.AudioSpecification
 import com.leyu.melora.playback.DownloadMetadataWriter
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.UiTrack
 import com.leyu.melora.playback.sdk.OnlineSong
+import java.io.File
+import java.io.IOException
+import java.nio.file.Files
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
@@ -13,6 +18,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -22,6 +28,45 @@ class LocalMediaTest {
         LocalMediaStore.clear()
         LocalMediaStore.setScanning(false)
         MeloraSettings.localAutoFillInfo.value = false
+    }
+
+    @Test
+    fun localIndexWriteFailureKeepsPublishedAndPersistedSnapshot() {
+        val root = Files.createTempDirectory("local-index-commit").toFile()
+        val filesDir = File(root, "files").apply { mkdirs() }
+        val target = File(filesDir, "local_media.json").apply { writeText("previous-index") }
+        File(filesDir, "local_media.json.tmp").mkdir()
+        val store = LocalMediaStore.javaClass
+        val contextField = store.getDeclaredField("appContext").apply { isAccessible = true }
+        val previousContext = contextField.get(LocalMediaStore)
+        @Suppress("UNCHECKED_CAST")
+        val songs = store.getDeclaredField("_songs").apply { isAccessible = true }
+            .get(LocalMediaStore) as kotlinx.coroutines.flow.MutableStateFlow<List<LocalSong>>
+        val previousSongs = songs.value
+        val existing = localSong(id = "before-write", title = "旧快照")
+        val candidate = localSong(id = "after-write", title = "候选快照")
+
+        try {
+            contextField.set(LocalMediaStore, null)
+            LocalMediaStore.replaceAll(listOf(existing))
+            contextField.set(LocalMediaStore, IndexFilesContext(filesDir))
+
+            assertEquals(listOf(existing), songs.value)
+            assertThrows(IOException::class.java) {
+                LocalMediaStore.replaceAll(listOf(candidate))
+            }
+
+            assertEquals(listOf(existing), songs.value)
+            assertEquals(existing, LocalMediaStore.find(existing.id))
+            assertNull(LocalMediaStore.find(candidate.id))
+            assertEquals("previous-index", target.readText())
+        } finally {
+            contextField.set(LocalMediaStore, null)
+            LocalMediaStore.clear()
+            if (previousSongs.isNotEmpty()) LocalMediaStore.replaceAll(previousSongs)
+            contextField.set(LocalMediaStore, previousContext)
+            root.deleteRecursively()
+        }
     }
 
     @Test
@@ -568,4 +613,9 @@ class LocalMediaTest {
         album = "",
         source = source,
     )
+}
+
+private class IndexFilesContext(private val root: File) : ContextWrapper(null) {
+    override fun getFilesDir(): File = root
+    override fun getApplicationContext(): Context = this
 }

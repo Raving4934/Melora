@@ -7,6 +7,7 @@ import com.leyu.melora.playback.UiTrack
 import com.leyu.melora.playback.UserLibrary
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.sdk.SourceResolver
+import com.leyu.melora.playback.writeTextAtomically
 import java.io.File
 import java.util.Locale
 import kotlin.math.abs
@@ -29,7 +30,6 @@ import org.json.JSONObject
  */
 object LocalMediaStore {
     private const val FILE_NAME = "local_media.json"
-    private const val TEMP_FILE_NAME = "$FILE_NAME.tmp"
     private const val DURATION_TOLERANCE_MS = 5_000L
     private val lock = Any()
     private val audioSpecificationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -51,9 +51,9 @@ object LocalMediaStore {
         appContext = app
         val loaded = readIndex(File(app.filesDir, FILE_NAME))
         synchronized(lock) {
-            applyIndex(loaded)
-            // 旧版本已落盘的重复ID在首屏发布前修复，只改索引，不删除媒体文件。
-            if (_songs.value != loaded) persist(_songs.value)
+            val prepared = prepareIndex(loaded)
+            if (prepared.songs != loaded) persist(prepared.songs)
+            applyIndex(prepared)
         }
         UserLibrary.refreshLocalSongs()
     }
@@ -305,20 +305,28 @@ object LocalMediaStore {
     private fun commitLocked(updated: List<LocalSong>, pruneMissing: Boolean): Boolean {
         val current = _songs.value
         if (updated === current || updated == current) return false
-        applyIndex(updated)
-        persist(_songs.value)
+        val prepared = prepareIndex(updated)
+        if (prepared.songs == current) return false
+        persist(prepared.songs)
+        applyIndex(prepared)
         UserLibrary.refreshLocalSongs(pruneMissing)
         return true
     }
 
-    /** 先完整构造新映射再切换引用，播放线程不会撞见 clear/add 中间态。 */
-    private fun applyIndex(list: List<LocalSong>) {
+    /** 旧版本重复ID按原顺序合并，修复时不删除媒体文件。 */
+    private fun prepareIndex(list: List<LocalSong>): PreparedIndex {
         val idIndex = LinkedHashMap<String, LocalSong>(list.size)
         list.forEach { song ->
             idIndex[song.id] = preserveLocalEnrichment(song, idIndex[song.id])
         }
         val unique = if (idIndex.size == list.size) list else idIndex.values.toList()
-        val matchIndex = LinkedHashMap<String, LocalSong>(list.size)
+        return PreparedIndex(unique, idIndex)
+    }
+
+    /** 先完整构造新映射再切换引用，播放线程不会撞见 clear/add 中间态。 */
+    private fun applyIndex(prepared: PreparedIndex) {
+        val unique = prepared.songs
+        val matchIndex = LinkedHashMap<String, LocalSong>(unique.size)
         val titleIndex = LinkedHashMap<String, MutableList<LocalSong>>()
         unique.forEach { song ->
             val matchKey = song.matchKey()
@@ -328,7 +336,7 @@ object LocalMediaStore {
             }
             titleIndex.getOrPut(LocalSong.titleKeyOf(song.title)) { mutableListOf() }.add(song)
         }
-        byId = idIndex
+        byId = prepared.byId
         byUri = unique.associateBy(LocalSong::uri)
         byMatch = matchIndex
         byTitle = titleIndex
@@ -431,23 +439,20 @@ object LocalMediaStore {
 
     private fun persist(snapshot: List<LocalSong>) {
         val context = appContext ?: return
-        runCatching {
-            val array = JSONArray()
-            snapshot.forEach { array.put(it.toJson()) }
-            val payload = JSONObject().apply {
-                put("version", 1)
-                put("savedAt", System.currentTimeMillis())
-                put("songs", array)
-            }.toString()
-            val target = File(context.filesDir, FILE_NAME)
-            val temp = File(context.filesDir, TEMP_FILE_NAME)
-            temp.writeText(payload)
-            if (!temp.renameTo(target)) {
-                target.writeText(payload)
-                temp.delete()
-            }
-        }
+        val array = JSONArray()
+        snapshot.forEach { array.put(it.toJson()) }
+        val payload = JSONObject().apply {
+            put("version", 1)
+            put("savedAt", System.currentTimeMillis())
+            put("songs", array)
+        }.toString()
+        writeTextAtomically(File(context.filesDir, FILE_NAME), payload)
     }
+
+    private data class PreparedIndex(
+        val songs: List<LocalSong>,
+        val byId: Map<String, LocalSong>,
+    )
 
     private enum class AudioKind { Compressed, Lossless, Dsd }
 
