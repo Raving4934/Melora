@@ -4,10 +4,16 @@
 from __future__ import annotations
 
 import ast
+from contextlib import redirect_stdout
+import io
+import json
 from fnmatch import fnmatchcase
 from pathlib import Path
 import re
 import unittest
+from unittest.mock import patch
+from textwrap import dedent
+import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github/workflows"
@@ -132,6 +138,159 @@ class ReleaseWorkflowTest(unittest.TestCase):
         for path in (ROOT / "scripts/release").glob("*.py"):
             with self.subTest(path=path.name):
                 ast.parse(path.read_text(), filename=str(path))
+
+
+class DeviceWorkflowTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.workflow = (WORKFLOWS / "android-ci.yml").read_text()
+        self.job = self.workflow.split("\n  device-regression:\n", 1)[1]
+
+    def test_api_matrix_requires_explicit_manual_opt_in(self) -> None:
+        dispatch = self.workflow.split("  workflow_dispatch:\n", 1)[1].split("\npermissions:", 1)[0]
+        self.assertIn("      api_matrix:\n", dispatch)
+        self.assertIn("        type: boolean\n", dispatch)
+        self.assertIn("        default: false\n", dispatch)
+        choices = re.search(
+            r"fromJSON\(github.event_name == 'workflow_dispatch' && inputs.api_matrix && '([^']+)' \|\| '([^']+)'\)",
+            self.job,
+        )
+        self.assertIsNotNone(choices)
+        self.assertEqual(json.loads(choices.group(1)), [26, 35, 37])
+        self.assertEqual(json.loads(choices.group(2)), [35])
+        self.assertIn("    needs: verify\n", self.job)
+        self.assertIn("    timeout-minutes: 60\n", self.job)
+        self.assertIn("      fail-fast: false\n", self.job)
+        self.assertNotIn("continue-on-error:", self.job)
+
+    def test_native_avd_uses_official_images_and_fresh_writable_storage(self) -> None:
+        prepare = step(self.workflow, "准备设备 SDK 与全新 AVD")
+        self.assertIn("runs-on: ubuntu-24.04", self.job)
+        self.assertIn("ANDROID_AVD_HOME: ${{ runner.temp }}/melora-avd-", self.job)
+        self.assertIn("ANDROID_SERIAL: emulator-5554", self.job)
+        self.assertIn('image="system-images;android-${image_api};google_apis;x86_64"', prepare)
+        self.assertIn('if [[ "$API_LEVEL" == 37 ]]; then image_api=37.0; fi', prepare)
+        self.assertIn("sdkmanager --list --channel=0", prepare)
+        self.assertIn('grep -F "$image" "$DEVICE_LOG_DIR/sdk-packages.log"', prepare)
+        self.assertIn('test ! -e "$ANDROID_AVD_HOME"', prepare)
+        self.assertIn('mkdir "$ANDROID_AVD_HOME"', prepare)
+        self.assertIn('avdmanager create avd --name melora-ci --package "$image"', prepare)
+        self.assertIn('--path "$ANDROID_AVD_HOME/melora-ci.avd"', prepare)
+        for unsafe in ("-read-only", "-initdata", " -data ", "userdata", "emulator-runner", "avd-cache"):
+            self.assertNotIn(unsafe, self.job)
+        self.assertEqual(set(re.findall(r"uses: ([^@\s]+)@", self.job)), {
+            "actions/checkout", "actions/setup-java", "android-actions/setup-android", "actions/upload-artifact",
+        })
+
+    def test_device_gate_is_ordered_bounded_and_has_no_test_selection(self) -> None:
+        names = (
+            "准备设备 SDK 与全新 AVD", "构建设备测试 APK", "启动并校验独立模拟器",
+            "安装测试目标并预置 overlay 权限", "执行完整 Android 设备回归", "校验 Android 设备 JUnit 结果",
+            "收集设备诊断并清理模拟器", "上传设备回归诊断",
+        )
+        positions = [self.job.index(f"      - name: {name}\n") for name in names]
+        self.assertEqual(positions, sorted(positions))
+        for name in names[:5]:
+            self.assertNotRegex(step(self.workflow, name), r"(?m)^        if:")
+        for name, task in (
+            ("构建设备测试 APK", ":app:assembleDebugAndroidTest"),
+            ("安装测试目标并预置 overlay 权限", ":app:installDebug"),
+            ("执行完整 Android 设备回归", ":app:connectedDebugAndroidTest"),
+        ):
+            body = step(self.workflow, name)
+            for required in (task, "-Pmelora.debugAbi=x86_64", "--max-workers=1", "--build-cache", "set -euo pipefail", "| tee"):
+                self.assertIn(required, body)
+            self.assertNotIn("|| true", body)
+        install = step(self.workflow, "安装测试目标并预置 overlay 权限")
+        overlay = "appops set --uid com.leyu.melora.debug SYSTEM_ALERT_WINDOW allow"
+        self.assertLess(install.index(":app:installDebug"), install.index(overlay))
+        self.assertIn("appops get com.leyu.melora.debug SYSTEM_ALERT_WINDOW", install)
+        for selector in ("testInstrumentationRunnerArguments", "--tests", "am instrument", "pm grant"):
+            self.assertNotIn(selector, self.job)
+        self.assertEqual(self.job.count(":app:connectedDebugAndroidTest"), 1)
+        connected = step(self.workflow, "执行完整 Android 设备回归")
+        self.assertIn("rm -rf app/build/outputs/androidTest-results/connected", connected)
+        self.assertIn("        timeout-minutes: 30", connected)
+
+    def test_emulator_boot_is_bounded_and_checks_runtime_api_and_abi(self) -> None:
+        boot = step(self.workflow, "启动并校验独立模拟器")
+        for required in ("timeout 360 bash -c", "-port 5554", "-no-snapshot", "-gpu swiftshader", "-accel on",
+                         "getprop sys.boot_completed", "getprop ro.build.version.sdk", '= "$API_LEVEL"',
+                         "getprop ro.product.cpu.abi", "= x86_64", 'adb -s "$ANDROID_SERIAL"'):
+            self.assertIn(required, boot)
+        self.assertIn('echo $! > "$DEVICE_LOG_DIR/emulator.pid"', boot)
+
+    def test_result_check_diagnostics_and_pid_cleanup_always_run(self) -> None:
+        for name in ("校验 Android 设备 JUnit 结果", "收集设备诊断并清理模拟器", "上传设备回归诊断"):
+            self.assertIn("        if: always()\n", step(self.workflow, name))
+        result = step(self.workflow, "校验 Android 设备 JUnit 结果")
+        self.assertIn("set -euo pipefail", result)
+        self.assertIn('tee "$DEVICE_LOG_DIR/junit-summary.log"', result)
+        cleanup = step(self.workflow, "收集设备诊断并清理模拟器")
+        for required in ('timeout 10 adb -s "$ANDROID_SERIAL" emu kill', 'logcat -d -v threadtime',
+                         'kill "$pid"', 'kill -KILL "$pid"', 'rm -rf "$ANDROID_AVD_HOME"'):
+            self.assertIn(required, cleanup)
+        upload = step(self.workflow, "上传设备回归诊断")
+        for required in ("${{ env.DEVICE_LOG_DIR }}/", "android/app/build/outputs/androidTest-results/connected/",
+                         "android/app/build/reports/androidTests/connected/", "retention-days: 3",
+                         "if-no-files-found: error", "api${{ matrix.api }}"):
+            self.assertIn(required, upload)
+
+    def run_result_checker(self, documents: list[str]) -> tuple[BaseException | None, str]:
+        # 执行 workflow 内真正的门禁代码；仅用内存 XML，不建临时文件或启动设备。
+        body = step(self.workflow, "校验 Android 设备 JUnit 结果")
+        source = dedent(body.split("<<'PYTEST'", 1)[1].split("\n", 1)[1].split("\n          PYTEST", 1)[0])
+        reports = {Path(f"TEST-{index}.xml"): xml for index, xml in enumerate(documents)}
+        output = io.StringIO()
+        failure = None
+        with patch.object(Path, "rglob", return_value=list(reports)), \
+             patch.object(ET, "parse", side_effect=lambda path: ET.ElementTree(ET.fromstring(reports[path]))), \
+             redirect_stdout(output):
+            try:
+                exec(compile(source, "android-ci-device-results", "exec"), {})
+            except (SystemExit, ET.ParseError) as error:
+                failure = error
+        return failure, output.getvalue()
+
+    def test_result_gate_accepts_multiple_reports_and_expected_api_skips(self) -> None:
+        failure, output = self.run_result_checker([
+            '<testsuite tests="2"><testcase name="pass"/><testcase name="api29"><skipped/></testcase></testsuite>',
+            '<testsuites><testsuite tests="1"><testcase name="alsoPass"/></testsuite></testsuites>',
+        ])
+        self.assertIsNone(failure)
+        self.assertIn("reports=2, executed=2", output)
+        self.assertIn("'tests': 3", output)
+        self.assertIn("'skipped': 1", output)
+
+    def test_result_gate_rejects_missing_empty_and_skipped_only_execution(self) -> None:
+        for documents in ([], ['<testsuite tests="0"/>'], ['<testsuite tests="371"/>'],
+                          ['<testsuite tests="1"><testcase name="skip"><skipped/></testcase></testsuite>']):
+            with self.subTest(documents=documents):
+                failure, output = self.run_result_checker(documents)
+                self.assertIsInstance(failure, SystemExit)
+                self.assertIn("executed=0", output)
+
+    def test_result_gate_logs_method_failures_and_errors_even_with_zero_suite_counts(self) -> None:
+        for tag in ("failure", "error"):
+            with self.subTest(tag=tag):
+                failure, output = self.run_result_checker([
+                    f'<testsuite tests="1" failures="0" errors="0"><testcase classname="Fixture" name="broken">'
+                    f'<{tag} message="bad result">stack detail</{tag}></testcase></testsuite>',
+                ])
+                self.assertIsInstance(failure, SystemExit)
+                self.assertIn(f"{tag.upper()} Fixture#broken: bad result stack detail", output)
+
+    def test_result_gate_rejects_suite_level_crashes_and_malformed_xml(self) -> None:
+        for key in ("errors", "failures"):
+            for document in (
+                f'<testsuite tests="1" {key}="1"><testcase name="pass"/></testsuite>',
+                f'<testsuites {key}="1"><testsuite tests="1"><testcase name="pass"/></testsuite></testsuites>',
+            ):
+                with self.subTest(document=document):
+                    failure, output = self.run_result_checker([document])
+                    self.assertIsInstance(failure, SystemExit)
+                    self.assertIn("JUnit suite failure", output)
+        failure, _ = self.run_result_checker(['<testsuite'])
+        self.assertIsInstance(failure, ET.ParseError)
 
 
 class DockerContextTests(unittest.TestCase):

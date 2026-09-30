@@ -15,6 +15,12 @@ on:
       - '.github/workflows/android-ci.yml'
       - '.github/workflows/android-release.yml'
   workflow_dispatch:
+    inputs:
+      api_matrix:
+        description: '运行 API 26/35/37 完整设备矩阵（默认仅 API 35）'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -96,5 +102,182 @@ jobs:
         with:
           name: android-debug-${{ github.sha }}
           path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 3
+
+  device-regression:
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        api: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.api_matrix && '[26,35,37]' || '[35]') }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      API_LEVEL: ${{ matrix.api }}
+      ANDROID_SERIAL: emulator-5554
+      ANDROID_AVD_HOME: ${{ runner.temp }}/melora-avd-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.api }}
+      DEVICE_LOG_DIR: ${{ runner.temp }}/melora-device-${{ matrix.api }}
+      CI_GRADLE_JVM_ARGS: -Xmx4G -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256m -XX:+HeapDumpOnOutOfMemoryError -XX:ActiveProcessorCount=2 -Dfile.encoding=UTF-8
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: zulu
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: |
+            android/*.gradle*
+            android/gradle.properties
+            android/gradle/*.toml
+            android/gradle/wrapper/gradle-wrapper.properties
+            android/**/build.gradle*
+      - uses: android-actions/setup-android@v3.2.2
+        with:
+          cmdline-tools-version: '16111833'
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - name: 准备设备 SDK 与全新 AVD
+        run: |
+          set -euo pipefail
+          mkdir -p "$DEVICE_LOG_DIR"
+          image_api="$API_LEVEL"
+          # 官方 API 37 基础镜像使用 37.0 包路径，不回退到预览版或其他 API。
+          if [[ "$API_LEVEL" == 37 ]]; then image_api=37.0; fi
+          image="system-images;android-${image_api};google_apis;x86_64"
+          sdkmanager --list --channel=0 > "$DEVICE_LOG_DIR/sdk-packages.log" 2>&1
+          grep -F "$image" "$DEVICE_LOG_DIR/sdk-packages.log"
+          (set +o pipefail; yes | sdkmanager --licenses > "$DEVICE_LOG_DIR/sdk-licenses.log" 2>&1)
+          sdkmanager --channel=0 'platforms;android-37.0' 'ndk;28.2.13676358' 'cmake;3.22.1' 'emulator' "$image" \
+            2>&1 | tee "$DEVICE_LOG_DIR/sdk-install.log"
+          test -e /dev/kvm
+          sudo chmod 666 /dev/kvm
+          # 每个 job 从空目录创建可写 AVD；不恢复 AVD 缓存或既有数据盘。
+          test ! -e "$ANDROID_AVD_HOME"
+          mkdir "$ANDROID_AVD_HOME"
+          printf 'no\n' | avdmanager create avd --name melora-ci --package "$image" \
+            --path "$ANDROID_AVD_HOME/melora-ci.avd" --device pixel_2 \
+            2>&1 | tee "$DEVICE_LOG_DIR/avd-create.log"
+      - name: 构建设备测试 APK
+        working-directory: android
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon --build-cache --max-workers=1 \
+            -Dorg.gradle.jvmargs="$CI_GRADLE_JVM_ARGS" -Pmelora.debugAbi=x86_64 \
+            :app:assembleDebug :app:assembleDebugAndroidTest 2>&1 | tee "$DEVICE_LOG_DIR/build.log"
+      - name: 启动并校验独立模拟器
+        run: |
+          set -euo pipefail
+          nohup "$ANDROID_HOME/emulator/emulator" -avd melora-ci -port 5554 \
+            -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader \
+            -accel on -cores 2 -memory 2048 > "$DEVICE_LOG_DIR/emulator.log" 2>&1 &
+          echo $! > "$DEVICE_LOG_DIR/emulator.pid"
+          timeout 360 bash -c '
+            set -euo pipefail
+            adb -s "$ANDROID_SERIAL" wait-for-device
+            until [[ "$(adb -s "$ANDROID_SERIAL" shell getprop sys.boot_completed | tr -d "\r")" == 1 ]]; do
+              sleep 2
+            done
+          '
+          test "$(adb -s "$ANDROID_SERIAL" shell getprop ro.build.version.sdk | tr -d '\r')" = "$API_LEVEL"
+          test "$(adb -s "$ANDROID_SERIAL" shell getprop ro.product.cpu.abi | tr -d '\r')" = x86_64
+          adb devices | tee "$DEVICE_LOG_DIR/devices.log"
+          test "$(adb devices | awk 'NR > 1 && NF {print $1}')" = "$ANDROID_SERIAL"
+          adb -s "$ANDROID_SERIAL" shell input keyevent 82
+          # 动画回归需要真实时间比例，不能用关闭系统动画掩盖中断/回弹问题。
+          for scale in window_animation_scale transition_animation_scale animator_duration_scale; do
+            adb -s "$ANDROID_SERIAL" shell settings put global "$scale" 1
+          done
+          nohup adb -s "$ANDROID_SERIAL" logcat -v threadtime > "$DEVICE_LOG_DIR/logcat.log" 2>&1 &
+          echo $! > "$DEVICE_LOG_DIR/logcat.pid"
+      - name: 安装测试目标并预置 overlay 权限
+        working-directory: android
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon --build-cache --max-workers=1 \
+            -Dorg.gradle.jvmargs="$CI_GRADLE_JVM_ARGS" -Pmelora.debugAbi=x86_64 \
+            :app:installDebug 2>&1 | tee "$DEVICE_LOG_DIR/install.log"
+          # BackupRoundTripTest 的 overlay 前置条件只授予目标 debug 包，不授予测试 APK。
+          adb -s "$ANDROID_SERIAL" shell appops set --uid com.leyu.melora.debug SYSTEM_ALERT_WINDOW allow
+          adb -s "$ANDROID_SERIAL" shell appops get com.leyu.melora.debug SYSTEM_ALERT_WINDOW \
+            | tee "$DEVICE_LOG_DIR/overlay.log" | grep -F 'SYSTEM_ALERT_WINDOW: allow'
+      - name: 执行完整 Android 设备回归
+        working-directory: android
+        timeout-minutes: 30
+        run: |
+          set -euo pipefail
+          rm -rf app/build/outputs/androidTest-results/connected app/build/reports/androidTests/connected
+          # 由 runner 发现全部 androidTest；不维护类名清单，避免同文件多测试类漏跑。
+          ./gradlew --no-daemon --build-cache --max-workers=1 \
+            -Dorg.gradle.jvmargs="$CI_GRADLE_JVM_ARGS" -Pmelora.debugAbi=x86_64 \
+            :app:connectedDebugAndroidTest 2>&1 | tee "$DEVICE_LOG_DIR/connected-tests.log"
+      - name: 校验 Android 设备 JUnit 结果
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p "$DEVICE_LOG_DIR"
+          python3 -B - <<'PYTEST' 2>&1 | tee "$DEVICE_LOG_DIR/junit-summary.log"
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          reports = sorted(Path("android/app/build/outputs/androidTest-results/connected").rglob("TEST-*.xml"))
+          totals = dict(tests=0, failures=0, errors=0, skipped=0)
+          suite_failed = False
+          for path in reports:
+              root = ET.parse(path).getroot()
+              for suite in root.iter():
+                  if suite.tag in ("testsuite", "testsuites") and any(int(suite.get(key, "0")) for key in ("failures", "errors")):
+                      suite_failed = True
+                      print(f"JUnit suite failure: {path.name}: {suite.attrib}")
+              for case in root.iter("testcase"):
+                  totals["tests"] += 1
+                  for tag, key in (("failure", "failures"), ("error", "errors"), ("skipped", "skipped")):
+                      issues = case.findall(tag)
+                      totals[key] += bool(issues)
+                      if tag != "skipped":
+                          for issue in issues:
+                              print(f"{tag.upper()} {case.get('classname', '')}#{case.get('name', '')}: "
+                                    f"{issue.get('message', '')} {issue.text or ''}")
+          executed = totals["tests"] - totals["skipped"]
+          print(f"Android device tests: reports={len(reports)}, executed={executed}, {totals}")
+          if not reports or not executed or totals["failures"] or totals["errors"] or suite_failed:
+              raise SystemExit("Android device-test verification failed (missing/empty/skipped-only/failing results).")
+          PYTEST
+      - name: 收集设备诊断并清理模拟器
+        if: always()
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          mkdir -p "$DEVICE_LOG_DIR"
+          if [[ -s "$DEVICE_LOG_DIR/emulator.pid" ]]; then
+            timeout 15 adb -s "$ANDROID_SERIAL" shell getprop > "$DEVICE_LOG_DIR/device-properties.log" 2>&1 || true
+            timeout 15 adb -s "$ANDROID_SERIAL" logcat -d -v threadtime > "$DEVICE_LOG_DIR/logcat-final.log" 2>&1 || true
+            timeout 10 adb -s "$ANDROID_SERIAL" emu kill > "$DEVICE_LOG_DIR/emulator-stop.log" 2>&1 || true
+          fi
+          for process in logcat emulator; do
+            if [[ -s "$DEVICE_LOG_DIR/$process.pid" ]]; then
+              pid="$(cat "$DEVICE_LOG_DIR/$process.pid")"
+              kill "$pid" 2>/dev/null || true
+              for attempt in $(seq 1 10); do
+                kill -0 "$pid" 2>/dev/null || break
+                sleep 1
+              done
+              if kill -0 "$pid" 2>/dev/null; then kill -KILL "$pid" 2>/dev/null || true; fi
+            fi
+          done
+          rm -rf "$ANDROID_AVD_HOME"
+      - name: 上传设备回归诊断
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: android-device-api${{ matrix.api }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.DEVICE_LOG_DIR }}/
+            android/app/build/outputs/androidTest-results/connected/
+            android/app/build/reports/androidTests/connected/
           if-no-files-found: error
           retention-days: 3
