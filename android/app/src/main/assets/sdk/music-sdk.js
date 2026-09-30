@@ -18050,7 +18050,9 @@ ${result.lyric}`;
     }
   }
   var pendingResult;
+  var invocationGeneration = 0;
   globalThis.__meloraInvoke = (payloadJson) => {
+    const generation = ++invocationGeneration;
     pendingResult = void 0;
     let payload;
     try {
@@ -18061,10 +18063,10 @@ ${result.lyric}`;
     }
     Promise.resolve().then(() => dispatch(payload.action, payload.source, payload.params || {})).then(
       (data) => {
-        pendingResult = JSON.stringify({ ok: true, data });
+        if (generation === invocationGeneration) pendingResult = JSON.stringify({ ok: true, data });
       },
       (error) => {
-        pendingResult = JSON.stringify({ ok: false, error: String(globalThis.__meloraDebug ? error && error.stack || error : error && error.message || error) });
+        if (generation === invocationGeneration) pendingResult = JSON.stringify({ ok: false, error: String(globalThis.__meloraDebug ? error && error.stack || error : error && error.message || error) });
       }
     );
   };

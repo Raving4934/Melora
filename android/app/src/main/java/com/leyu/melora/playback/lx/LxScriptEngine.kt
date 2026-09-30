@@ -180,9 +180,8 @@ class LxScriptEngine(private val context: Context) : Closeable {
     }
 
     // 调用内置 musicSdk 协议：__meloraInvoke / __meloraTake。
-    fun sdkCall(action: String, source: String, params: JSONObject, timeoutMs: Long = 25_000): JSONObject {
-        val token = host.newRequestToken()
-        return executeWithBudget(token, timeoutMs, "目录请求超时") { deadlineNanos ->
+    suspend fun sdkCall(action: String, source: String, params: JSONObject, timeoutMs: Long = 25_000): JSONObject = withCancellation { token ->
+        executeWithBudget(token, timeoutMs, "目录请求超时") { deadlineNanos ->
             val payload = JSONObject()
                 .put("action", action)
                 .put("source", source)

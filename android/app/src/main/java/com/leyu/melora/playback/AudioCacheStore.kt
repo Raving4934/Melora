@@ -11,7 +11,7 @@ import androidx.core.net.toUri
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultDataSource
-import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheDataSink
 import androidx.media3.datasource.cache.CacheDataSource
@@ -26,6 +26,11 @@ import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.net.URLEncoder
+import java.util.concurrent.TimeUnit
+import okhttp3.Call
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import kotlinx.coroutines.currentCoroutineContext
 import org.json.JSONObject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -60,6 +65,14 @@ object AudioCacheStore {
     private const val AUDIO_DIR = "audio_cache"
     private const val CACHE_FRAGMENT_BYTES = 1024L * 1024L
     private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36"
+
+    private val mediaHttpClient = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .followSslRedirects(true)
+        // 保留原媒体上游的HTTP/1.1行为，与脚本宿主一致，避免顺带改变CDN协议协商。
+        .protocols(listOf(Protocol.HTTP_1_1))
+        .build()
 
     private val initLock = Any()
     private val metadataLock = Any()
@@ -263,7 +276,7 @@ object AudioCacheStore {
         )
     }
 
-    private fun openComplete(context: Context, resource: AudioCacheResource): CachedAudioInput? {
+    private suspend fun openComplete(context: Context, resource: AudioCacheResource): CachedAudioInput? {
         val sharedCache = obtainCache(context)
         val metadata = sharedCache.getContentMetadata(resource.key)
         val length = ContentMetadata.getContentLength(metadata)
@@ -278,15 +291,16 @@ object AudioCacheStore {
             .setCache(sharedCache)
             .setFlags(CacheDataSource.FLAG_BLOCK_ON_CACHE)
             .createDataSource()
-        return runCatching {
-            dataSource.openAsInput(dataSpec, complete, completeCacheHit = true)
-        }.getOrElse {
+        return try {
+            runInterruptible { dataSource.openAsInput(dataSpec, complete, completeCacheHit = true) }
+        } catch (error: Throwable) {
             runCatching { dataSource.close() }
+            if (error is CancellationException) throw error
             null
         }
     }
 
-    private fun openReadThrough(context: Context, resource: AudioCacheResource): CachedAudioInput {
+    private suspend fun openReadThrough(context: Context, resource: AudioCacheResource): CachedAudioInput {
         val sourceUrl = requireNotNull(resource.sourceUrl) { "音频地址为空" }
         val sharedCache = obtainCache(context)
         val dataSpec = DataSpec.Builder()
@@ -294,9 +308,20 @@ object AudioCacheStore {
             .setKey(resource.key)
             .setFlags(DataSpec.FLAG_ALLOW_CACHE_FRAGMENTATION)
             .build()
-        return readThroughFactory(sharedCache, mediaUpstreamFactory(context, tagDownloadFailures = true))
-            .createDataSource()
-            .openAsInput(dataSpec, resource, completeCacheHit = false)
+        // 独立子 Job 在父任务取消时立即结束，唤醒阻塞的 HTTP；流关闭时解除父子关系。
+        val transfer = Job(currentCoroutineContext()[Job])
+        val dataSource = readThroughFactory(
+            sharedCache, mediaUpstreamFactory(context, tagDownloadFailures = true, transfer = transfer),
+        ).createDataSource()
+        return try {
+            runInterruptible {
+                dataSource.openAsInput(dataSpec, resource, completeCacheHit = false) { transfer.complete() }
+            }
+        } catch (error: Throwable) {
+            transfer.cancel()
+            runCatching { dataSource.close() }
+            throw error
+        }
     }
 
     private suspend fun cacheWhole(context: Context, resource: AudioCacheResource) {
@@ -310,7 +335,8 @@ object AudioCacheStore {
                     DataSpec.FLAG_MIGHT_NOT_USE_FULL_NETWORK_SPEED,
             )
             .build()
-        val dataSource = readThroughFactory(sharedCache, mediaUpstreamFactory(context))
+        val transfer = Job(currentCoroutineContext()[Job])
+        val dataSource = readThroughFactory(sharedCache, mediaUpstreamFactory(context, transfer = transfer))
             .createDataSourceForDownloading()
         lateinit var writer: CacheWriter
         writer = CacheWriter(
@@ -324,11 +350,13 @@ object AudioCacheStore {
         val networkManager = context.getSystemService(ConnectivityManager::class.java)
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onLost(network: Network) {
+                transfer.cancel()
                 writer.cancel()
             }
 
             override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
                 if (!capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)) {
+                    transfer.cancel()
                     writer.cancel()
                 }
             }
@@ -338,6 +366,7 @@ object AudioCacheStore {
             if (!NetworkState.isUnmetered(context)) return
             runInterruptible { writer.cache() }
         } finally {
+            transfer.complete()
             writer.cancel()
             runCatching { networkManager?.unregisterNetworkCallback(callback) }
         }
@@ -387,12 +416,12 @@ object AudioCacheStore {
     private fun mediaUpstreamFactory(
         context: Context,
         tagDownloadFailures: Boolean = false,
+        transfer: Job? = null,
     ): DataSource.Factory {
-        val http = DefaultHttpDataSource.Factory()
-            .setUserAgent(USER_AGENT)
-            .setConnectTimeoutMs(15_000)
-            .setReadTimeoutMs(60_000)
-            .setAllowCrossProtocolRedirects(true)
+        val calls = if (transfer == null) mediaHttpClient else Call.Factory { request ->
+            mediaHttpClient.newCall(request).also { call -> transfer.invokeOnCompletion { call.cancel() } }
+        }
+        val http = OkHttpDataSource.Factory(calls).setUserAgent(USER_AGENT)
         // 所有媒体网络读取走同一个边界：完整缓存被清理/淘汰后也不能绕过脚本使用历史直链。
         return DefaultDataSource.Factory(context, DataSource.Factory {
             val upstream = http.createDataSource()
@@ -428,6 +457,7 @@ object AudioCacheStore {
         dataSpec: DataSpec,
         resource: AudioCacheResource,
         completeCacheHit: Boolean,
+        onClose: () -> Unit = {},
     ): CachedAudioInput = try {
         val length = open(dataSpec)
         val contentType = responseHeaders.entries
@@ -437,7 +467,7 @@ object AudioCacheStore {
             ?.substringBefore(';')
             ?.trim()
         CachedAudioInput(
-            stream = OpenedDataSourceInputStream(this),
+            stream = OpenedDataSourceInputStream(this, onClose),
             resourceKey = resource.key,
             sourceUrl = resource.sourceUrl,
             sourceIdentity = resource.sourceIdentity,
@@ -584,7 +614,10 @@ internal class DownloadHttpTransferFailure(
     cause: IOException,
 ) : IOException(cause.message ?: "HTTP 音频传输失败", cause)
 
-private class OpenedDataSourceInputStream(private val dataSource: DataSource) : InputStream() {
+private class OpenedDataSourceInputStream(
+    private val dataSource: DataSource,
+    private val onClose: () -> Unit,
+) : InputStream() {
     private val singleByte = ByteArray(1)
 
     override fun read(): Int {
@@ -596,7 +629,7 @@ private class OpenedDataSourceInputStream(private val dataSource: DataSource) : 
         dataSource.read(buffer, offset, length)
 
     override fun close() {
-        dataSource.close()
+        try { dataSource.close() } finally { onClose() }
     }
 }
 

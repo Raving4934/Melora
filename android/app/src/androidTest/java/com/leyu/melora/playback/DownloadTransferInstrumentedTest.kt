@@ -174,13 +174,40 @@ class DownloadTransferInstrumentedTest {
             try {
                 assertTrue("download did not open the loopback response", headersSent.await(8, TimeUnit.SECONDS))
                 Downloader.pause(context, song.uid)
+                // 服务端仍然阻塞：不能先放行响应再把任务退出当作取消成功。
+                withTimeout(2_000) { task.join() }
             } finally {
                 resumeBody.countDown()
+                withTimeout(8_000) { task.join() }
             }
-            withTimeout(8_000) { task.join() }
             assertEquals(1, server.count("/blocked"))
             assertEquals("cancellation must not switch resources", 0, server.count("/unused"))
             assertTemporaryFilesClean()
+        }
+    }
+
+    @Test fun cancellingPrefetchReleasesBlockedHttpWithoutWaitingForTheBody() = runBlocking<Unit> {
+        assertTrue("fixture needs unmetered emulator Wi-Fi", NetworkState.isUnmetered(context))
+        val headersSent = CountDownLatch(1)
+        val resumeBody = CountDownLatch(1)
+        LoopbackAudioServer(mapOf(
+            "/blocked" to HttpResponse(200, asset("audio/fixture-320.mp3"), headersSent = headersSent, waitBeforeBody = resumeBody),
+        )).use { server ->
+            installSources(server, Source("primary", "/blocked"))
+            val song = song("prefetch-cancel")
+            AudioCacheStore.prefetchCurrent(context, song.uid, song, "320k")
+            val job = AudioCacheStore.javaClass.getDeclaredField("prefetchJob").apply { isAccessible = true }
+                .get(AudioCacheStore) as kotlinx.coroutines.Job
+            try {
+                assertTrue("prefetch did not open response", headersSent.await(8, TimeUnit.SECONDS))
+                AudioCacheStore.cancelPrefetch()
+                withTimeout(2_000) { job.join() }
+                assertEquals(1, server.count("/blocked"))
+            } finally {
+                AudioCacheStore.cancelPrefetch()
+                resumeBody.countDown()
+                withTimeout(8_000) { job.join() }
+            }
         }
     }
 
@@ -346,7 +373,11 @@ class DownloadTransferInstrumentedTest {
             while (running.get() == 1) {
                 try {
                     val socket = server.accept()
-                    executor.execute { serve(socket) }
+                    executor.execute {
+                        try { serve(socket) }
+                        catch (_: java.io.IOException) { /* 客户端取消会关闭连接，服务端不能因此终止测试进程。 */ }
+                        catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+                    }
                 } catch (_: Exception) { if (running.get() != 1) break }
             }
         }, "melora-download-loopback").apply { isDaemon = true; start() }
@@ -380,6 +411,7 @@ class DownloadTransferInstrumentedTest {
             running.set(0)
             server.close()
             executor.shutdownNow()
+            executor.awaitTermination(1, TimeUnit.SECONDS)
             acceptThread.join(1_000)
         }
     }

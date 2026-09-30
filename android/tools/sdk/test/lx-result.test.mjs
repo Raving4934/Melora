@@ -50,3 +50,35 @@ test('source inspection checks registration without invoking the audio request h
   vm.runInContext("lx.on('request', null)", context)
   assert.equal(context.__lxHasRequestHandler(), false)
 })
+
+const entry = await readFile(new URL('../entry.js', import.meta.url), 'utf8')
+const sdkProtocol = entry.slice(entry.indexOf('let pendingResult'))
+assert.ok(sdkProtocol.startsWith('let pendingResult'), 'test must execute the production SDK result protocol')
+
+test('retired SDK promises cannot overwrite the next invocation, including invalid input', async () => {
+  for (const fail of [false, true]) {
+    for (const invalid of [false, true]) {
+      const pending = {}
+      const context = vm.createContext({
+        dispatch: (_action, source) => new Promise((resolve, reject) => { pending[source] = { resolve, reject } }),
+      })
+      vm.runInContext(sdkProtocol, context)
+      context.__meloraInvoke(JSON.stringify({ source: 'old' }))
+      await tick()
+      context.__meloraInvoke(invalid ? '{' : JSON.stringify({ source: 'new' }))
+      await tick()
+      if (fail) pending.old.reject(new Error('stale'))
+      else pending.old.resolve('stale')
+      await tick()
+      if (invalid) {
+        assert.deepEqual(JSON.parse(context.__meloraTake()), { ok: false, error: '调用参数解析失败' })
+      } else {
+        assert.equal(context.__meloraTake(), '')
+        pending.new.resolve('current')
+        await tick()
+        assert.deepEqual(JSON.parse(context.__meloraTake()), { ok: true, data: 'current' })
+      }
+      assert.equal(context.__meloraTake(), '')
+    }
+  }
+})

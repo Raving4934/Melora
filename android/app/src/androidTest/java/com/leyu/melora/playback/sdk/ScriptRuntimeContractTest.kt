@@ -6,9 +6,14 @@ import android.util.Log
 import com.leyu.melora.playback.lx.LxScriptEngine
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -283,7 +288,7 @@ class ScriptRuntimeContractTest {
     }
 
     @Test(timeout = 5_000)
-    fun sdkTimeoutInterruptsSynchronousJavaScriptAndKeepsRuntimeUsable() {
+    fun sdkTimeoutInterruptsSynchronousJavaScriptAndKeepsRuntimeUsable() = runBlocking {
         LxScriptEngine(InstrumentationRegistry.getInstrumentation().targetContext).use { engine ->
             engine.load("""
                 globalThis.__meloraInvoke = (payloadJson) => {
@@ -375,6 +380,119 @@ class ScriptRuntimeContractTest {
         }
     }
 
+    @Test(timeout = 6_000)
+    fun cancellingSdkCallClosesPendingHostHttpAndKeepsQuickJsReusable() = runBlocking {
+        DelayedHttpServer(responseDelayMs = 0, holdResponseUntilReleased = true).use { server ->
+            LxScriptEngine(InstrumentationRegistry.getInstrumentation().targetContext).use { engine ->
+                engine.load(loopbackSdkCode(server.url), "sdk-loopback.js")
+                val call = launch(Dispatchers.IO) {
+                    engine.sdkCall("blocked", "kw", JSONObject(), timeoutMs = 5_000)
+                }
+                assertTrue("SDK HTTP request did not reach server", server.awaitRequest())
+                assertFalse("server response was released before cancellation", server.responseWasWritten())
+
+                val cancelStartedAt = System.nanoTime()
+                call.cancel()
+                withTimeout(3_000) { call.join() }
+                val cancelElapsedMs = (System.nanoTime() - cancelStartedAt) / 1_000_000L
+                assertTrue("SDK HTTP cancellation waited ${cancelElapsedMs}ms", cancelElapsedMs < 1_000)
+                assertFalse("server sent its held response", server.responseWasWritten())
+                assertEquals("next", engine.sdkCall("next", "kw", JSONObject(), 1_000).getString("action"))
+            }
+        }
+    }
+
+    @Test(timeout = 10_000)
+    fun cancellingMusicSdkTaskKeepsSameWorkerSlotAvailableBeforeHttpResponse() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        DelayedHttpServer(responseDelayMs = 0, holdResponseUntilReleased = true).use { server ->
+            val singleton = MusicSdkEngine
+            val slotsField = field(singleton, "slots")
+            val loadBalancerField = field(singleton, "loadBalancer")
+            val sdkCodeField = field(singleton, "sdkCode")
+            val appContextField = field(singleton, "appContext")
+            val originalSlots = slotsField.get(singleton)
+            val originalLoadBalancer = loadBalancerField.get(singleton)
+            val originalSdkCode = sdkCodeField.get(singleton)
+            val originalAppContext = appContextField.get(singleton)
+            assertTrue("fixture requires an idle SDK pool", (originalLoadBalancer as SlotLoadBalancer).snapshot().all { it == 0 })
+            val slotType = (originalSlots as List<*>).first()!!.javaClass
+            val injectedSlots = listOf(
+                slotType.getDeclaredConstructor(Int::class.javaPrimitiveType!!).apply { isAccessible = true }
+                    .newInstance(0),
+            )
+            var cancelledCall: Job? = null
+            try {
+                slotsField.set(singleton, injectedSlots)
+                loadBalancerField.set(singleton, SlotLoadBalancer(1))
+                sdkCodeField.set(singleton, loopbackSdkCode(server.url))
+                appContextField.set(singleton, context.applicationContext)
+
+                cancelledCall = launch(Dispatchers.IO) {
+                    MusicSdkEngine.call(context, "blocked", "kw", timeoutMs = 5_000)
+                }
+                assertTrue("SDK worker HTTP request did not reach server", server.awaitRequest())
+                assertFalse("server response was released before worker cancellation", server.responseWasWritten())
+                cancelledCall.cancel()
+                withTimeout(3_000) { cancelledCall.join() }
+
+                assertFalse("server sent its held response", server.responseWasWritten())
+                assertEquals(
+                    "next",
+                    withTimeout(3_000) { MusicSdkEngine.call(context, "next", "kw", timeoutMs = 1_000) }
+                        .getString("action"),
+                )
+            } finally {
+                withContext(NonCancellable) {
+                    try {
+                        cancelledCall?.cancelAndJoin()
+                    } finally {
+                        try {
+                            closeInjectedSlots(injectedSlots)
+                        } finally {
+                            slotsField.set(singleton, originalSlots)
+                            loadBalancerField.set(singleton, originalLoadBalancer)
+                            sdkCodeField.set(singleton, originalSdkCode)
+                            appContextField.set(singleton, originalAppContext)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun loopbackSdkCode(url: String) = """
+        globalThis.sdkResult = '';
+        let generation = 0;
+        globalThis.__meloraInvoke = (payloadJson) => {
+          const callGeneration = ++generation;
+          const {action} = JSON.parse(payloadJson);
+          globalThis.sdkResult = '';
+          if (action === 'blocked') {
+            lx.request(${JSONObject.quote(url)}, {timeout:5000, responseType:'text'}).then(
+              ({body}) => { if (callGeneration === generation) globalThis.sdkResult = JSON.stringify({ok:true, data:{body}}); },
+              error => { if (callGeneration === generation) globalThis.sdkResult = JSON.stringify({ok:false, error:String(error)}); }
+            );
+          } else {
+            globalThis.sdkResult = JSON.stringify({ok:true, data:{action}});
+          }
+        };
+        globalThis.__meloraTake = () => globalThis.sdkResult;
+    """.trimIndent()
+
+    private fun field(target: Any, name: String) =
+        target.javaClass.getDeclaredField(name).apply { isAccessible = true }
+
+    private suspend fun closeInjectedSlots(slots: List<Any>) {
+        slots.forEach { slot ->
+            (field(slot, "worker").get(slot) as? Job)?.cancelAndJoin()
+            (field(slot, "high").get(slot) as Channel<Any?>).cancel()
+            (field(slot, "low").get(slot) as Channel<Any?>).cancel()
+            (field(slot, "engine").get(slot) as? LxScriptEngine)?.close()
+            (field(slot, "dispatcher").get(slot) as Closeable).close()
+        }
+    }
+
     private fun loadLoopbackRequestScript(engine: LxScriptEngine) {
         // HTTP callback executes on QuickJS's event thread while its call context is established on IO.
         val script = """
@@ -386,9 +504,14 @@ class ScriptRuntimeContractTest {
         engine.load(script, "loopback-http.js")
     }
 
-    private class DelayedHttpServer(private val responseDelayMs: Long) : Closeable {
+    private class DelayedHttpServer(
+        private val responseDelayMs: Long,
+        private val holdResponseUntilReleased: Boolean = false,
+    ) : Closeable {
         private val server = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
         private val requestReceived = CountDownLatch(1)
+        private val responseGate = CountDownLatch(1)
+        @Volatile private var responseWritten = false
         @Volatile private var client: Socket? = null
         val url = "http://127.0.0.1:${server.localPort}/delayed"
         private val worker = thread(name = "lx-loopback-http", isDaemon = true) {
@@ -399,7 +522,8 @@ class ScriptRuntimeContractTest {
                     val reader = socket.getInputStream().bufferedReader(StandardCharsets.US_ASCII)
                     while (!reader.readLine().isNullOrEmpty()) Unit
                     requestReceived.countDown()
-                    Thread.sleep(responseDelayMs)
+                    if (holdResponseUntilReleased) responseGate.await()
+                    else Thread.sleep(responseDelayMs)
                     val body = "delayed".toByteArray(StandardCharsets.UTF_8)
                     val headers = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n" +
                         "Content-Length: ${body.size}\r\nConnection: close\r\n\r\n"
@@ -408,6 +532,7 @@ class ScriptRuntimeContractTest {
                         write(body)
                         flush()
                     }
+                    responseWritten = true
                 }
             } catch (_: Exception) {
                 // Client-side timeout/cancel closes the socket before this finite delayed write.
@@ -417,10 +542,12 @@ class ScriptRuntimeContractTest {
         }
 
         fun awaitRequest(): Boolean = requestReceived.await(2, TimeUnit.SECONDS)
+        fun responseWasWritten(): Boolean = responseWritten
 
         override fun close() {
             runCatching { server.close() }
             runCatching { client?.close() }
+            responseGate.countDown()
             worker.interrupt()
             worker.join(1_000)
         }

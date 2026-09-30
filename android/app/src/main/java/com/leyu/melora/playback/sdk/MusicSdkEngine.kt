@@ -6,6 +6,9 @@ import com.leyu.melora.playback.SourceAlias
 import com.leyu.melora.playback.lx.LxScriptEngine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -37,7 +40,6 @@ object MusicSdkEngine {
         val timeoutMs: Long,
     ) {
         val result = CompletableDeferred<JSONObject>()
-        @Volatile var cancelled = false
     }
 
     private class Slot(val index: Int) {
@@ -102,10 +104,7 @@ object MusicSdkEngine {
             withTimeoutOrNull(timeoutMs + 10_000) { task.result.await() }
                 ?: throw IllegalStateException("目录请求超时")
         } finally {
-            if (!task.result.isCompleted) {
-                task.cancelled = true
-                task.result.cancel()
-            }
+            if (!task.result.isCompleted) task.result.cancel()
         }
     }
 
@@ -122,7 +121,7 @@ object MusicSdkEngine {
                 while (isActive) {
                     val task = receivePriority(slot.high, slot.low)
                     try {
-                        if (!task.cancelled) runTask(app, slot, task)
+                        if (task.result.isActive) runTask(app, slot, task)
                     } finally {
                         loadBalancer.release(slot.index)
                     }
@@ -131,14 +130,19 @@ object MusicSdkEngine {
         }
     }
 
-    private fun runTask(context: Context, slot: Slot, task: Task) {
+    private suspend fun runTask(context: Context, slot: Slot, task: Task) = supervisorScope {
         val startedAt = System.currentTimeMillis()
+        val invocation = async(start = CoroutineStart.LAZY) {
+            ensureEngine(context, slot).sdkCall(task.action, task.source, task.params, task.timeoutMs)
+        }
+        // 结果同时承担排队/运行态的取消信号；只中止本次调用，保留slot与QuickJS实例。
+        val cancellation = task.result.invokeOnCompletion { if (task.result.isCancelled) invocation.cancel() }
         try {
-            val engine = ensureEngine(context, slot)
-            if (task.cancelled) return
-            task.result.complete(engine.sdkCall(task.action, task.source, task.params, task.timeoutMs))
+            task.result.complete(invocation.await())
         } catch (error: Throwable) {
             task.result.completeExceptionally(error)
+        } finally {
+            cancellation.dispose()
         }
         val cost = System.currentTimeMillis() - startedAt
         if (cost > 1_500) Log.d(TAG, "${task.action}/${task.source} 耗时 ${cost}ms")

@@ -240,8 +240,10 @@ async function dispatch(action, source, params = {}) {
 }
 
 let pendingResult
+let invocationGeneration = 0
 
 globalThis.__meloraInvoke = (payloadJson) => {
+  const generation = ++invocationGeneration
   pendingResult = undefined
   let payload
   try {
@@ -253,8 +255,8 @@ globalThis.__meloraInvoke = (payloadJson) => {
   Promise.resolve()
     .then(() => dispatch(payload.action, payload.source, payload.params || {}))
     .then(
-      (data) => { pendingResult = JSON.stringify({ ok: true, data }) },
-      (error) => { pendingResult = JSON.stringify({ ok: false, error: String(globalThis.__meloraDebug ? (error && error.stack) || error : (error && error.message) || error) }) },
+      (data) => { if (generation === invocationGeneration) pendingResult = JSON.stringify({ ok: true, data }) },
+      (error) => { if (generation === invocationGeneration) pendingResult = JSON.stringify({ ok: false, error: String(globalThis.__meloraDebug ? (error && error.stack) || error : (error && error.message) || error) }) },
     )
 }
 
