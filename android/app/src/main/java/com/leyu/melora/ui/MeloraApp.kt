@@ -80,7 +80,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -408,7 +407,7 @@ fun MeloraApp(initialTab: Int = 5) {
         if (settingsState.autoPlayOnStart.value) {
             // 等播放服务把上次队列恢复出来；确实没有可恢复内容才兜底播最近播放
             kotlinx.coroutines.withTimeoutOrNull(2_500) {
-                snapshotFlow { PlaybackController.state.value.ready }.first { it }
+                PlaybackController.state.first { it.ready }
             }
             val snapshot = PlaybackController.state.value
             if (snapshot.current == null && snapshot.queue.isEmpty() && UserLibrary.recents.value.isNotEmpty()) {

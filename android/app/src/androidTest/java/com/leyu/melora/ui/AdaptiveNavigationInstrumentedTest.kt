@@ -1,12 +1,18 @@
 package com.leyu.melora.ui
 
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.Density
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.leyu.melora.playback.PlaybackController
+import com.leyu.melora.playback.PlayerUiState
+import com.leyu.melora.playback.UserLibrary
+import kotlinx.coroutines.flow.MutableStateFlow
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.ui.common.SongListStateProvider
 import com.leyu.melora.ui.theme.MeloraTheme
@@ -36,6 +42,46 @@ class AdaptiveNavigationInstrumentedTest {
             }
         }
         compose.waitForIdle()
+    }
+
+    @Test fun startupWaitsForPlaybackFlowWithoutFallingThroughToTimeout() {
+        // 仅替换测试进程中的状态，不连接播放服务、不读取正式应用的数据。
+        @Suppress("UNCHECKED_CAST")
+        val playback = PlaybackController::class.java.getDeclaredField("_state").apply {
+            isAccessible = true
+        }.get(null) as MutableStateFlow<PlayerUiState>
+        val previousPlayback = playback.value
+        val previousRecents = UserLibrary.recents.value
+        val previousDesktop = MeloraSettings.showDesktopLyrics.value
+        val autoStart = mutableStateOf(false)
+        val visible = mutableStateOf(true)
+        try {
+            playback.value = PlayerUiState()
+            UserLibrary.recents.value = emptyList()
+            MeloraSettings.showDesktopLyrics.value = false
+            MeloraSettings.autoPlayOnStart.value = false
+            compose.setContent {
+                if (visible.value) key(autoStart.value) {
+                    MeloraTheme { SongListStateProvider { MeloraApp(initialTab = 7) } }
+                }
+            }
+            compose.waitForIdle()
+            val regularSubscribers = playback.subscriptionCount.value
+            compose.runOnIdle {
+                MeloraSettings.autoPlayOnStart.value = true
+                autoStart.value = true
+            }
+            // 就绪等待必须真正订阅StateFlow，而不是对普通value读取创建snapshotFlow。
+            compose.waitUntil(1_000) { playback.subscriptionCount.value == regularSubscribers + 1 }
+            compose.runOnIdle { playback.value = PlayerUiState(ready = true) }
+            compose.waitUntil(1_000) { playback.subscriptionCount.value == regularSubscribers }
+        } finally {
+            compose.runOnIdle { visible.value = false }
+            compose.waitForIdle()
+            playback.value = previousPlayback
+            UserLibrary.recents.value = previousRecents
+            MeloraSettings.showDesktopLyrics.value = previousDesktop
+        }
     }
 
     @Test fun navigationKeepsSelectionAcrossCompactAndExpandedWindows() {
