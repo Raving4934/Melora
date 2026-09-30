@@ -19,11 +19,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import com.leyu.melora.ui.theme.SystemBarsVisibility
@@ -58,7 +63,7 @@ internal fun rememberSheetDismiss(sheetState: SheetState): (() -> Unit) -> Unit 
     }
 }
 
-/** 统一抽屉内容的边界行为，不修改开关动画、展开档位或下拉关闭手势。 */
+/** 统一抽屉的边界行为与随位移变化的遮罩，保留原生面板动画、档位及关闭手势。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun MeloraBottomSheet(
@@ -72,11 +77,37 @@ internal fun MeloraBottomSheet(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     if (!LocalPageActive.current) return
+    var viewport by remember { mutableStateOf(IntSize.Zero) }
     ModalBottomSheet(
+        // 外层位于 Material3 的位移和 Surface 裁剪之前，遮罩不会随面板移动。
+        modifier = Modifier
+            .layout { measurable, constraints ->
+                val sheet = measurable.measure(constraints)
+                viewport = IntSize(constraints.maxWidth, constraints.maxHeight)
+                layout(sheet.width, sheet.height) { sheet.place(0, 0) }
+            }
+            .drawBehind {
+                if (scrimColor == Color.Unspecified || size.height == 0f) return@drawBehind
+                val height = viewport.height.toFloat()
+                val visibleHeight = if (sheetState.hasPartiallyExpandedState) {
+                    height / 2f
+                } else {
+                    size.height.coerceAtMost(height)
+                }
+                val progress = ((height - sheetState.requireOffset()) / visibleHeight)
+                    .coerceIn(0f, 1f)
+                drawRect(
+                    color = scrimColor,
+                    alpha = progress,
+                    topLeft = Offset((size.width - viewport.width) / 2f, 0f),
+                    size = Size(viewport.width.toFloat(), height),
+                )
+            },
         onDismissRequest = onDismissRequest,
         sheetState = sheetState,
         containerColor = containerColor,
-        scrimColor = scrimColor,
+        // 保留原生遮罩的点击/无障碍关闭；可视遮罩只由上方物理位移驱动。
+        scrimColor = if (scrimColor == Color.Unspecified) Color.Unspecified else Color.Transparent,
         tonalElevation = tonalElevation,
         shape = shape,
         dragHandle = dragHandle,
