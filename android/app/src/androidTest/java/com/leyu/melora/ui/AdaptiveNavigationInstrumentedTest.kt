@@ -37,7 +37,7 @@ class AdaptiveNavigationInstrumentedTest {
         MeloraSettings.autoPlayOnStart.value = false
         compose.setContent {
             val original = LocalDensity.current
-            CompositionLocalProvider(LocalDensity provides Density(original.density * densityFactor.floatValue, original.fontScale)) {
+            CompositionLocalProvider(LocalDensity provides Density(densityFactor.floatValue, original.fontScale)) {
                 MeloraTheme { SongListStateProvider { MeloraApp(initialTab = 5) } }
             }
         }

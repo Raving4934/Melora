@@ -1,10 +1,10 @@
 package com.leyu.melora.playback
 
+import com.leyu.melora.releaseAudioCacheFixture
 import android.content.Context
 import android.content.ContextWrapper
 import android.net.Uri
 import android.provider.DocumentsContract
-import androidx.media3.datasource.cache.SimpleCache
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
@@ -91,11 +91,7 @@ class DownloadTransferInstrumentedTest {
         SourceResolver.clearCache()
         scriptStore.list().forEach { scriptStore.remove(it.id) }
         LxScriptPool.reload(context)
-        run {
-            val field = AudioCacheStore.javaClass.getDeclaredField("cache").apply { isAccessible = true }
-            (field.get(AudioCacheStore) as? SimpleCache)?.release()
-            field.set(AudioCacheStore, null)
-        }
+        releaseAudioCacheFixture()
         context.contentResolver.call(tree, "reset", null, null)
         context.getSharedPreferences(MeloraSettings.PREFS, 0).edit().clear().commit()
         // DownloadCenter.init 是进程级单次初始化，不能让下一组测试继续写已删除的夹具目录。

@@ -14,6 +14,7 @@ import androidx.compose.ui.platform.WindowInfo
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.leyu.melora.playback.sdk.OnlinePlaylist
@@ -37,11 +38,11 @@ class ResponsiveGridLayoutInstrumentedTest {
         var columns = 0
         compose.setContent {
             val actual = LocalWindowInfo.current
-            val density = LocalDensity.current
+            val density = Density(1f)
             val window = object : WindowInfo by actual {
                 override val containerSize = with(density) { IntSize(720.dp.roundToPx(), 960.dp.roundToPx()) }
             }
-            CompositionLocalProvider(LocalWindowInfo provides window) {
+            CompositionLocalProvider(LocalWindowInfo provides window, LocalDensity provides density) {
                 BoxWithConstraints(Modifier.size(720.dp, 960.dp).padding(start = 208.dp)) {
                     availableWidth = maxWidth.value
                     columns = responsiveGridColumns(maxWidth)
@@ -65,11 +66,11 @@ class ResponsiveGridLayoutInstrumentedTest {
         }
         compose.setContent {
             val actual = LocalWindowInfo.current
-            val density = LocalDensity.current
+            val density = Density(1f)
             val window = object : WindowInfo by actual {
                 override val containerSize = with(density) { IntSize(windowWidth.value.roundToPx(), 960.dp.roundToPx()) }
             }
-            CompositionLocalProvider(LocalWindowInfo provides window) {
+            CompositionLocalProvider(LocalWindowInfo provides window, LocalDensity provides density) {
                 MeloraTheme {
                     Box(Modifier.size(paneWidth.value, 960.dp).padding(start = sidebar.value)) {
                         SearchResultsContent(

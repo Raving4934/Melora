@@ -1,5 +1,6 @@
 package com.leyu.melora.playback
 
+import com.leyu.melora.releaseAudioCacheFixture
 import android.content.Context
 import android.content.ContextWrapper
 import android.net.Uri
@@ -68,12 +69,7 @@ class DownloadQualityInstrumentedTest {
         DownloadCenter.remove(song.uid)
         LocalMediaStore.clear()
         SourceResolver.clearCache()
-        // 解析失败也可能创建缓存；删除夹具目录前必须释放，不能只看是否 seed 过。
-        run {
-            val field = AudioCacheStore.javaClass.getDeclaredField("cache").apply { isAccessible = true }
-            (field.get(AudioCacheStore) as? SimpleCache)?.release()
-            field.set(AudioCacheStore, null)
-        }
+        runBlocking { releaseAudioCacheFixture() }
         context.getSystemService(android.app.NotificationManager::class.java)?.cancel(song.uid.hashCode())
         context.contentResolver.call(tree, "reset", null, null)
         context.getSharedPreferences(MeloraSettings.PREFS, 0).edit().clear().commit()

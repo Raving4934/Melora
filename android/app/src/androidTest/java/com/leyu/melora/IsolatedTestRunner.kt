@@ -16,3 +16,19 @@ class IsolatedTestRunner : AndroidJUnitRunner() {
     override fun newApplication(cl: ClassLoader, className: String, context: Context): Application =
         super.newApplication(cl, Application::class.java.name, context)
 }
+
+/** 缓存夹具先等待异步账本初始化/裁剪退出，再释放实例，防止跨用例迟到回调。 */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+internal suspend fun releaseAudioCacheFixture() {
+    val owner = com.leyu.melora.playback.AudioCacheStore
+    owner.cancelPrefetch()
+    val scope = owner.javaClass.getDeclaredField("scope").apply { isAccessible = true }
+        .get(owner) as kotlinx.coroutines.CoroutineScope
+    kotlinx.coroutines.withTimeout(5_000) {
+        scope.coroutineContext[kotlinx.coroutines.Job]?.children?.toList()?.forEach { it.join() }
+    }
+    val cache = owner.javaClass.getDeclaredField("cache").apply { isAccessible = true }
+    (cache.get(owner) as? androidx.media3.datasource.cache.SimpleCache)?.release()
+    cache.set(owner, null)
+    owner.javaClass.getDeclaredField("evictor").apply { isAccessible = true }.set(owner, null)
+}

@@ -1,5 +1,6 @@
 package com.leyu.melora.playback.sdk
 
+import com.leyu.melora.releaseAudioCacheFixture
 import android.content.Context
 import android.content.ContextWrapper
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -37,7 +38,6 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class PlaybackResolutionInstrumentedTest {
     private val context = FixtureContext(InstrumentationRegistry.getInstrumentation().targetContext)
-    private var ownsCache = false
     private val store get() = LxScriptStore(context)
     private val song = OnlineSong(JSONObject().put("source", "kw").put("songmid", "fixture")
         .put("name", "Fixture").put("singer", "Test Artist").put("_types", JSONObject().put("128k", JSONObject())))
@@ -59,11 +59,7 @@ class PlaybackResolutionInstrumentedTest {
         LxScriptPool.reload(context)
         context.getSharedPreferences("lx-sources", 0).edit().clear().commit()
         context.getSharedPreferences(MeloraSettings.PREFS, 0).edit().clear().commit()
-        val cacheField = AudioCacheStore.javaClass.getDeclaredField("cache").apply { isAccessible = true }
-        if (ownsCache) {
-            (cacheField.get(AudioCacheStore) as? SimpleCache)?.release()
-            cacheField.set(AudioCacheStore, null)
-        }
+        releaseAudioCacheFixture()
         context.root.deleteRecursively()
     }
 
@@ -326,7 +322,6 @@ class PlaybackResolutionInstrumentedTest {
         val original = SourceResolver.Resolved("https://example.test/file-a.flac", "flac24bit", song, false, "lx:fixture:file-a")
         assertNull(AudioCacheStore.javaClass.getDeclaredField("cache").apply { isAccessible = true }.get(AudioCacheStore))
         val resource = AudioCacheStore.registerResolved(context, song.uid, "flac24bit", original)
-        ownsCache = true
         val cache = AudioCacheStore.javaClass.getDeclaredField("cache").apply { isAccessible = true }
             .get(AudioCacheStore) as SimpleCache
         val bytes = "synthetic cached audio bytes for metadata test".toByteArray()
@@ -382,7 +377,6 @@ class PlaybackResolutionInstrumentedTest {
 
         val cacheField = AudioCacheStore.javaClass.getDeclaredField("cache").apply { isAccessible = true }
         assertNull("factory fixture must start with an uninitialized AudioCacheStore cache", cacheField.get(AudioCacheStore))
-        ownsCache = true
         TrackRegistry.register(UiTrack.fromOnline(target))
         TrackRegistry.register(UiTrack.fromOnline(untouched))
         TrackRegistry.notifyResolved(target.uid, "320k", "fixture:old-cache", "320k", "fixture", fromCompleteCache = true)

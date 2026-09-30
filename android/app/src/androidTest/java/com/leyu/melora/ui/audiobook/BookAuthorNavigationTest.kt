@@ -111,7 +111,7 @@ class BookAuthorNavigationTest {
                 LocalSongListState provides shared,
             ) {
                 MeloraTheme {
-                    Box(if (wide) Modifier.requiredSize(720.dp, 600.dp) else Modifier.fillMaxSize()) {
+                    Box(if (wide) Modifier.requiredSize(840.dp, 600.dp) else Modifier.fillMaxSize()) {
                         SongsCollectionPage(collection, {})
                     }
                 }

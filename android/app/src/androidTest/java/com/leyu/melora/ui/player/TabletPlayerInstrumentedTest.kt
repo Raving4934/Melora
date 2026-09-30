@@ -170,12 +170,17 @@ class TabletPlayerGestureInstrumentedTest {
 
     @Test fun draggingCoverCollapsesButDraggingLyricsAtTheirBoundaryDoesNot() {
         compose.setContent {
-            MeloraTheme {
-                SongListStateProvider {
-                    ContinuousPlayerSheet(
-                        PlayerUiState(current = UiTrack("tablet-gesture", "平板手势测试", "测试歌手", "测试专辑")),
-                        Modifier.fillMaxSize(),
-                    )
+            // 手势用例也显式提供横屏平板视口，不依赖运行设备本身的方向/密度。
+            CompositionLocalProvider(LocalDensity provides Density(1f)) {
+                Box(Modifier.size(1000.dp, 640.dp)) {
+                    MeloraTheme {
+                        SongListStateProvider {
+                            ContinuousPlayerSheet(
+                                PlayerUiState(current = UiTrack("tablet-gesture", "平板手势测试", "测试歌手", "测试专辑")),
+                                Modifier.fillMaxSize(),
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -194,7 +199,7 @@ class TabletPlayerGestureInstrumentedTest {
             swipe(Offset(center.x, height * .15f), Offset(center.x, height * .9f), 220)
         }
         compose.waitForIdle()
-        val collapsed = compose.onNodeWithTag("player-expanded-layout").fetchSemanticsNode().boundsInRoot
+        val collapsed = compose.onNodeWithTag("player-expanded-layout", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         assertTrue("封面下拉应把Sheet移到迷你条位置，实际top=${collapsed.top}", collapsed.top > before.top + before.height * .5f)
         compose.onNodeWithTag("player-full-lyrics").assertIsNotDisplayed()
         compose.onAllNodesWithText("平板手势测试", substring = true).onLast().assertIsDisplayed()
