@@ -4,7 +4,6 @@ import com.leyu.melora.playback.LyricsUiConfig
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.snap
 import androidx.compose.foundation.selection.selectable
@@ -222,12 +221,6 @@ import com.leyu.melora.ui.common.runCatchingCancellable
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
-
-// 与 Pager 手势松手后的默认吸附一致；点击翻页不能使用更硬、更急的默认 spring。
-private val PlayerPageSnapSpec = spring<Float>(
-    stiffness = Spring.StiffnessMediumLow,
-    visibilityThreshold = 1f,
-)
 
 // VerticalPager Page 0: 全屏播放页
 @OptIn(ExperimentalMaterial3Api::class)
@@ -569,6 +562,7 @@ internal fun FullPlayerPageContent(
         val queuePaneContent: @Composable (Modifier, @Composable () -> Unit) -> Unit = { pagerModifier, playerContent ->
             VerticalPager(
                 state = queuePagerState,
+                flingBehavior = PagerDefaults.flingBehavior(queuePagerState, snapAnimationSpec = PlayerPageSnapSpec),
                 userScrollEnabled = !immersive && !expandedLayout && (twoPanes || queuePagerState.currentPage == 1 || queueSwipeAllowed),
                 modifier = pagerModifier,
             ) { page ->

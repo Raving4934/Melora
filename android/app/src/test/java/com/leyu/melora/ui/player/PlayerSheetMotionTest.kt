@@ -1,5 +1,7 @@
 package com.leyu.melora.ui.player
 
+import androidx.compose.animation.core.TargetBasedAnimation
+import androidx.compose.animation.core.VectorConverter
 import androidx.compose.foundation.gestures.AnchoredDraggableState
 import androidx.compose.foundation.gestures.DraggableAnchors
 import androidx.compose.foundation.pager.PageSize
@@ -128,14 +130,25 @@ class PlayerSheetMotionTest {
     }
 
     @Test
-    fun miniAndFullTextNeverGhostOverEachOther() {
-        for (step in 0..100) {
-            val progress = step / 100f
+    fun fullContentLeavesEarlyAndMiniAppearsOnlyNearItsEndpoint() {
+        var previousFull = 0f
+        var previousMini = 1f
+        for (step in 0..1000) {
+            val progress = step / 1000f
+            val full = playerMotionPhase(progress, PlayerContentFadeStart, 1f)
             val mini = 1f - playerMotionPhase(progress, 0f, PlayerMiniFadeEnd)
-            val full = playerMotionPhase(progress, 0.18f, 0.88f)
-            assertTrue(mini == 0f || full == 0f)
-            assertTrue(mini in 0f..1f && full in 0f..1f)
+            assertTrue("不能同时显示全屏控件和Mini: p=$progress", full == 0f || mini == 0f)
+            assertTrue(full in 0f..1f && mini in 0f..1f)
+            assertTrue(full >= previousFull && mini <= previousMini)
+            if (progress <= PlayerContentFadeStart) assertEquals(0f, full, 0f)
+            if (progress >= PlayerMiniFadeEnd) assertEquals(0f, mini, 0f)
+            previousFull = full
+            previousMini = mini
         }
+        assertEquals(1f, previousFull, 0f)
+        assertEquals(0f, previousMini, 0f)
+        // 中段正文已退场；面板背景仍须遮挡底页，由真实截图回归单独验证。
+        assertEquals(0f, playerMotionPhase(0.5f, PlayerContentFadeStart, 1f), 0f)
     }
 
     @Test
@@ -233,6 +246,67 @@ class PlayerSheetMotionTest {
     }
 
     @Test
+    fun playerPageSnapTrajectoryIsMonotonicBoundedAcrossPhoneAndTabletTravel() {
+        val sampleIntervalNanos = 16_000_000L
+        val earlySampleNanos = 100_000_000L
+
+        for (distance in listOf(360f, 720f, 1080f, 2560f, 3200f)) {
+            val animation = playerPageSnapAnimation(0f, distance)
+            val earlyValue = animation.getValueFromNanos(earlySampleNanos)
+            assertTrue(
+                "distance=$distance earlyValue=$earlyValue",
+                earlyValue in 0f..(distance * 0.75f),
+            )
+
+            var previousValue = animation.getValueFromNanos(0L)
+            var playTimeNanos = sampleIntervalNanos
+            while (playTimeNanos < animation.durationNanos) {
+                val value = animation.getValueFromNanos(playTimeNanos)
+                assertTrue("distance=$distance time=$playTimeNanos value=$value", value >= -0.01f)
+                assertTrue("distance=$distance time=$playTimeNanos value=$value", value <= distance + 0.01f)
+                assertTrue(
+                    "distance=$distance time=$playTimeNanos previous=$previousValue value=$value",
+                    value >= previousValue - 0.01f,
+                )
+                previousValue = value
+                playTimeNanos += sampleIntervalNanos
+            }
+
+            val endValue = animation.getValueFromNanos(animation.durationNanos)
+            assertTrue("distance=$distance endValue=$endValue", endValue >= previousValue - 0.01f)
+            assertEquals(distance, endValue, 0f)
+        }
+    }
+
+    @Test
+    fun playerPageSnapTrajectoryIsSymmetricInBothDirectionsAndReachesEachEndpoint() {
+        val sampleIntervalNanos = 16_000_000L
+
+        for (distance in listOf(360f, 720f, 1080f, 2560f, 3200f)) {
+            val forward = playerPageSnapAnimation(0f, distance)
+            val backward = playerPageSnapAnimation(distance, 0f)
+            // 比较避开 duration 边界，避免结束阈值的取整差异掩盖轨迹对称性。
+            val comparisonEndNanos = minOf(forward.durationNanos, backward.durationNanos) - sampleIntervalNanos
+
+            var playTimeNanos = 0L
+            while (playTimeNanos <= comparisonEndNanos) {
+                val forwardValue = forward.getValueFromNanos(playTimeNanos)
+                val backwardValue = backward.getValueFromNanos(playTimeNanos)
+                assertEquals(
+                    "distance=$distance time=$playTimeNanos",
+                    distance,
+                    forwardValue + backwardValue,
+                    0.1f,
+                )
+                playTimeNanos += sampleIntervalNanos
+            }
+
+            assertEquals(distance, forward.getValueFromNanos(forward.durationNanos), 0f)
+            assertEquals(0f, backward.getValueFromNanos(backward.durationNanos), 0f)
+        }
+    }
+
+    @Test
     fun actualDragStateTracksReversalAndClampsBothEdges() {
         val state = AnchoredDraggableState(PlayerSheetAnchor.Collapsed)
         state.updateAnchors(anchors(800f))
@@ -312,6 +386,15 @@ class PlayerSheetMotionTest {
             }
         }
     }
+
+    private fun playerPageSnapAnimation(initialValue: Float, targetValue: Float) =
+        TargetBasedAnimation(
+            animationSpec = PlayerPageSnapSpec,
+            typeConverter = Float.VectorConverter,
+            initialValue = initialValue,
+            targetValue = targetValue,
+            initialVelocity = 0f,
+        )
 
     private fun anchors(travel: Float) = DraggableAnchors {
         PlayerSheetAnchor.Expanded at 0f

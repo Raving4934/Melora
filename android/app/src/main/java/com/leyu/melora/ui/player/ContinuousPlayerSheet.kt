@@ -122,12 +122,11 @@ internal fun ContinuousPlayerSheet(
     var sheetCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
     var miniBounds by remember { mutableStateOf<Rect?>(null) }
     var fullBounds by remember { mutableStateOf<Rect?>(null) }
-    val fluidSpec = remember { spring<Float>(dampingRatio = 1f, stiffness = Spring.StiffnessMedium) }
     val decay = rememberSplineBasedDecay<Float>()
     val fling = AnchoredDraggableDefaults.flingBehavior(
         state = sheetState,
         positionalThreshold = { distance -> distance * 0.35f },
-        animationSpec = fluidSpec,
+        animationSpec = PlayerPageSnapSpec,
     )
 
     BoxWithConstraints(modifier.fillMaxSize().clipToBounds()) {
@@ -173,11 +172,11 @@ internal fun ContinuousPlayerSheet(
         }
         val artworkAlpha = remember(morphing) { { if (morphing()) 0f else 1f } }
 
-        val nestedScroll = remember(sheetState, travel, velocityThreshold, fluidSpec, decay, canCollapse, offset) {
+        val nestedScroll = remember(sheetState, travel, velocityThreshold, decay, canCollapse, offset) {
             object : NestedScrollConnection {
                 suspend fun settle(velocity: Float): Velocity {
                     val target = playerSheetTarget(offset(), travel, velocity, velocityThreshold, sheetState.settledValue)
-                    val consumed = sheetState.animateToWithDecay(target, velocity, fluidSpec, decay)
+                    val consumed = sheetState.animateToWithDecay(target, velocity, PlayerPageSnapSpec, decay)
                     return Velocity(0f, consumed)
                 }
                 override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset =
@@ -214,8 +213,8 @@ internal fun ContinuousPlayerSheet(
             val action = backAction()
             if (action == PlayerSheetBackAction.Collapse || action == PlayerSheetBackAction.ReturnToPlayer) {
                 launchTransition {
-                    if (action == PlayerSheetBackAction.ReturnToPlayer) verticalPagerState.animateScrollToPage(0)
-                    else sheetState.animateTo(PlayerSheetAnchor.Collapsed, fluidSpec)
+                    if (action == PlayerSheetBackAction.ReturnToPlayer) verticalPagerState.animateScrollToPage(0, animationSpec = PlayerPageSnapSpec)
+                    else sheetState.animateTo(PlayerSheetAnchor.Collapsed, PlayerPageSnapSpec)
                 }
             }
         }
@@ -294,14 +293,17 @@ internal fun ContinuousPlayerSheet(
                         alpha = playerMotionPhase(progress(), 0f, PlayerMiniFadeEnd)
                     },
                 )
-                Box(Modifier.fillMaxSize().graphicsLayer { alpha = playerMotionPhase(progress(), 0.18f, 0.88f) }) {
+                // 只提前退出正文；背景始终由根面板承接，不能让底页从播放器内部透出。
+                Box(Modifier.fillMaxSize().graphicsLayer {
+                    alpha = playerMotionPhase(progress(), PlayerContentFadeStart, 1f)
+                }) {
                     FullPlayerPageContent(
                         state = state,
                         immersive = immersive,
                         onImmersiveChange = { immersive = it },
                         onCollapse = { launchTransition {
                             verticalPagerState.scrollToPage(0)
-                            sheetState.animateTo(PlayerSheetAnchor.Collapsed, fluidSpec)
+                            sheetState.animateTo(PlayerSheetAnchor.Collapsed, PlayerPageSnapSpec)
                         } },
                         lyricPosition = lyricPosition,
                         motionEnabled = playerMotionEnabled && expanded && (twoPanes || verticalPagerState.currentPage == 0),
@@ -312,7 +314,7 @@ internal fun ContinuousPlayerSheet(
                         queuePagerState = verticalPagerState,
                         onOpenQueue = { launchTransition {
                             queueReturnTarget = PlayerSheetAnchor.Expanded
-                            verticalPagerState.animateScrollToPage(1)
+                            verticalPagerState.animateScrollToPage(1, animationSpec = PlayerPageSnapSpec)
                         } },
                         onCloseQueue = handleBack,
                         onArtworkPositioned = { child ->
@@ -366,7 +368,7 @@ internal fun ContinuousPlayerSheet(
                                 ) {
                                     launchTransition {
                                         verticalPagerState.scrollToPage(0)
-                                        sheetState.animateTo(PlayerSheetAnchor.Expanded, fluidSpec)
+                                        sheetState.animateTo(PlayerSheetAnchor.Expanded, PlayerPageSnapSpec)
                                     }
                                 }
                                 .draggable(
@@ -468,7 +470,7 @@ internal fun ContinuousPlayerSheet(
                             launchTransition {
                                 queueReturnTarget = PlayerSheetAnchor.Collapsed
                                 verticalPagerState.scrollToPage(1)
-                                sheetState.animateTo(PlayerSheetAnchor.Expanded, fluidSpec)
+                                sheetState.animateTo(PlayerSheetAnchor.Expanded, PlayerPageSnapSpec)
                             }
                         }) {
                             Icon(

@@ -1,11 +1,22 @@
 package com.leyu.melora.ui.player
 
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.lerp
 
-/** 迷你文字退场与整张播放器背景交接使用同一进度，避免上下两截不同底色。 */
+/** 播放面板、翻页与队列共用吸附节奏，保留手势速度但避免硬弹簧的急冲。 */
+internal val PlayerPageSnapSpec = spring<Float>(
+    stiffness = Spring.StiffnessMediumLow,
+    visibilityThreshold = 1f,
+)
+
+/** 全屏正文在收起前20%行程内退出，避免控件随封面滑进迷你条。 */
+internal const val PlayerContentFadeStart = 0.8f
+
+/** 迷你条与背景在末段交接；根面板始终不透明，正文不参与这层配色过渡。 */
 internal const val PlayerMiniFadeEnd = 0.16f
 
 internal enum class PlayerSheetAnchor { Collapsed, Expanded }
