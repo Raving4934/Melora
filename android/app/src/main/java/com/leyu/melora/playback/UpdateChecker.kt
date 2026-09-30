@@ -6,6 +6,11 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import java.io.IOException
+import kotlinx.coroutines.suspendCancellableCoroutine
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.Response
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
@@ -20,6 +25,7 @@ data class UpdateResult(
     val downloadUrl: String,
     val pageUrl: String,
     val message: String? = null,
+    val checkFailed: Boolean = false,
 )
 
 internal data class AndroidRelease(
@@ -65,7 +71,7 @@ object UpdateChecker {
                     currentCoroutineContext().ensureActive()
                     val remainingMillis = TimeUnit.NANOSECONDS.toMillis(deadlineNanos - System.nanoTime())
                     if (remainingMillis <= 0L) {
-                        return@runCatching noUpdate(currentVersion, TIMEOUT_MESSAGE)
+                        return@runCatching noUpdate(currentVersion, TIMEOUT_MESSAGE, failed = true)
                     }
 
                     val request = Request.Builder()
@@ -76,7 +82,7 @@ object UpdateChecker {
                     val call = client.newCall(request)
                     call.timeout().timeout(remainingMillis.coerceAtLeast(1L), TimeUnit.MILLISECONDS)
 
-                    call.execute().use { response ->
+                    call.readUpdateResponse { response ->
                         when {
                             response.code == 404 -> exhausted = true
                             !response.isSuccessful -> {
@@ -100,20 +106,22 @@ object UpdateChecker {
                     currentCoroutineContext().ensureActive()
                 }
 
+                val selected = latest
+                val failure = failureMessage
                 when {
-                    failureMessage != null -> noUpdate(currentVersion, failureMessage)
-                    latest == null -> noUpdate(currentVersion, "尚未找到Android发布版本")
+                    failure != null -> noUpdate(currentVersion, failure, failed = true)
+                    selected == null -> noUpdate(currentVersion, "尚未找到Android发布版本")
                     else -> {
-                        val versionComparison = compareVersions(latest.version, currentVersion)
+                        val versionComparison = compareVersions(selected.version, currentVersion)
                         UpdateResult(
                             hasUpdate = versionComparison > 0,
-                            latestVersion = latest.tagName,
+                            latestVersion = selected.tagName,
                             currentVersion = currentVersion,
-                            releaseNotes = latest.releaseNotes,
-                            downloadUrl = latest.downloadUrl,
-                            pageUrl = latest.pageUrl,
+                            releaseNotes = selected.releaseNotes,
+                            downloadUrl = selected.downloadUrl,
+                            pageUrl = selected.pageUrl,
                             message = if (versionComparison < 0) {
-                                "当前安装版本高于 ${latest.tagName}，不会自动降级。"
+                                "当前安装版本高于 ${selected.tagName}，不会自动降级。"
                             } else {
                                 null
                             },
@@ -123,12 +131,12 @@ object UpdateChecker {
             }.getOrElse { error ->
                 if (error is CancellationException) throw error
                 if (System.nanoTime() >= deadlineNanos) {
-                    noUpdate(currentVersion, TIMEOUT_MESSAGE)
+                    noUpdate(currentVersion, TIMEOUT_MESSAGE, failed = true)
                 } else {
-                    noUpdate(currentVersion, error.message ?: "网络连接异常")
+                    noUpdate(currentVersion, error.message ?: "网络连接异常", failed = true)
                 }
             }
-        } ?: noUpdate(currentVersion, TIMEOUT_MESSAGE)
+        } ?: noUpdate(currentVersion, TIMEOUT_MESSAGE, failed = true)
     }
 
     /** 只构造当前仓库的 Release URL；Link 头只提供下一页页码，不直接作为请求目标。 */
@@ -231,7 +239,7 @@ object UpdateChecker {
             .mapNotNull { it.value.toIntOrNull() }
             .toList()
 
-    private fun noUpdate(currentVersion: String, message: String): UpdateResult = UpdateResult(
+    private fun noUpdate(currentVersion: String, message: String, failed: Boolean = false): UpdateResult = UpdateResult(
         hasUpdate = false,
         latestVersion = currentVersion,
         currentVersion = currentVersion,
@@ -239,5 +247,26 @@ object UpdateChecker {
         downloadUrl = "",
         pageUrl = RELEASES_PAGE_URL,
         message = message,
+        checkFailed = failed,
     )
+}
+
+/** 回调内完成响应读取；协程取消会同时取消 HTTP 请求（包括响应体读取）。不向外转交裸 Response。 */
+internal suspend fun <T> Call.readUpdateResponse(read: (Response) -> T): T = suspendCancellableCoroutine { continuation ->
+    continuation.invokeOnCancellation { cancel() }
+    enqueue(object : Callback {
+        override fun onFailure(call: Call, error: IOException) {
+            continuation.resumeWith(Result.failure(error))
+        }
+
+        override fun onResponse(call: Call, response: Response) {
+            val result = runCatching {
+                response.use {
+                    if (!continuation.isActive) throw CancellationException("更新请求已取消")
+                    read(it)
+                }
+            }
+            continuation.resumeWith(result)
+        }
+    })
 }

@@ -69,8 +69,19 @@ import androidx.core.net.toUri
 import com.leyu.melora.BuildConfig
 import com.leyu.melora.playback.CrashLogger
 import com.leyu.melora.playback.PlaybackController
-import com.leyu.melora.playback.UpdateChecker
-import com.leyu.melora.playback.UpdateResult
+import com.leyu.melora.playback.ApkUpdater
+import com.leyu.melora.playback.ApkUpdatePhase
+import com.leyu.melora.playback.ApkUpdateState
+import com.leyu.melora.playback.formatCacheBytes
+import com.leyu.melora.playback.updateInstallIntent
+import com.leyu.melora.playback.updatePermissionIntent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.ui.text.style.TextOverflow
 import com.leyu.melora.ui.theme.MeloraAppearance
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -157,128 +168,160 @@ internal fun AboutModalSheet(
 @Composable
 private fun UpdateContent() {
     val context = LocalContext.current
-    var checking by remember { mutableStateOf(true) }
-    var result by remember { mutableStateOf<UpdateResult?>(null) }
-
-    LaunchedEffect(Unit) {
-        result = UpdateChecker.check(BuildConfig.VERSION_NAME)
-        checking = false
+    val updater = remember(context.applicationContext) { ApkUpdater.create(context) }
+    val state by updater.state.collectAsStateWithLifecycle()
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        updater.permissionReturned()
     }
+    // 不能把 Activity 返回或启动成功误报为安装成功；是否安装由系统负责。
+    val installerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { }
+    DisposableEffect(updater) {
+        updater.checkForUpdates()
+        onDispose { updater.close() }
+    }
+    LaunchedEffect(updater, state.phase) {
+        when (state.phase) {
+            ApkUpdatePhase.PermissionRequired -> updater.launchPermission {
+                permissionLauncher.launch(updatePermissionIntent(context))
+            }
+            ApkUpdatePhase.InstallRequested -> updater.launchInstaller {
+                installerLauncher.launch(updateInstallIntent(context, it))
+            }
+            else -> Unit
+        }
+    }
+    ApkUpdatePanel(
+        state = state,
+        onDownload = updater::download,
+        onCancel = updater::cancel,
+        onInstall = updater::install,
+        onCheck = updater::checkForUpdates,
+        onReleases = {
+            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, "https://github.com/Raving4934/Melora/releases".toUri())) }
+        },
+    )
+}
 
+@Composable
+internal fun ApkUpdatePanel(
+    state: ApkUpdateState,
+    onDownload: () -> Unit,
+    onCancel: () -> Unit,
+    onInstall: () -> Unit,
+    onCheck: () -> Unit,
+    onReleases: () -> Unit,
+) {
+    val phase = state.phase
+    val release = state.release
+    val hasUpdate = release?.hasUpdate == true
+    val transferring = phase == ApkUpdatePhase.Downloading || phase == ApkUpdatePhase.Verifying
+    val busy = transferring || phase == ApkUpdatePhase.Checking || phase == ApkUpdatePhase.PermissionRequired || phase == ApkUpdatePhase.InstallRequested
+    val title = when {
+        hasUpdate -> "发现新版本 ${release?.latestVersion.orEmpty().removePrefix("android-")}"
+        phase == ApkUpdatePhase.Checking -> "正在检查更新"
+        phase == ApkUpdatePhase.Failed -> "检查更新失败"
+        release?.message == "尚未找到Android发布版本" -> "尚未找到 Android 发布版本"
+        else -> "当前无需更新"
+    }
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 20.dp),
+        modifier = Modifier.fillMaxWidth().heightIn(max = 560.dp)
+            .verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        if (checking) {
-            Spacer(Modifier.height(30.dp))
-            CircularProgressIndicator(
-                modifier = Modifier.size(40.dp),
-                color = SettingsBrandBlue,
-                strokeWidth = 3.5.dp,
-            )
-            Spacer(Modifier.height(18.dp))
-            Text("正在连接 GitHub 检查最新发布…", fontSize = 14.sp, color = SettingsTextSub)
-            Spacer(Modifier.height(30.dp))
-        } else {
-            val res = result
-            if (res != null && res.hasUpdate) {
-                // 发现新版本
-                Box(
-                    modifier = Modifier
-                        .size(56.dp)
-                        .clip(CircleShape)
-                        .background(SettingsBrandBlue.copy(alpha = 0.12f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(Icons.Rounded.Update, contentDescription = null, tint = SettingsBrandBlue, modifier = Modifier.size(32.dp))
-                }
-                Spacer(Modifier.height(14.dp))
-                val displayVersion = res.latestVersion.removePrefix("android-").ifBlank { res.latestVersion }
-                Text("发现新版本 $displayVersion", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = SettingsTextMain)
-                Text("当前安装版本: v${BuildConfig.VERSION_NAME}", fontSize = 12.sp, color = SettingsTextSub, modifier = Modifier.padding(top = 4.dp))
-
-                if (res.releaseNotes.isNotBlank()) {
-                    Spacer(Modifier.height(16.dp))
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = MeloraAppearance.softFill,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 240.dp),
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .padding(16.dp)
-                                .verticalScroll(rememberScrollState()),
-                        ) {
-                            Text("更新日志", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = SettingsTextMain)
-                            Spacer(Modifier.height(6.dp))
-                            Text(res.releaseNotes, fontSize = 12.sp, color = SettingsTextSub, lineHeight = 18.sp)
-                        }
-                    }
-                }
-
-                Spacer(Modifier.height(20.dp))
-                Button(
-                    onClick = {
-                        val targetUrl = res.downloadUrl.ifBlank { res.pageUrl }
-                        runCatching {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, targetUrl.toUri()))
-                        }
-                    },
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = SettingsBrandBlue),
-                    modifier = Modifier.fillMaxWidth().height(46.dp),
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.AutoMirrored.Rounded.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("下载 Android APK", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    }
-                }
+        Box(
+            modifier = Modifier.size(56.dp).clip(CircleShape).background(SettingsBrandBlue.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (phase == ApkUpdatePhase.Checking) {
+                CircularProgressIndicator(modifier = Modifier.size(32.dp), color = SettingsBrandBlue, strokeWidth = 3.dp)
             } else {
-                // 已是当前版本或尚未找到公开 Android 发布
-                Box(
-                    modifier = Modifier
-                        .size(56.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFF10B981).copy(alpha = 0.12f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = Color(0xFF10B981), modifier = Modifier.size(32.dp))
-                }
-                Spacer(Modifier.height(14.dp))
-                Text(
-                    text = if (res?.message == "尚未找到Android发布版本") {
-                        "尚未找到 Android 发布版本"
-                    } else {
-                        "当前无需更新"
+                Icon(
+                    when {
+                        phase == ApkUpdatePhase.Failed -> Icons.Rounded.ErrorOutline
+                        hasUpdate -> Icons.Rounded.Update
+                        else -> Icons.Rounded.CheckCircle
                     },
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = SettingsTextMain,
+                    contentDescription = null, tint = SettingsBrandBlue, modifier = Modifier.size(32.dp),
                 )
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        Text(title, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = SettingsTextMain, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text("当前安装版本: v${BuildConfig.VERSION_NAME}", fontSize = 12.sp, color = SettingsTextSub, modifier = Modifier.padding(top = 4.dp))
+        Spacer(Modifier.height(16.dp))
+        // 检查、下载、授权往返共享固定内容区，进度和按钮切换不会推挤弹层。
+        Surface(shape = RoundedCornerShape(14.dp), color = MeloraAppearance.softFill, modifier = Modifier.fillMaxWidth().height(144.dp)) {
+            Column(modifier = Modifier.padding(16.dp).verticalScroll(rememberScrollState())) {
+                Text(if (hasUpdate) "更新日志" else "Android 更新", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = SettingsTextMain)
+                Spacer(Modifier.height(6.dp))
                 Text(
-                    text = res?.message ?: "当前版本 v${BuildConfig.VERSION_NAME} 已是最新稳定版，暂无更新发布。",
-                    fontSize = 13.sp,
-                    color = SettingsTextSub,
-                    lineHeight = 18.sp,
-                    modifier = Modifier.padding(top = 6.dp),
-                )
-                Spacer(Modifier.height(20.dp))
-                OutlinedButton(
-                    onClick = {
-                        runCatching {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, "https://github.com/Raving4934/Melora/releases".toUri()))
-                        }
+                    if (hasUpdate) release?.releaseNotes.orEmpty().ifBlank { "暂无更新说明" }
+                    else when (phase) {
+                        ApkUpdatePhase.Checking -> "正在连接 GitHub 检查最新 Android 发布…"
+                        ApkUpdatePhase.Failed -> "未能完成版本检查，请重试。"
+                        else -> release?.message ?: "当前版本已是最新稳定版，暂无更新发布。"
                     },
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.fillMaxWidth().height(44.dp),
-                ) {
-                    Text("查看 GitHub Releases 仓库页面", fontSize = 13.sp, color = SettingsTextMain)
+                    fontSize = 12.sp, color = SettingsTextSub, lineHeight = 18.sp,
+                )
+            }
+        }
+        Column(modifier = Modifier.fillMaxWidth().height(76.dp), verticalArrangement = Arrangement.Center) {
+            val status = state.message ?: when (phase) {
+                ApkUpdatePhase.Downloading -> (state.totalBytes?.takeIf { it > 0 }?.let {
+                    "${formatCacheBytes(state.bytes)} / ${formatCacheBytes(it)}"
+                } ?: "已下载 ${formatCacheBytes(state.bytes)}（总大小未知）") + "\n关闭弹层即取消，不在后台下载。"
+                ApkUpdatePhase.Verifying -> "正在校验完整安装包、版本码与签名…"
+                ApkUpdatePhase.Ready -> "安装包校验通过，安装需由系统确认。"
+                ApkUpdatePhase.PermissionRequired -> "请允许本应用安装未知应用，返回后继续安装。"
+                ApkUpdatePhase.InstallRequested -> "正在打开系统安装器…"
+                else -> ""
+            }
+            Text(status, fontSize = 12.sp, lineHeight = 18.sp, color = SettingsTextSub, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(8.dp))
+            if (phase == ApkUpdatePhase.Downloading) {
+                val total = state.totalBytes?.takeIf { it > 0 }
+                if (total == null) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(4.dp), color = SettingsBrandBlue)
+                } else {
+                    LinearProgressIndicator(progress = { (state.bytes.toFloat() / total).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(4.dp), color = SettingsBrandBlue)
                 }
+            } else Spacer(Modifier.height(4.dp))
+        }
+        Button(
+            onClick = {
+                when {
+                    phase == ApkUpdatePhase.Ready -> onInstall()
+                    hasUpdate -> onDownload()
+                    else -> onCheck()
+                }
+            },
+            enabled = !busy,
+            shape = RoundedCornerShape(14.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = SettingsBrandBlue),
+            modifier = Modifier.fillMaxWidth().height(46.dp),
+        ) {
+            Text(
+                when (phase) {
+                    ApkUpdatePhase.Checking -> "正在检查…"
+                    ApkUpdatePhase.Downloading -> "正在下载…"
+                    ApkUpdatePhase.Verifying -> "正在校验…"
+                    ApkUpdatePhase.Ready -> "安装更新"
+                    ApkUpdatePhase.PermissionRequired -> "等待安装授权…"
+                    ApkUpdatePhase.InstallRequested -> "正在打开安装器…"
+                    ApkUpdatePhase.Failed -> if (hasUpdate) "重新下载" else "重试检查"
+                    ApkUpdatePhase.Latest -> "重新检查"
+                    ApkUpdatePhase.Available -> "下载 Android APK"
+                }, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+            )
+        }
+        Box(Modifier.fillMaxWidth().height(44.dp), contentAlignment = Alignment.Center) {
+            when {
+                transferring -> TextButton(onClick = onCancel) { Text("取消", color = SettingsTextSub) }
+                phase == ApkUpdatePhase.Latest -> TextButton(onClick = onReleases) { Text("查看 GitHub Releases 仓库页面", color = SettingsTextSub, fontSize = 12.sp) }
+                hasUpdate -> Text(
+                    if (state.apk == null) "关闭弹层会取消未完成的下载。" else "安装器接管前，关闭将清理安装包。",
+                    color = SettingsTextSub, fontSize = 12.sp,
+                )
             }
         }
     }

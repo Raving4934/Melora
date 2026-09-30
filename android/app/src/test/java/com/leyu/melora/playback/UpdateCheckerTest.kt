@@ -71,6 +71,7 @@ class UpdateCheckerTest {
     @Test
     fun `compares numeric versions without treating missing patch as newer`() {
         assertTrue(UpdateChecker.isVersionNewer("android-v1.10.0", "1.9.9"))
+        assertFalse(UpdateChecker.isVersionNewer("android-v0.1.6", "0.1.6"))
         assertFalse(UpdateChecker.isVersionNewer("android-v1.2", "1.2.0"))
         assertFalse(UpdateChecker.isVersionNewer("android-v0.1.0", "1.0.0"))
         assertEquals(0, UpdateChecker.compareVersions("1.0.0", "android-v1.0"))
