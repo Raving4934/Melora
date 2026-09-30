@@ -52,7 +52,7 @@ class PlaylistSyncStorageTest {
 
     @Test fun repeatedImportIsRejectedWithoutAnyWriteOrChangesToOriginal() = isolated { file ->
         val first = UserLibrary.createImportedPlaylist("手改名", remote("a"))
-        UserLibrary.addToPlaylist(first.id, song("local"))
+        UserLibrary.addToPlaylist(first.id, listOf(song("local")))
         val current = UserLibrary.playlists.value.single()
         val primary = file.readBytes()
         val backup = File(file.parentFile, "${file.name}.bak").readBytes()
@@ -225,7 +225,7 @@ class PlaylistSyncStorageTest {
     @Test fun confirmReplacesExactlyOnePlaylistAfterPreviewAndPersistsBeforePublishing() = isolated { file ->
         val target = UserLibrary.createImportedPlaylist("手改名", remote("a", "b"))
         val other = UserLibrary.createPlaylist("另一歌单", listOf(song("untouched")))
-        UserLibrary.addToPlaylist(target.id, song("local"))
+        UserLibrary.addToPlaylist(target.id, listOf(song("local")))
         val before = UserLibrary.playlists.value.first()
         val bytes = file.readText()
         val preview = previewPlaylistSync(before, remote("b", "c"))
@@ -260,7 +260,7 @@ class PlaylistSyncStorageTest {
     @Test fun concurrentEditDeletionAndRestoreRejectStalePreviewWithoutWriting() = isolated { file ->
         val edits: List<(String) -> Unit> = listOf(
             { UserLibrary.renamePlaylist(it, "并发改名") },
-            { UserLibrary.addToPlaylist(it, song("concurrent")) },
+            { UserLibrary.addToPlaylist(it, listOf(song("concurrent"))) },
             { UserLibrary.removeFromPlaylist(it, "wy_a") },
             { UserLibrary.deletePlaylist(it) },
             { UserLibrary.replaceFromBackup(UserLibrary.exportSnapshot()) },
@@ -404,7 +404,7 @@ class PlaylistSyncStorageTest {
             try {
                 val writes: List<() -> Unit> = listOf(
                     { UserLibrary.deletePlaylist(playlist.id) },
-                    { UserLibrary.addToPlaylist(playlist.id, song("b")) },
+                    { UserLibrary.addToPlaylist(playlist.id, listOf(song("b"))) },
                     { UserLibrary.removeFromPlaylist(playlist.id, "wy_a") },
                     { UserLibrary.markPlayed(song("b")) },
                     { UserLibrary.clearRecents() },
@@ -419,13 +419,71 @@ class PlaylistSyncStorageTest {
                 }
                 assertEquals(1, emissions.size)
             } finally { blocker.delete(); observer.cancel() }
-            UserLibrary.addToPlaylist(playlist.id, song("b"))
-            UserLibrary.addToPlaylist(playlist.id, song("b"))
+            UserLibrary.addToPlaylist(playlist.id, listOf(song("b")))
+            UserLibrary.addToPlaylist(playlist.id, listOf(song("b")))
             val committed = UserLibrary.exportSnapshot()
             UserLibrary.replaceFromBackup(committed)
             assertEquals(committed, UserLibrary.exportSnapshot())
             assertEquals(listOf("wy_a", "wy_b"), UserLibrary.playlists.value.single().songs.map { it.uid })
         }
+    }
+
+    @Test fun batchPlaylistAddDeduplicatesPersistsOnceAndSkipsNoOpWrites() = isolated { file ->
+        val playlist = UserLibrary.createPlaylist("批量歌单", listOf(song("a")))
+        val before = file.readBytes()
+
+        assertEquals(2, checkNotNull(UserLibrary.addToPlaylist(playlist.id, listOf(song("b"), song("c"), song("b"), song("a")))))
+        assertEquals(listOf("wy_a", "wy_b", "wy_c"), UserLibrary.playlists.value.single().songs.map { it.uid })
+        assertArrayEquals("A batch must create one backup from the pre-batch state", before,
+            File(file.parentFile, "${file.name}.bak").readBytes())
+
+        val committed = file.readBytes()
+        val snapshot = UserLibrary.exportSnapshot()
+        val blocker = File(file.parentFile, "${file.name}.tmp").apply { check(mkdir()) }
+        try {
+            assertEquals(0, checkNotNull(UserLibrary.addToPlaylist(playlist.id, listOf(song("c"), song("b"), song("b")))))
+            assertNull(UserLibrary.addToPlaylist("deleted", listOf(song("d"))))
+            assertEquals(snapshot, UserLibrary.exportSnapshot())
+            assertArrayEquals(committed, file.readBytes())
+        } finally { blocker.delete() }
+    }
+
+    @Test fun failedBatchPlaylistAddKeepsDiskAndPublishedStateUnchangedAndCanRetry() = isolated { file ->
+        val playlist = UserLibrary.createPlaylist("批量歌单", listOf(song("a")))
+        val published = UserLibrary.playlists.value.single()
+        val snapshot = UserLibrary.exportSnapshot()
+        val primary = file.readBytes()
+        val backupFile = File(file.parentFile, "${file.name}.bak")
+        val backup = backupFile.readBytes()
+        val blocker = File(file.parentFile, "${file.name}.tmp").apply { check(mkdir()) }
+        try {
+            assertThrows(java.io.IOException::class.java) {
+                UserLibrary.addToPlaylist(playlist.id, listOf(song("b"), song("c")))
+            }
+            assertSame(published, UserLibrary.playlists.value.single())
+            assertEquals(snapshot, UserLibrary.exportSnapshot())
+            assertArrayEquals(primary, file.readBytes())
+            assertArrayEquals(backup, backupFile.readBytes())
+        } finally { blocker.delete() }
+
+        assertEquals(2, checkNotNull(UserLibrary.addToPlaylist(playlist.id, listOf(song("b"), song("c")))))
+        assertEquals(listOf("wy_a", "wy_b", "wy_c"), UserLibrary.playlists.value.single().songs.map { it.uid })
+    }
+
+    @Test fun thousandSongBatchPreservesOrderDeduplicatesAndPersistsOnce() = isolated { file ->
+        val playlist = UserLibrary.createPlaylist("千首批量", listOf(song("existing")))
+        val before = file.readBytes()
+        val batch = (0 until 500).flatMap { listOf(song("bulk_$it"), song("bulk_$it")) }
+        val expected = listOf("wy_existing") + (0 until 500).map { "wy_bulk_$it" }
+
+        assertEquals(500, checkNotNull(UserLibrary.addToPlaylist(playlist.id, batch)))
+        assertEquals(expected, UserLibrary.playlists.value.single().songs.map { it.uid })
+        val savedSongs = JSONObject(file.readText()).getJSONArray("playlists")
+            .getJSONObject(0).getJSONArray("songs")
+        assertEquals(expected, (0 until savedSongs.length()).map {
+            requireNotNull(OnlineSong.from(savedSongs.getJSONObject(it))).uid
+        })
+        assertArrayEquals(before, File(file.parentFile, "${file.name}.bak").readBytes())
     }
 
     private fun <T> isolated(block: (File) -> T): T {

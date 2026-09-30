@@ -736,20 +736,46 @@ internal fun SheetAction(
 fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
     if (songs.isEmpty()) return
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState()
     var newName by remember { mutableStateOf("") }
+    var adding by remember { mutableStateOf(false) }
     val playlists by UserLibrary.playlists.collectAsStateWithLifecycle()
-    val createAndAdd = {
-        if (newName.isNotBlank()) {
+    val addSongs: (UserLibrary.UserPlaylist?) -> Unit = { playlist ->
+        if (!adding && (playlist != null || newName.isNotBlank())) {
             val name = newName.trim()
-            val playlist = UserLibrary.createPlaylist(name)
-            songs.forEach { UserLibrary.addToPlaylist(playlist.id, it) }
-            PlaybackController.postMessage(
-                context,
-                if (songs.size == 1) "已创建歌单「$name」并添加" else "已创建歌单「$name」并添加 ${songs.size} 首",
-            )
-            newName = ""
-            onDismiss()
+            adding = true
+            scope.launch {
+                try {
+                    runCatchingCancellable {
+                        withContext(Dispatchers.IO) {
+                            if (playlist == null) {
+                                UserLibrary.createPlaylist(name, songs)
+                                songs.size
+                            } else {
+                                UserLibrary.addToPlaylist(playlist.id, songs)
+                            }
+                        }
+                    }.onSuccess { newCount ->
+                        PlaybackController.postMessage(context, when {
+                            playlist == null -> if (songs.size == 1) "已创建歌单「$name」并添加" else "已创建歌单「$name」并添加 ${songs.size} 首"
+                            newCount == null -> "歌单已不存在，请重试"
+                            newCount == 0 -> "已在歌单「${playlist.name}」中"
+                            songs.size == 1 -> "已添加到歌单「${playlist.name}」"
+                            else -> "已添加 $newCount 首到歌单「${playlist.name}」"
+                        })
+                        if (playlist == null) newName = ""
+                        if (newCount != null) onDismiss()
+                    }.onFailure {
+                        PlaybackController.postMessage(
+                            context,
+                            if (playlist == null) "创建失败，歌单未修改" else "添加失败，歌单未修改",
+                        )
+                    }
+                } finally {
+                    adding = false
+                }
+            }
         }
     }
 
@@ -812,6 +838,7 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
                     BasicTextField(
                         value = newName,
                         onValueChange = { newName = it },
+                        enabled = !adding,
                         singleLine = true,
                         textStyle = TextStyle(
                             fontSize = 14.sp,
@@ -821,7 +848,7 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
                         ),
                         cursorBrush = SolidColor(BrandBlue),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = { createAndAdd() }),
+                        keyboardActions = KeyboardActions(onDone = { addSongs(null) }),
                         modifier = Modifier.weight(1f),
                         decorationBox = { innerTextField ->
                             Box(
@@ -841,7 +868,7 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
                     )
                     if (newName.isNotBlank()) {
                         Surface(
-                            onClick = { createAndAdd() },
+                            onClick = { addSongs(null) },
                             shape = RoundedCornerShape(14.dp),
                             color = BrandBlue,
                         ) {
@@ -875,18 +902,8 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable {
-                                    val newCount = songs.count { s -> playlist.songs.none { it.uid == s.uid } }
-                                    songs.forEach { UserLibrary.addToPlaylist(playlist.id, it) }
-                                    PlaybackController.postMessage(
-                                        context,
-                                        when {
-                                            newCount == 0 -> "已在歌单「${playlist.name}」中"
-                                            songs.size == 1 -> "已添加到歌单「${playlist.name}」"
-                                            else -> "已添加 $newCount 首到歌单「${playlist.name}」"
-                                        },
-                                    )
-                                    onDismiss()
+                                .clickable(enabled = !adding) {
+                                    addSongs(playlist)
                                 }
                                 .padding(horizontal = 20.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,

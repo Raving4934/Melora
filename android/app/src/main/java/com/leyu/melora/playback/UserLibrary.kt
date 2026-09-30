@@ -499,10 +499,19 @@ object UserLibrary {
         playlists = playlists.map { if (it.id == id) it.copy(name = name.ifBlank { it.name }) else it }
     }
 
-    fun addToPlaylist(id: String, song: OnlineSong) = mutate {
+    /** 返回实际新增数量；歌单已删除时返回null，无变化不写盘。 */
+    fun addToPlaylist(id: String, songs: List<OnlineSong>): Int? = mutate(
+        shouldPersist = { it != null && it > 0 },
+    ) {
+        val playlist = playlists.firstOrNull { it.id == id } ?: return@mutate null
+        val knownUids = playlist.songs.mapTo(hashSetOf()) { it.uid }
+        val additions = songs.filter { knownUids.add(it.uid) }
+        if (additions.isEmpty()) return@mutate 0
+
         playlists = playlists.map {
-            if (it.id == id && it.songs.none { item -> item.uid == song.uid }) it.copy(songs = it.songs + song) else it
+            if (it.id == id) it.copy(songs = it.songs + additions) else it
         }
+        additions.size
     }
 
     fun removeFromPlaylist(id: String, uid: String) = mutate {
