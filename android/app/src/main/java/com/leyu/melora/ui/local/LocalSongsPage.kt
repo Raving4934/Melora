@@ -9,10 +9,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.core.content.ContextCompat
 import com.leyu.melora.ui.common.PageBackHandler as BackHandler
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -41,7 +38,6 @@ import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.GraphicEq
@@ -75,7 +71,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -101,6 +96,7 @@ import com.leyu.melora.ui.common.AddToPlaylistSheet
 import com.leyu.melora.ui.common.BadgePill
 import com.leyu.melora.ui.common.LocalBadgePill
 import com.leyu.melora.ui.common.BrandBlue
+import com.leyu.melora.ui.common.SongRowSelectionAction
 import com.leyu.melora.ui.common.ChromeScaffold
 import com.leyu.melora.ui.common.DetailPageHost
 import com.leyu.melora.ui.common.rememberFastScrollToTop
@@ -724,50 +720,7 @@ internal fun LocalSongRow(
             }
         }
 
-        val actionAlpha by animateFloatAsState(if (selectionMode) 0f else 1f, tween(180), label = "localRowAction")
-        val checkAlpha by animateFloatAsState(if (selectionMode) 1f else 0f, tween(180), label = "localRowCheck")
-        Box(Modifier.size(36.dp), contentAlignment = Alignment.Center) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (onMore != null) {
-                    IconButton(onClick = onMore, enabled = !selectionMode, modifier = Modifier.size(36.dp)) {
-                        Icon(
-                            Icons.Outlined.MoreVert,
-                            contentDescription = "更多",
-                            tint = TextMuted,
-                            modifier = Modifier
-                                .size(20.dp)
-                                .graphicsLayer { alpha = actionAlpha },
-                        )
-                    }
-                }
-            }
-            if (checkAlpha > 0.01f) {
-                Box(
-                    modifier = Modifier
-                        // 与 ⋮ 图标同一中心：选中后圆圈原地出现，不右移
-                        .align(Alignment.Center)
-                        .graphicsLayer { alpha = checkAlpha }
-                        .size(22.dp)
-                        .clip(CircleShape)
-                        .clickable(
-                            enabled = selectionMode,
-                            indication = null,
-                            interactionSource = remember { MutableInteractionSource() },
-                        ) { onClick() }
-                        .background(if (selected) BrandBlue else Color.Transparent)
-                        .border(
-                            width = 1.5.dp,
-                            color = if (selected) BrandBlue else TextMuted.copy(alpha = 0.55f),
-                            shape = CircleShape,
-                        ),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (selected) {
-                        Icon(Icons.Rounded.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
-                    }
-                }
-            }
-        }
+        SongRowSelectionAction(selectionMode, selected, onMore, onClick)
     }
 }
 

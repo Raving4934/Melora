@@ -3,11 +3,13 @@ package com.leyu.melora.ui.common
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
@@ -19,16 +21,23 @@ import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.rounded.Checklist
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -40,6 +49,47 @@ import com.leyu.melora.playback.UiTrack
 import com.leyu.melora.playback.UserLibrary
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.ui.theme.MeloraAppearance
+
+/** 在线与本地行尾共用一个进度；每帧只更新图层，文字和封面不随淡入淡出重组。 */
+@Composable
+internal fun SongRowSelectionAction(
+    selectionMode: Boolean,
+    selected: Boolean,
+    onMore: (() -> Unit)?,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val progress = animateFloatAsState(if (selectionMode) 1f else 0f, tween(180), label = "songRowSelection")
+    val showSelection by remember(progress) { derivedStateOf { progress.value > 0.01f } }
+    val glyphs: @Composable () -> Unit = {
+        if (onMore != null) {
+            Icon(Icons.Outlined.MoreVert, null, tint = TextMuted,
+                modifier = Modifier.size(20.dp).graphicsLayer { alpha = 1f - progress.value })
+        }
+        if (showSelection) {
+            Box(
+                Modifier.size(22.dp).graphicsLayer { alpha = progress.value }
+                    .clip(CircleShape)
+                    .background(if (selected) BrandBlue else Color.Transparent)
+                    .border(1.5.dp, if (selected) BrandBlue else TextMuted.copy(alpha = 0.55f), CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (selected) Icon(Icons.Rounded.Check, null, tint = Color.White, modifier = Modifier.size(14.dp))
+            }
+        }
+    }
+    // 两个图形只负责绘制，共用一个点击入口；退场中的勾选圈不能挡住“更多”。
+    Box(modifier.size(36.dp), contentAlignment = Alignment.Center) {
+        if (selectionMode || onMore != null) {
+            IconButton(
+                onClick = { if (selectionMode) onToggle() else onMore?.invoke() },
+                modifier = Modifier.size(36.dp).semantics {
+                    contentDescription = if (selectionMode) "选择歌曲" else "更多"
+                },
+            ) { glyphs() }
+        } else glyphs() // 无操作时保持空位，但不截断父歌曲行的点击。
+    }
+}
 
 /** 按歌曲身份选择；分页重叠或列表更新时，操作仅作用于当前仍存在的歌曲。 */
 @Stable

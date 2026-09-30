@@ -5,9 +5,6 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -37,7 +34,6 @@ import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.PlaylistAdd
 import androidx.compose.material.icons.automirrored.outlined.PlaylistPlay
-import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.RemoveCircleOutline
 import androidx.compose.material.icons.rounded.FavoriteBorder
@@ -73,7 +69,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -334,54 +329,7 @@ fun OnlineSongRow(
             )
         }
         if (onMore != null || selectionMode) {
-            val checkAlpha by animateFloatAsState(
-                targetValue = if (selectionMode) 1f else 0f,
-                animationSpec = tween(durationMillis = 180),
-                label = "rowSelectionAlpha",
-            )
-            // 同一 36dp 触控位：⋯ 淡出、勾选框淡入，布局零跳动
-            Box(modifier = Modifier.size(36.dp), contentAlignment = Alignment.Center) {
-                if (onMore != null) {
-                    // 批量模式下禁用点击：透明但仍可点和透传，点勾选框不能弹出单曲更多操作
-                    IconButton(
-                        onClick = onMore,
-                        enabled = !selectionMode,
-                        modifier = Modifier.size(36.dp).alpha(1f - checkAlpha),
-                    ) {
-                        Icon(Icons.Outlined.MoreVert, contentDescription = "更多", tint = TextMuted, modifier = Modifier.size(20.dp))
-                    }
-                }
-                if (checkAlpha > 0.01f) {
-                    Box(
-                        modifier = Modifier
-                            .alpha(checkAlpha)
-                            .size(22.dp)
-                            .clip(CircleShape)
-                            .background(if (selected) BrandBlue else Color.Transparent)
-                            .border(
-                                width = 1.5.dp,
-                                color = if (selected) BrandBlue else TextMuted.copy(alpha = 0.55f),
-                                shape = CircleShape,
-                            )
-                            // 勾选圈自身可点：彻底解决“点圈穿透到 ⋯ 弹出更多菜单”
-                            .clickable(
-                                enabled = selectionMode,
-                                indication = null,
-                                interactionSource = remember { MutableInteractionSource() },
-                            ) { onClick() },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        if (selected) {
-                            Icon(
-                                Icons.Rounded.Check,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(14.dp),
-                            )
-                        }
-                    }
-                }
-            }
+            SongRowSelectionAction(selectionMode, selected, onMore, onClick)
         }
     }
 }
