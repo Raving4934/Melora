@@ -426,6 +426,30 @@ class DownloadQualityInstrumentedTest {
         assertEquals(result, PlaybackController.state.value.message)
     }
 
+    @Test fun interruptedUpgradeRecognizesPublishedFileAndCompletesTheOriginalRecord() = runBlocking<Unit> {
+        val local = localFixture("fixture-128.mp3")
+        val original = bytes(local.uri)
+        seed("320k", "fixture-320.mp3")
+        download("320k")
+        val published = requireNotNull(DownloadCenter.saved(song.uid))
+        // 保留已发布文件，但回到写文件后、完成记录提交前的持久化状态。
+        DownloadCenter.remove(song.uid)
+        DownloadCenter.start(song.uid, song, "升级下载", local)
+        DownloadCenter.paused(song.uid)
+        val interrupted = DownloadCenter.records.value.first { it.id == song.uid }
+        assertFalse(interrupted.hasSavedResource)
+        repeat(2) {
+            Downloader.retry(context, interrupted).await().getOrThrow()
+            val recovered = DownloadCenter.records.value.first { it.id == song.uid }
+            assertEquals(DownloadCenter.Status.Done, recovered.status)
+            assertEquals(published.savedUri, recovered.savedUri)
+            assertEquals("HQ", recovered.audioSpec?.qualityBadge)
+            assertEquals(local, recovered.upgradeFrom)
+            assertEquals(1, files().size)
+            assertArrayEquals(original, bytes(local.uri))
+        }
+    }
+
     @Test fun sameActualQualityNeverAppearsInDownloadHistory() = runBlocking<Unit> {
         val local = localFixture("fixture-16.flac")
         seed("flac24bit", "fixture-16.flac", "flac")

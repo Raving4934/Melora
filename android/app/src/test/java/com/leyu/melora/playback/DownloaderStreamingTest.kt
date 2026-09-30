@@ -1,5 +1,13 @@
 package com.leyu.melora.playback
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.yield
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
@@ -232,9 +240,119 @@ class DownloaderStreamingTest {
     }
 
     @Test
+    fun queuedBatchDoesNotPollAnUnchangedLimit() = runBlocking {
+        val limit = MutableStateFlow(1)
+        val reads = AtomicInteger()
+        val measured = object : StateFlow<Int> by limit {
+            override val value: Int get() = limit.value.also { reads.incrementAndGet() }
+        }
+        val gate = DynamicDownloadGate(measured)
+        gate.acquire()
+        val queued = List(64) {
+            launch(start = CoroutineStart.UNDISPATCHED) { gate.acquire(); gate.release() }
+        }
+        val initialReads = reads.get()
+        delay(150)
+        val repeatedReads = reads.get() - initialReads
+        queued.forEach { it.cancelAndJoin() }
+        gate.release()
+        println("64 queued downloads, 150ms unchanged limit: $repeatedReads repeated capacity reads")
+        assertEquals("queued tasks must sleep until capacity changes", 0, repeatedReads)
+    }
+
+    @Test
+    fun changingLimitWakesQueuedTasksAndShrinkingWaitsForExistingOwners() = runBlocking {
+        val limit = MutableStateFlow(1)
+        val gate = DynamicDownloadGate(limit)
+        gate.acquire()
+        val added = List(2) { async(start = CoroutineStart.UNDISPATCHED) { gate.acquire() } }
+        limit.value = 3
+        withTimeout(2_000) { added.awaitAll() }
+        limit.value = 1
+        val next = async(start = CoroutineStart.UNDISPATCHED) { gate.acquire() }
+        try {
+            gate.release()
+            yield()
+            assertFalse(next.isCompleted)
+            gate.release()
+            yield()
+            assertFalse(next.isCompleted)
+            gate.release()
+            withTimeout(2_000) { next.await() }
+            gate.release()
+        } finally { next.cancelAndJoin() }
+    }
+
+    @Test
+    fun concurrentBatchesNeverExceedConfiguredCapacityOrLosePermits() = runBlocking {
+        for (capacity in 1..4) {
+            val gate = DynamicDownloadGate(MutableStateFlow(capacity))
+            val active = AtomicInteger()
+            val peak = AtomicInteger()
+            withTimeout(5_000) {
+                List(256) {
+                    async(Dispatchers.Default) {
+                        gate.acquire()
+                        try {
+                            val now = active.incrementAndGet()
+                            peak.updateAndGet { maxOf(it, now) }
+                            yield()
+                            active.decrementAndGet()
+                        } finally { gate.release() }
+                    }
+                }.awaitAll()
+            }
+            assertTrue("capacity=$capacity, peak=${peak.get()}", peak.get() in 1..capacity)
+            assertEquals(0, active.get())
+            withTimeout(1_000) { repeat(capacity) { gate.acquire() } }
+            repeat(capacity) { gate.release() }
+        }
+    }
+
+    @Test
+    fun lostCompareAndSetRetriesEvenWhenCapacityReturnsToTheSameValue() = runBlocking {
+        val gate = DynamicDownloadGate(MutableStateFlow(1))
+        val count = MutableStateFlow(0)
+        var attempts = 0
+        val contested = object : MutableStateFlow<Int> by count {
+            override fun compareAndSet(expect: Int, update: Int): Boolean {
+                if (attempts++ == 0) {
+                    // 另一持有者在当前订阅处理前完成0→1→0；StateFlow会合并中间值。
+                    count.value = 1
+                    count.value = 0
+                    return false
+                }
+                return count.compareAndSet(expect, update)
+            }
+        }
+        gate.javaClass.getDeclaredField("active").apply { isAccessible = true }.set(gate, contested)
+        withTimeout(1_000) { gate.acquire() }
+        assertEquals(2, attempts)
+        gate.release()
+        assertEquals(0, count.value)
+    }
+
+    @Test
+    fun cancellationRacingWithAdmissionDoesNotLeakCapacity() = runBlocking {
+        repeat(128) {
+            val gate = DynamicDownloadGate(MutableStateFlow(1))
+            gate.acquire()
+            val waiter = launch(Dispatchers.Default) {
+                gate.acquire()
+                try { kotlinx.coroutines.awaitCancellation() } finally { gate.release() }
+            }
+            yield()
+            gate.release()
+            waiter.cancelAndJoin()
+            withTimeout(1_000) { gate.acquire() }
+            gate.release()
+        }
+    }
+
+    @Test
     fun queuedDownloadAcquiresAfterActiveDownloadReleases() {
         runBlocking {
-            val gate = DynamicDownloadGate(limit = { 1 }, retryDelayMs = 1)
+            val gate = DynamicDownloadGate(MutableStateFlow(1))
             gate.acquire()
             var acquired = false
             val queued = launch {
@@ -253,7 +371,7 @@ class DownloaderStreamingTest {
     @Test
     fun cancellingQueuedDownloadDoesNotConsumePermit() {
         runBlocking {
-            val gate = DynamicDownloadGate(limit = { 1 }, retryDelayMs = 1)
+            val gate = DynamicDownloadGate(MutableStateFlow(1))
             gate.acquire()
             val cancelled = launch { gate.acquire() }
             kotlinx.coroutines.delay(10)

@@ -44,9 +44,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
@@ -90,9 +94,7 @@ object Downloader {
         .readTimeout(60, TimeUnit.SECONDS)
         .build()
 
-    private val slots = DynamicDownloadGate(limit = {
-        MeloraSettings.downloadConcurrentTasks.value.coerceIn(1, 4)
-    })
+    private val slots = DynamicDownloadGate(MeloraSettings.downloadConcurrentTasks)
     private val taskScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val taskLock = Any()
     private data class DownloadRequest(
@@ -372,7 +374,13 @@ object Downloader {
             (listOf(baseline) + initial.map { it.audio.spec }).maxBy { SourceResolver.qualityRank(it.verifiedQuality.orEmpty()) }
         }
         if (upgradeBaseline != null && SourceResolver.qualityRank(upgradeBaseline.verifiedQuality.orEmpty()) >=
-            SourceResolver.qualityRank(SourceResolver.normalizedQuality(request.quality))) return "本地已达到所选音质，无需升级"
+            SourceResolver.qualityRank(SourceResolver.normalizedQuality(request.quality))) {
+            // 文件发布与完成记录之间可能发生进程中断；重试必须补齐同一个完成提交。
+            if (DownloadCenter.records.value.any { it.id == recordId }) {
+                return finish(initial.first { it.audio.spec == upgradeBaseline }, "已恢复（已有升级文件）")
+            }
+            return "本地已达到所选音质，无需升级"
+        }
         if (request.skipExisting && upgradeBaseline == null) {
             initial.firstOrNull { downloadQualityMatches(it.audio.spec, request.quality) }?.let {
                 return finish(it, "已跳过（已有同版本、同音质文件）")
@@ -1260,29 +1268,22 @@ internal fun downloadQualityNote(preferred: String, actual: String): String = wh
 internal fun shouldLookupDownloadMetadata(completeCacheHit: Boolean, song: OnlineSong): Boolean =
     !completeCacheHit && (song.albumName.isBlank() || song.singer.isBlank())
 
-internal class DynamicDownloadGate(
-    private val limit: () -> Int,
-    private val retryDelayMs: Long = 25L,
-) {
-    private val mutex = Mutex()
-    private var active = 0
+/** 容量释放或并发设置变化时才唤醒排队任务，不为每首等待歌曲创建定时轮询。 */
+internal class DynamicDownloadGate(private val limit: StateFlow<Int>) {
+    private val active = MutableStateFlow(0)
 
     suspend fun acquire() {
         while (true) {
-            val acquired = mutex.withLock {
-                if (active >= limit().coerceAtLeast(1)) false else {
-                    active++
-                    true
-                }
-            }
-            if (acquired) return
-            delay(retryDelayMs)
+            val (count, _) = combine(active, limit) { count, ceiling -> count to ceiling.coerceIn(1, 4) }
+                .first { (count, ceiling) -> count < ceiling }
+            // 等待订阅完全结束后才占许可；CAS竞争失败重新订阅，避免合并0→1→0后丢失唤醒。
+            if (count < limit.value.coerceIn(1, 4) && active.compareAndSet(count, count + 1)) return
         }
     }
 
-    suspend fun release() = mutex.withLock {
-        check(active > 0) { "下载并发许可重复释放" }
-        active--
+    fun release() = active.update { count ->
+        check(count > 0) { "下载并发许可重复释放" }
+        count - 1
     }
 }
 
