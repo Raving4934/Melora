@@ -1,6 +1,7 @@
 package com.leyu.melora.ui.audiobook
 
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.rememberSheetDismiss
 import com.leyu.melora.ui.common.PageBackHandler as BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -377,14 +378,16 @@ private fun RankPage(tab: KwBookApi.BookRankTab, onBack: () -> Unit, onOpen: (On
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun RankCategorySheet(tab: KwBookApi.BookRankTab, selectedTag: String, onSelect: (Int) -> Unit, onDismiss: () -> Unit) {
-    MeloraBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = MeloraAppearance.canvas, tonalElevation = 0.dp) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val closeSheet = rememberSheetDismiss(sheetState)
+    MeloraBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = MeloraAppearance.canvas, tonalElevation = 0.dp) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
             Text(tab.name, fontSize = 19.sp, fontWeight = FontWeight.Medium, color = TextMain)
             Text("选择${tab.name}分类", fontSize = 12.sp, color = TextSub, modifier = Modifier.padding(top = 3.dp, bottom = 18.dp))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 tab.tags.forEachIndexed { tagIndex, item ->
                     val selected = item.id == selectedTag
-                    Surface(onClick = { onSelect(tagIndex) }, shape = RoundedCornerShape(11.dp), color = if (selected) BrandBlue else MeloraAppearance.card, border = if (selected) null else MeloraAppearance.chipBorder) {
+                    Surface(onClick = { closeSheet { onSelect(tagIndex) } }, shape = RoundedCornerShape(11.dp), color = if (selected) BrandBlue else MeloraAppearance.card, border = if (selected) null else MeloraAppearance.chipBorder) {
                         Text(item.name, fontSize = 12.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium, color = if (selected) Color.White else TextSub, modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp))
                     }
                 }

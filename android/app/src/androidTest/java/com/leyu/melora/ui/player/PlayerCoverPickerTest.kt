@@ -53,8 +53,8 @@ class PlayerCoverPickerTest {
                     motionEnabled = false,
                     themeMode = ThemeMode.Auto,
                     onThemeModeChange = {},
-                    onSelect = { selections.add(it); selected.value = it },
-                    onToggleImmersive = { immersiveCount.intValue++ },
+                    onSelect = { selections.add(it); selected.value = it; visible.value = false },
+                    onToggleImmersive = { immersiveCount.intValue++; visible.value = false },
                     onDismiss = { dismissCount.intValue++; visible.value = false },
                 )
             }
@@ -77,6 +77,10 @@ class PlayerCoverPickerTest {
                 assertEquals(0, dismissCount.intValue)
                 assertEquals(0, immersiveCount.intValue)
             }
+            // 与实际播放页宿主一致：选择后卸载，下次打开保留选中样式。
+            compose.onNodeWithTag("player-cover-picker").assertDoesNotExist()
+            compose.runOnIdle { visible.value = true }
+            compose.awaitStable(tag)
             compose.onNodeWithTag(tag).assertIsSelected()
             compose.onNodeWithTag("player-cover-picker").assertIsDisplayed()
         }
@@ -87,7 +91,9 @@ class PlayerCoverPickerTest {
             assertEquals(1, immersiveCount.intValue)
             assertEquals(0, dismissCount.intValue)
         }
-        compose.onNodeWithTag("player-cover-picker").assertIsDisplayed()
+        compose.onNodeWithTag("player-cover-picker").assertDoesNotExist()
+        compose.runOnIdle { visible.value = true }
+        compose.awaitStable("player-cover-picker")
         compose.onNodeWithTag("player-cover-cancel").performScrollTo().also { compose.awaitStable(it) }.performClick()
         compose.runOnIdle {
             assertEquals(3, selections.size)

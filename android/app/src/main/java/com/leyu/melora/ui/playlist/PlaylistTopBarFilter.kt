@@ -1,6 +1,7 @@
 package com.leyu.melora.ui.playlist
 
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.rememberSheetDismiss
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -210,6 +211,7 @@ private fun PlaylistCategorySheet(onDismiss: () -> Unit) {
     val platform = playlistPlatforms.firstOrNull { it.id == platformId } ?: playlistPlatforms.first()
     val selectedTagId by MeloraSettings.playlistTagId.collectAsStateWithLifecycle()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val closeSheet = rememberSheetDismiss(sheetState)
     var tagInfo by remember(platformId) {
         mutableStateOf(OnlineCache.get<TagInfo>("playlistTags.$platformId", TAG_CACHE_TTL) ?: TagInfo(emptyList(), emptyList()))
     }
@@ -265,8 +267,10 @@ private fun PlaylistCategorySheet(onDismiss: () -> Unit) {
                         tags = hotList,
                         selectedTagId = selectedTagId,
                         onSelectTag = { tag ->
-                            MeloraSettings.updatePlaylistTag(tag.id, tag.name)
-                            onDismiss()
+                            closeSheet {
+                                MeloraSettings.updatePlaylistTag(tag.id, tag.name)
+                                onDismiss()
+                            }
                         },
                     )
 
@@ -278,8 +282,10 @@ private fun PlaylistCategorySheet(onDismiss: () -> Unit) {
                                 tags = group.list,
                                 selectedTagId = selectedTagId,
                                 onSelectTag = { tag ->
-                                    MeloraSettings.updatePlaylistTag(tag.id, tag.name)
-                                    onDismiss()
+                                    closeSheet {
+                                        MeloraSettings.updatePlaylistTag(tag.id, tag.name)
+                                        onDismiss()
+                                    }
                                 },
                             )
                         }

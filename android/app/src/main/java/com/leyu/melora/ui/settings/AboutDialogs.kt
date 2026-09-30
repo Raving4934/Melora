@@ -1,6 +1,7 @@
 package com.leyu.melora.ui.settings
 
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.rememberSheetDismiss
 import com.leyu.melora.ui.common.runCatchingCancellable
 import android.content.Intent
 import java.net.URLEncoder
@@ -102,6 +103,7 @@ internal fun AboutModalSheet(
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val closeSheet = rememberSheetDismiss(sheetState)
 
     MeloraBottomSheet(
         onDismissRequest = onDismiss,
@@ -137,7 +139,7 @@ internal fun AboutModalSheet(
                         .clickable(
                             indication = null,
                             interactionSource = remember { MutableInteractionSource() },
-                        ) { onDismiss() },
+                        ) { closeSheet(onDismiss) },
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(

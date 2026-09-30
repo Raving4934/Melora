@@ -37,6 +37,7 @@ import com.leyu.melora.playback.PlayerCoverStyle
 import com.leyu.melora.playback.UiTrack
 import com.leyu.melora.playback.ThemeMode
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.rememberSheetDismiss
 import kotlinx.coroutines.delay
 
 /** 悬浮卡片选择原有封面类型，主题模式复用播放页设置；拖动只聚焦，不写入偏好。 */
@@ -58,6 +59,8 @@ internal fun PlayerCoverPicker(
     var focused by remember { mutableIntStateOf(selected.ordinal) }
     var width by remember { mutableIntStateOf(1) }
     LaunchedEffect(selected) { focused = selected.ordinal }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val closeSheet = rememberSheetDismiss(sheetState)
     val focus: (Float) -> Unit = { x ->
         val index = ((x / width) * PlayerCoverStyle.entries.size).toInt().coerceIn(0, PlayerCoverStyle.entries.lastIndex)
         if (focused != index) {
@@ -67,7 +70,7 @@ internal fun PlayerCoverPicker(
     }
     MeloraBottomSheet(
         onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        sheetState = sheetState,
         containerColor = Color.Transparent,
         scrimColor = colors.background.copy(alpha = 0.82f),
         dragHandle = null,
@@ -112,7 +115,7 @@ internal fun PlayerCoverPicker(
                             alpha = entrance.coerceIn(0f, 1f)
                         }.clip(shape).background(colors.background)
                             .border(if (current) 1.5.dp else 0.5.dp, if (current) colors.textPrimary else colors.outline, shape)
-                            .selectable(current, role = Role.RadioButton, onClick = { onSelect(style) })
+                            .selectable(current, role = Role.RadioButton, onClick = { closeSheet { onSelect(style) } })
                             .testTag("player-cover-${style.storageValue}").padding(7.dp),
                     ) {
                         Box(Modifier.fillMaxWidth().height(112.dp), contentAlignment = Alignment.Center) {
@@ -159,11 +162,11 @@ internal fun PlayerCoverPicker(
                     }
                 }
             }
-            TextButton(onClick = onToggleImmersive,
+            TextButton(onClick = { closeSheet(onToggleImmersive) },
                 modifier = Modifier.padding(top = 5.dp).heightIn(min = 48.dp).testTag("player-cover-immersive")) {
                 Text(if (immersive) "退出沉浸模式" else "进入沉浸模式", color = colors.textPrimary, fontSize = 14.sp)
             }
-            TextButton(onClick = onDismiss, modifier = Modifier.heightIn(min = 48.dp).testTag("player-cover-cancel")) {
+            TextButton(onClick = { closeSheet(onDismiss) }, modifier = Modifier.heightIn(min = 48.dp).testTag("player-cover-cancel")) {
                 Text("取消", color = colors.textSecondary, fontSize = 12.sp)
             }
         }

@@ -84,9 +84,12 @@ class PlaylistImportDuplicateSheetTest {
         show()
         captureDuplicateSheet()
         compose.onNodeWithText("已导入此来源").assertExists()
+        val dialogId = compose.onNode(isDialog()).fetchSemanticsNode().id
         compose.onNodeWithTag("playlist-import-submit").assertIsEnabled().performClick()
         compose.onNodeWithTag("playlist-import-sheet").assertDoesNotExist()
         compose.onNodeWithTag("playlist-sync-sheet").assertExists()
+        assertEquals("更新必须沿用导入窗口，不重新弹出另一张抽屉", dialogId,
+            compose.onNode(isDialog()).fetchSemanticsNode().id)
         assertEquals(0, creates.get()); assertEquals(0, commits.get())
         compose.onNodeWithTag("playlist-sync-submit").performClick()
         compose.waitUntil(5_000) { compose.onAllNodesWithTag("playlist-sync-preview").fetchSemanticsNodes().isNotEmpty() }

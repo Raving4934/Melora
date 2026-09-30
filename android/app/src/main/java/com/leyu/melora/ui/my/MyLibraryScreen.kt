@@ -1,6 +1,7 @@
 package com.leyu.melora.ui.my
 
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.rememberSheetDismiss
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -2029,6 +2030,7 @@ private fun DownloadRecordSheet(
 ) {
     val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState()
+    val closeSheet = rememberSheetDismiss(sheetState)
     val favoriteUids by UserLibrary.favoriteUids.collectAsStateWithLifecycle()
     val song = record.song
     val isFavorite = song != null && song.uid in favoriteUids
@@ -2127,8 +2129,7 @@ private fun DownloadRecordSheet(
                             label = "暂停下载",
                             subtitle = "暂停当前传输中的任务",
                         ) {
-                            onPause()
-                            onDismiss()
+                            closeSheet(onPause)
                         }
                         SheetAction(
                             icon = Icons.Outlined.DeleteOutline,
@@ -2136,8 +2137,7 @@ private fun DownloadRecordSheet(
                             label = "删除下载任务",
                             subtitle = "停止传输并清理未完成任务",
                         ) {
-                            onDeleteFile()
-                            onDismiss()
+                            closeSheet(onDeleteFile)
                         }
                     }
                     DownloadCenter.Status.Paused -> {
@@ -2147,8 +2147,7 @@ private fun DownloadRecordSheet(
                             label = "继续下载",
                             subtitle = "重新建立下载流并继续任务",
                         ) {
-                            onResume()
-                            onDismiss()
+                            closeSheet(onResume)
                         }
                         SheetAction(
                             icon = Icons.Outlined.DeleteOutline,
@@ -2156,8 +2155,7 @@ private fun DownloadRecordSheet(
                             label = "删除下载任务",
                             subtitle = "清理暂停的下载任务",
                         ) {
-                            onDeleteFile()
-                            onDismiss()
+                            closeSheet(onDeleteFile)
                         }
                     }
                     DownloadCenter.Status.Done -> {
@@ -2167,7 +2165,7 @@ private fun DownloadRecordSheet(
                                 tint = BrandBlue,
                                 label = if (isPlaying) "暂停播放" else if (isCurrent) "继续播放" else "立即播放",
                                 subtitle = if (isPlaying) "暂停当前歌曲" else if (isCurrent) "从当前位置继续播放" else "开始播放该歌曲",
-                            ) { onPlay() }
+                            ) { closeSheet(onPlay) }
                         }
                         if (song != null && !com.leyu.melora.playback.downloadQualityMatches(record.audioSpec, selectedDownloadQuality)) {
                             SheetAction(
@@ -2175,7 +2173,7 @@ private fun DownloadRecordSheet(
                                 tint = BrandBlue,
                                 label = "重新下载所选音质",
                                 subtitle = "按下载设置保存，新旧版本分别保留",
-                            ) { onRetry() }
+                            ) { closeSheet(onRetry) }
                         }
                         if (record.hasSavedResource && (record.fileName != null || record.savedUri != null)) {
                             SheetAction(
@@ -2183,14 +2181,14 @@ private fun DownloadRecordSheet(
                                 tint = AccentRed,
                                 label = "删除本地文件",
                                 subtitle = "删除真实音频文件并同步清理下载记录",
-                            ) { onDeleteFile() }
+                            ) { closeSheet(onDeleteFile) }
                         }
                         SheetAction(
                             icon = Icons.Outlined.RemoveCircleOutline,
                             tint = TextSub,
                             label = "仅移除下载记录",
                             subtitle = "从下载任务列表中清理该记录，保留本地音频文件",
-                        ) { onRemoveRecord() }
+                        ) { closeSheet(onRemoveRecord) }
                     }
                     DownloadCenter.Status.Failed -> {
                         if (song != null) {
@@ -2199,7 +2197,7 @@ private fun DownloadRecordSheet(
                                 tint = BrandBlue,
                                 label = "重试下载",
                                 subtitle = "重新建立下载任务拉取音频",
-                            ) { onRetry() }
+                            ) { closeSheet(onRetry) }
                         }
                         if (record.hasSavedResource && (record.fileName != null || record.savedUri != null)) {
                             SheetAction(
@@ -2207,14 +2205,14 @@ private fun DownloadRecordSheet(
                                 tint = AccentRed,
                                 label = "删除本地文件",
                                 subtitle = "删除仍保留的真实音频文件并清理记录",
-                            ) { onDeleteFile() }
+                            ) { closeSheet(onDeleteFile) }
                         }
                         SheetAction(
                             icon = Icons.Outlined.RemoveCircleOutline,
                             tint = TextSub,
                             label = "移除失败记录",
                             subtitle = "仅清理下载列表记录，不触碰本地文件",
-                        ) { onRemoveRecord() }
+                        ) { closeSheet(onRemoveRecord) }
                     }
                 }
 
@@ -2229,8 +2227,10 @@ private fun DownloadRecordSheet(
                         label = if (isFavorite) "取消收藏" else "收藏到我的列表",
                         subtitle = if (isFavorite) "从「我的列表」收藏夹中移除" else "保存到「我的列表」收藏夹",
                     ) {
-                        UserLibrary.toggleFavorite(song)
-                        onDismiss()
+                        closeSheet {
+                            UserLibrary.toggleFavorite(song)
+                            onDismiss()
+                        }
                     }
                     SheetAction(
                         icon = Icons.AutoMirrored.Outlined.PlaylistPlay,
@@ -2238,8 +2238,10 @@ private fun DownloadRecordSheet(
                         label = "下一首播放",
                         subtitle = "加入当前播放队列的下一顺位",
                     ) {
-                        PlaybackController.addToQueueNext(context, UiTrack.fromOnline(song))
-                        onDismiss()
+                        closeSheet {
+                            PlaybackController.addToQueueNext(context, UiTrack.fromOnline(song))
+                            onDismiss()
+                        }
                     }
                     SheetAction(
                         icon = Icons.AutoMirrored.Outlined.PlaylistAdd,
@@ -2247,7 +2249,7 @@ private fun DownloadRecordSheet(
                         label = "添加到歌单",
                         subtitle = "收录到自建歌单中分类管理",
                     ) {
-                        onAddToPlaylist()
+                        closeSheet(onAddToPlaylist)
                     }
                 }
             }
@@ -2267,6 +2269,7 @@ internal fun PlaylistEditSheet(
     onConfirm: (String) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val closeSheet = rememberSheetDismiss(sheetState)
     val focusRequester = remember { FocusRequester() }
     var textValue by remember(initialName) {
         mutableStateOf(TextFieldValue(initialName, selection = TextRange(initialName.length)))
@@ -2275,8 +2278,10 @@ internal fun PlaylistEditSheet(
 
     val submit = {
         if (canSubmit) {
-            onConfirm(textValue.text.trim())
-            onDismiss()
+            closeSheet {
+                onConfirm(textValue.text.trim())
+                onDismiss()
+            }
         }
     }
 
@@ -2303,7 +2308,9 @@ internal fun PlaylistEditSheet(
                 icon = if (isRename) Icons.Outlined.Edit else Icons.AutoMirrored.Rounded.QueueMusic,
                 title = if (isRename) "重命名歌单" else "新建歌单",
                 subtitle = if (isRename) "输入新的歌单标题" else "为喜欢的音乐留一个位置",
-                onImportClick = onImport.takeUnless { isRename },
+                onImportClick = onImport.takeUnless { isRename }?.let { onImportClick ->
+                    { closeSheet(onImportClick) }
+                },
             )
             Spacer(Modifier.height(16.dp))
 
@@ -2397,7 +2404,7 @@ internal fun PlaylistEditSheet(
             Spacer(Modifier.height(20.dp))
 
             PlaylistSheetActions(
-                onSecondary = onDismiss,
+                onSecondary = { closeSheet(onDismiss) },
                 onConfirm = submit,
                 confirmText = if (isRename) "保存修改" else "立即创建",
                 confirmEnabled = canSubmit,
@@ -2420,6 +2427,7 @@ internal fun PlaylistMoreSheet(
     onUpdate: (() -> Unit)? = null,
 ) {
     val sheetState = rememberModalBottomSheetState()
+    val closeSheet = rememberSheetDismiss(sheetState)
     MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
@@ -2509,14 +2517,14 @@ internal fun PlaylistMoreSheet(
                         tint = BrandBlue,
                         label = "播放全部",
                         subtitle = "立即开始播放歌单内全部歌曲",
-                        onClick = { onDismiss(); onPlayAll() },
+                        onClick = { closeSheet { onDismiss(); onPlayAll() } },
                     )
                     SheetAction(
                         icon = Icons.AutoMirrored.Outlined.PlaylistAdd,
                         tint = BrandBlue,
                         label = "添加全部歌曲到播放队列",
                         subtitle = "追加到队列末尾，不打断当前播放",
-                        onClick = { onDismiss(); onAddToQueue() },
+                        onClick = { closeSheet { onDismiss(); onAddToQueue() } },
                     )
                 }
                 SheetAction(
@@ -2524,21 +2532,21 @@ internal fun PlaylistMoreSheet(
                     tint = Color(0xFF0284C7),
                     label = "重命名歌单",
                     subtitle = "修改该歌单的显示名称",
-                    onClick = { onDismiss(); onRename() },
+                    onClick = { closeSheet { onDismiss(); onRename() } },
                 )
                 if (onUpdate != null) SheetAction(
                     icon = Icons.Outlined.Refresh,
                     tint = BrandBlue,
                     label = if (playlist.importSource != null) "从原歌单更新" else "绑定来源并更新",
                     subtitle = "先读取完整歌单，预览差异后确认",
-                    onClick = { onDismiss(); onUpdate() },
+                    onClick = { closeSheet { onDismiss(); onUpdate() } },
                 )
                 SheetAction(
                     icon = Icons.Outlined.DeleteOutline,
                     tint = AccentRed,
                     label = "删除歌单",
                     subtitle = "彻底删除此歌单及其收录记录",
-                    onClick = { onDismiss(); onDelete() },
+                    onClick = { closeSheet { onDismiss(); onDelete() } },
                 )
             }
         }
@@ -2555,6 +2563,7 @@ private fun PlaylistDeleteConfirmSheet(
     onConfirm: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState()
+    val closeSheet = rememberSheetDismiss(sheetState)
     MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
@@ -2621,14 +2630,14 @@ private fun PlaylistDeleteConfirmSheet(
                     modifier = Modifier
                         .weight(1f)
                         .height(44.dp)
-                        .clickable(onClick = onDismiss),
+                        .clickable(onClick = { closeSheet(onDismiss) }),
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Text("取消", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = TextSub)
                     }
                 }
                 Surface(
-                    onClick = onConfirm,
+                    onClick = { closeSheet(onConfirm) },
                     shape = RoundedCornerShape(22.dp),
                     color = AccentRed,
                     modifier = Modifier

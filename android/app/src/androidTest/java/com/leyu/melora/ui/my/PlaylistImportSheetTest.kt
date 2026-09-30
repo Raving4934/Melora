@@ -13,6 +13,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.espresso.Espresso
 import com.leyu.melora.playback.UserLibrary
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.sdk.PlaylistImportProgress
@@ -220,6 +221,9 @@ class PlaylistImportSheetTest {
             },
             autoRead = false,
         )
+        // 比较相同IME状态：小屏收起键盘会增加可用高度，不属于读取状态导致的布局跳动。
+        Espresso.closeSoftKeyboard()
+        compose.awaitStable("playlist-import-submit")
         compose.onNodeWithTag("playlist-import-submit").assertIsDisplayed()
         val initialSubmit = bounds("playlist-import-submit")
         val initialBody = bounds("playlist-import-body")

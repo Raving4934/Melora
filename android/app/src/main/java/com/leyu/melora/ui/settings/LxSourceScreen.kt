@@ -1,6 +1,7 @@
 package com.leyu.melora.ui.settings
 
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.rememberSheetDismiss
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -518,11 +519,12 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
             errorMessage = onlineImportError,
             onErrorClear = { onlineImportError = null },
             onDismiss = { if (!busy) onlineImportOpen = false },
-            onImport = { url ->
+            onImportSuccess = { onlineImportOpen = false },
+            onImport = { url, onImportSuccess ->
                 onlineImportError = null
                 launchSourceImport(
                     import = { sourceImporter.importUrl(url) },
-                    onSuccess = { onlineImportOpen = false },
+                    onSuccess = onImportSuccess,
                     onFailure = { onlineImportError = it },
                 )
             },
@@ -606,9 +608,10 @@ private fun SourceModalSheet(
     icon: ImageVector,
     title: String,
     subtitle: String,
-    content: @Composable ColumnScope.() -> Unit,
+    content: @Composable ColumnScope.(closeSheet: (() -> Unit) -> Unit) -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val closeSheet = rememberSheetDismiss(sheetState)
     MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
@@ -672,7 +675,7 @@ private fun SourceModalSheet(
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
-                content = content,
+                content = { content(closeSheet) },
             )
         }
     }
@@ -689,7 +692,7 @@ internal fun ImportSourceSheet(
         icon = Icons.Outlined.FolderOpen,
         title = "导入音源脚本",
         subtitle = "选择从本地文件选取或从网络链接导入兼容 JS 音源",
-    ) {
+    ) { closeSheet ->
         SourceSheetAction(
             icon = Icons.Outlined.FolderOpen,
             iconTint = BrandBlue,
@@ -698,7 +701,9 @@ internal fun ImportSourceSheet(
             subtitle = "仅选择设备存储中的 .js 音源脚本",
             titleColor = TextMain,
             onClick = {
-                onLocalFile(arrayOf("application/javascript", "text/javascript", "application/x-javascript"))
+                closeSheet {
+                    onLocalFile(arrayOf("application/javascript", "text/javascript", "application/x-javascript"))
+                }
             },
         )
         SourceSheetAction(
@@ -708,7 +713,7 @@ internal fun ImportSourceSheet(
             title = "从链接导入",
             subtitle = "粘贴 HTTP/HTTPS 音源脚本直链",
             titleColor = TextMain,
-            onClick = onOnlineUrl,
+            onClick = { closeSheet(onOnlineUrl) },
         )
         SourceSheetAction(
             icon = Icons.Rounded.Refresh,
@@ -717,7 +722,7 @@ internal fun ImportSourceSheet(
             title = "恢复音源备份",
             subtitle = "选择此前导出的 .json 音源合集",
             titleColor = TextMain,
-            onClick = { onLocalFile(arrayOf("application/json")) },
+            onClick = { closeSheet { onLocalFile(arrayOf("application/json")) } },
         )
     }
 }
@@ -728,7 +733,8 @@ private fun OnlineSourceImportSheet(
     errorMessage: String?,
     onErrorClear: () -> Unit,
     onDismiss: () -> Unit,
-    onImport: (String) -> Unit,
+    onImportSuccess: () -> Unit,
+    onImport: (String, onImportSuccess: () -> Unit) -> Unit,
 ) {
     var url by remember { mutableStateOf("") }
     val isCleartextHttp = url.trim().startsWith("http://", ignoreCase = true)
@@ -743,7 +749,7 @@ private fun OnlineSourceImportSheet(
         icon = Icons.Outlined.Link,
         title = "从链接导入",
         subtitle = "支持 HTTP/HTTPS 直链；HTTP 会显示明文传输警告",
-    ) {
+    ) { closeSheet ->
         Surface(
             shape = RoundedCornerShape(14.dp),
             color = CardBg,
@@ -867,7 +873,7 @@ private fun OnlineSourceImportSheet(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Surface(
-                onClick = onDismiss,
+                onClick = { closeSheet(onDismiss) },
                 enabled = !busy,
                 shape = RoundedCornerShape(12.dp),
                 color = MeloraAppearance.softFill,
@@ -879,7 +885,11 @@ private fun OnlineSourceImportSheet(
                 }
             }
             Surface(
-                onClick = { onImport(url.trim()) },
+                onClick = {
+                    onImport(url.trim()) {
+                        closeSheet(onImportSuccess)
+                    }
+                },
                 enabled = canSubmit,
                 shape = RoundedCornerShape(12.dp),
                 color = if (canSubmit) BrandBlue else BrandBlue.copy(alpha = 0.22f),
@@ -991,6 +1001,7 @@ private fun SourceRow(
 
     if (sheetOpen) {
         val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val closeSheet = rememberSheetDismiss(sheetState)
         val actionBusy = actionStatus?.busy == true
         val metrics = LxScriptPool.metrics(script.id)
         MeloraBottomSheet(
@@ -1120,8 +1131,10 @@ private fun SourceRow(
                         titleColor = TextMain,
                         enabled = !actionBusy,
                     ) {
-                        sheetOpen = false
-                        onExport()
+                        closeSheet {
+                            sheetOpen = false
+                            onExport()
+                        }
                     }
 
                     SourceSheetAction(
@@ -1133,8 +1146,10 @@ private fun SourceRow(
                         titleColor = Color(0xFFD1606A),
                         enabled = !actionBusy,
                     ) {
-                        sheetOpen = false
-                        onDelete()
+                        closeSheet {
+                            sheetOpen = false
+                            onDelete()
+                        }
                     }
                 }
             }

@@ -40,6 +40,7 @@ import androidx.compose.material.icons.rounded.FavoriteBorder
 
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.SheetValue
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -403,6 +404,7 @@ fun SongMoreSheet(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState()
+    val closeSheet = rememberSheetDismiss(sheetState)
     val favoriteUids by UserLibrary.favoriteUids.collectAsStateWithLifecycle()
     val isFavorite = song.uid in favoriteUids
     // 本地索引、播放器与抽屉只使用一条实时链路：当前歌曲先复用播放器已解析封面，
@@ -452,15 +454,19 @@ fun SongMoreSheet(
     val storagePermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        if (granted) startDownload() else PlaybackController.postMessage(context, "未获得存储权限，无法下载")
-        onDismiss()
+        closeSheet {
+            if (granted) startDownload() else PlaybackController.postMessage(context, "未获得存储权限，无法下载")
+            onDismiss()
+        }
     }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) {
         // 无论是否授予通知权限都继续下载（未授予时只是不显示通知栏进度）
-        startDownload()
-        onDismiss()
+        closeSheet {
+            startDownload()
+            onDismiss()
+        }
     }
 
     if (showPlaylistPicker) {
@@ -542,8 +548,10 @@ fun SongMoreSheet(
                     label = if (isFavorite) "取消收藏" else "收藏到我的列表",
                     subtitle = if (isFavorite) "从「我的列表」收藏夹中移除" else "保存到「我的列表」收藏夹",
                 ) {
-                    UserLibrary.toggleFavorite(song)
-                    onDismiss()
+                    closeSheet {
+                        UserLibrary.toggleFavorite(song)
+                        onDismiss()
+                    }
                 }
                 SheetAction(
                     icon = Icons.AutoMirrored.Outlined.PlaylistPlay,
@@ -551,8 +559,10 @@ fun SongMoreSheet(
                     label = "下一首播放",
                     subtitle = "加入当前播放队列的下一顺位",
                 ) {
-                    PlaybackController.addToQueueNext(context, UiTrack.fromOnline(song))
-                    onDismiss()
+                    closeSheet {
+                        PlaybackController.addToQueueNext(context, UiTrack.fromOnline(song))
+                        onDismiss()
+                    }
                 }
                 SheetAction(
                     icon = Icons.AutoMirrored.Outlined.PlaylistAdd,
@@ -560,7 +570,7 @@ fun SongMoreSheet(
                     label = "添加到歌单",
                     subtitle = "收录到自建歌单中分类管理",
                 ) {
-                    showPlaylistPicker = true
+                    closeSheet { showPlaylistPicker = true }
                 }
                 if (onRemoveFromPlaylist != null) {
                     SheetAction(
@@ -569,8 +579,10 @@ fun SongMoreSheet(
                         label = "从歌单移除",
                         subtitle = "仅从此歌单列表中移除该歌曲",
                     ) {
-                        onRemoveFromPlaylist()
-                        onDismiss()
+                        closeSheet {
+                            onRemoveFromPlaylist()
+                            onDismiss()
+                        }
                     }
                 }
                 if (downloadAllowed) {
@@ -592,7 +604,7 @@ fun SongMoreSheet(
                             // 下载前申请通知权限，用于通知栏展示进度；拒绝也不阻断下载
                             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                         }
-                        else -> {
+                        else -> closeSheet {
                             startDownload()
                             onDismiss()
                         }
@@ -606,8 +618,10 @@ fun SongMoreSheet(
                         label = "永久删除",
                         subtitle = "从设备中删除该音频文件，无法恢复",
                     ) {
-                        onDeleteLocal()
-                        onDismiss()
+                        closeSheet {
+                            onDeleteLocal()
+                            onDismiss()
+                        }
                     }
                 }
             }
@@ -686,11 +700,14 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState()
+    val closeSheet = rememberSheetDismiss(sheetState)
     var newName by remember { mutableStateOf("") }
     var adding by remember { mutableStateOf(false) }
     val playlists by UserLibrary.playlists.collectAsStateWithLifecycle()
     val addSongs: (UserLibrary.UserPlaylist?) -> Unit = { playlist ->
-        if (!adding && (playlist != null || newName.isNotBlank())) {
+        if (!adding && sheetState.targetValue != SheetValue.Hidden &&
+            (playlist != null || newName.isNotBlank())
+        ) {
             val name = newName.trim()
             adding = true
             scope.launch {
@@ -713,7 +730,7 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
                             else -> "已添加 $newCount 首到歌单「${playlist.name}」"
                         })
                         if (playlist == null) newName = ""
-                        if (newCount != null) onDismiss()
+                        if (newCount != null) closeSheet(onDismiss)
                     }.onFailure {
                         PlaybackController.postMessage(
                             context,

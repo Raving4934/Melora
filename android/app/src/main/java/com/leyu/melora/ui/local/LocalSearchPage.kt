@@ -1,6 +1,7 @@
 package com.leyu.melora.ui.local
 
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.rememberSheetDismiss
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -293,6 +294,7 @@ internal fun LocalSortSheet(
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val closeSheet = rememberSheetDismiss(sheetState)
     MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
@@ -385,8 +387,10 @@ internal fun LocalSortSheet(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null,
                             ) {
-                                onFieldChange(option)
-                                onDismiss()
+                                closeSheet {
+                                    onFieldChange(option)
+                                    onDismiss()
+                                }
                             }
                             .padding(horizontal = 12.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
