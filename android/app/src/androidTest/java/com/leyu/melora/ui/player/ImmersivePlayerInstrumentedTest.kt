@@ -99,7 +99,7 @@ class ImmersivePlayerInstrumentedTest {
                     immersive = immersive.value, onImmersiveChange = { immersive.value = it },
                     lyricPosition = position, motionEnabled = motionEnabled,
                     lyricFrame = rememberLyricFrame(lines, position), lyricLines = lines,
-                    onOpenQueue = {}, queuePagerState = rememberPagerState { 2 },
+                    onOpenQueue = {}, onCloseQueue = {}, queuePagerState = rememberPagerState { 2 },
                     onArtworkPositioned = {}, artworkAlpha = { 1f },
                     coverStyle = coverStyle, artworkRotation = { 0f },
                     onPageVisualChanged = { _, _, _ -> },

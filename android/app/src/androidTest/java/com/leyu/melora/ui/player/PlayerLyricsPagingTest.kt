@@ -63,7 +63,7 @@ class PlayerLyricsPagingTest {
                     immersive = immersiveState.value, onImmersiveChange = { immersiveState.value = it },
                     lyricPosition = position, motionEnabled = true,
                     lyricFrame = rememberLyricFrame(lines, position), lyricLines = lines,
-                    onOpenQueue = {}, queuePagerState = rememberPagerState { 2 },
+                    onOpenQueue = {}, onCloseQueue = {}, queuePagerState = rememberPagerState { 2 },
                     onArtworkPositioned = {}, artworkAlpha = { 1f },
                     coverStyle = PlayerCoverStyle.Default, artworkRotation = { 0f },
                     onPageVisualChanged = { _, _, _ -> },

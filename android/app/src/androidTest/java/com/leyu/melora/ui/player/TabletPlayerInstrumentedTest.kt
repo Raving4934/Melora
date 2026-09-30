@@ -43,8 +43,8 @@ class TabletPlayerInstrumentedTest {
 
     private fun showPlayer() {
         compose.setContent {
-            val density = LocalDensity.current
-            CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale.value)) {
+            // 固定测试密度，使1000dp视口真实放入手机物理窗口，而不是被size约束压成窄屏。
+            CompositionLocalProvider(LocalDensity provides Density(1f, fontScale.value)) {
                 PlayerAppearanceProvider(dark = true) {
                     val lines = (0..20).map { LyricLine(it * 10_000L, "在平板上听见海风，第 $it 句") }
                     Box(Modifier.fillMaxSize()) {
@@ -54,7 +54,7 @@ class TabletPlayerInstrumentedTest {
                             immersive = immersive.value, onImmersiveChange = { immersive.value = it },
                             lyricPosition = position, motionEnabled = false,
                             lyricFrame = rememberLyricFrame(lines, position), lyricLines = lines,
-                            onOpenQueue = {}, queuePagerState = rememberPagerState { 2 },
+                            onOpenQueue = {}, onCloseQueue = {}, queuePagerState = rememberPagerState { 2 },
                             onArtworkPositioned = {}, artworkAlpha = { 1f },
                             coverStyle = PlayerCoverStyle.Default, artworkRotation = { 0f },
                             onPageVisualChanged = { _, _, _ -> },

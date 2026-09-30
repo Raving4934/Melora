@@ -241,6 +241,7 @@ internal fun FullPlayerPageContent(
     lyricFrame: androidx.compose.runtime.State<com.leyu.melora.playback.LyricFrame>,
     lyricLines: List<LyricLine>,
     onOpenQueue: () -> Unit,
+    onCloseQueue: () -> Unit,
     queuePagerState: PagerState,
     onArtworkPositioned: (LayoutCoordinates) -> Unit,
     artworkAlpha: () -> Float,
@@ -315,13 +316,8 @@ internal fun FullPlayerPageContent(
             if (isVisible && (expandedLayout || currentPage == 1)) PlaybackController.ensureCurrentArtwork()
         }
         val queueSwipeAllowed = !immersive && openedCollection == null && currentPage != 2
-        // 宽屏歌词就是首页；队列打开时交给外层队列返回处理，不切换隐藏的阅读页。
-        if (isVisible && (immersive || (queuePagerState.currentPage == 0 && currentPage != (if (expandedLayout) 2 else 1)))) {
-            BackHandler {
-                if (immersive) onImmersiveChange(false)
-                else scope.launch { coverPagerState.animateScrollToPage(if (expandedLayout) 0 else 1, animationSpec = PlayerPageSnapSpec) }
-            }
-        }
+        // 播放分页是同级视图，不消费返回；仅沉浸态先退出，再由外层收起播放器。
+        BackHandler(enabled = isVisible && immersive) { onImmersiveChange(false) }
         LaunchedEffect(collection != null, coverPagerState.currentPage, coverPagerState.isScrollInProgress, pageIsLight, immersive, expandedLayout) {
             onPageVisualChanged(
                 !immersive && collection == null && (expandedLayout || (currentPage == 1 && !coverPagerState.isScrollInProgress)),
@@ -581,7 +577,7 @@ internal fun FullPlayerPageContent(
                 } else {
                     QueuePageContent(
                         state = state,
-                        onBackToPlayer = { scope.launch { queuePagerState.animateScrollToPage(0) } },
+                        onClose = onCloseQueue,
                         horizontalPadding = if (twoPanes) 0.dp else 18.dp,
                         modifier = if (twoPanes) Modifier.padding(controlsPadding) else Modifier,
                     )

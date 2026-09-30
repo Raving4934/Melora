@@ -104,6 +104,10 @@ internal fun ContinuousPlayerSheet(
     val sheetState = backState.sheet
     val swipeOffset = remember { Animatable(0f) }
     val verticalPagerState = rememberPagerState(pageCount = { 2 })
+    var queueReturnTarget by rememberSaveable { mutableStateOf(PlayerSheetAnchor.Expanded) }
+    LaunchedEffect(verticalPagerState.settledPage) {
+        if (verticalPagerState.settledPage == 0) queueReturnTarget = PlayerSheetAnchor.Expanded
+    }
     fun launchTransition(block: suspend () -> Unit) {
         if (backState.pending) return
         // 同步占有返回，不能等协程/动画首帧或展开回调才停用底页。
@@ -200,12 +204,12 @@ internal fun ContinuousPlayerSheet(
             {
                 backState.action(
                     pagerScrolling = verticalPagerState.isScrollInProgress,
-                    queueVisible = verticalPagerState.currentPage == 1,
+                    queueReturnTarget = queueReturnTarget.takeIf { verticalPagerState.currentPage == 1 },
                 )
             }
         }
         val currentBackAction by remember(backAction) { derivedStateOf { backAction() } }
-        BackHandler(enabled = currentBackAction != PlayerSheetBackAction.PassThrough) {
+        val handleBack = {
             // 点击时重读状态；先同步占有返回，再启动协程，堵住动画首帧前的重复返回。
             val action = backAction()
             if (action == PlayerSheetBackAction.Collapse || action == PlayerSheetBackAction.ReturnToPlayer) {
@@ -215,6 +219,8 @@ internal fun ContinuousPlayerSheet(
                 }
             }
         }
+
+        BackHandler(enabled = currentBackAction != PlayerSheetBackAction.PassThrough, onBack = handleBack)
 
         val baseIsLight = miniColors.surface.luminance() > 0.5f
         val darkStatusIcons by remember(offset, topInset, baseIsLight) {
@@ -304,7 +310,11 @@ internal fun ContinuousPlayerSheet(
                         isCollapsed = collapsed,
                         isVisible = expanded && (twoPanes || verticalPagerState.currentPage == 0),
                         queuePagerState = verticalPagerState,
-                        onOpenQueue = { launchTransition { verticalPagerState.animateScrollToPage(1) } },
+                        onOpenQueue = { launchTransition {
+                            queueReturnTarget = PlayerSheetAnchor.Expanded
+                            verticalPagerState.animateScrollToPage(1)
+                        } },
+                        onCloseQueue = handleBack,
                         onArtworkPositioned = { child ->
                             val parent = sheetCoordinates
                             if (parent != null && parent.isAttached && child.isAttached && pageShowsCover) {
@@ -354,7 +364,10 @@ internal fun ContinuousPlayerSheet(
                                     indication = null,
                                     interactionSource = remember { MutableInteractionSource() },
                                 ) {
-                                    launchTransition { sheetState.animateTo(PlayerSheetAnchor.Expanded, fluidSpec) }
+                                    launchTransition {
+                                        verticalPagerState.scrollToPage(0)
+                                        sheetState.animateTo(PlayerSheetAnchor.Expanded, fluidSpec)
+                                    }
                                 }
                                 .draggable(
                                     enabled = showMini,
@@ -453,6 +466,7 @@ internal fun ContinuousPlayerSheet(
                         }
                         IconButton(enabled = showMini, onClick = {
                             launchTransition {
+                                queueReturnTarget = PlayerSheetAnchor.Collapsed
                                 verticalPagerState.scrollToPage(1)
                                 sheetState.animateTo(PlayerSheetAnchor.Expanded, fluidSpec)
                             }

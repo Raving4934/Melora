@@ -52,20 +52,30 @@ class PlayerSheetMotionTest {
     fun expandedQueueReturnsToPlayerBeforeCollapsingButPartialQueueCollapses() {
         assertEquals(
             PlayerSheetBackAction.ReturnToPlayer,
-            playerSheetBackAction(PlayerSheetAnchor.Expanded, PlayerSheetAnchor.Expanded, 1f, queueVisible = true),
+            playerSheetBackAction(PlayerSheetAnchor.Expanded, PlayerSheetAnchor.Expanded, 1f, queueReturnTarget = PlayerSheetAnchor.Expanded),
         )
         assertEquals(
             PlayerSheetBackAction.Collapse,
-            playerSheetBackAction(PlayerSheetAnchor.Expanded, PlayerSheetAnchor.Expanded, 0.5f, queueVisible = true),
+            playerSheetBackAction(PlayerSheetAnchor.Expanded, PlayerSheetAnchor.Expanded, 0.5f, queueReturnTarget = PlayerSheetAnchor.Expanded),
         )
         assertEquals(
             PlayerSheetBackAction.Consume,
-            playerSheetBackAction(PlayerSheetAnchor.Expanded, PlayerSheetAnchor.Expanded, 1f, backInProgress = true, queueVisible = true),
+            playerSheetBackAction(PlayerSheetAnchor.Expanded, PlayerSheetAnchor.Expanded, 1f, backInProgress = true, queueReturnTarget = PlayerSheetAnchor.Expanded),
         )
         assertEquals(
             PlayerSheetBackAction.PassThrough,
-            playerSheetBackAction(PlayerSheetAnchor.Collapsed, PlayerSheetAnchor.Collapsed, 0f, queueVisible = true),
+            playerSheetBackAction(PlayerSheetAnchor.Collapsed, PlayerSheetAnchor.Collapsed, 0f, queueReturnTarget = PlayerSheetAnchor.Expanded),
         )
+    }
+
+    @Test
+    fun miniQueueReturnsToUnderlyingPageAndStillGuardsTransitionBack() {
+        assertEquals(PlayerSheetBackAction.Collapse,
+            playerSheetBackAction(PlayerSheetAnchor.Expanded, PlayerSheetAnchor.Expanded, 1f,
+                queueReturnTarget = PlayerSheetAnchor.Collapsed))
+        assertEquals(PlayerSheetBackAction.Consume,
+            playerSheetBackAction(PlayerSheetAnchor.Expanded, PlayerSheetAnchor.Expanded, 1f,
+                backInProgress = true, queueReturnTarget = PlayerSheetAnchor.Collapsed))
     }
 
     @Test

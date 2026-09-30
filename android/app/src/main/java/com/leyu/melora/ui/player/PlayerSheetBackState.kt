@@ -15,14 +15,14 @@ internal class PlayerSheetBackState(val sheet: AnchoredDraggableState<PlayerShee
 
     val ownsBack by derivedStateOf { action() != PlayerSheetBackAction.PassThrough }
 
-    fun action(queueVisible: Boolean = false, pagerScrolling: Boolean = false): PlayerSheetBackAction =
+    fun action(queueReturnTarget: PlayerSheetAnchor? = null, pagerScrolling: Boolean = false): PlayerSheetBackAction =
         playerSheetBackAction(
             settled = sheet.settledValue,
             target = sheet.targetValue,
             progress = playerSheetProgress(sheet.offset, sheet.anchors.positionOf(PlayerSheetAnchor.Collapsed)),
             animationRunning = sheet.isAnimationRunning,
             backInProgress = pending || pagerScrolling,
-            queueVisible = queueVisible,
+            queueReturnTarget = queueReturnTarget,
         )
 }
 

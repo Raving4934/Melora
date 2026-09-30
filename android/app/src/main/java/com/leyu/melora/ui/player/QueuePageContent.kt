@@ -64,7 +64,7 @@ private val QueueActionSize = 48.dp
 @Composable
 fun QueuePageContent(
     state: PlayerUiState,
-    onBackToPlayer: () -> Unit,
+    onClose: () -> Unit,
     modifier: Modifier = Modifier,
     horizontalPadding: Dp = 18.dp,
 ) {
@@ -79,7 +79,7 @@ fun QueuePageContent(
     ) {
         // 顶部返回提示
         Text(
-            text = "此处向下轻扫以返回播放界面",
+            text = "收起播放队列",
             style = MaterialTheme.typography.labelSmall,
             color = FullPlayerTextMuted,
             textAlign = TextAlign.Center,
@@ -88,7 +88,7 @@ fun QueuePageContent(
                 .clickable(
                     indication = null,
                     interactionSource = remember { MutableInteractionSource() },
-                    onClick = onBackToPlayer,
+                    onClick = onClose,
                 )
                 .padding(vertical = 12.dp),
         )

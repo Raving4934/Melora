@@ -105,11 +105,11 @@ class PlayerSheetBackDispatcherTest {
         host.openCatalog() // Newer even than the player's internal callback.
         host.state.sheet.snapTo(PlayerSheetAnchor.Expanded)
         host.dialogOpen = true
-        host.queueVisible = true
+        host.queueReturnTarget = PlayerSheetAnchor.Expanded
         host.back()
         host.back()
         host.back()
-        host.queueVisible = false
+        host.queueReturnTarget = null
         host.state.pending = false
         host.back()
         assertEquals(listOf("dialog", "ReturnToPlayer", "Consume", "Collapse"), host.actions)
@@ -155,13 +155,13 @@ class PlayerSheetBackDispatcherTest {
             })
         }
         var dialogOpen = false
-        var queueVisible = false
+        var queueReturnTarget: PlayerSheetAnchor? = null
         var catalog: OnBackPressedCallback? = null
         private val root = RootBackCallback({ 100L }, { actions += "hint" }, { actions += "background" })
         private val dispatcher = OnBackPressedDispatcher().apply { addCallback(root) }
         private val player = callback {
             root.reset()
-            val action = state.action(queueVisible)
+            val action = state.action(queueReturnTarget)
             actions += action.name
             if (action == PlayerSheetBackAction.Collapse || action == PlayerSheetBackAction.ReturnToPlayer) {
                 state.pending = true
@@ -183,7 +183,7 @@ class PlayerSheetBackDispatcherTest {
         }
 
         fun back() {
-            val action = state.action(queueVisible)
+            val action = state.action(queueReturnTarget)
             player.isEnabled = action != PlayerSheetBackAction.PassThrough
             // MeloraApp supplies this to the entire underlying page tree, not to the player.
             catalog?.isEnabled = !state.ownsBack

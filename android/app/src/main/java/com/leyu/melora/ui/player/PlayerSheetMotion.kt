@@ -19,12 +19,12 @@ internal fun playerSheetBackAction(
     progress: Float,
     animationRunning: Boolean = false,
     backInProgress: Boolean = false,
-    queueVisible: Boolean = false,
+    queueReturnTarget: PlayerSheetAnchor? = null,
 ): PlayerSheetBackAction = when {
     animationRunning || backInProgress -> PlayerSheetBackAction.Consume
     settled == PlayerSheetAnchor.Collapsed && target == PlayerSheetAnchor.Collapsed && progress <= 0f ->
         PlayerSheetBackAction.PassThrough
-    progress >= 0.99f && queueVisible -> PlayerSheetBackAction.ReturnToPlayer
+    progress >= 0.99f && queueReturnTarget == PlayerSheetAnchor.Expanded -> PlayerSheetBackAction.ReturnToPlayer
     else -> PlayerSheetBackAction.Collapse
 }
 

@@ -12,6 +12,7 @@ import com.leyu.melora.playback.UiTrack
 import com.leyu.melora.ui.common.LocalSongListState
 import com.leyu.melora.ui.common.SongListState
 import com.leyu.melora.ui.theme.MeloraTheme
+import com.leyu.melora.ui.awaitStable
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -31,7 +32,10 @@ class PlayerEmptyStateTest {
         val shared = SongListState(mutableStateOf(emptyList()), mutableStateOf(false), mutableStateOf(null))
         compose.setContent {
             CompositionLocalProvider(LocalSongListState provides shared) {
-                MeloraTheme { ContinuousPlayerSheet(state.value, Modifier.fillMaxSize()) }
+                MeloraTheme {
+                    // 与 MeloraApp 一致：清空时卸载播放器及返回状态，新队列从 Mini 开始。
+                    if (state.value.current != null) ContinuousPlayerSheet(state.value, Modifier.fillMaxSize())
+                }
             }
         }
     }
@@ -39,6 +43,7 @@ class PlayerEmptyStateTest {
     private fun expand(title: String) {
         compose.onAllNodesWithText(title, substring = true).onLast().performClick()
         compose.onNodeWithTag("player-pages").assertIsDisplayed()
+        compose.awaitStable("player-artwork")
     }
 
     private fun assertEmpty() {
