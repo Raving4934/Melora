@@ -89,7 +89,7 @@ object LocalTagFiller {
         if (track == null) return
         if (OnlineSong.from(track.raw)?.isBookChapter == true) return
         val local = activeLocal ?: return
-        if (!shouldFillLocalInfo(local) || hasManualWrite(local.id)) return
+        if (!shouldFillLocalInfo(local) || !canFill(local.id)) return
         val cooldown = retryAfter[local.id]
         if (cooldown != null && System.currentTimeMillis() < cooldown) return
         if (pendingWrites.containsKey(local.id) || !inFlight.add(local.id)) return
@@ -149,12 +149,12 @@ object LocalTagFiller {
 
     private suspend fun fill(context: Context, trackUid: String, original: LocalSong) {
         val local = LocalMediaStore.find(original.id) ?: original
-        if (!MeloraSettings.localAutoFillInfo.value || hasManualWrite(local.id) || !shouldFillLocalInfo(local)) return
+        if (!canFill(local.id) || !shouldFillLocalInfo(local)) return
         val existingCover = LocalTagReader.bestCoverUri(context, local)
         val existingLyric = LocalTagReader.embeddedLyrics(context, local.uri, local.mimeType)
         val gaps = localInfoGaps(local, existingCover != null, existingLyric?.isBlank == false)
         if (!gaps.any) {
-            markInfoFilled(local.id)
+            LocalMediaStore.updateMetadata(local, local.copy(infoFilled = true))
             return
         }
         val matched = try {
@@ -164,14 +164,13 @@ object LocalTagFiller {
         } catch (_: Throwable) {
             null
         }
-        if (!MeloraSettings.localAutoFillInfo.value || hasManualWrite(local.id)) return
+        if (!canFill(local.id)) return
         if (matched == null) {
             retryAfter[local.id] = System.currentTimeMillis() + RETRY_COOLDOWN_MS
             // 在线匹配失败仍保留已提取的内嵌封面
             if (existingCover != null && local.coverUri.isNullOrBlank()) {
                 val patched = local.copy(coverUri = existingCover)
-                publishUpdatedLocal(patched)
-                TrackRegistry.updateArtwork(trackUid, existingCover)
+                if (LocalMediaStore.updateMetadata(local, patched) != null) TrackRegistry.updateArtwork(trackUid, existingCover)
             }
             return
         }
@@ -193,14 +192,14 @@ object LocalTagFiller {
         } else {
             existingLyric
         }
-        if (!MeloraSettings.localAutoFillInfo.value || hasManualWrite(local.id)) return
+        if (!canFill(local.id)) return
         val coverUri = when {
             existingCover != null -> existingCover
             coverBytes != null -> LocalTagReader.cacheCover(context, local, coverBytes)
             else -> null
         }
-        val updated = mergeLocalInfo(local, matched, coverUri).copy(infoFilled = false)
-        publishUpdatedLocal(updated)
+        val updated = LocalMediaStore.updateMetadata(local,
+            mergeLocalInfo(local, matched, coverUri).copy(infoFilled = false)) ?: return
         coverUri?.let { TrackRegistry.updateArtwork(trackUid, it) }
 
         val resolved = !localInfoGaps(
@@ -210,7 +209,7 @@ object LocalTagFiller {
         ).unresolvedRequired
         val request = PendingTagWrite(updated, matched, gaps, coverBytes, lyric, resolved)
         if (!request.supported) {
-            if (resolved) markInfoFilled(updated.id)
+            if (resolved) LocalMediaStore.updateMetadata(updated, updated.copy(infoFilled = true))
             return
         }
         if (isCurrentLocal(updated)) {
@@ -286,11 +285,8 @@ object LocalTagFiller {
                 authorizationDeclined.remove(request.local.id)
                 writeFailureNotified.remove(request.local.id)
                 pendingWrites.remove(request.local.id, request)
-                val updated = if (request.manual) LocalMediaStore.find(outcome.song.id)?.copy(
-                    sizeBytes = outcome.song.sizeBytes, modifiedAt = outcome.song.modifiedAt,
-                ) ?: outcome.song else outcome.song
-                publishUpdatedLocal(updated)
-                if (request.resolved) markInfoFilled(outcome.song.id)
+                LocalMediaStore.updateMetadata(request.local,
+                    outcome.song.copy(infoFilled = request.resolved || outcome.song.infoFilled))
                 if (request.manual) {
                     clearManualWriteIdIfIdle(request.local.id)
                     PlaybackController.postMessage(context, "《${request.local.title}》歌词已写入本地文件")
@@ -307,65 +303,48 @@ object LocalTagFiller {
         }
     }
 
+    private fun canFill(id: String): Boolean = MeloraSettings.localAutoFillInfo.value &&
+        !hasManualWrite(id) && id !in authorizationDeclined
+
+    private fun shouldDeferWrite(request: PendingTagWrite): Boolean {
+        val queued = pendingWrites[request.local.id]
+        return isCurrentLocal(request.local) || shouldDeferTagWriteForQueuedManual(
+            request.manual, queued?.manual == true, queued === request,
+        ) || hasOtherAuthorization(request.local.id, request) || (!request.manual && !canFill(request.local.id))
+    }
+
     private suspend fun writeTagsNow(
         context: Context,
         request: PendingTagWrite,
         allowAuthorization: Boolean = true,
-    ): TagWriteOutcome {
-        if (isCurrentLocal(request.local)) return TagWriteOutcome.Deferred
-        val queuedManual = pendingWrites[request.local.id]?.takeIf { it.manual }
-        if (shouldDeferTagWriteForQueuedManual(
-                requestIsManual = request.manual,
-                queuedIsManual = queuedManual?.manual == true,
-                sameRequest = queuedManual === request,
-            ) || hasOtherAuthorization(request.local.id, request) ||
-            (!request.manual && (!MeloraSettings.localAutoFillInfo.value || hasManualWrite(request.local.id)))
-        ) return TagWriteOutcome.Deferred
-        val extension = request.extension
-            ?: return TagWriteOutcome.Failed(IllegalArgumentException("不支持的音频容器"))
-        val local = LocalMediaStore.find(request.local.id) ?: request.local
-        val uri = local.uri.toUri()
-        // file 分支在写租约前读取；content 分支必须等恢复后从独立原件读取，不能嵌套获取目标读锁。
-        val prepared = if (uri.scheme == "file") request.preservingContent(context, local, local.uri) else request
-        return LocalMediaIoCoordinator.withExclusive(context, uri) {
-            // 写租约本身保证起播不能与物理写入交错；此检查只用于减少无意义写入。
-            val queuedManual = pendingWrites[local.id]?.takeIf { it.manual }
-            if (isCurrentLocal(local) ||
-                shouldDeferTagWriteForQueuedManual(
-                    requestIsManual = request.manual,
-                    queuedIsManual = queuedManual?.manual == true,
-                    sameRequest = queuedManual === request,
-                ) || hasOtherAuthorization(local.id, request) ||
-                (!request.manual && (!MeloraSettings.localAutoFillInfo.value || hasManualWrite(local.id)))
-            ) {
-                return@withExclusive TagWriteOutcome.Deferred
-            }
-            when (uri.scheme) {
-                "file" -> writeFileTags(context, local, uri, extension, prepared)
-                "content" -> writeContentTags(
-                    context,
-                    local,
-                    uri,
-                    extension,
-                    request,
-                    allowAuthorization,
-                )
-                else -> TagWriteOutcome.Failed(IllegalArgumentException("不支持的媒体 URI: ${uri.scheme}"))
+    ): TagWriteOutcome = try {
+        if (shouldDeferWrite(request)) TagWriteOutcome.Deferred else {
+            val local = LocalMediaStore.find(request.local.id)
+            check(request.local.sameFileVersion(local)) { "本地文件已删除或发生变化，请重新读取后再写入" }
+            requireNotNull(local)
+            val extension = requireNotNull(request.extension) { "不支持的音频容器" }
+            val uri = local.uri.toUri()
+            // file读取仍在写租约前进行，避免嵌套读锁；拿到写租约后重新核对真实文件版本。
+            val prepared = if (uri.scheme == "file") request.preservingContent(context, local, local.uri) else request
+            LocalMediaIoCoordinator.withExclusive(context, uri) {
+                if (shouldDeferWrite(request)) TagWriteOutcome.Deferred else {
+                    check(request.local.sameFileVersion(LocalMediaStore.find(local.id))) {
+                        "本地文件已删除或发生变化，请重新读取后再写入"
+                    }
+                    when (uri.scheme) {
+                        "file" -> {
+                            checkStorageState(context, local)
+                            val file = uri.path?.let(::File)?.takeIf { it.isFile && it.canWrite() }
+                                ?: error("文件不存在或不可写")
+                            writeMetadata(file, extension, local, prepared)
+                            TagWriteOutcome.Written(refreshStorageState(context, local))
+                        }
+                        "content" -> writeContentTags(context, local, uri, extension, request, allowAuthorization)
+                        else -> TagWriteOutcome.Failed(IllegalArgumentException("不支持的媒体 URI: ${uri.scheme}"))
+                    }
+                }
             }
         }
-    }
-
-    private fun writeFileTags(
-        context: Context,
-        local: LocalSong,
-        uri: Uri,
-        extension: String,
-        request: PendingTagWrite,
-    ): TagWriteOutcome = try {
-        val file = uri.path?.let(::File)?.takeIf { it.isFile && it.canWrite() }
-            ?: error("文件不存在或不可写")
-        writeMetadata(file, extension, local, request)
-        TagWriteOutcome.Written(refreshStorageState(context, local))
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (error: Throwable) {
@@ -386,6 +365,7 @@ object LocalTagFiller {
             ContentTagWrite.recover(root, uri.toString()) { target ->
                 context.contentResolver.openOutputStream(target.toUri(), "rwt") ?: error("无法恢复媒体文件")
             }
+            checkStorageState(context, local)
             root.mkdirs()
             ContentTagWrite(Files.createTempDirectory(root.toPath(), "write-").toFile())
         } catch (error: Exception) {
@@ -566,30 +546,36 @@ object LocalTagFiller {
         ?.let(LocalMediaStore::matchTrack)
         ?.id
 
+    private fun checkStorageState(context: Context, song: LocalSong) {
+        val actual = refreshStorageState(context, song)
+        // 旧索引的0表示未知；Provider恢复相同原件也会改变mtime，不能将其当作媒体版本号。
+        val sizeChanged = song.sizeBytes > 0L && song.sizeBytes != actual.sizeBytes
+        val timeChanged = song.uri.toUri().scheme == "file" && song.modifiedAt > 0L && song.modifiedAt != actual.modifiedAt
+        check(!sizeChanged && !timeChanged) { "本地文件已变化，请重新读取后再写入" }
+    }
+
     private fun refreshStorageState(context: Context, song: LocalSong): LocalSong {
         val uri = song.uri.toUri()
         val file = writableFile(song.uri)
         if (file != null) {
             return song.copy(
-                sizeBytes = file.length().takeIf { it > 0L } ?: song.sizeBytes,
+                sizeBytes = file.length(),
                 modifiedAt = file.lastModified().takeIf { it > 0L } ?: song.modifiedAt,
             )
+        }
+        if (uri.authority == MediaStore.AUTHORITY) {
+            val columns = arrayOf(MediaStore.MediaColumns.SIZE, MediaStore.MediaColumns.DATE_MODIFIED)
+            return context.contentResolver.query(uri, columns, null, null, null)?.use { cursor ->
+                if (!cursor.moveToFirst()) return@use song
+                song.copy(sizeBytes = cursor.getLong(0).takeIf { it > 0L } ?: song.sizeBytes,
+                    modifiedAt = (cursor.getLong(1) * 1000L).takeIf { it > 0L } ?: song.modifiedAt)
+            } ?: song
         }
         val document = runCatching { DocumentFile.fromSingleUri(context, uri) }.getOrNull()
         return song.copy(
             sizeBytes = document?.length()?.takeIf { it > 0L } ?: song.sizeBytes,
             modifiedAt = document?.lastModified()?.takeIf { it > 0L } ?: song.modifiedAt,
         )
-    }
-
-    private fun publishUpdatedLocal(song: LocalSong) {
-        LocalMediaStore.updateMetadata(song)
-    }
-
-    private fun markInfoFilled(id: String) {
-        val latest = LocalMediaStore.find(id) ?: return
-        if (latest.infoFilled) return
-        publishUpdatedLocal(latest.copy(infoFilled = true))
     }
 
     private suspend fun fetchCover(context: Context, song: OnlineSong): ByteArray? {
@@ -640,7 +626,7 @@ object LocalTagFiller {
 
     private fun enqueuePendingWrite(request: PendingTagWrite) {
         val id = request.local.id
-        if (!request.manual && (!MeloraSettings.localAutoFillInfo.value || hasManualWrite(id))) return
+        if (!request.manual && !canFill(id)) return
         pendingWrites.compute(id) { _, current ->
             when {
                 request.manual && current?.manual == true && current !== request -> current

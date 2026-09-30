@@ -36,7 +36,7 @@ class FavoriteArtistsTest {
             UserLibrary.toggleFavorite(local.toOnlineSong())
 
             val enriched = local.copy(artist = "新歌手", album = "新专辑")
-            LocalMediaStore.updateMetadata(enriched)
+            LocalMediaStore.updateMetadata(local, enriched)
             assertEquals("新歌手", UserLibrary.favorites.value.single().singer)
             assertEquals("新专辑", UserLibrary.favorites.value.single().albumName)
 

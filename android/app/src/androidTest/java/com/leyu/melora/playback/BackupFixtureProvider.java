@@ -3,6 +3,8 @@ package com.leyu.melora.playback;
 import android.content.ContentProvider;
 import android.content.ContentValues;
 import android.database.Cursor;
+import android.database.MatrixCursor;
+import android.provider.DocumentsContract;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.ParcelFileDescriptor;
@@ -37,11 +39,25 @@ public final class BackupFixtureProvider extends ContentProvider {
             } catch (IOException error) { throw new IllegalStateException(error); }
         } else if (method.equals("failNextWrite")) writesToFail = 1;
         else if (method.equals("failBothWrites")) writesToFail = 2;
+        else if (method.equals("setModified")) {
+            if (!file().setLastModified(Long.parseLong(arg))) throw new IllegalStateException("Cannot set fixture timestamp");
+        }
         else throw new IllegalArgumentException("Unknown fixture operation");
         return Bundle.EMPTY;
     }
     @Override public String getType(Uri uri) { return "application/json"; }
-    @Override public Cursor query(Uri uri, String[] projection, String selection, String[] args, String order) { return null; }
+    @Override public synchronized Cursor query(Uri uri, String[] projection, String selection, String[] args, String order) {
+        String[] columns = projection == null ? new String[] { DocumentsContract.Document.COLUMN_SIZE,
+            DocumentsContract.Document.COLUMN_LAST_MODIFIED } : projection;
+        MatrixCursor cursor = new MatrixCursor(columns);
+        MatrixCursor.RowBuilder row = cursor.newRow();
+        for (String column : columns) {
+            if (column.equals(DocumentsContract.Document.COLUMN_SIZE)) row.add(file().length());
+            else if (column.equals(DocumentsContract.Document.COLUMN_LAST_MODIFIED)) row.add(file().lastModified());
+            else row.add(null);
+        }
+        return cursor;
+    }
     @Override public Uri insert(Uri uri, ContentValues values) { return null; }
     @Override public int delete(Uri uri, String selection, String[] args) { return file().delete() ? 1 : 0; }
     @Override public int update(Uri uri, ContentValues values, String selection, String[] args) { return 0; }

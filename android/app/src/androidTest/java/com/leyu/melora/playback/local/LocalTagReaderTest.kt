@@ -1,5 +1,16 @@
 package com.leyu.melora.playback.local
 
+import com.leyu.melora.playback.MeloraSettings
+import com.leyu.melora.playback.PlaybackController
+import com.leyu.melora.playback.PlayerUiState
+import com.leyu.melora.playback.PlayerLyric
+import com.leyu.melora.playback.LyricLine
+import com.leyu.melora.playback.UiTrack
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import android.content.Context
 import android.content.ContextWrapper
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -47,6 +58,140 @@ class LocalTagReaderTest {
         resetIndex()
         cacheRoot.deleteRecursively()
         filesRoot.deleteRecursively()
+    }
+
+    @Test fun queuedLyricWriteRejectsReplacedFileWithOrWithoutRescan() = runBlocking {
+        for (rescan in listOf(false, true)) for (empty in listOf(false, true)) withTagWriteFixture { file, song, player ->
+            val track = requireNotNull(player.value.current)
+            LocalTagFiller.requestLyricWrite(context, track, PlayerLyric(track.uid, song.title, song.artist,
+                listOf(LyricLine(0, "旧曲歌词")), "local"))
+            val replacement = if (empty) byteArrayOf() else InstrumentationRegistry.getInstrumentation().context.assets
+                .open("audio/fixture-320.mp3").use { it.readBytes() }
+            file.writeBytes(replacement)
+            assertTrue(file.setLastModified(song.modifiedAt)) // 同mtime下仍须检测变长或被截断的文件。
+            if (rescan) LocalMediaStore.replaceAll(listOf(song.copy(title = "新文件",
+                sizeBytes = file.length(), modifiedAt = file.lastModified())))
+            val latest = LocalMediaStore.find(song.id)
+            player.value = PlayerUiState()
+            LocalTagFiller.consider(context, null)
+            awaitTagJobs()
+            org.junit.Assert.assertArrayEquals(replacement, file.readBytes())
+            assertEquals(latest, LocalMediaStore.find(song.id))
+        }
+    }
+
+    @Test fun legacyUnknownFileVersionCanStillWriteAndAcquireRealMetadata() = runBlocking {
+        withTagWriteFixture { file, song, player ->
+            LocalMediaStore.replaceAll(listOf(song.copy(sizeBytes = 0L, modifiedAt = 0L)))
+            val track = requireNotNull(player.value.current)
+            LocalTagFiller.requestLyricWrite(context, track, PlayerLyric(track.uid, song.title, song.artist,
+                listOf(LyricLine(0, "旧索引仍可写入")), "local"))
+            player.value = PlayerUiState()
+            LocalTagFiller.consider(context, null)
+            awaitTagJobs()
+            assertTrue(requireNotNull(LocalTagReader.embeddedLyrics(context, song.uri, song.mimeType)).plain.contains("旧索引仍可写入"))
+            assertEquals(file.length(), LocalMediaStore.find(song.id)?.sizeBytes)
+            assertEquals(file.lastModified(), LocalMediaStore.find(song.id)?.modifiedAt)
+        }
+    }
+
+    @Test fun restoredProviderTimestampDoesNotBlockANewLyricWrite() = runBlocking {
+        withTagWriteFixture { file, song, player ->
+            val uri = android.net.Uri.parse("content://${InstrumentationRegistry.getInstrumentation().context.packageName}.backup-fixture/document")
+            val resolver = context.contentResolver
+            resolver.call(uri, "reset", null, null)
+            try {
+                val original = file.readBytes()
+                requireNotNull(resolver.openOutputStream(uri, "rwt")).use { it.write(original) }
+                val previousTime = 1_600_000_000_000L
+                resolver.call(uri, "setModified", previousTime.toString(), null)
+                val local = song.copy(uri = uri.toString(), sizeBytes = original.size.toLong(), modifiedAt = previousTime)
+                LocalMediaStore.replaceAll(listOf(local))
+                player.value = PlayerUiState(current = UiTrack.fromOnline(local.toOnlineSong()))
+                val root = File(filesRoot, "local-tag-writes/restore-retry").apply { mkdirs() }
+                ContentTagWrite(root).use { transaction ->
+                    transaction.original.writeBytes(original)
+                    transaction.rewritten.writeText("interrupted replacement")
+                    resolver.call(uri, "failNextWrite", null, null)
+                    org.junit.Assert.assertThrows(java.io.FileNotFoundException::class.java) {
+                        transaction.overwrite(uri.toString()) { requireNotNull(resolver.openOutputStream(uri, "rwt")) }
+                    }
+                }
+                LocalTagFiller.recoverInterruptedWrites(context)
+                assertFalse(root.exists())
+                val document = androidx.documentfile.provider.DocumentFile.fromSingleUri(context, uri)!!
+                assertTrue(document.lastModified() != previousTime)
+                assertEquals(local.sizeBytes, document.length())
+                val track = requireNotNull(player.value.current)
+                LocalTagFiller.requestLyricWrite(context, track, PlayerLyric(track.uid, song.title, song.artist,
+                    listOf(LyricLine(0, "恢复后仍可写入")), "local"))
+                player.value = PlayerUiState()
+                LocalTagFiller.consider(context, null)
+                awaitTagJobs()
+                val written = requireNotNull(resolver.openInputStream(uri)).use { it.readBytes() }
+                assertTrue(requireNotNull(LocalTagReader.embeddedLyricsFromBytes(written, "audio/mpeg")).plain.contains("恢复后仍可写入"))
+            } finally { resolver.call(uri, "reset", null, null) }
+        }
+    }
+
+    @Test fun declinedAutomaticWriteDoesNotRestartButManualRetryStillWrites() = runBlocking {
+        withTagWriteFixture { file, song, player ->
+            @Suppress("UNCHECKED_CAST")
+            val declined = LocalTagFiller.javaClass.getDeclaredField("authorizationDeclined")
+                .apply { isAccessible = true }.get(LocalTagFiller) as MutableSet<String>
+            @Suppress("UNCHECKED_CAST")
+            val inFlight = LocalTagFiller.javaClass.getDeclaredField("inFlight")
+                .apply { isAccessible = true }.get(LocalTagFiller) as Set<String>
+            MeloraSettings.localAutoFillInfo.value = true
+            declined += song.id
+            try {
+                LocalMediaIoCoordinator.withExclusive(context, android.net.Uri.fromFile(file)) {
+                    LocalTagFiller.consider(context, requireNotNull(player.value.current))
+                    assertFalse("已拒绝授权的自动请求不能再次进入标签读取/网络匹配", song.id in inFlight)
+                }
+                val track = requireNotNull(player.value.current)
+                LocalTagFiller.requestLyricWrite(context, track, PlayerLyric(track.uid, song.title, song.artist,
+                    listOf(LyricLine(0, "明确手动重试")), "local"))
+                assertFalse(song.id in declined)
+                player.value = PlayerUiState()
+                LocalTagFiller.consider(context, null)
+                awaitTagJobs()
+                assertTrue(requireNotNull(LocalTagReader.embeddedLyrics(context, song.uri, song.mimeType))
+                    .plain.contains("明确手动重试"))
+                assertEquals(file.length(), LocalMediaStore.find(song.id)?.sizeBytes)
+            } finally { declined.remove(song.id) }
+        }
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private suspend fun withTagWriteFixture(block: suspend (File, LocalSong, MutableStateFlow<PlayerUiState>) -> Unit) {
+        val player = PlaybackController.javaClass.getDeclaredField("_state").apply { isAccessible = true }
+            .get(PlaybackController) as MutableStateFlow<PlayerUiState>
+        val before = player.value
+        val auto = MeloraSettings.localAutoFillInfo.value
+        val file = File(filesRoot, "tag-boundary.mp3")
+        InstrumentationRegistry.getInstrumentation().context.assets.open("audio/fixture-128.mp3")
+            .use { input -> file.outputStream().use(input::copyTo) }
+        val song = testSong("boundary").copy(uri = file.toURI().toString(), sizeBytes = file.length(),
+            modifiedAt = file.lastModified(), folder = file.parent.orEmpty())
+        LocalMediaStore.replaceAll(listOf(song))
+        MeloraSettings.localAutoFillInfo.value = false
+        player.value = PlayerUiState(current = UiTrack.fromOnline(song.toOnlineSong()))
+        try { block(file, song, player) } finally {
+            MeloraSettings.localAutoFillInfo.value = false
+            val jobs = tagScope().coroutineContext[Job]!!.children.toList()
+            jobs.forEach { it.cancel() }
+            withTimeout(5_000) { jobs.forEach { it.join() } }
+            player.value = before
+            MeloraSettings.localAutoFillInfo.value = auto
+        }
+    }
+
+    private fun tagScope() = LocalTagFiller.javaClass.getDeclaredField("scope").apply { isAccessible = true }
+        .get(LocalTagFiller) as CoroutineScope
+
+    private suspend fun awaitTagJobs() {
+        withTimeout(5_000) { tagScope().coroutineContext[Job]!!.children.toList().forEach { it.join() } }
     }
 
     @Test

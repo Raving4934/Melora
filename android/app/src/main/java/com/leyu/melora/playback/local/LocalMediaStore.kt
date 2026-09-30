@@ -113,16 +113,14 @@ object LocalMediaStore {
         registered
     }
 
-    /** 标签补全只更新描述/文件时间戳，不覆盖播放期间已确认的物理音频规格。 */
-    fun updateMetadata(song: LocalSong) {
-        mutate { current ->
-            val index = current.indexOfFirst { it.id == song.id }
-            if (index < 0 || current[index].uri != song.uri) return@mutate current
-            val latest = current[index]
-            val updated = song.copy(mimeType = latest.mimeType, sampleRate = latest.sampleRate,
-                bitrate = latest.bitrate, bitDepth = latest.bitDepth)
-            if (latest == updated) current else current.toMutableList().also { it[index] = updated }
-        }
+    /** 按读取快照提交标签结果，保留同一文件后来测得的音频规格；失效结果不写盘、不发布。 */
+    fun updateMetadata(expected: LocalSong, song: LocalSong): LocalSong? = synchronized(lock) {
+        val latest = byId[expected.id]?.takeIf { expected.sameFileVersion(it) } ?: return@synchronized null
+        require(song.id == expected.id && song.uri == expected.uri)
+        val updated = song.copy(mimeType = latest.mimeType, sampleRate = latest.sampleRate,
+            bitrate = latest.bitrate, bitDepth = latest.bitDepth)
+        if (updated != latest) commitLocked(_songs.value.map { if (it.id == expected.id) updated else it }, pruneMissing = false)
+        updated
     }
 
     /**
@@ -133,19 +131,13 @@ object LocalMediaStore {
      */
     fun recordAudioSpecification(observed: LocalSong, spec: AudioSpecification): Job {
         val observedId = observed.id
-        val observedUri = observed.uri
-        val observedModifiedAt = observed.modifiedAt
-        val observedSizeBytes = observed.sizeBytes
         return audioSpecificationScope.launch {
             mutate { current ->
                 val index = current.indexOfFirst { it.id == observedId }
                 if (index < 0) return@mutate current
                 val currentSong = current[index]
                 // 只允许把这次播放识别到的规格写回同一个文件；删除/替换后的条目不接受旧播放结果。
-                if (currentSong.uri != observedUri ||
-                    currentSong.modifiedAt != observedModifiedAt ||
-                    currentSong.sizeBytes != observedSizeBytes
-                ) return@mutate current
+                if (!observed.sameFileVersion(currentSong)) return@mutate current
 
                 val measuredMime = spec.mimeType?.trim()?.takeIf { it.isNotEmpty() }
                 val updated = currentSong.copy(

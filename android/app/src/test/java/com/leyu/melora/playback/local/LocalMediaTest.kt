@@ -102,9 +102,24 @@ class LocalMediaTest {
     fun updateReplacesOneSongAndRebuildsMatchKey() {
         LocalMediaStore.replaceAll(listOf(localSong(id = "ms_1", title = "夜曲", artist = "")))
         assertNull(LocalMediaStore.match("夜曲", "周杰伦"))
-        LocalMediaStore.updateMetadata(localSong(id = "ms_1", title = "夜曲", artist = "周杰伦"))
+        LocalMediaStore.updateMetadata(requireNotNull(LocalMediaStore.find("ms_1")), localSong(id = "ms_1", title = "夜曲", artist = "周杰伦"))
         assertNotNull(LocalMediaStore.match("夜曲", "周杰伦"))
         assertEquals("周杰伦", LocalMediaStore.find("ms_1")?.artist)
+    }
+
+    @Test
+    fun staleMetadataCannotOverwriteAReplacementAtTheSameUri() {
+        val observed = localSong(id = "same-uri", title = "原曲", modifiedAt = 10, sizeBytes = 100)
+        for (replacement in listOf(
+            observed.copy(title = "替换后", modifiedAt = 11),
+            observed.copy(title = "替换后", sizeBytes = 101),
+        )) {
+            LocalMediaStore.replaceAll(listOf(replacement))
+            val snapshot = LocalMediaStore.songs.value
+            LocalMediaStore.updateMetadata(observed, observed.copy(artist = "迟到匹配", infoFilled = true))
+            org.junit.Assert.assertSame(snapshot, LocalMediaStore.songs.value)
+            assertEquals(replacement, LocalMediaStore.find(observed.id))
+        }
     }
 
     @Test
@@ -134,7 +149,7 @@ class LocalMediaTest {
         LocalMediaStore.replaceAll(listOf(song))
         val snapshot = LocalMediaStore.songs.value
         LocalMediaStore.replaceAll(listOf(song.copy()))
-        LocalMediaStore.updateMetadata(song.copy())
+        LocalMediaStore.updateMetadata(song, song.copy())
         org.junit.Assert.assertSame(snapshot, LocalMediaStore.songs.value)
     }
 
@@ -514,7 +529,7 @@ class LocalMediaTest {
         assertEquals(enriched.artist, updated.artist)
         assertEquals(24, updated.bitDepth)
         // 较早启动的联网补全晚到，也不能把实测位深/采样率覆盖回旧快照。
-        LocalMediaStore.updateMetadata(observed.copy(coverUri = "file:///late.jpg", modifiedAt = observed.modifiedAt + 100))
+        LocalMediaStore.updateMetadata(observed, observed.copy(coverUri = "file:///late.jpg", modifiedAt = observed.modifiedAt + 100))
         assertEquals(24, LocalMediaStore.find(observed.id)?.bitDepth)
         assertEquals(48000, LocalMediaStore.find(observed.id)?.sampleRate)
         assertEquals("file:///late.jpg", LocalMediaStore.find(observed.id)?.coverUri)

@@ -26,6 +26,10 @@ data class LocalSong(
     /** MediaMetadataRetriever/Media3 未识别时为 -1；旧索引读取同样默认为未知。 */
     val bitDepth: Int = -1,
 ) {
+    /** 异步结果只属于读取时的那一版文件；描述信息和播放测得规格不参与版本判断。 */
+    internal fun sameFileVersion(other: LocalSong?): Boolean = other != null &&
+        id == other.id && uri == other.uri && modifiedAt == other.modifiedAt && sizeBytes == other.sizeBytes
+
     /** 本地索引与播放页共用同一实际音频规格映射。 */
     val audioSpecification: AudioSpecification
         get() = AudioSpecification.fromLocal(mimeType, uri, sampleRate, bitrate, bitDepth)
