@@ -107,7 +107,7 @@ class PlaybackQueueAppendInstrumentedTest {
         }
     }
 
-    @Test fun clearQueueRemovesSavedQueueAndAppendCannotResurrectIt() = withPlayer(listen = true) { player, _ ->
+    @Test fun clearQueueRemovesSavedQueueAndCannotRestoreItBeforeNextAppend() = withPlayer(listen = true) { player, controller ->
         main {
             PlaybackController.addToQueue(testContext, listOf(track("c")))
             assertTrue(prefs.contains("queue"))
@@ -116,44 +116,175 @@ class PlaybackQueueAppendInstrumentedTest {
             assertTrue(PlaybackController.state.value.queue.isEmpty())
             assertFalse(prefs.contains("queue"))
         }
-        await { player.mediaItemCount == 0 }
+        await { player.mediaItemCount == 0 && controller.mediaItemCount == 0 }
+        restoreQueue(controller, autoPlay = false)
+        await { controller.mediaItemCount == 0 }
+        assertFalse("显式清空后，冷恢复不得复活旧队列", prefs.contains("queue"))
         main { PlaybackController.addToQueue(testContext, listOf(track("new"))) }
         await { player.mediaItemCount == 1 }
         main { assertEquals(listOf("new"), uids(player)) }
     }
 
-    @Test fun serviceExitClearsSavedQueueEvenWithoutConnectedUi() = withPlayer { player, _ ->
-        main {
-            PlaybackController.addToQueue(testContext, listOf(track("c")))
-            assertNotNull(PlaybackController.state.value.current)
-            field("controller").set(PlaybackController, null)
-            // 通知栏使用服务端Player，不能依赖界面控制器仍然连接。
-            PlaybackController.stop(player)
-            assertEquals(0, player.mediaItemCount)
-            assertFalse(prefs.contains("queue"))
-            assertNull(PlaybackController.state.value.current)
-            assertTrue(PlaybackController.state.value.queue.isEmpty())
-            assertFalse(PlaybackController.state.value.playing)
+    @Test fun serviceExitPersistsQueueIndexAndPositionWithoutUiControllerAndIsIdempotent() =
+        withPlayer(listen = true) { player, controller ->
+            main { PlaybackController.addToQueue(testContext, listOf(track("c"))) }
+            await { player.mediaItemCount == 3 }
+            main { PlaybackController.jumpTo(1) }
+            await { player.currentMediaItemIndex == 1 && player.playbackState == Player.STATE_READY }
+            main {
+                controller.pause()
+                controller.seekTo(23_000L)
+            }
+            await { !player.playWhenReady && player.currentPosition in 22_800L..23_200L }
+            val beforeExitPosition = main { player.currentPosition }
+
+            main {
+                // 通知退出必须以服务端 Player 为来源；模拟 UI controller 已先断开的竞态。
+                field("controller").set(PlaybackController, null)
+                field("controllerFuture").set(PlaybackController, Futures.immediateFuture(controller))
+                PlaybackController.exitPlayback(player)
+                assertNull(field("controller").get(PlaybackController))
+                assertNull(field("controllerFuture").get(PlaybackController))
+                assertNull(PlaybackController.state.value.current)
+                assertFalse(PlaybackController.state.value.playing)
+            }
+            await { !controller.isConnected }
+            val saved = JSONArray(prefs.getString("queue", "[]"))
+            assertEquals(listOf("a", "b", "c"), (0 until saved.length()).map { saved.getJSONObject(it).getString("uid") })
+            assertEquals(1, prefs.getInt("index", -1))
+            assertTrue("退出前=$beforeExitPosition，持久化=${prefs.getLong("positionMs", -1L)}",
+                kotlin.math.abs(prefs.getLong("positionMs", -1L) - beforeExitPosition) <= 1_000L)
+            main {
+                assertEquals(3, player.mediaItemCount)
+                assertFalse(player.playWhenReady)
+            }
+
+            // 已解绑后的重复退出无 Player，必须幂等且不能把已保存断点覆盖为 0。
+            val savedPosition = prefs.getLong("positionMs", -1L)
+            main { PlaybackController.exitPlayback() }
+            assertEquals(saved.toString(), JSONArray(prefs.getString("queue", "[]")).toString())
+            assertEquals(1, prefs.getInt("index", -1))
+            assertEquals(savedPosition, prefs.getLong("positionMs", -1L))
+        }
+
+    @Test fun serviceExitSnapshotRestoresForNextControllerConnection() =
+        withPlayer(listen = true) { player, controller ->
+            main { PlaybackController.addToQueue(testContext, listOf(track("c"))) }
+            await { player.mediaItemCount == 3 }
+            main { PlaybackController.jumpTo(1) }
+            await { player.currentMediaItemIndex == 1 && player.playbackState == Player.STATE_READY }
+            main {
+                controller.pause()
+                controller.seekTo(31_000L)
+            }
+            await { !player.playWhenReady && player.currentPosition in 30_800L..31_200L }
+            val beforeExitPosition = main { player.currentPosition }
+            main {
+                field("controllerFuture").set(PlaybackController, Futures.immediateFuture(controller))
+                PlaybackController.exitPlayback(player)
+            }
+            await { !controller.isConnected }
+            assertTrue(kotlin.math.abs(prefs.getLong("positionMs", -1L) - beforeExitPosition) <= 1_000L)
+
+            // 冷重建一个新的本地 MediaSession/Controller；只恢复队列快照，不触发网络解析。
+            withFreshController { _, restored ->
+                restoreQueue(restored, autoPlay = false)
+                await { restored.mediaItemCount == 3 && restored.currentMediaItemIndex == 1 }
+                main {
+                    assertEquals(listOf("a", "b", "c"), uids(restored))
+                    assertEquals("b", restored.currentMediaItem?.mediaId)
+                    assertTrue(kotlin.math.abs(restored.currentPosition - beforeExitPosition) <= 1_000L)
+                    assertFalse(restored.playWhenReady)
+                    assertEquals(Player.STATE_IDLE, restored.playbackState)
+                }
+            }
+        }
+
+    @Test fun restoreQueueRestoresPausedShortMusicSnapshotAtNonFirstIndex() = withPlayer(empty = true) { _, controller ->
+        val audio = silentWav()
+        val previousRememberProgress = main {
+            MeloraSettings.rememberProgress.value.also { MeloraSettings.rememberProgress.value = true }
+        }
+        try {
+            // 60秒本地静音音频低于逐曲长音乐阈值；此处只验证队列快照当前位置。
+            val tracks = listOf(track("short-first"), fileTrack(audio, "short-selected"))
+            writeQueueSnapshot(tracks, index = 1, positionMs = 17_000L)
+            restoreQueue(controller, autoPlay = false)
+            await { controller.mediaItemCount == 2 && controller.currentMediaItemIndex == 1 }
+            main {
+                assertEquals("短歌队列快照", tracks[1].uid, controller.currentMediaItem?.mediaId)
+                assertTrue("应恢复队列当前位置=${controller.currentPosition}",
+                    kotlin.math.abs(controller.currentPosition - 17_000L) <= 1_000L)
+                assertFalse(controller.playWhenReady)
+                assertEquals(Player.STATE_IDLE, controller.playbackState)
+            }
+        } finally {
+            main { MeloraSettings.rememberProgress.value = previousRememberProgress }
+            audio.delete()
         }
     }
 
-    @Test fun serviceExitDoesNotRestoreOldTracksOnNextQueueUse() = withPlayer(listen = true) { player, controller ->
-        main { PlaybackController.addToQueue(testContext, listOf(track("c"))) }
-        // 先让已保存队列真正到达服务端，再模拟通知栏退出命令。
-        await { player.mediaItemCount == 3 }
-        main {
-            PlaybackController.stop(player)
-            assertFalse(prefs.contains("queue"))
+    @Test fun restoreQueueAutoPlayTruePreparesSavedLocalTrack() = withPlayer(empty = true) { player, controller ->
+        val audio = silentWav()
+        val previousRememberProgress = main {
+            MeloraSettings.rememberProgress.value.also { MeloraSettings.rememberProgress.value = true }
         }
-        await { controller.mediaItemCount == 0 }
-        instrumentation.waitForIdleSync()
-        main {
-            assertFalse(prefs.contains("queue"))
-            assertNull(PlaybackController.state.value.current)
-            PlaybackController.addToQueue(testContext, listOf(track("new")))
+        try {
+            val selected = fileTrack(audio, "autoplay-selected")
+            writeQueueSnapshot(listOf(track("autoplay-first"), selected), index = 1, positionMs = 4_000L)
+            restoreQueue(controller, autoPlay = true)
+            await { player.currentMediaItem?.mediaId == selected.uid && player.playbackState == Player.STATE_READY && player.isPlaying }
+            main {
+                assertEquals(1, player.currentMediaItemIndex)
+                assertTrue(player.playWhenReady)
+                assertTrue("autoPlay=true must prepare the saved position", player.currentPosition >= 3_500L)
+            }
+        } finally {
+            main {
+                player.pause()
+                MeloraSettings.rememberProgress.value = previousRememberProgress
+            }
+            audio.delete()
         }
-        await { player.mediaItemCount == 1 }
-        main { assertEquals(listOf("new"), uids(player)) }
+    }
+
+    @Test fun restoreQueueLegacySnapshotWithoutPositionUsesDefaultStart() = withPlayer(empty = true) { _, controller ->
+        val previousRememberProgress = main {
+            MeloraSettings.rememberProgress.value.also { MeloraSettings.rememberProgress.value = true }
+        }
+        try {
+            writeQueueSnapshot(listOf(track("legacy-first"), track("legacy-selected")), index = 1, positionMs = null)
+            restoreQueue(controller, autoPlay = false)
+            await { controller.mediaItemCount == 2 && controller.currentMediaItemIndex == 1 }
+            main {
+                assertEquals("legacy-selected", controller.currentMediaItem?.mediaId)
+                assertEquals(0L, controller.currentPosition)
+                assertFalse(controller.playWhenReady)
+                assertEquals(Player.STATE_IDLE, controller.playbackState)
+            }
+        } finally {
+            main { MeloraSettings.rememberProgress.value = previousRememberProgress }
+        }
+    }
+
+    @Test fun restoreQueueIgnoresSavedPositionWhenRememberProgressIsDisabled() = withPlayer(empty = true) { _, controller ->
+        val previousRememberProgress = main {
+            MeloraSettings.rememberProgress.value.also { MeloraSettings.rememberProgress.value = false }
+        }
+        try {
+            writeQueueSnapshot(listOf(track("disabled-first"), track("disabled-selected")), index = 1, positionMs = 26_000L)
+            restoreQueue(controller, autoPlay = false)
+            await { controller.mediaItemCount == 2 && controller.currentMediaItemIndex == 1 }
+            main {
+                assertEquals("disabled-selected", controller.currentMediaItem?.mediaId)
+                assertEquals("记忆关闭时队列索引仍恢复", 1, controller.currentMediaItemIndex)
+                assertEquals("记忆关闭时不能恢复保存的位置", 0L, controller.currentPosition)
+                assertFalse(controller.playWhenReady)
+                assertEquals(Player.STATE_IDLE, controller.playbackState)
+            }
+        } finally {
+            main { MeloraSettings.rememberProgress.value = previousRememberProgress }
+        }
     }
 
     @Test fun externalTimelineClearIsPersistedAfterCallbacksSettle() = withPlayer(listen = true) { player, controller ->
@@ -417,6 +548,63 @@ class PlaybackQueueAppendInstrumentedTest {
         }
     }
 
+    private fun restoreQueue(controller: MediaController, autoPlay: Boolean) {
+        main {
+            PlaybackController.javaClass
+                .getDeclaredMethod("restoreQueue", MediaController::class.java, Boolean::class.javaPrimitiveType!!)
+                .apply { isAccessible = true }
+                .invoke(PlaybackController, controller, autoPlay)
+        }
+    }
+
+    private fun writeQueueSnapshot(tracks: List<UiTrack>, index: Int, positionMs: Long?) {
+        val queue = JSONArray().apply {
+            tracks.forEach { track ->
+                put(JSONObject()
+                    .put("uid", track.uid)
+                    .put("title", track.title)
+                    .put("artist", track.artist)
+                    .put("album", track.album)
+                    .put("source", track.source)
+                    .apply {
+                        track.artwork?.let { put("artwork", it) }
+                        track.raw?.let { put("raw", it) }
+                    })
+            }
+        }
+        prefs.edit()
+            .putString("queue", queue.toString())
+            .putInt("index", index)
+            .apply {
+                if (positionMs == null) remove("positionMs") else putLong("positionMs", positionMs)
+            }
+            .commit()
+    }
+
+    private fun fileTrack(file: File, title: String): UiTrack = UiTrack(
+        uid = Uri.fromFile(file).toString(),
+        title = title,
+        artist = "测试歌手",
+        album = "测试专辑",
+    )
+
+    private fun withFreshController(test: (ExoPlayer, MediaController) -> Unit) {
+        val player = main { ExoPlayer.Builder(context).build().apply { volume = 0f } }
+        val session = main { MediaSession.Builder(context, player).setId("queue-restore-${System.nanoTime()}").build() }
+        val controller = main {
+            MediaController.Builder(context, session.token).buildAsync()
+        }.get(5, TimeUnit.SECONDS)
+        try {
+            test(player, controller)
+        } finally {
+            main {
+                controller.release()
+                session.release()
+                player.release()
+            }
+        }
+    }
+
     private fun withoutSources(): Context = object : ContextWrapper(context) {
         override fun getApplicationContext(): Context = this
         override fun getSharedPreferences(name: String, mode: Int): SharedPreferences =
@@ -489,6 +677,7 @@ class PlaybackQueueAppendInstrumentedTest {
                 savedPreferences.forEach { (key, value) -> when (value) {
                     is String -> putString(key, value)
                     is Int -> putInt(key, value)
+                    is Long -> putLong(key, value)
                 } }
             }.commit()
             audio.delete()

@@ -64,7 +64,7 @@ class PlaybackQueuePersistenceTest {
     }
 
     @Test
-    fun clearAndStopCancelPendingPlaybackAndLyricsEvenBeforeControllerConnects() {
+    fun clearAndExitCancelPendingPlaybackAndLyricsEvenBeforeControllerConnects() {
         // 直接构造冷连接待处理状态，不为测试向生产入口增加适配器或setter。
         val owner = PlaybackController
         val jobField = owner.javaClass.getDeclaredField("queueLoadJob").apply { isAccessible = true }
@@ -82,7 +82,7 @@ class PlaybackQueuePersistenceTest {
         val previousLyricJob = lyricJobField.get(owner)
         val previousDetailUid = detailUidField.get(owner)
         try {
-            for (end in listOf(owner::clearQueue, { owner.stop() })) {
+            for (end in listOf(owner::clearQueue, { owner.exitPlayback() })) {
                 val pending = Job()
                 val lyricJob = Job()
                 jobField.set(owner, pending)

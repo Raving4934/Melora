@@ -66,20 +66,7 @@ object PlaybackController {
     private val controllerListener = object : MediaController.Listener {
         override fun onDisconnected(disconnected: MediaController) {
             if (controller !== disconnected) return
-            positionJob?.cancel()
-            positionJob = null
-            controller = null
-            controllerFuture = null
-            bookQueue?.stop()
-            bookQueue = null
-            interruptRecovery()
-            cancelPendingPlayback()
-            clearCurrentTrackLyrics()
-            artworkJob?.cancel()
-            // 断连不等于用户清空：保留磁盘队列供下次连接恢复，但不能再操作失效控制器。
-            val previous = _state.value
-            _state.value = PlayerUiState(mode = previous.mode, speed = previous.speed,
-                message = if (previous.current != null) "播放服务已断开，请重新选择歌曲" else previous.message)
+            releaseController()
         }
     }
     private var pendingPlayback: PendingPlaybackSelection? = null
@@ -173,6 +160,8 @@ object PlaybackController {
         controllerFuture = future
         future.addListener(
             {
+                // 退出可能发生在连接完成前，已释放的请求不能随后恢复并自动播放。
+                if (controllerFuture !== future) return@addListener
                 runCatching { future.get() }
                     .onSuccess {
                         controller = it
@@ -1118,12 +1107,8 @@ object PlaybackController {
         pendingPlayback = null
     }
 
-    fun clearQueue() = endPlayback(stopEngine = false, player = controller)
-
-    // 通知栏持有服务端Player，即使界面尚未连接，也必须清理同一份持久化队列。
-    fun stop(player: Player? = controller) = endPlayback(stopEngine = true, player = player)
-
-    private fun endPlayback(stopEngine: Boolean, player: Player?) {
+    /** 主动清空才删除持久化队列；不能与通知退出共用删除路径。 */
+    fun clearQueue() {
         localQueueCheck?.cancel()
         localQueueCheck = null
         interruptRecovery()
@@ -1132,13 +1117,12 @@ object PlaybackController {
         editingQueue = true
         try {
             bookQueue?.stop()
-            player?.let {
-                if (stopEngine) it.stop() else it.pause()
+            controller?.let {
+                it.pause()
                 it.clearMediaItems()
             }
         } finally {
             editingQueue = false
-            // 停止/暂停回调不能在清空过程中把旧队列重新保存。
             clearSavedQueue()
         }
         currentQueueId = null
@@ -1146,12 +1130,43 @@ object PlaybackController {
         consecutiveErrors = 0
         clearCurrentTrackLyrics()
         artworkJob?.cancel()
-        // 不依赖异步MediaController回调，也不在无控制器时遗留旧曲目。
         val previous = _state.value
         _state.value = PlayerUiState(
             ready = controller?.isConnected == true, mode = previous.mode, speed = previous.speed,
         )
         appContext?.let { LocalTagFiller.consider(it, null) }
+    }
+
+    /** 通知退出使用服务端实际位置；保存后解除绑定，不能把退出当作清空。 */
+    fun exitPlayback(player: Player? = controller) {
+        player?.pause()
+        saveQueue(player = player)
+        player?.stop()
+        releaseController()
+    }
+
+    private fun releaseController() {
+        val previousController = controller
+        val previousFuture = controllerFuture
+        controller = null
+        controllerFuture = null
+        positionJob?.cancel()
+        positionJob = null
+        localQueueCheck?.cancel()
+        localQueueCheck = null
+        bookQueue?.stop()
+        bookQueue = null
+        interruptRecovery()
+        errorRecovery.reset()
+        consecutiveErrors = 0
+        cancelPendingPlayback()
+        AudioCacheStore.cancelPrefetch()
+        clearCurrentTrackLyrics()
+        artworkJob?.cancel()
+        val previous = _state.value
+        _state.value = PlayerUiState(mode = previous.mode, speed = previous.speed)
+        if (previousFuture != null) MediaController.releaseFuture(previousFuture)
+        else previousController?.release()
     }
 
     fun consumeMessage() {
@@ -1206,6 +1221,7 @@ object PlaybackController {
     private const val PREFS_QUEUE = "melora-queue"
     private const val KEY_QUEUE = "queue"
     private const val KEY_QUEUE_INDEX = "index"
+    private const val KEY_QUEUE_POSITION = "positionMs"
     private const val MAX_SAVED_QUEUE = 200
 
     private fun queuePrefs(): android.content.SharedPreferences? =
@@ -1235,9 +1251,8 @@ object PlaybackController {
     }
 
     /** 持久化当前队列（超长队列只保存当前位置附近的窗口），供冷启动恢复 mini 播放条。 */
-    private fun saveQueue(force: Boolean = false) {
-        if (editingQueue) return
-        val player = controller?.takeIf { it.isConnected } ?: return
+    internal fun saveQueue(force: Boolean = false, player: Player? = controller?.takeIf { it.isConnected }) {
+        if (editingQueue || player == null) return
         val prefs = queuePrefs() ?: return
         val count = player.mediaItemCount
         if (count == 0) {
@@ -1247,8 +1262,16 @@ object PlaybackController {
         val index = player.currentMediaItemIndex.coerceAtLeast(0)
         val all = (0 until count).mapNotNull { i -> TrackRegistry.get(player.getMediaItemAt(i).mediaId) }
         if (all.size != count) return
-        val fingerprint = "${bookQueue?.albumId}:${currentQueueId}:" + playbackQueueFingerprint(all, index)
-        if (!force && fingerprint == lastQueueFingerprint) return
+        val bookId = bookQueue?.albumId ?: player.bookAlbumId(TrackRegistry::get)
+        val fingerprint = "${bookId}:${currentQueueId}:" + playbackQueueFingerprint(all, index)
+        val position = player.currentPosition.coerceAtLeast(0L)
+        if (!force && fingerprint == lastQueueFingerprint) {
+            // 当前位置属于队列快照，不新增另一套逐曲历史断点；位置改变无需重写整份队列。
+            if (prefs.getLong(KEY_QUEUE_POSITION, C.TIME_UNSET) != position) {
+                prefs.edit { putLong(KEY_QUEUE_POSITION, position) }
+            }
+            return
+        }
         val window = if (count <= MAX_SAVED_QUEUE) {
             0 to count
         } else {
@@ -1260,7 +1283,8 @@ object PlaybackController {
         prefs.edit {
             putString(KEY_QUEUE, array.toString())
             putInt(KEY_QUEUE_INDEX, (index - window.first).coerceAtLeast(0))
-            putString("bookId", bookQueue?.albumId)
+            putLong(KEY_QUEUE_POSITION, position)
+            putString("bookId", bookId)
             putString("queueId", currentQueueId)
         }
         lastQueueFingerprint = fingerprint
@@ -1290,7 +1314,10 @@ object PlaybackController {
         val bookId = prefs.getString("bookId", null)?.takeIf { id ->
             tracks.all { OnlineSong.from(it.raw)?.bookId() == id }
         }
-        player.setMediaItems(items, index, C.TIME_UNSET)
+        val position = if (MeloraSettings.rememberProgress.value) {
+            prefs.getLong(KEY_QUEUE_POSITION, C.TIME_UNSET).let { if (it >= 0) it else C.TIME_UNSET }
+        } else C.TIME_UNSET
+        player.setMediaItems(items, index, position)
         if (bookId != null) bookQueue?.start(bookId)
         if (autoPlay) {
             player.prepareAndPlay()

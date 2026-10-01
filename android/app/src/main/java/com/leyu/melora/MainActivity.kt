@@ -191,6 +191,8 @@ class MainActivity : ComponentActivity() {
         resetRootBackConfirmation()
         lifecycleScope.launch {
             (application as MeloraApplication).awaitStartup()
+            // 进程可能仍在而播放服务已退出；重进界面也必须走同一个队列恢复入口。
+            com.leyu.melora.playback.PlaybackController.init(this@MainActivity)
             com.leyu.melora.playback.PlaybackController.checkLocalQueue(this@MainActivity)
         }
     }

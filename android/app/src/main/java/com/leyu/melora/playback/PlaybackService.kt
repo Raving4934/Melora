@@ -162,7 +162,8 @@ class PlaybackService : MediaSessionService() {
                             return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
                         }
                         ACTION_EXIT -> {
-                            exitPlayback()
+                            // 先让Media3答复本次命令，再释放session；否则命令仍在途，绑定会等30秒超时。
+                            serviceScope.launch { exitPlayback() }
                             return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
                         }
                     }
@@ -226,7 +227,10 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun exitPlayback() {
-        PlaybackController.stop(mediaSession?.player)
+        // 在stop/release之前记录真实断点，退出不删除队列。
+        playbackProgress?.checkpoint()
+        PlaybackController.exitPlayback(mediaSession?.player)
+        releaseSession()
         stopSelf()
     }
 
@@ -266,8 +270,9 @@ class PlaybackService : MediaSessionService() {
     override fun onTaskRemoved(rootIntent: Intent?) {
         playbackProgress?.checkpoint()
         val player = mediaSession?.player
+        PlaybackController.saveQueue(player = player)
         if (player == null || !player.playWhenReady || player.mediaItemCount == 0) {
-            stopSelf()
+            exitPlayback()
         }
     }
 
@@ -275,16 +280,21 @@ class PlaybackService : MediaSessionService() {
         TrackRegistry.removeArtworkListener(artworkListener)
         AudioCacheStore.cancelPrefetch()
         serviceScope.cancel()
-        playbackProgress?.close()
-        playbackProgress = null
-        mediaSession?.run {
-            player.release()
-            release()
-        }
-        mediaSession = null
+        PlaybackController.saveQueue(player = mediaSession?.player)
+        releaseSession()
         AudioEffects.resetState()
         isRunning = false
         super.onDestroy()
+    }
+
+    private fun releaseSession() {
+        playbackProgress?.close()
+        playbackProgress = null
+        mediaSession?.run {
+            release()
+            player.release()
+        }
+        mediaSession = null
     }
 
     companion object {
