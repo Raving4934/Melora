@@ -93,6 +93,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -139,6 +140,7 @@ import com.leyu.melora.ui.common.ChromeScaffold
 import com.leyu.melora.ui.common.DetailPageHost
 import com.leyu.melora.ui.common.chromeHeaderColor
 import com.leyu.melora.ui.player.ContinuousPlayerSheet
+import com.leyu.melora.ui.player.PlayerSheetAnchor
 import com.leyu.melora.ui.player.rememberPlayerSheetBackState
 import com.leyu.melora.ui.theme.SystemBarsAppearance
 import com.leyu.melora.ui.search.SearchCategory
@@ -565,6 +567,12 @@ fun MeloraApp(initialTab: Int = 5) {
                 .padding(start = if (isPersistentDrawer) drawerWidth else 0.dp)
                 .graphicsLayer {
                     translationX = if (isPersistentDrawer) 0f else drawerOffset.value
+                    // 播放器移动时复用静止底页的纹理，避免每帧重放整屏列表绘制。
+                    // 在layer阶段判断，不逐帧重组；停稳即恢复正常绘制并释放缓存层。
+                    val sheet = playerSheetBackState?.sheet
+                    val moving = sheet != null && sheet.offset > 0f &&
+                        sheet.offset < sheet.anchors.positionOf(PlayerSheetAnchor.Collapsed)
+                    compositingStrategy = if (moving) CompositingStrategy.Offscreen else CompositingStrategy.Auto
                 }
                 .then(
                     if (isPersistentDrawer) Modifier else Modifier.drawerSwipeable(

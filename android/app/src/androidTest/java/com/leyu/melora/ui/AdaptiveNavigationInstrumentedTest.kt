@@ -8,10 +8,12 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.Density
+import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.PlayerUiState
 import com.leyu.melora.playback.UserLibrary
+import com.leyu.melora.playback.UiTrack
 import kotlinx.coroutines.flow.MutableStateFlow
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.ui.common.SongListStateProvider
@@ -81,6 +83,74 @@ class AdaptiveNavigationInstrumentedTest {
             playback.value = previousPlayback
             UserLibrary.recents.value = previousRecents
             MeloraSettings.showDesktopLyrics.value = previousDesktop
+        }
+    }
+
+    @Test fun fullAppPlayerBackKeepsRootPageAndNavigationAcrossRepeatedExpansions() {
+        @Suppress("UNCHECKED_CAST")
+        val playback = PlaybackController::class.java.getDeclaredField("_state").apply {
+            isAccessible = true
+        }.get(null) as MutableStateFlow<PlayerUiState>
+        val previousPlayback = playback.value
+        val previousRecents = UserLibrary.recents.value
+        val previousAutoPlay = MeloraSettings.autoPlayOnStart.value
+        val previousDesktopLyrics = MeloraSettings.showDesktopLyrics.value
+        val visible = mutableStateOf(true)
+        val track = UiTrack("adaptive-navigation-regression", "导航回归歌曲", "测试歌手", "测试专辑")
+
+        try {
+            playback.value = PlayerUiState(
+                ready = true,
+                current = track,
+                queue = listOf(track),
+                currentIndex = 0,
+                playing = false,
+                durationMs = 180_000,
+            )
+            UserLibrary.recents.value = emptyList()
+            MeloraSettings.autoPlayOnStart.value = false
+            MeloraSettings.showDesktopLyrics.value = false
+            compose.setContent {
+                if (visible.value) {
+                    val original = LocalDensity.current
+                    CompositionLocalProvider(LocalDensity provides Density(densityFactor.floatValue, original.fontScale)) {
+                        MeloraTheme { SongListStateProvider { MeloraApp(initialTab = 5) } }
+                    }
+                }
+            }
+            compose.awaitStable("main-navigation-content")
+            compose.onNodeWithText("乐屿 · Melora").assertIsDisplayed()
+            compose.onNodeWithText("沉浸式音乐与听书体验").assertIsDisplayed()
+            compose.onNodeWithTag("main-navigation-item-5").assertIsSelected()
+
+            repeat(2) {
+                val mini = compose.onAllNodesWithText(track.title, substring = true).onLast()
+                compose.awaitStable(mini)
+                mini.performClick()
+                compose.awaitStable("player-heading")
+
+                Espresso.pressBack()
+                compose.awaitStable(mini)
+                compose.onNodeWithTag("main-navigation-content").assertIsDisplayed()
+                compose.onNodeWithText("乐屿 · Melora").assertIsDisplayed()
+                compose.onNodeWithTag("main-navigation-item-5").assertIsSelected()
+            }
+
+            compose.onNodeWithTag("main-navigation-item-7").performScrollTo().performClick()
+            compose.onNodeWithTag("main-navigation-item-7").assertIsSelected()
+            compose.onNodeWithTag("main-navigation-item-5").performScrollTo().performClick()
+            compose.onNodeWithTag("main-navigation-item-5").assertIsSelected()
+            compose.onNodeWithText("乐屿 · Melora").assertIsDisplayed()
+        } finally {
+            try {
+                compose.runOnIdle { visible.value = false }
+                compose.waitForIdle()
+            } finally {
+                playback.value = previousPlayback
+                UserLibrary.recents.value = previousRecents
+                MeloraSettings.autoPlayOnStart.value = previousAutoPlay
+                MeloraSettings.showDesktopLyrics.value = previousDesktopLyrics
+            }
         }
     }
 
