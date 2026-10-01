@@ -2,6 +2,53 @@
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-10-01
+
+### 安卓客户端
+
+> 本次仅更新 Android 客户端至 0.1.7（versionCode 16）；Web / NAS、FPK 与 Docker 维持 0.1.1。
+
+【应用内 APK 更新】
+- 可在应用内检查并下载更新 APK，查看下载进度或取消；下载完成后校验包信息、版本与签名，再交由 Android 系统安装。权限恢复和重试可在更新面板中完成。
+
+【下载、取消与本地写入】
+- 修复下载任务等待容量变化时的响应问题；升级中断后若目标文件已发布，可恢复原完成记录，避免重复处理。
+- 下载和预取取消时同步结束底层网络与音源脚本任务；迟到的脚本结果不会串入后续请求。
+- 本地歌曲标签写入前核对文件快照，避免文件被替换或截断后仍写入旧元数据；保留手动重试及未知元数据处理。
+- 歌单批量添加改为一次去重事务；无变化时跳过写入，失败时保留原有回滚行为。
+
+【列表与播放界面】
+- 统一歌曲列表选择状态的渐隐动效并稳定行内操作位置，修复选择按钮淡出时影响“更多”操作的问题。
+- 底部弹窗关闭时完整播放退场动画，遮罩随拖动位置同步变化；歌单导入后转为更新可复用同一弹窗并保留预览确认流程。
+- 统一播放面板与队列吸附动效，保持转场中的不透明背景；播放器移动时复用静态底层画面。
+- 封面样式切换连续过渡，覆盖封面形状、唱片标签与沉浸式描边，并同步调整封面尺寸、位置和迷你歌词对齐。
+
+【队列、返回与恢复】
+- 播放队列页返回原入口；普通播放页按层级收起，沉浸播放继续保留原有返回行为。播放器转场中首次返回可打断进入动画，横向翻页、纵向手势与队列交接分开处理。
+- 从通知栏退出播放时保留队列、当前歌曲和播放位置，不关闭应用 Activity；重新打开应用后恢复迷你播放器。
+- 队列展示按播放器引擎的真实播放顺序定位当前歌曲，同时保留原队列数据、手动浏览及下拉交接行为。
+- 启动恢复过程直接观察播放就绪状态，沿用既有超时与队列回退策略。
+
+【质量验证】
+- 补充下载恢复、取消、本地文件变更、弹窗拖动、播放器导航、队列顺序与通知栏退出播放等回归覆盖；隔离异步缓存测试生命周期，并将 API 35 全量仪器测试设为 CI 默认门禁。
+
+### 提交追溯（安卓版）
+
+> 完整提交区间：[android-v0.1.6...android-v0.1.7][Android 0.1.7]。
+
+- 应用内 APK 下载、校验与安装交接：[`74b10bd`](https://github.com/Raving4934/Melora/commit/74b10bdfbd6fb58b8f09a48fd913d7522d492a51)。
+- 下载任务响应与中断恢复：[`91c96d0`](https://github.com/Raving4934/Melora/commit/91c96d0b1e50704d7286ab0e12e34a2166acdd24)；音频及目录 IO 取消传递：[`f8659bb`](https://github.com/Raving4934/Melora/commit/f8659bbec483bc1a8648a027e96393714bc100cd)；本地标签写入快照保护：[`d1e4398`](https://github.com/Raving4934/Melora/commit/d1e439819db4f3c678ee09ede55ad88e1af133fd)。
+- 播放就绪恢复观察：[`a6b317a`](https://github.com/Raving4934/Melora/commit/a6b317ac69e2bc345f9da161b592cdfa6cf68c66)；歌单批量添加事务：[`a6b59c2`](https://github.com/Raving4934/Melora/commit/a6b59c2a2f01cabb621c31eefa1a1dd9e50782e8)。
+- 歌曲行选择动效与操作区域：[`fabb054`](https://github.com/Raving4934/Melora/commit/fabb0540c996e834fcd5f71ec03bfcb4bdf8a1b1)。
+- 播放面板转场：[`6b9af37`](https://github.com/Raving4934/Melora/commit/6b9af37d4af4197eb70aca229bb2874cb1f77f30)；弹窗退场与歌单更新窗口复用：[`2d96490`](https://github.com/Raving4934/Melora/commit/2d96490cc5ec6d99307be89e39a2b1ddeea09ff5)；拖动遮罩同步：[`60e919c`](https://github.com/Raving4934/Melora/commit/60e919c5ae07e88e446b03b47a0324867e8305c4)；播放转场底层复用：[`1ddf511`](https://github.com/Raving4934/Melora/commit/1ddf5115d7b6582b74a5e7bbeae912945bbdd43a)。
+- 队列返回来源页面：[`bbec5a4`](https://github.com/Raving4934/Melora/commit/bbec5a4615d092dcea173618ef522c1f82a5331a)；播放器手势、返回与队列交接：[`3328932`](https://github.com/Raving4934/Melora/commit/3328932bfc8318dd84e6bac4f89a47de3756b218)；通知栏退出播放保留队列：[`6989570`](https://github.com/Raving4934/Melora/commit/69895706d844ad3aa290926b73efd362d78116a3)；按引擎顺序展示队列：[`219a82d`](https://github.com/Raving4934/Melora/commit/219a82dd96c82d9942967e58d4aafccef36a7fc5)。
+- 封面样式连续过渡：[`1eb768d`](https://github.com/Raving4934/Melora/commit/1eb768d8614ed71790ce31caefa9c231a4438a06)。
+- 测试缓存生命周期与自适应视口隔离：[`0774fa2`](https://github.com/Raving4934/Melora/commit/0774fa2cee054d78dfd6e537cb012268d5c193aa)；Android 仿真器回归 CI 门禁：[`9244507`](https://github.com/Raving4934/Melora/commit/9244507f0a3312a0514ae9d8953f5450bf1b1fb4)。
+
+### 安卓安装包
+
+- Android 0.1.7 APK（arm64-v8a）：正式发布后下载。
+
 ## [0.1.6] - 2026-09-29
 
 ### 安卓客户端
@@ -293,9 +340,11 @@
 
 **Docker 镜像：** `ghcr.io/raving4934/melora:0.1.0`（支持 `linux/amd64`、`linux/arm64`）。
 
-[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.6...HEAD
-[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.6...HEAD
+[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.7...HEAD
+[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.7...HEAD
 [Web Unreleased]: https://github.com/Raving4934/Melora/compare/v0.1.1...HEAD
+[0.1.7]: https://github.com/Raving4934/Melora/compare/android-v0.1.6...android-v0.1.7
+[Android 0.1.7]: https://github.com/Raving4934/Melora/compare/android-v0.1.6...android-v0.1.7
 [0.1.6]: https://github.com/Raving4934/Melora/compare/android-v0.1.5...android-v0.1.6
 [Android 0.1.6]: https://github.com/Raving4934/Melora/compare/android-v0.1.5...android-v0.1.6
 [0.1.5]: https://github.com/Raving4934/Melora/compare/android-v0.1.4...android-v0.1.5
