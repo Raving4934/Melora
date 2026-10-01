@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalViewConfiguration
@@ -92,9 +93,20 @@ internal fun TimedLyricText(
     mutedColor: Color? = null,
     inactiveAlpha: Float = 0.36f,
     marquee: Boolean = false,
+    centerFraction: State<Float>? = null,
 ) {
     var layout by remember(line.text, style) { mutableStateOf<TextLayoutResult?>(null) }
     val runs = remember(line, layout) { layout?.let { wordRuns(line, it) }.orEmpty() }
+    val alignment = if (centerFraction != null) Modifier.drawWithContent {
+        // 在marquee外侧按视口宽度移动字形；不改变整行点击区域和无障碍边界。
+        val text = layout
+        val shift = if (text != null && text.lineCount > 0) {
+            val left = text.getLineLeft(0)
+            val width = text.getLineRight(0) - left
+            if (width < size.width) ((size.width - width) * 0.5f - left) * centerFraction.value else 0f
+        } else 0f
+        translate(left = shift) { this@drawWithContent.drawContent() }
+    } else Modifier
     Text(
         text = line.text,
         style = style,
@@ -106,7 +118,7 @@ internal fun TimedLyricText(
         maxLines = maxLines,
         overflow = if (marquee) TextOverflow.Clip else TextOverflow.Ellipsis,
         onTextLayout = { layout = it },
-        modifier = modifier.then(if (marquee) Modifier.basicMarquee(iterations = Int.MAX_VALUE,
+        modifier = modifier.then(alignment).then(if (marquee) Modifier.basicMarquee(iterations = Int.MAX_VALUE,
             initialDelayMillis = 1000, repeatDelayMillis = 1200, velocity = 32.dp) else Modifier)
             .drawWithContent {
                 drawContent()
@@ -233,6 +245,8 @@ internal fun LyricsViewport(
     } else if (config.isBlurEnabled) Color(0xFFB4B4B4) else Color(0xFF969696)
     val immersiveMode = immersive && !mini
     val forceCenter = immersive || centered || config.isCentered
+    val centerFraction = animateFloatAsState(if (forceCenter) 1f else 0f,
+        if (mini && motionEnabled) PlayerCoverMorphSpec else snap(), label = "miniLyricAlignment")
     val alignment = if (forceCenter) Alignment.CenterHorizontally else Alignment.Start
     val fontSize = when {
         mini -> config.fontSizeSp.coerceIn(12f, 26f)
@@ -247,7 +261,7 @@ internal fun LyricsViewport(
             config.isBold -> FontWeight.ExtraBold
             else -> FontWeight.SemiBold
         },
-        textAlign = if (forceCenter) TextAlign.Center else TextAlign.Start)
+        textAlign = if (forceCenter && !mini) TextAlign.Center else TextAlign.Start)
     val subStyle = baseStyle.copy(fontSize = (fontSize * 0.68f).sp, lineHeight = (fontSize * 0.95f).sp, textAlign = style.textAlign)
     val measurer = rememberTextMeasurer(cacheSize = 32)
     BoxWithConstraints(modifier.clipToBounds()) {
@@ -343,13 +357,14 @@ internal fun LyricsViewport(
                                     val depthAlpha = if (immersiveRow) immersiveLyricsAlpha(depthDistance) else 1f
                                     alpha = (if (line.isBackground) 0.78f else 1f) * depthAlpha
                                     scaleX = scale.value; scaleY = scale.value
-                                    transformOrigin = TransformOrigin(if (alignment == Alignment.CenterHorizontally) 0.5f else 0f, 0.5f)
+                                    transformOrigin = TransformOrigin(if (mini) centerFraction.value * 0.5f else if (alignment == Alignment.CenterHorizontally) 0.5f else 0f, 0.5f)
                                     renderEffect = blurEffect
                                 }) {
                                 TimedLyricText(line, position, active, ink, style,
                                     modifier = if (mini) Modifier.fillMaxWidth().height(with(density) { miniLineHeight.toDp() }) else Modifier.fillMaxWidth(),
                                     maxLines = if (mini) 1 else Int.MAX_VALUE,
                                     mutedColor = if (mini) null else muted, marquee = mini && active && motionEnabled,
+                                    centerFraction = if (mini) centerFraction else null,
                                     inactiveAlpha = if (mini) { if (distance == 1) 0.47f else 0.27f } else if (config.isBlurEnabled) 0.24f else 0.36f)
                                 if (!mini) for (text in listOfNotNull(line.translation, line.romanization)) Text(
                                     text, style = subStyle,

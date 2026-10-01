@@ -49,4 +49,15 @@ class PlayerArtworkStyleTest {
         for (angle in 0..360) assertTrue(vinylRotationRemainingMillis(angle.toFloat()) in 1..24_000)
     }
 
+    @Test fun leavingVinylRestoresUprightAlongTheShortArc() {
+        assertEquals(-90f, artworkRestingRotation(90f), 0f)
+        assertEquals(90f, artworkRestingRotation(270f), 0f)
+        assertEquals(10f, artworkRestingRotation(350f), 0f)
+        for (angle in 0..360) {
+            val correction = artworkRestingRotation(angle.toFloat())
+            assertTrue(kotlin.math.abs(correction) <= 180f)
+            assertEquals(0f, (angle + correction) % 360f, 0.0001f)
+        }
+    }
+
 }

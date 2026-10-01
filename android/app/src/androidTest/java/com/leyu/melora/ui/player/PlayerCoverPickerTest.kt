@@ -1,5 +1,16 @@
 package com.leyu.melora.ui.player
 
+import android.graphics.Bitmap
+import java.io.File
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.graphics.toPixelMap
+import androidx.compose.ui.test.captureToImage
+
 import com.leyu.melora.ui.awaitStable
 
 import androidx.compose.runtime.SideEffect
@@ -322,4 +333,83 @@ class PlayerCoverPickerTest {
             assertEquals(listOf(PlayerCoverStyle.Vinyl), selections.toList())
         }
     }
+    @Test fun sameArtworkMorphsContinuouslyIntoVinylAndCanReverse() {
+        verifyArtworkMorph(motionEnabled = true)
+    }
+
+    @Test fun disabledMotionAppliesTheCoverStyleWithoutIntermediateFrames() {
+        verifyArtworkMorph(motionEnabled = false)
+    }
+
+    private fun verifyArtworkMorph(motionEnabled: Boolean) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val file = File(context.cacheDir, "cover-morph-red.png")
+        val bitmap = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888).apply { eraseColor(android.graphics.Color.RED) }
+        file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        bitmap.recycle()
+        val selected = mutableStateOf(PlayerCoverStyle.Default)
+        try {
+            compose.setContent {
+                Box(Modifier.size(160.dp).background(Color.Green).testTag("cover-morph")) {
+                    NowPlayingArtwork(file.toURI().toString(), "morph", selected.value,
+                        Modifier.size(160.dp), motionEnabled = motionEnabled)
+                }
+            }
+            compose.waitUntil(5_000) { redSpan() > 0.9f }
+            val squareArea = redCoverage()
+            compose.mainClock.autoAdvance = false
+            compose.runOnIdle { selected.value = PlayerCoverStyle.Circle }
+            compose.mainClock.advanceTimeBy(96)
+            val roundingArea = redCoverage()
+            compose.mainClock.advanceTimeBy(600)
+            val circleArea = redCoverage()
+            assertTrue("circle must crop the square corners", circleArea < squareArea - 0.1f)
+            if (motionEnabled) assertTrue("corners must morph through intermediate geometry: $squareArea -> $roundingArea -> $circleArea",
+                roundingArea < squareArea - 0.005f && roundingArea > circleArea + 0.01f)
+            else assertEquals(circleArea, roundingArea, 0.01f)
+            compose.runOnIdle { selected.value = PlayerCoverStyle.Vinyl }
+            compose.mainClock.advanceTimeBy(96)
+            val middle = redSpan()
+            compose.mainClock.advanceTimeBy(600)
+            val vinyl = redSpan()
+            assertTrue("vinyl label should occupy roughly half of the disc: $vinyl", vinyl in 0.35f..0.53f)
+            if (motionEnabled) {
+                assertTrue("label must shrink continuously, not switch instantly: $middle -> $vinyl", middle > vinyl + 0.03f && middle < 0.98f)
+                compose.runOnIdle { selected.value = PlayerCoverStyle.Default }
+                compose.mainClock.advanceTimeBy(96)
+                val growing = redSpan()
+                compose.runOnIdle { selected.value = PlayerCoverStyle.Vinyl }
+                assertEquals("retarget must preserve the currently drawn label", growing, redSpan(), 0.02f)
+                compose.mainClock.advanceTimeBy(600)
+                assertEquals(vinyl, redSpan(), 0.02f)
+            } else {
+                assertEquals("reduced motion must already be at its target", vinyl, middle, 0.02f)
+            }
+        } finally {
+            compose.mainClock.autoAdvance = true
+            file.delete()
+        }
+    }
+
+    private fun redSpan(): Float {
+        val pixels = compose.onNodeWithTag("cover-morph").captureToImage().toPixelMap()
+        val y = pixels.height / 2
+        return (0 until pixels.width).count { x ->
+            val color = pixels[x, y]
+            color.red > 0.9f && color.green < 0.1f && color.blue < 0.1f
+        }.toFloat() / pixels.width
+    }
+
+    private fun redCoverage(): Float {
+        val pixels = compose.onNodeWithTag("cover-morph").captureToImage().toPixelMap()
+        var red = 0
+        var total = 0
+        for (y in 0 until pixels.height step 6) for (x in 0 until pixels.width step 6) {
+            val color = pixels[x, y]
+            if (color.red > 0.9f && color.green < 0.1f && color.blue < 0.1f) red++
+            total++
+        }
+        return red.toFloat() / total
+    }
+
 }

@@ -1292,6 +1292,9 @@ private fun PlayerCoverPage(
 ) {
     val lines = fullPlayerLyricsOrFallback(track, lyrics)
     val centered = nowPlayingArtworkShape(coverStyle) == NowPlayingArtworkShape.Circle
+    val roundness = animateFloatAsState(if (centered) 1f else 0f,
+        if (motionEnabled) PlayerCoverMorphSpec else snap(), label = "coverLayout")
+    val c = roundness.value
     val t = immersion.value
     var controlsVisible by remember(immersive) { mutableStateOf(false) }
     var controlInteraction by remember { mutableIntStateOf(0) }
@@ -1304,16 +1307,17 @@ private fun PlayerCoverPage(
     val previewHeight = if (compact) 28.dp else with(LocalDensity.current) { maxOf(24f, miniFontSize * 1.5f).sp.toDp() * 5 } + 12.dp
     val normalLyricsHeight = if (miniLyricsEnabled && lyricsInCover) previewHeight + 16.dp else 0.dp
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val normalSide = if (centered) playerCoverSideDp(maxWidth.value, maxHeight.value, normalLyricsHeight.value).dp
-            else minOf(maxWidth, (maxHeight - normalLyricsHeight).coerceAtLeast(0.dp), if (maxWidth >= 600.dp) 480.dp else maxWidth)
+        val squareSide = minOf(maxWidth, (maxHeight - normalLyricsHeight).coerceAtLeast(0.dp), if (maxWidth >= 600.dp) 480.dp else maxWidth)
+        val circleSide = playerCoverSideDp(maxWidth.value, maxHeight.value, normalLyricsHeight.value).dp
+        val normalSide = squareSide * (1f - c) + circleSide * c
         val floatingSide = if (lyricsInCover) minOf(maxWidth * 0.75f, maxHeight * 0.40f)
             else minOf(maxWidth * 0.85f, maxHeight * 0.70f, 420.dp)
         val side = normalSide * (1f - t) + floatingSide * t
         val normalBelowCover = if (miniLyricsEnabled && lyricsInCover) previewHeight + 24.dp else 12.dp
         val remaining = (maxHeight - side - normalBelowCover).coerceAtLeast(0.dp)
-        val centeredLayout = centered || !lyricsInCover || maxWidth >= 600.dp
+        val centering = if (!lyricsInCover || maxWidth >= 600.dp) 1f else c
         val roomyLyrics = largePortrait && miniLyricsEnabled && lyricsInCover
-        val normalTop = if (roomyLyrics) minOf(12.dp, remaining) else if (centeredLayout) remaining / 2f else remaining
+        val normalTop = if (roomyLyrics) minOf(12.dp, remaining) else remaining * (1f - centering * 0.5f)
         val normalLyricHeight = if (roomyLyrics) (maxHeight - normalSide - normalTop - 20.dp).coerceAtLeast(0.dp) else previewHeight
         val topSpace = if (lyricsInCover) normalTop * (1f - t) + maxHeight * (0.04f * t)
             else ((maxHeight - side - 26.dp * t) / 2f).coerceAtLeast(0.dp)
@@ -1321,9 +1325,10 @@ private fun PlayerCoverPage(
         val timeHeight = 26.dp * t
         val lyricHeight = (if (miniLyricsEnabled) normalLyricHeight else 0.dp) * (1f - t) +
             (maxHeight - side - topSpace - timeHeight - 24.dp).coerceAtLeast(0.dp) * t
+        val lyricWidth = if (immersive) maxWidth else maxWidth * (1f - centering) + normalLyricWidth * centering
         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
             Spacer(Modifier.height(topSpace))
-            Box(Modifier.fillMaxWidth(), contentAlignment = BiasAlignment(if (centeredLayout) 0f else t - 1f, 0f)) {
+            Box(Modifier.fillMaxWidth(), contentAlignment = BiasAlignment((t - 1f) * (1f - centering), 0f)) {
                 // 进度轮廓与艺术封面共享同一透视平面，不再将方形封面放进独立大圆盘。
                 Box(Modifier.size(side).graphicsLayer {
                     alpha = artworkAlpha()
@@ -1340,7 +1345,7 @@ private fun PlayerCoverPage(
                             .onGloballyPositioned(onArtworkPositioned)
                             .graphicsLayer {
                                 shadowElevation = 14.dp.toPx() * immersion.value
-                                shape = if (centered) CircleShape else RoundedCornerShape(18.dp)
+                                shape = RoundedCornerShape((18f * (1f - c) + size.minDimension / (2f * density) * c).dp)
                             }
                             .combinedClickable(
                                 interactionSource = remember { MutableInteractionSource() }, indication = null,
@@ -1349,9 +1354,9 @@ private fun PlayerCoverPage(
                                 onClick = { if (immersive) interact() },
                             ),
                         cornerRadius = 18, retryOnError = retryArtwork, smoothChanges = true,
-                        rotationDegrees = artworkRotation,
+                        rotationDegrees = artworkRotation, motionEnabled = motionEnabled,
                     )
-                    ImmersiveCoverProgress(position, state.durationMs, immersion, circular = centered,
+                    ImmersiveCoverProgress(position, state.durationMs, immersion, roundness = roundness,
                         modifier = Modifier.matchParentSize())
                 }
                 androidx.compose.animation.AnimatedVisibility(
@@ -1377,7 +1382,7 @@ private fun PlayerCoverPage(
                     config = LyricsUiConfig(fontSizeSp = miniFontSize),
                     mini = !immersive, immersive = immersive,
                     frameState = frame, motionEnabled = motionEnabled, centered = centered || largePortrait,
-                    modifier = (if (centeredLayout && !immersive) Modifier.width(normalLyricWidth) else Modifier.fillMaxWidth())
+                    modifier = Modifier.width(lyricWidth)
                         .height(lyricHeight).testTag("player-mini-lyrics")
                         .then(if (immersive || roomyLyrics) Modifier.lyricViewportFade() else Modifier)
                         .graphicsLayer { alpha = if (miniLyricsEnabled) 1f else immersion.value },

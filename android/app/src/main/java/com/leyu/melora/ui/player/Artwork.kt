@@ -1,6 +1,8 @@
 package com.leyu.melora.ui.player
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.LinearEasing
@@ -10,8 +12,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.LaunchedEffect
@@ -175,7 +177,10 @@ fun ArtworkPlaceholder(
     }
 }
 
-private const val CircleArtworkCornerRadius = 1_000
+/** 封面几何、标签和歌词共享节奏，快速换目标时从当前显示值继续。 */
+internal val PlayerCoverMorphSpec = tween<Float>(280, easing = FastOutSlowInEasing)
+
+internal fun artworkRestingRotation(angle: Float): Float = -((angle + 180f) % 360f - 180f)
 
 internal enum class NowPlayingArtworkShape {
     Rounded,
@@ -202,34 +207,40 @@ internal fun NowPlayingArtwork(
     retryOnError: Boolean = false,
     smoothChanges: Boolean = false,
     rotationDegrees: () -> Float = { 0f },
+    motionEnabled: Boolean = true,
 ) {
-    val isCircular = nowPlayingArtworkShape(style) == NowPlayingArtworkShape.Circle
-    val artworkModifier = if (style == PlayerCoverStyle.Vinyl) {
-        Modifier
-            .fillMaxWidth(0.50f)
-            .aspectRatio(1f)
-    } else {
-        Modifier.fillMaxSize()
-    }
-
-    Box(
-        modifier = modifier.then(if (isCircular) Modifier.clip(CircleShape) else Modifier),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (style == PlayerCoverStyle.Vinyl) {
-            VinylDisc(modifier = Modifier.fillMaxSize())
+    val roundness = animateFloatAsState(
+        if (nowPlayingArtworkShape(style) == NowPlayingArtworkShape.Circle) 1f else 0f,
+        if (motionEnabled) PlayerCoverMorphSpec else snap(), label = "coverRoundness",
+    )
+    val vinyl = animateFloatAsState(if (style == PlayerCoverStyle.Vinyl) 1f else 0f,
+        if (motionEnabled) PlayerCoverMorphSpec else snap(), label = "coverVinyl")
+    val rotationAlignment = animateFloatAsState(
+        if (style == PlayerCoverStyle.Vinyl) 0f else artworkRestingRotation(rotationDegrees()),
+        if (motionEnabled) PlayerCoverMorphSpec else snap(), label = "coverRotationAlignment",
+    )
+    Box(modifier, contentAlignment = Alignment.Center) {
+        if (style == PlayerCoverStyle.Vinyl || vinyl.value > 0f) {
+            VinylDisc(Modifier.fillMaxSize().graphicsLayer { alpha = vinyl.value })
         }
-        val rotatingArtwork = if (style == PlayerCoverStyle.Vinyl) {
-            artworkModifier.graphicsLayer { rotationZ = rotationDegrees() }
-        } else artworkModifier
-        val radius = if (isCircular) CircleArtworkCornerRadius else cornerRadius
+        // 同一张已加载图片只改变裁切和变换，不把整张专辑替换成另一棵黑胶图片树。
+        val artworkModifier = Modifier.fillMaxSize().graphicsLayer {
+            val scale = 1f - vinyl.value * 0.5f
+            scaleX = scale; scaleY = scale
+            rotationZ = rotationDegrees() + rotationAlignment.value
+            shape = RoundedCornerShape((cornerRadius * (1f - roundness.value) +
+                size.minDimension / (2f * density) * roundness.value).dp)
+            clip = true
+        }
+        // 方形/圆形占位使用同一内容，圆形裁切也由外层连续控制，不能由占位先硬切。
+        val imageStyle = if (style == PlayerCoverStyle.Circle) PlayerCoverStyle.Default else style
         if (smoothChanges && url?.startsWith("http") == true) {
-            SmoothPlayerArtwork(url, seed, rotatingArtwork, radius, retryOnError, style = style)
+            SmoothPlayerArtwork(url, seed, artworkModifier, 0, retryOnError, style = imageStyle)
         } else {
-            SongArtwork(url, seed, rotatingArtwork, radius, retryOnError, style = style)
+            SongArtwork(url, seed, artworkModifier, 0, retryOnError, style = imageStyle)
         }
-        if (style == PlayerCoverStyle.Vinyl) {
-            Canvas(Modifier.fillMaxSize()) {
+        if (style == PlayerCoverStyle.Vinyl || vinyl.value > 0f) {
+            Canvas(Modifier.fillMaxSize().graphicsLayer { alpha = vinyl.value }) {
                 val radius = size.minDimension / 2f
                 drawCircle(Color.Black.copy(alpha = 0.35f), radius * 0.052f)
                 drawCircle(Color(0xFF111216), radius * 0.035f)

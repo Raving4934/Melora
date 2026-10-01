@@ -11,6 +11,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
@@ -26,6 +27,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipe
 import androidx.compose.ui.test.swipeRight
+import kotlin.math.abs
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.leyu.melora.playback.LyricLine
 import com.leyu.melora.playback.MeloraSettings
@@ -49,8 +51,15 @@ class PlayerLyricsPagingTest {
     }
 
     private val immersiveState = mutableStateOf(false)
+    private val coverStyleState = mutableStateOf(PlayerCoverStyle.Default)
 
-    private fun showPlayer(immersive: Boolean = false, wide: Boolean = false, miniLyrics: Boolean = true) {
+    private fun showPlayer(
+        immersive: Boolean = false,
+        wide: Boolean = false,
+        miniLyrics: Boolean = true,
+        coverStyle: PlayerCoverStyle = PlayerCoverStyle.Default,
+    ) {
+        coverStyleState.value = coverStyle
         MeloraSettings.miniLyricsEnabled.value = miniLyrics
         val position = mutableLongStateOf(2_000)
         val lines = listOf(LyricLine(0, "点击迷你歌词翻页"), LyricLine(5_000, "下一句歌词"))
@@ -65,7 +74,7 @@ class PlayerLyricsPagingTest {
                     lyricFrame = rememberLyricFrame(lines, position), lyricLines = lines,
                     onOpenQueue = {}, onCloseQueue = {}, queuePagerState = rememberPagerState { 2 },
                     onArtworkPositioned = {}, artworkAlpha = { 1f },
-                    coverStyle = PlayerCoverStyle.Default, artworkRotation = { 0f },
+                    coverStyle = coverStyleState.value, artworkRotation = { 0f },
                     onPageVisualChanged = { _, _, _ -> },
                     modifier = if (wide) Modifier.requiredSize(720.dp, 360.dp) else Modifier.fillMaxSize(),
                 )
@@ -81,6 +90,78 @@ class PlayerLyricsPagingTest {
             compose.runOnIdle { assertTrue(immersiveState.value) }
             compose.onNodeWithTag("player-heading").assertDoesNotExist()
             compose.onNodeWithTag("player-transport").assertDoesNotExist()
+        }
+    }
+
+    @Test fun coverStyleChangesAnimateArtworkGeometryAndRetargetWithoutMovingChrome() {
+        showPlayer()
+        compose.mainClock.autoAdvance = false
+        try {
+            fun artworkBounds() = compose.onNodeWithTag("player-artwork").fetchSemanticsNode().boundsInRoot
+            fun assertBoundsNear(expected: Rect, actual: Rect, message: String) {
+                assertEquals("$message (left)", expected.left, actual.left, 1f)
+                assertEquals("$message (top)", expected.top, actual.top, 1f)
+                assertEquals("$message (right)", expected.right, actual.right, 1f)
+                assertEquals("$message (bottom)", expected.bottom, actual.bottom, 1f)
+            }
+            fun assertIntermediate(actual: Rect, start: Rect, end: Rect, label: String) {
+                val positionFromStart = maxOf(
+                    abs(actual.center.x - start.center.x),
+                    abs(actual.center.y - start.center.y),
+                )
+                val positionFromEnd = maxOf(
+                    abs(actual.center.x - end.center.x),
+                    abs(actual.center.y - end.center.y),
+                )
+                assertTrue("$label 封面位置应处于动画中间帧", positionFromStart > 1f && positionFromEnd > 1f)
+                val sizeFromStart = maxOf(abs(actual.width - start.width), abs(actual.height - start.height))
+                val sizeFromEnd = maxOf(abs(actual.width - end.width), abs(actual.height - end.height))
+                assertTrue("$label 封面 size 应处于动画中间帧", sizeFromStart > 1f && sizeFromEnd > 1f)
+            }
+            fun assertChromeUnchanged(heading: Rect, transport: Rect, label: String) {
+                assertBoundsNear(heading, compose.onNodeWithTag("player-heading").fetchSemanticsNode().boundsInRoot, "$label 标题区域不应移动")
+                assertBoundsNear(transport, compose.onNodeWithTag("player-transport").fetchSemanticsNode().boundsInRoot, "$label transport区域不应移动")
+            }
+
+            val defaultArtwork = artworkBounds()
+            val heading = compose.onNodeWithTag("player-heading").fetchSemanticsNode().boundsInRoot
+            val transport = compose.onNodeWithTag("player-transport").fetchSemanticsNode().boundsInRoot
+
+            compose.runOnIdle { coverStyleState.value = PlayerCoverStyle.Circle }
+            compose.mainClock.advanceTimeBy(64)
+            val circleAt64ms = artworkBounds()
+            assertChromeUnchanged(heading, transport, "Default→Circle @64ms")
+            // 再加64ms得到从目标切换起约128ms的中间帧。
+            compose.mainClock.advanceTimeBy(64)
+            val circleAt128ms = artworkBounds()
+            assertChromeUnchanged(heading, transport, "Default→Circle @128ms")
+            compose.mainClock.advanceTimeBy(600)
+            val circleArtwork = artworkBounds()
+
+            assertIntermediate(circleAt64ms, defaultArtwork, circleArtwork, "Default→Circle @64ms")
+            assertIntermediate(circleAt128ms, defaultArtwork, circleArtwork, "Default→Circle @128ms")
+            assertTrue(
+                "Circle封面 size 应与Default不同",
+                abs(circleArtwork.width - defaultArtwork.width) > 1f &&
+                    abs(circleArtwork.height - defaultArtwork.height) > 1f,
+            )
+            assertChromeUnchanged(heading, transport, "切换至Circle后")
+
+            // Circle→Default进行中再次反向，目标更新应从当前几何连续接管，而非跳回旧端点。
+            compose.runOnIdle { coverStyleState.value = PlayerCoverStyle.Default }
+            compose.mainClock.advanceTimeBy(96)
+            val returningToDefault = artworkBounds()
+            assertIntermediate(returningToDefault, circleArtwork, defaultArtwork, "Circle→Default @96ms")
+            assertChromeUnchanged(heading, transport, "Circle→Default中途")
+
+            compose.runOnIdle { coverStyleState.value = PlayerCoverStyle.Circle }
+            val immediatelyRetargeted = artworkBounds()
+            assertBoundsNear(returningToDefault, immediatelyRetargeted, "反向改目标时封面不应跳变")
+            compose.mainClock.advanceTimeBy(600)
+            assertBoundsNear(circleArtwork, artworkBounds(), "反向动画应完成在Circle端点")
+            assertChromeUnchanged(heading, transport, "反向动画完成后")
+        } finally {
+            compose.mainClock.autoAdvance = true
         }
     }
 

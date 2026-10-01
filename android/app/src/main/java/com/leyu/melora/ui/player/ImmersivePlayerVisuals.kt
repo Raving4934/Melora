@@ -261,7 +261,7 @@ internal fun ImmersiveCoverProgress(
     position: State<Long>,
     durationMs: Long,
     immersion: State<Float>,
-    circular: Boolean,
+    roundness: State<Float>,
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalPlayerColors.current
@@ -278,7 +278,7 @@ internal fun ImmersiveCoverProgress(
                 val path = buildImmersiveCoverPath(
                     width = size.width,
                     height = size.height,
-                    circular = circular,
+                    roundness = roundness.value,
                     inset = pathInset,
                     cornerRadius = ImmersiveProgressCornerRadiusDp.dp.toPx(),
                 )
@@ -332,26 +332,20 @@ internal fun ImmersiveCoverProgress(
 private fun buildImmersiveCoverPath(
     width: Float,
     height: Float,
-    circular: Boolean,
+    roundness: Float,
     inset: Float,
     cornerRadius: Float,
 ): Path {
     val path = Path()
     if (width <= inset * 2f || height <= inset * 2f) return path
 
-    if (circular) {
-        val diameter = min(width, height) - inset * 2f
-        val left = (width - diameter) / 2f
-        val top = (height - diameter) / 2f
-        path.addArc(RectF(left, top, left + diameter, top + diameter), -90f, 360f)
-        return path
-    }
-
-    val left = inset
-    val top = inset
-    val right = width - inset
-    val bottom = height - inset
-    val radius = min(cornerRadius, min(right - left, bottom - top) / 2f)
+    val diameter = min(width, height)
+    val left = inset + (width - diameter) * 0.5f * roundness
+    val top = inset + (height - diameter) * 0.5f * roundness
+    val right = width - left
+    val bottom = height - top
+    val maxRadius = min(right - left, bottom - top) / 2f
+    val radius = min(cornerRadius, maxRadius) * (1f - roundness) + maxRadius * roundness
     val centerX = (left + right) / 2f
     path.moveTo(centerX, top)
     path.lineTo(right - radius, top)

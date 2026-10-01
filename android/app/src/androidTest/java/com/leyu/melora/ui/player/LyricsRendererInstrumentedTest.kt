@@ -159,7 +159,26 @@ class LyricsRendererInstrumentedTest {
         composeRule.waitForIdle()
         assertEquals(viewportBounds().center.x, textBounds("主唱").center.x, 0.5f)
         assertEquals(viewportBounds().center.x, textBounds("对唱").center.x, 0.5f)
-        saveProof("mini-aligned", composeRule.onNodeWithTag(VIEWPORT_TAG).captureToImage())
+        val image = composeRule.onNodeWithTag(VIEWPORT_TAG).captureToImage()
+        val bitmap = image.asAndroidBitmap()
+        val background = bitmap.getPixel(0, 0)
+        for (label in listOf("主唱", "对唱")) {
+            val bounds = textBounds(label)
+            var left = bitmap.width
+            var right = -1
+            val top = (bounds.top - viewportBounds().top).toInt().coerceAtLeast(0)
+            val bottom = (bounds.bottom - viewportBounds().top).toInt().coerceAtMost(bitmap.height)
+            for (y in top until bottom) for (x in 0 until bitmap.width) {
+                val pixel = bitmap.getPixel(x, y)
+                if (abs(android.graphics.Color.red(pixel) - android.graphics.Color.red(background)) > 20) {
+                    left = minOf(left, x); right = maxOf(right, x)
+                }
+            }
+            assertTrue("$label must render visible glyphs", right >= left)
+            assertEquals("marquee-enabled active and inactive glyphs must both be centered: $label",
+                bitmap.width / 2f, (left + right) / 2f, 8f)
+        }
+        saveProof("mini-aligned", image)
     }
 
     @Test

@@ -2,6 +2,8 @@ package com.leyu.melora.ui.player
 
 import com.leyu.melora.ui.common.PageBackHandler as BackHandler
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.rememberSplineBasedDecay
@@ -20,7 +22,6 @@ import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
@@ -96,6 +97,10 @@ internal fun ContinuousPlayerSheet(
     val density = LocalDensity.current
     val haptics = LocalHapticFeedback.current
     val playerMotionEnabled = rememberPlayerMotionEnabled(isVisible = true)
+    val artworkRoundness = animateFloatAsState(
+        if (nowPlayingArtworkShape(playerCoverStyle) == NowPlayingArtworkShape.Circle) 1f else 0f,
+        if (playerMotionEnabled) PlayerCoverMorphSpec else snap(), label = "sharedCoverRoundness",
+    )
     val playerLyric by PlaybackController.lyric.collectAsStateWithLifecycle()
     val lyricLines = playerLyricLines(state.current?.uid, playerLyric)
     val lyricPosition = rememberLyricPosition(state, visible = lyricLines.isNotEmpty())
@@ -411,7 +416,7 @@ internal fun ContinuousPlayerSheet(
                                         url = track.artwork,
                                         seed = track.uid,
                                         style = playerCoverStyle,
-                                        rotationDegrees = vinylRotation,
+                                        rotationDegrees = vinylRotation, motionEnabled = playerMotionEnabled,
                                         modifier = Modifier.size(46.dp)
                                             .onGloballyPositioned { child ->
                                                 val parent = sheetCoordinates
@@ -502,7 +507,7 @@ internal fun ContinuousPlayerSheet(
                             url = track.artwork,
                             seed = track.uid,
                             style = playerCoverStyle,
-                            rotationDegrees = vinylRotation,
+                            rotationDegrees = vinylRotation, motionEnabled = playerMotionEnabled,
                             modifier = Modifier.size(fullSide).zIndex(2f).graphicsLayer {
                                 val p = progress()
                                 val rect = playerArtworkBounds(mini.translate(Offset(swipeOffset.value, 0f)), full, p)
@@ -512,10 +517,9 @@ internal fun ContinuousPlayerSheet(
                                 translationY = rect.top
                                 scaleX = scale
                                 scaleY = scale
-                                shape = when (nowPlayingArtworkShape(playerCoverStyle)) {
-                                    NowPlayingArtworkShape.Rounded -> RoundedCornerShape((10.dp + 8.dp * p) / scale)
-                                    NowPlayingArtworkShape.Circle -> CircleShape
-                                }
+                                val rounded = (10.dp + 8.dp * p) / scale
+                                shape = RoundedCornerShape(rounded * (1f - artworkRoundness.value) +
+                                    (size.minDimension / (2f * this.density)).dp * artworkRoundness.value)
                                 clip = true
                                 alpha = if (morphing()) 1f else 0f
                             },
