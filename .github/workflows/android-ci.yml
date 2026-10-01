@@ -119,10 +119,12 @@ jobs:
     env:
       API_LEVEL: ${{ matrix.api }}
       ANDROID_SERIAL: emulator-5554
-      ANDROID_AVD_HOME: ${{ runner.temp }}/melora-avd-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.api }}
-      DEVICE_LOG_DIR: ${{ runner.temp }}/melora-device-${{ matrix.api }}
       CI_GRADLE_JVM_ARGS: -Xmx4G -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256m -XX:+HeapDumpOnOutOfMemoryError -XX:ActiveProcessorCount=2 -Dfile.encoding=UTF-8
     steps:
+      - name: 初始化设备诊断目录
+        run: |
+          echo "ANDROID_AVD_HOME=$RUNNER_TEMP/melora-avd-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${API_LEVEL}" >> "$GITHUB_ENV"
+          echo "DEVICE_LOG_DIR=$RUNNER_TEMP/melora-device-${API_LEVEL}" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4.2.2
         with:
           persist-credentials: false

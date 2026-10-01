@@ -10,6 +10,8 @@ import json
 from fnmatch import fnmatchcase
 from pathlib import Path
 import re
+import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
 from textwrap import dedent
@@ -162,10 +164,27 @@ class DeviceWorkflowTest(unittest.TestCase):
         self.assertIn("      fail-fast: false\n", self.job)
         self.assertNotIn("continue-on-error:", self.job)
 
+    def test_device_paths_are_initialized_at_runtime_not_in_job_context(self) -> None:
+        job_config = self.job.split("    steps:\n", 1)[0]
+        self.assertNotIn("runner.", job_config)
+        initialize = step(self.workflow, "初始化设备诊断目录")
+        script = dedent(initialize.split("        run: |\n", 1)[1])
+        with tempfile.TemporaryDirectory(prefix="melora workflow ") as directory:
+            env_file = Path(directory) / "github-env"
+            subprocess.run(["bash", "-euc", script], check=True, env={
+                "RUNNER_TEMP": directory, "GITHUB_ENV": str(env_file),
+                "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2", "API_LEVEL": "35",
+            })
+            self.assertEqual(env_file.read_text().splitlines(), [
+                f"ANDROID_AVD_HOME={directory}/melora-avd-123-2-35",
+                f"DEVICE_LOG_DIR={directory}/melora-device-35",
+            ])
+        self.assertLess(self.job.index("- name: 初始化设备诊断目录"), self.job.index("- uses:"))
+
     def test_native_avd_uses_official_images_and_fresh_writable_storage(self) -> None:
         prepare = step(self.workflow, "准备设备 SDK 与全新 AVD")
         self.assertIn("runs-on: ubuntu-24.04", self.job)
-        self.assertIn("ANDROID_AVD_HOME: ${{ runner.temp }}/melora-avd-", self.job)
+        self.assertIn("ANDROID_AVD_HOME=$RUNNER_TEMP/melora-avd-", self.job)
         self.assertIn("ANDROID_SERIAL: emulator-5554", self.job)
         self.assertIn('image="system-images;android-${image_api};google_apis;x86_64"', prepare)
         self.assertIn('if [[ "$API_LEVEL" == 37 ]]; then image_api=37.0; fi', prepare)
