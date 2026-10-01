@@ -153,7 +153,19 @@ jobs:
           if [[ "$API_LEVEL" == 37 ]]; then image_api=37.0; fi
           image="system-images;android-${image_api};google_apis;x86_64"
           sdkmanager --list --channel=0 > "$DEVICE_LOG_DIR/sdk-packages.log" 2>&1
-          grep -F "$image" "$DEVICE_LOG_DIR/sdk-packages.log"
+          # sdkmanager 旧输出用分号，新 Android CLI 用斜杠；仅匹配完整包 ID。
+          python3 - "$DEVICE_LOG_DIR/sdk-packages.log" "$image" <<'PYSDK'
+          from pathlib import Path
+          import sys
+          expected = sys.argv[2].replace(";", "/")
+          for line in Path(sys.argv[1]).read_text().splitlines():
+              fields = line.split()
+              if fields and fields[0].replace(";", "/") == expected:
+                  print(line)
+                  break
+          else:
+              raise SystemExit(f"Required Android SDK package not found: {sys.argv[2]}")
+          PYSDK
           (set +o pipefail; yes | sdkmanager --licenses > "$DEVICE_LOG_DIR/sdk-licenses.log" 2>&1)
           sdkmanager --channel=0 'platforms;android-37.0' 'ndk;28.2.13676358' 'cmake;3.22.1' 'emulator' "$image" \
             2>&1 | tee "$DEVICE_LOG_DIR/sdk-install.log"

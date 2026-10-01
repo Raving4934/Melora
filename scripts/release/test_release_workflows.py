@@ -7,6 +7,7 @@ import ast
 from contextlib import redirect_stdout
 import io
 import json
+import os
 from fnmatch import fnmatchcase
 from pathlib import Path
 import re
@@ -189,7 +190,7 @@ class DeviceWorkflowTest(unittest.TestCase):
         self.assertIn('image="system-images;android-${image_api};google_apis;x86_64"', prepare)
         self.assertIn('if [[ "$API_LEVEL" == 37 ]]; then image_api=37.0; fi', prepare)
         self.assertIn("sdkmanager --list --channel=0", prepare)
-        self.assertIn('grep -F "$image" "$DEVICE_LOG_DIR/sdk-packages.log"', prepare)
+        self.assertIn('python3 - "$DEVICE_LOG_DIR/sdk-packages.log" "$image"', prepare)
         self.assertIn('test ! -e "$ANDROID_AVD_HOME"', prepare)
         self.assertIn('mkdir "$ANDROID_AVD_HOME"', prepare)
         self.assertIn('avdmanager create avd --name melora-ci --package "$image"', prepare)
@@ -199,6 +200,60 @@ class DeviceWorkflowTest(unittest.TestCase):
         self.assertEqual(set(re.findall(r"uses: ([^@\s]+)@", self.job)), {
             "actions/checkout", "actions/setup-java", "android-actions/setup-android", "actions/upload-artifact",
         })
+
+    def run_sdk_package_preflight(
+        self, listing: str, api: str = "35", list_exit: int = 0,
+    ) -> subprocess.CompletedProcess:
+        prepare = step(self.workflow, "准备设备 SDK 与全新 AVD")
+        script = dedent(prepare.split("        run: |\n", 1)[1])
+        # Execute the real preflight, replacing only the external SDK listing command.
+        script = script.split("(set +o pipefail; yes | sdkmanager --licenses", 1)[0]
+        with tempfile.TemporaryDirectory(prefix="melora sdk listing ") as directory:
+            return subprocess.run(
+                ["bash", "-euc", 'sdkmanager() { printf "%s\\n" "$SDK_PACKAGE_LIST"; return "$SDK_LIST_EXIT"; }\n' + script],
+                env={**os.environ, "API_LEVEL": api, "DEVICE_LOG_DIR": directory,
+                     "SDK_PACKAGE_LIST": listing, "SDK_LIST_EXIT": str(list_exit)}, capture_output=True, text=True, timeout=10,
+            )
+
+    def test_sdk_preflight_accepts_android_cli_slash_package_ids(self) -> None:
+        result = self.run_sdk_package_preflight(
+            "WARNING: The SDK Manager CLI tool (sdkmanager) is deprecated.\n"
+            "Available packages:\n"
+            "  system-images/android-35/google_apis/x86_64  9.0.0  Google APIs Intel x86_64 Atom System Image\n"
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_sdk_preflight_accepts_both_formats_for_every_matrix_api(self) -> None:
+        for api, image_api in (("26", "26"), ("35", "35"), ("37", "37.0")):
+            for separator in (";", "/"):
+                with self.subTest(api=api, separator=separator):
+                    package = separator.join(("system-images", f"android-{image_api}", "google_apis", "x86_64"))
+                    result = self.run_sdk_package_preflight(
+                        f"Available packages:\n  {package} | 9 | Google APIs Intel x86_64 Atom System Image\n", api,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn(package, result.stdout)
+
+    def test_sdk_preflight_rejects_missing_and_inexact_packages(self) -> None:
+        for listing in (
+            "", "Available packages:\n",
+            "system-images/android-35/google_apis/x86_64_extra 9 description\n",
+            "system-images/android-35/google_apis/arm64-v8a 9 description\n",
+            "system-images/android-35/google_apis_playstore/x86_64 9 description\n",
+            "system-images/android-36/google_apis/x86_64 9 description\n",
+            "other-package 9 description system-images;android-35;google_apis;x86_64\n",
+        ):
+            with self.subTest(listing=listing):
+                result = self.run_sdk_package_preflight(listing)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Required Android SDK package not found", result.stderr)
+
+    def test_sdk_preflight_preserves_sdkmanager_failure(self) -> None:
+        result = self.run_sdk_package_preflight(
+            "system-images/android-35/google_apis/x86_64 9 description\n", list_exit=7,
+        )
+        self.assertEqual(result.returncode, 7)
+        self.assertNotIn("Required Android SDK package not found", result.stderr)
 
     def test_device_gate_is_ordered_bounded_and_has_no_test_selection(self) -> None:
         names = (
