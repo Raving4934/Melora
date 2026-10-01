@@ -3,6 +3,10 @@ package com.leyu.melora.ui.player
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.platform.ViewConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.lerp
@@ -23,16 +27,23 @@ internal enum class PlayerSheetAnchor { Collapsed, Expanded }
 
 internal enum class PlayerSheetBackAction { PassThrough, Consume, ReturnToPlayer, Collapse }
 
+internal enum class PlayerSheetTransition { Expand, OpenQueue, ReturnToPlayer, Collapse }
+
 /** 只有迷你条完全归位才把返回交还底页，不能复用视觉上的展开/收起阈值。 */
 internal fun playerSheetBackAction(
     settled: PlayerSheetAnchor,
     target: PlayerSheetAnchor,
     progress: Float,
     animationRunning: Boolean = false,
-    backInProgress: Boolean = false,
+    transition: PlayerSheetTransition? = null,
     queueReturnTarget: PlayerSheetAnchor? = null,
 ): PlayerSheetBackAction = when {
-    animationRunning || backInProgress -> PlayerSheetBackAction.Consume
+    transition == PlayerSheetTransition.Collapse || transition == PlayerSheetTransition.ReturnToPlayer ->
+        PlayerSheetBackAction.Consume
+    transition == PlayerSheetTransition.OpenQueue && queueReturnTarget == PlayerSheetAnchor.Expanded ->
+        PlayerSheetBackAction.ReturnToPlayer
+    transition != null -> PlayerSheetBackAction.Collapse
+    animationRunning && target == PlayerSheetAnchor.Collapsed -> PlayerSheetBackAction.Consume
     settled == PlayerSheetAnchor.Collapsed && target == PlayerSheetAnchor.Collapsed && progress <= 0f ->
         PlayerSheetBackAction.PassThrough
     progress >= 0.99f && queueReturnTarget == PlayerSheetAnchor.Expanded -> PlayerSheetBackAction.ReturnToPlayer
@@ -110,5 +121,16 @@ internal class PlayerSkipBurstGate(
 
         remaining -= 1
         return true
+    }
+}
+
+/** 下拉/纵向容器比横向翻页晚确认；只覆盖容器本身，子按钮仍使用系统原阈值。 */
+@Composable
+internal fun rememberPlayerVerticalViewConfiguration(): ViewConfiguration {
+    val base = LocalViewConfiguration.current
+    return remember(base) {
+        object : ViewConfiguration by base {
+            override val touchSlop: Float = base.touchSlop * 3f
+        }
     }
 }

@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -298,59 +299,65 @@ internal fun LyricsViewport(
         LaunchedEffect(frame.focusIndex, browsing, rowHeight, motionEnabled) {
             if (!browsing) follow(frame.focusIndex.coerceAtLeast(0))
         }
-        LazyColumn(
-            state = list,
-            userScrollEnabled = !mini,
-            contentPadding = PaddingValues(vertical = with(density) { (height / 2f).toDp() }),
-            verticalArrangement = Arrangement.spacedBy(
-                if (mini) 3.dp
-                else (fontSize * if (immersiveMode) IMMERSIVE_LYRICS_SPACING_MULTIPLIER else 0.66f).dp,
-            ),
-            modifier = Modifier.fillMaxSize(),
-        ) {
-            itemsIndexed(lines, key = { index, _ -> index }) { index, line ->
-                val active = index in frame.activeIndices
-                val distance = kotlin.math.abs(index - frame.focusIndex)
-                val immersiveRow = immersiveMode
-                // 对唱/背景声部可能同时在演唱，正在唱的行都应清晰，不能只照亮焦点索引。
-                val depthDistance = if (active) 0 else distance
-                val scale = animateFloatAsState(
-                    if (immersiveRow) immersiveLyricsScale(depthDistance)
-                    else if (mini) when (distance) { 0 -> 1f; 1 -> 0.82f; else -> 0.75f }
-                    else if (active) 1f else 0.97f,
-                    if (motionEnabled) spring(dampingRatio = 0.9f, stiffness = 300f) else snap(), label = "lyricFocusScale",
-                )
-                val blurRadiusDp = if (immersiveRow) immersiveLyricsBlurDp(depthDistance) else 0f
-                val blurEffect = remember(blurRadiusDp, density.density) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && blurRadiusDp > 0f) {
-                        with(density) {
-                            val radiusPx = blurRadiusDp.dp.toPx()
-                            BlurEffect(radiusX = radiusPx, radiusY = radiusPx)
-                        }
-                    } else null
-                }
-                Column(Modifier.fillMaxWidth().clickable {
-                    onLineClick(line)
-                    if (!mini) { browsing = false; scope.launch { follow(index) } }
-                }, horizontalAlignment = alignment) {
-                    Column(Modifier.fillMaxWidth()
-                        .graphicsLayer {
-                            val depthAlpha = if (immersiveRow) immersiveLyricsAlpha(depthDistance) else 1f
-                            alpha = (if (line.isBackground) 0.78f else 1f) * depthAlpha
-                            scaleX = scale.value; scaleY = scale.value
-                            transformOrigin = TransformOrigin(if (alignment == Alignment.CenterHorizontally) 0.5f else 0f, 0.5f)
-                            renderEffect = blurEffect
-                        }) {
-                        TimedLyricText(line, position, active, ink, style,
-                            modifier = if (mini) Modifier.fillMaxWidth().height(with(density) { miniLineHeight.toDp() }) else Modifier.fillMaxWidth(),
-                            maxLines = if (mini) 1 else Int.MAX_VALUE,
-                            mutedColor = if (mini) null else muted, marquee = mini && active && motionEnabled,
-                            inactiveAlpha = if (mini) { if (distance == 1) 0.47f else 0.27f } else if (config.isBlurEnabled) 0.24f else 0.36f)
-                        if (!mini) for (text in listOfNotNull(line.translation, line.romanization)) Text(
-                            text, style = subStyle,
-                            color = if (!active) muted else if (dark) Color(0xFFBDBDBD) else Color(0xFF686868),
-                            modifier = Modifier.fillMaxWidth().padding(top = 3.dp),
+        val viewConfiguration = LocalViewConfiguration.current
+        val verticalViewConfiguration = rememberPlayerVerticalViewConfiguration()
+        CompositionLocalProvider(LocalViewConfiguration provides verticalViewConfiguration) {
+            LazyColumn(
+                state = list,
+                userScrollEnabled = !mini,
+                contentPadding = PaddingValues(vertical = with(density) { (height / 2f).toDp() }),
+                verticalArrangement = Arrangement.spacedBy(
+                    if (mini) 3.dp
+                    else (fontSize * if (immersiveMode) IMMERSIVE_LYRICS_SPACING_MULTIPLIER else 0.66f).dp,
+                ),
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                itemsIndexed(lines, key = { index, _ -> index }) { index, line ->
+                    CompositionLocalProvider(LocalViewConfiguration provides viewConfiguration) {
+                        val active = index in frame.activeIndices
+                        val distance = kotlin.math.abs(index - frame.focusIndex)
+                        val immersiveRow = immersiveMode
+                        // 对唱/背景声部可能同时在演唱，正在唱的行都应清晰，不能只照亮焦点索引。
+                        val depthDistance = if (active) 0 else distance
+                        val scale = animateFloatAsState(
+                            if (immersiveRow) immersiveLyricsScale(depthDistance)
+                            else if (mini) when (distance) { 0 -> 1f; 1 -> 0.82f; else -> 0.75f }
+                            else if (active) 1f else 0.97f,
+                            if (motionEnabled) spring(dampingRatio = 0.9f, stiffness = 300f) else snap(), label = "lyricFocusScale",
                         )
+                        val blurRadiusDp = if (immersiveRow) immersiveLyricsBlurDp(depthDistance) else 0f
+                        val blurEffect = remember(blurRadiusDp, density.density) {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && blurRadiusDp > 0f) {
+                                with(density) {
+                                    val radiusPx = blurRadiusDp.dp.toPx()
+                                    BlurEffect(radiusX = radiusPx, radiusY = radiusPx)
+                                }
+                            } else null
+                        }
+                        Column(Modifier.fillMaxWidth().clickable {
+                            onLineClick(line)
+                            if (!mini) { browsing = false; scope.launch { follow(index) } }
+                        }, horizontalAlignment = alignment) {
+                            Column(Modifier.fillMaxWidth()
+                                .graphicsLayer {
+                                    val depthAlpha = if (immersiveRow) immersiveLyricsAlpha(depthDistance) else 1f
+                                    alpha = (if (line.isBackground) 0.78f else 1f) * depthAlpha
+                                    scaleX = scale.value; scaleY = scale.value
+                                    transformOrigin = TransformOrigin(if (alignment == Alignment.CenterHorizontally) 0.5f else 0f, 0.5f)
+                                    renderEffect = blurEffect
+                                }) {
+                                TimedLyricText(line, position, active, ink, style,
+                                    modifier = if (mini) Modifier.fillMaxWidth().height(with(density) { miniLineHeight.toDp() }) else Modifier.fillMaxWidth(),
+                                    maxLines = if (mini) 1 else Int.MAX_VALUE,
+                                    mutedColor = if (mini) null else muted, marquee = mini && active && motionEnabled,
+                                    inactiveAlpha = if (mini) { if (distance == 1) 0.47f else 0.27f } else if (config.isBlurEnabled) 0.24f else 0.36f)
+                                if (!mini) for (text in listOfNotNull(line.translation, line.romanization)) Text(
+                                    text, style = subStyle,
+                                    color = if (!active) muted else if (dark) Color(0xFFBDBDBD) else Color(0xFF686868),
+                                    modifier = Modifier.fillMaxWidth().padding(top = 3.dp),
+                                )
+                            }
+                        }
                     }
                 }
             }

@@ -1,5 +1,7 @@
 package com.leyu.melora.ui.player
 
+import com.leyu.melora.ui.common.LocalPageActive
+
 import com.leyu.melora.playback.LyricsUiConfig
 
 import androidx.compose.animation.AnimatedVisibility
@@ -112,6 +114,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.PagerState
@@ -175,6 +178,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -308,7 +312,6 @@ internal fun FullPlayerPageContent(
         LaunchedEffect(track?.uid, currentPage, expandedLayout, isVisible) {
             if (isVisible && (expandedLayout || currentPage == 1)) PlaybackController.ensureCurrentArtwork()
         }
-        val queueSwipeAllowed = !immersive && openedCollection == null && currentPage != 2
         // 播放分页是同级视图，不消费返回；仅沉浸态先退出，再由外层收起播放器。
         BackHandler(enabled = isVisible && immersive) { onImmersiveChange(false) }
         LaunchedEffect(collection != null, coverPagerState.currentPage, coverPagerState.isScrollInProgress, pageIsLight, immersive, expandedLayout) {
@@ -559,22 +562,56 @@ internal fun FullPlayerPageContent(
             )
         }
         // 同一份队列页：竖屏接管整页，横屏只接管右侧控制区。
+        val viewConfiguration = LocalViewConfiguration.current
+        val verticalViewConfiguration = rememberPlayerVerticalViewConfiguration()
+        val queueGestureEnabled by rememberUpdatedState(
+            LocalPageActive.current && !immersive && !expandedLayout && collection == null,
+        )
+        val queueFling = PagerDefaults.flingBehavior(queuePagerState, snapAnimationSpec = PlayerPageSnapSpec)
+        val defaultQueueScroll = PagerDefaults.pageNestedScrollConnection(queuePagerState, Orientation.Vertical)
+        val queueNestedScroll = remember(defaultQueueScroll, queueFling) {
+            object : NestedScrollConnection by defaultQueueScroll {
+                override suspend fun onPreFling(available: Velocity): Velocity {
+                    if (!queueGestureEnabled || queuePagerState.currentPageOffsetFraction == 0f) return Velocity.Zero
+                    // 页面已离开端点：释放速度属于翻页，不能先让内层列表惯性滚动再等余速。
+                    // 与直接拖动共用原生吸附；新手势/返回仍可通过Pager的滚动互斥取消它。
+                    queuePagerState.scroll {
+                        with(queueFling) {
+                            performFling(-available.y) { remaining ->
+                                val pageSize = queuePagerState.layoutInfo.let { it.pageSize + it.pageSpacing }
+                                if (pageSize > 0) with(queuePagerState) {
+                                    updateTargetPage(queuePagerState.currentPage + (remaining / pageSize).roundToInt())
+                                }
+                            }
+                        }
+                        // 在同一滚动事务内提交终点，避免小数余量让下一次Back误判仍在队列。
+                        with(queuePagerState) { updateCurrentPage(queuePagerState.currentPage) }
+                    }
+                    return Velocity(0f, available.y)
+                }
+            }
+        }
         val queuePaneContent: @Composable (Modifier, @Composable () -> Unit) -> Unit = { pagerModifier, playerContent ->
-            VerticalPager(
-                state = queuePagerState,
-                flingBehavior = PagerDefaults.flingBehavior(queuePagerState, snapAnimationSpec = PlayerPageSnapSpec),
-                userScrollEnabled = !immersive && !expandedLayout && (twoPanes || queuePagerState.currentPage == 1 || queueSwipeAllowed),
-                modifier = pagerModifier,
-            ) { page ->
-                if (page == 0) {
-                    playerContent()
-                } else {
-                    QueuePageContent(
-                        state = state,
-                        onClose = onCloseQueue,
-                        horizontalPadding = if (twoPanes) 0.dp else 18.dp,
-                        modifier = if (twoPanes) Modifier.padding(controlsPadding) else Modifier,
-                    )
+            CompositionLocalProvider(LocalViewConfiguration provides verticalViewConfiguration) {
+                VerticalPager(
+                    state = queuePagerState,
+                    pageNestedScrollConnection = queueNestedScroll,
+                    flingBehavior = queueFling,
+                    userScrollEnabled = queueGestureEnabled,
+                    modifier = pagerModifier,
+                ) { page ->
+                    CompositionLocalProvider(LocalViewConfiguration provides viewConfiguration) {
+                        if (page == 0) {
+                            playerContent()
+                        } else {
+                            QueuePageContent(
+                                state = state,
+                                onClose = onCloseQueue,
+                                horizontalPadding = if (twoPanes) 0.dp else 18.dp,
+                                modifier = if (twoPanes) Modifier.padding(controlsPadding) else Modifier,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -733,20 +770,26 @@ private fun AudioInfoPage(
         ImmersiveTrackNotes(track, platformName, qualityBadge, sourceLabel, onOpenAlbum, onOpenArtist)
         return
     }
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        AudioInfoCard(
-            platformName = platformName,
-            qualityBadge = qualityBadge,
-            sourceLabel = sourceLabel,
-        )
-        AlbumInfoCard(track = track, onOpenAlbum = onOpenAlbum)
-        ArtistInfoCard(track = track, onOpenArtist = onOpenArtist)
+    val viewConfiguration = LocalViewConfiguration.current
+    val verticalViewConfiguration = rememberPlayerVerticalViewConfiguration()
+    CompositionLocalProvider(LocalViewConfiguration provides verticalViewConfiguration) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            CompositionLocalProvider(LocalViewConfiguration provides viewConfiguration) {
+                AudioInfoCard(
+                    platformName = platformName,
+                    qualityBadge = qualityBadge,
+                    sourceLabel = sourceLabel,
+                )
+                AlbumInfoCard(track = track, onOpenAlbum = onOpenAlbum)
+                ArtistInfoCard(track = track, onOpenArtist = onOpenArtist)
+            }
+        }
     }
 }
 

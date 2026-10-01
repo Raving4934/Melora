@@ -1,9 +1,11 @@
 package com.leyu.melora.ui.player
 
 import androidx.compose.animation.core.TargetBasedAnimation
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.foundation.gestures.AnchoredDraggableState
 import androidx.compose.foundation.gestures.DraggableAnchors
+import androidx.compose.foundation.gestures.animateTo
 import androidx.compose.foundation.pager.PageSize
 import androidx.compose.ui.unit.Density
 import androidx.compose.foundation.layout.calculateEndPadding
@@ -11,6 +13,15 @@ import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.runtime.BroadcastFrameClock
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -35,23 +46,30 @@ class PlayerSheetMotionTest {
     }
 
     @Test
-    fun backDuringSheetAnimationOrPendingBackIsConsumedWithoutRestarting() {
-        for (settled in PlayerSheetAnchor.entries) {
-            for (target in PlayerSheetAnchor.entries) {
-                for (progress in listOf(0f, 0.0005f, 0.5f, 0.995f, 1f)) {
-                    for ((animating, pending) in listOf(true to false, false to true, true to true)) {
-                        assertEquals(
-                            PlayerSheetBackAction.Consume,
-                            playerSheetBackAction(settled, target, progress, animating, pending),
-                        )
-                    }
-                }
-            }
-        }
+    fun entryRequestsCollapseWhileExitTransitionAndAnimationConsumeBack() {
+        assertEquals(PlayerSheetBackAction.Collapse, playerSheetBackAction(
+            PlayerSheetAnchor.Collapsed, PlayerSheetAnchor.Expanded, 0.5f,
+            animationRunning = true, transition = PlayerSheetTransition.Expand,
+        ))
+        assertEquals(PlayerSheetBackAction.Consume, playerSheetBackAction(
+            PlayerSheetAnchor.Expanded, PlayerSheetAnchor.Collapsed, 0.5f, animationRunning = true,
+        ))
+        assertEquals(PlayerSheetBackAction.Consume, playerSheetBackAction(
+            PlayerSheetAnchor.Expanded, PlayerSheetAnchor.Expanded, 1f,
+            transition = PlayerSheetTransition.Collapse,
+        ))
+        assertEquals(PlayerSheetBackAction.Consume, playerSheetBackAction(
+            PlayerSheetAnchor.Expanded, PlayerSheetAnchor.Expanded, 1f,
+            transition = PlayerSheetTransition.ReturnToPlayer,
+        ))
     }
 
     @Test
     fun expandedQueueReturnsToPlayerBeforeCollapsingButPartialQueueCollapses() {
+        assertEquals(PlayerSheetBackAction.ReturnToPlayer, playerSheetBackAction(
+            PlayerSheetAnchor.Expanded, PlayerSheetAnchor.Expanded, 1f,
+            transition = PlayerSheetTransition.OpenQueue, queueReturnTarget = PlayerSheetAnchor.Expanded,
+        ))
         assertEquals(
             PlayerSheetBackAction.ReturnToPlayer,
             playerSheetBackAction(PlayerSheetAnchor.Expanded, PlayerSheetAnchor.Expanded, 1f, queueReturnTarget = PlayerSheetAnchor.Expanded),
@@ -62,7 +80,10 @@ class PlayerSheetMotionTest {
         )
         assertEquals(
             PlayerSheetBackAction.Consume,
-            playerSheetBackAction(PlayerSheetAnchor.Expanded, PlayerSheetAnchor.Expanded, 1f, backInProgress = true, queueReturnTarget = PlayerSheetAnchor.Expanded),
+            playerSheetBackAction(
+                PlayerSheetAnchor.Expanded, PlayerSheetAnchor.Expanded, 1f,
+                transition = PlayerSheetTransition.ReturnToPlayer, queueReturnTarget = PlayerSheetAnchor.Expanded,
+            ),
         )
         assertEquals(
             PlayerSheetBackAction.PassThrough,
@@ -72,12 +93,90 @@ class PlayerSheetMotionTest {
 
     @Test
     fun miniQueueReturnsToUnderlyingPageAndStillGuardsTransitionBack() {
+        assertEquals(PlayerSheetBackAction.Collapse, playerSheetBackAction(
+            PlayerSheetAnchor.Expanded, PlayerSheetAnchor.Expanded, 1f,
+            transition = PlayerSheetTransition.OpenQueue, queueReturnTarget = PlayerSheetAnchor.Collapsed,
+        ))
         assertEquals(PlayerSheetBackAction.Collapse,
             playerSheetBackAction(PlayerSheetAnchor.Expanded, PlayerSheetAnchor.Expanded, 1f,
                 queueReturnTarget = PlayerSheetAnchor.Collapsed))
         assertEquals(PlayerSheetBackAction.Consume,
-            playerSheetBackAction(PlayerSheetAnchor.Expanded, PlayerSheetAnchor.Expanded, 1f,
-                backInProgress = true, queueReturnTarget = PlayerSheetAnchor.Collapsed))
+            playerSheetBackAction(
+                PlayerSheetAnchor.Expanded, PlayerSheetAnchor.Expanded, 1f,
+                transition = PlayerSheetTransition.Collapse, queueReturnTarget = PlayerSheetAnchor.Collapsed,
+            ))
+    }
+
+    @Test
+    fun replacingEntryWithCollapseKeepsOwnershipAndSameIntentDoesNotRestart() = runBlocking {
+        val clock = BroadcastFrameClock()
+        val scopeJob = Job(coroutineContext[Job])
+        val scope = CoroutineScope(coroutineContext + clock + scopeJob)
+        val state = PlayerSheetBackState(AnchoredDraggableState(PlayerSheetAnchor.Collapsed)).apply {
+            sheet.updateAnchors(anchors(800f))
+        }
+        val oldFinallyStarted = CompletableDeferred<Unit>()
+        val releaseOldFinally = CompletableDeferred<Unit>()
+        var collapseStarts = 0
+        var frameTime = 1_000_000_000L
+
+        try {
+            state.transitionTo(scope, PlayerSheetTransition.Expand) {
+                try {
+                    state.sheet.animateTo(PlayerSheetAnchor.Expanded, tween(100))
+                } finally {
+                    withContext(NonCancellable) {
+                        oldFinallyStarted.complete(Unit)
+                        releaseOldFinally.await()
+                    }
+                }
+            }
+            yield()
+            val entryJob = scopeJob.children.single()
+            assertEquals(PlayerSheetTransition.Expand, state.transition)
+            assertTrue(state.sheet.isAnimationRunning)
+
+            repeat(2) {
+                clock.sendFrame(frameTime)
+                frameTime += 16_000_000L
+                yield()
+            }
+            assertTrue(state.sheet.offset > 0f && state.sheet.offset < 800f)
+
+            state.transitionTo(scope, PlayerSheetTransition.Collapse) {
+                collapseStarts++
+                state.sheet.animateTo(PlayerSheetAnchor.Collapsed, tween(100))
+            }
+            oldFinallyStarted.await()
+            yield()
+            assertEquals(1, collapseStarts)
+            assertEquals(PlayerSheetTransition.Collapse, state.transition)
+            assertTrue(state.sheet.isAnimationRunning)
+
+            state.transitionTo(scope, PlayerSheetTransition.Collapse) { collapseStarts++ }
+            assertEquals("same intent must not launch a second animation", 1, collapseStarts)
+            assertEquals(PlayerSheetTransition.Collapse, state.transition)
+
+            releaseOldFinally.complete(Unit)
+            entryJob.join() // Wait through PlayerSheetBackState's finally, not just the test block's finally.
+            assertEquals("cancelled entry finally must not release the active collapse", PlayerSheetTransition.Collapse, state.transition)
+            assertEquals(PlayerSheetBackAction.Consume, state.action())
+            assertTrue(state.sheet.isAnimationRunning)
+
+            repeat(20) {
+                if (state.sheet.isAnimationRunning) {
+                    clock.sendFrame(frameTime)
+                    frameTime += 16_000_000L
+                    yield()
+                }
+            }
+            assertEquals(PlayerSheetAnchor.Collapsed, state.sheet.settledValue)
+            assertEquals(1, collapseStarts)
+            assertEquals(null, state.transition)
+        } finally {
+            releaseOldFinally.complete(Unit)
+            scopeJob.cancelAndJoin()
+        }
     }
 
     @Test

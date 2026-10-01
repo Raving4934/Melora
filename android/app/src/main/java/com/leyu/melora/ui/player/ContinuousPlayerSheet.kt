@@ -48,6 +48,7 @@ import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Velocity
@@ -108,14 +109,6 @@ internal fun ContinuousPlayerSheet(
     LaunchedEffect(verticalPagerState.settledPage) {
         if (verticalPagerState.settledPage == 0) queueReturnTarget = PlayerSheetAnchor.Expanded
     }
-    fun launchTransition(block: suspend () -> Unit) {
-        if (backState.pending) return
-        // 同步占有返回，不能等协程/动画首帧或展开回调才停用底页。
-        backState.pending = true
-        scope.launch {
-            try { block() } finally { backState.pending = false }
-        }
-    }
     var pageShowsCover by remember { mutableStateOf(true) }
     var pageBlocksCollapse by remember { mutableStateOf(false) }
     var pageIsLight by remember(playerIsDark) { mutableStateOf(!playerIsDark) }
@@ -162,8 +155,12 @@ internal fun ContinuousPlayerSheet(
         }
         val showMini by remember(progress) { derivedStateOf { progress() < 0.22f } }
         LaunchedEffect(collapsed) { if (collapsed) immersive = false }
-        val canCollapse = remember(playbackPage) { { playbackPage() && !pageBlocksCollapse && !immersive } }
-        val canDrag by remember(offset, canCollapse) { derivedStateOf { offset() > 0.5f || canCollapse() } }
+        val canCollapse = remember(playbackPage, backState) {
+            { backState.transition == null && playbackPage() && !pageBlocksCollapse && !immersive }
+        }
+        val canDrag by remember(offset, canCollapse, backState) {
+            derivedStateOf { backState.transition == null && (offset() > 0.5f || canCollapse()) }
+        }
         val morphing = remember(progress, playbackPage) {
             {
                 val p = progress()
@@ -180,7 +177,7 @@ internal fun ContinuousPlayerSheet(
                     return Velocity(0f, consumed)
                 }
                 override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset =
-                    if (source == NestedScrollSource.UserInput && offset() > 0.5f) {
+                    if (source == NestedScrollSource.UserInput && backState.transition == null && offset() > 0.5f) {
                         Offset(0f, sheetState.dispatchRawDelta(available.y))
                     } else Offset.Zero
 
@@ -190,7 +187,7 @@ internal fun ContinuousPlayerSheet(
                     } else Offset.Zero
 
                 override suspend fun onPreFling(available: Velocity): Velocity =
-                    if (offset() > 0.5f && offset() < travel) settle(available.y) else Velocity.Zero
+                    if (backState.transition == null && offset() > 0.5f && offset() < travel) settle(available.y) else Velocity.Zero
 
                 // 只接续播放器实际发生的位移；详情页遗留的惯性不能在返回后突然收起播放器。
                 override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity =
@@ -202,20 +199,26 @@ internal fun ContinuousPlayerSheet(
         val backAction = remember(backState, verticalPagerState) {
             {
                 backState.action(
-                    pagerScrolling = verticalPagerState.isScrollInProgress,
-                    queueReturnTarget = queueReturnTarget.takeIf { verticalPagerState.currentPage == 1 },
+                    queueReturnTarget = queueReturnTarget.takeIf {
+                        backState.transition == PlayerSheetTransition.OpenQueue ||
+                            verticalPagerState.currentPage != 0 || verticalPagerState.targetPage != 0 ||
+                            verticalPagerState.currentPageOffsetFraction != 0f
+                    },
                 )
             }
         }
         val currentBackAction by remember(backAction) { derivedStateOf { backAction() } }
         val handleBack = {
-            // 点击时重读状态；先同步占有返回，再启动协程，堵住动画首帧前的重复返回。
+            // 首次返回可以反转进入/队列翻页；只有同一退出过程的重复返回被合并。
             val action = backAction()
-            if (action == PlayerSheetBackAction.Collapse || action == PlayerSheetBackAction.ReturnToPlayer) {
-                launchTransition {
-                    if (action == PlayerSheetBackAction.ReturnToPlayer) verticalPagerState.animateScrollToPage(0, animationSpec = PlayerPageSnapSpec)
-                    else sheetState.animateTo(PlayerSheetAnchor.Collapsed, PlayerPageSnapSpec)
+            when (action) {
+                PlayerSheetBackAction.Collapse -> backState.transitionTo(scope, PlayerSheetTransition.Collapse) {
+                    sheetState.animateTo(PlayerSheetAnchor.Collapsed, PlayerPageSnapSpec)
                 }
+                PlayerSheetBackAction.ReturnToPlayer -> backState.transitionTo(scope, PlayerSheetTransition.ReturnToPlayer) {
+                    verticalPagerState.animateScrollToPage(0, animationSpec = PlayerPageSnapSpec)
+                }
+                else -> Unit
             }
         }
 
@@ -257,261 +260,269 @@ internal fun ContinuousPlayerSheet(
         val subtitleText = playbackStatus ?: currentLyricText
 
 
-        Box(
-            Modifier.fillMaxSize()
-                .graphicsLayer {
-                    val p = progress()
-                    translationY = offset()
-                    val rounding = playerMotionPhase(p, 0f, 0.04f) * (1f - playerMotionPhase(p, 0.85f, 1f))
-                    shape = RoundedCornerShape(topStart = 22.dp * rounding, topEnd = 22.dp * rounding)
-                    clip = true
-                }
-                // 端点坐标位于位移层内部，不能把容器 translationY 再算入封面轨迹。
-                .onPlaced { sheetCoordinates = it }
-                .nestedScroll(nestedScroll)
-                .anchoredDraggable(sheetState, Orientation.Vertical, enabled = canDrag, flingBehavior = fling)
-                .background(miniColors.surface),
-        ) {
-            CompositionLocalProvider(
-                LocalForceHideStatusBar provides (immersive && expanded),
-                // 静止展开时保留内部弹窗/歌词/详情的返回优先级；转场时只由外层消费。
-                LocalPageActive provides (LocalPageActive.current && expanded &&
-                    currentBackAction != PlayerSheetBackAction.Consume),
+        val viewConfiguration = LocalViewConfiguration.current
+        val verticalViewConfiguration = rememberPlayerVerticalViewConfiguration()
+        CompositionLocalProvider(LocalViewConfiguration provides verticalViewConfiguration) {
+            Box(
+                Modifier.fillMaxSize()
+                    .graphicsLayer {
+                        val p = progress()
+                        translationY = offset()
+                        val rounding = playerMotionPhase(p, 0f, 0.04f) * (1f - playerMotionPhase(p, 0.85f, 1f))
+                        shape = RoundedCornerShape(topStart = 22.dp * rounding, topEnd = 22.dp * rounding)
+                        clip = true
+                    }
+                    // 端点坐标位于位移层内部，不能把容器 translationY 再算入封面轨迹。
+                    .onPlaced { sheetCoordinates = it }
+                    .nestedScroll(nestedScroll)
+                    .anchoredDraggable(sheetState, Orientation.Vertical, enabled = canDrag, flingBehavior = fling)
+                    .background(miniColors.surface),
             ) {
-            PlayerAppearanceProvider(
-                dark = playerIsDark,
-                artworkColor = playerBackdropEntry?.representativeColor,
-            ) {
-                PlayerBackdrop(
-                    artwork = track.artwork,
-                    isVisible = expanded,
-                    playing = state.positionAdvancing,
-                    motionEnabled = playerMotionEnabled,
-                    entry = playerBackdropEntry,
-                    onEntryReady = { playerBackdropEntry = it },
-                    modifier = Modifier.fillMaxSize().graphicsLayer {
-                        alpha = playerMotionPhase(progress(), 0f, PlayerMiniFadeEnd)
-                    },
-                )
-                // 只提前退出正文；背景始终由根面板承接，不能让底页从播放器内部透出。
-                Box(Modifier.fillMaxSize().graphicsLayer {
-                    alpha = playerMotionPhase(progress(), PlayerContentFadeStart, 1f)
-                }) {
-                    FullPlayerPageContent(
-                        state = state,
-                        immersive = immersive,
-                        onImmersiveChange = { immersive = it },
-                        onCollapse = { launchTransition {
-                            verticalPagerState.scrollToPage(0)
-                            sheetState.animateTo(PlayerSheetAnchor.Collapsed, PlayerPageSnapSpec)
-                        } },
-                        lyricPosition = lyricPosition,
-                        motionEnabled = playerMotionEnabled && expanded && (twoPanes || verticalPagerState.currentPage == 0),
-                        lyricFrame = lyricFrameState,
-                        lyricLines = lyricLines,
-                        isCollapsed = collapsed,
-                        isVisible = expanded && (twoPanes || verticalPagerState.currentPage == 0),
-                        queuePagerState = verticalPagerState,
-                        onOpenQueue = { launchTransition {
-                            queueReturnTarget = PlayerSheetAnchor.Expanded
-                            verticalPagerState.animateScrollToPage(1, animationSpec = PlayerPageSnapSpec)
-                        } },
-                        onCloseQueue = handleBack,
-                        onArtworkPositioned = { child ->
-                            val parent = sheetCoordinates
-                            if (parent != null && parent.isAttached && child.isAttached && pageShowsCover) {
-                                val rect = parent.localBoundingBoxOf(child, clipBounds = false)
-                                if (rect.width > 0f && rect.height > 0f && rect.left >= 0f && rect.right <= screenWidthPx + 1f && rect.bottom <= screenHeightPx + 1f) {
-                                    fullBounds = rect
-                                }
-                            }
-                        },
-                        artworkAlpha = artworkAlpha,
-                        coverStyle = playerCoverStyle,
-                        artworkRotation = vinylRotation,
-                        onPageVisualChanged = { cover, light, blocksCollapse -> pageShowsCover = cover; pageIsLight = light; pageBlocksCollapse = blocksCollapse },
-                    )
-                }
-            }
-            }
-            Surface(
-                Modifier.fillMaxWidth().align(Alignment.TopStart)
-                    // 始终测量迷你端点，旋转后直接恢复展开态也能连续收起。
-                    .zIndex(if (showMini) 1f else -1f)
-                    .then(if (showMini) Modifier else Modifier.clearAndSetSemantics {})
-                    .graphicsLayer { alpha = 1f - playerMotionPhase(progress(), 0f, PlayerMiniFadeEnd) },
-                color = Color.Transparent,
-            ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
-                            .navigationBarsPadding(),
+                CompositionLocalProvider(LocalViewConfiguration provides viewConfiguration) {
+                    CompositionLocalProvider(
+                        LocalForceHideStatusBar provides (immersive && expanded),
+                        // 静止展开时保留内部弹窗/歌词/详情的返回优先级；转场时只由外层消费。
+                        LocalPageActive provides (LocalPageActive.current && expanded &&
+                            backState.transition == null),
                     ) {
-                    HorizontalDivider(color = miniColors.outlineVariant.copy(alpha = 0.4f))
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(miniBarContentHeight)
-                            .padding(start = 14.dp, end = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                    PlayerAppearanceProvider(
+                        dark = playerIsDark,
+                        artworkColor = playerBackdropEntry?.representativeColor,
                     ) {
-                        // 封面 + 双行信息：整块左右滑切歌、点击展开全屏播放页
-                        Row(
-                            modifier = Modifier
-                                .weight(1f)
-                                .graphicsLayer { translationX = swipeOffset.value }
-                                .clickable(
-                                    enabled = showMini,
-                                    indication = null,
-                                    interactionSource = remember { MutableInteractionSource() },
-                                ) {
-                                    launchTransition {
-                                        verticalPagerState.scrollToPage(0)
-                                        sheetState.animateTo(PlayerSheetAnchor.Expanded, PlayerPageSnapSpec)
-                                    }
-                                }
-                                .draggable(
-                                    enabled = showMini,
-                                    state = swipeDragState,
-                                    orientation = Orientation.Horizontal,
-                                    onDragStopped = { velocity ->
-                                        val offset = swipeOffset.value
-                                        when {
-                                            velocity < -600f || offset < -swipeThresholdPx -> {
-                                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                PlaybackController.next()
-                                            }
-                                            velocity > 600f || offset > swipeThresholdPx -> {
-                                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                PlaybackController.previous()
-                                            }
-                                        }
-                                        scope.launch {
-                                            swipeOffset.animateTo(
-                                                targetValue = 0f,
-                                                animationSpec = spring(dampingRatio = 1f, stiffness = Spring.StiffnessMedium),
-                                            )
-                                        }
-                                    },
-                                )
-                                .padding(end = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            NowPlayingArtwork(
-                                url = track.artwork,
-                                seed = track.uid,
-                                style = playerCoverStyle,
-                                rotationDegrees = vinylRotation,
-                                modifier = Modifier.size(46.dp)
-                                    .onGloballyPositioned { child ->
-                                        val parent = sheetCoordinates
-                                        if (parent != null && parent.isAttached && child.isAttached) {
-                                            miniBounds = parent.localBoundingBoxOf(child, clipBounds = false)
-                                                .translate(Offset(-swipeOffset.value, 0f))
-                                        }
-                                    }
-                                    .graphicsLayer { alpha = if (morphing()) 0f else 1f },
-                                cornerRadius = 10,
-                            )
-                            Column(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .padding(start = 12.dp),
-                            ) {
-                                Text(
-                                    text = listOf(track.title, track.artist)
-                                        .filter { it.isNotBlank() }
-                                        .joinToString(" - "),
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = miniColors.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(top = 3.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    if (playbackStatus == null && currentLine != null) {
-                                        TimedLyricText(
-                                            line = currentLine, position = lyricPosition,
-                                            active = lyricFrame.focusIndex in lyricFrame.activeIndices,
-                                            color = miniColors.onSurfaceVariant,
-                                            style = LocalTextStyle.current.copy(fontSize = 12.sp),
-                                            modifier = Modifier.weight(1f), maxLines = 1,
-                                            inactiveAlpha = 1f,
-                                        )
-                                    } else Text(
-                                        text = subtitleText, fontSize = 12.sp,
-                                        color = miniColors.onSurfaceVariant, maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
-                                    )
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(
-                                        text = "${formatClockMs(state.positionMs)} / ${formatClockMs(state.durationMs)}",
-                                        fontSize = 11.sp,
-                                        color = miniColors.onSurfaceVariant.copy(alpha = 0.8f),
-                                    )
-                                }
-                            }
-                        }
-                        IconButton(enabled = showMini, onClick = { PlaybackController.toggle() }) {
-                            Icon(
-                                imageVector = if (state.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                contentDescription = if (state.playing) "暂停" else "播放",
-                                tint = miniColors.onSurface,
-                                modifier = Modifier.size(32.dp),
-                            )
-                        }
-                        IconButton(enabled = showMini, onClick = {
-                            launchTransition {
-                                queueReturnTarget = PlayerSheetAnchor.Collapsed
-                                verticalPagerState.scrollToPage(1)
-                                sheetState.animateTo(PlayerSheetAnchor.Expanded, PlayerPageSnapSpec)
-                            }
+                        PlayerBackdrop(
+                            artwork = track.artwork,
+                            isVisible = expanded,
+                            playing = state.positionAdvancing,
+                            motionEnabled = playerMotionEnabled,
+                            entry = playerBackdropEntry,
+                            onEntryReady = { playerBackdropEntry = it },
+                            modifier = Modifier.fillMaxSize().graphicsLayer {
+                                alpha = playerMotionPhase(progress(), 0f, PlayerMiniFadeEnd)
+                            },
+                        )
+                        // 只提前退出正文；背景始终由根面板承接，不能让底页从播放器内部透出。
+                        Box(Modifier.fillMaxSize().graphicsLayer {
+                            alpha = playerMotionPhase(progress(), PlayerContentFadeStart, 1f)
                         }) {
-                            Icon(
-                                Icons.AutoMirrored.Rounded.QueueMusic,
-                                contentDescription = "播放队列",
-                                tint = miniColors.onSurface,
-                                modifier = Modifier.size(26.dp),
+                            FullPlayerPageContent(
+                                state = state,
+                                immersive = immersive,
+                                onImmersiveChange = { immersive = it },
+                                onCollapse = { backState.transitionTo(scope, PlayerSheetTransition.Collapse) {
+                                    verticalPagerState.scrollToPage(0)
+                                    sheetState.animateTo(PlayerSheetAnchor.Collapsed, PlayerPageSnapSpec)
+                                } },
+                                lyricPosition = lyricPosition,
+                                motionEnabled = playerMotionEnabled && expanded && (twoPanes || verticalPagerState.currentPage == 0),
+                                lyricFrame = lyricFrameState,
+                                lyricLines = lyricLines,
+                                isCollapsed = collapsed,
+                                isVisible = expanded && (twoPanes || verticalPagerState.currentPage == 0),
+                                queuePagerState = verticalPagerState,
+                                onOpenQueue = {
+                                    queueReturnTarget = PlayerSheetAnchor.Expanded
+                                    backState.transitionTo(scope, PlayerSheetTransition.OpenQueue) {
+                                        verticalPagerState.animateScrollToPage(1, animationSpec = PlayerPageSnapSpec)
+                                    }
+                                },
+                                onCloseQueue = handleBack,
+                                onArtworkPositioned = { child ->
+                                    val parent = sheetCoordinates
+                                    if (parent != null && parent.isAttached && child.isAttached && pageShowsCover) {
+                                        val rect = parent.localBoundingBoxOf(child, clipBounds = false)
+                                        if (rect.width > 0f && rect.height > 0f && rect.left >= 0f && rect.right <= screenWidthPx + 1f && rect.bottom <= screenHeightPx + 1f) {
+                                            fullBounds = rect
+                                        }
+                                    }
+                                },
+                                artworkAlpha = artworkAlpha,
+                                coverStyle = playerCoverStyle,
+                                artworkRotation = vinylRotation,
+                                onPageVisualChanged = { cover, light, blocksCollapse -> pageShowsCover = cover; pageIsLight = light; pageBlocksCollapse = blocksCollapse },
                             )
                         }
                     }
-                }
-            }
-            // A single visible artwork layer connects the two measured endpoints.
-            // Endpoint images stay attached/cache-warm, but are hidden during the morph.
-            val full = fullBounds
-            val mini = miniBounds
-            if (full != null && mini != null) {
-                val fullSide = with(density) { full.width.toDp() }
-                NowPlayingArtwork(
-                    url = track.artwork,
-                    seed = track.uid,
-                    style = playerCoverStyle,
-                    rotationDegrees = vinylRotation,
-                    modifier = Modifier.size(fullSide).zIndex(2f).graphicsLayer {
-                        val p = progress()
-                        val rect = playerArtworkBounds(mini.translate(Offset(swipeOffset.value, 0f)), full, p)
-                        val scale = (rect.width / full.width).coerceAtLeast(0.001f)
-                        transformOrigin = TransformOrigin(0f, 0f)
-                        translationX = rect.left
-                        translationY = rect.top
-                        scaleX = scale
-                        scaleY = scale
-                        shape = when (nowPlayingArtworkShape(playerCoverStyle)) {
-                            NowPlayingArtworkShape.Rounded -> RoundedCornerShape((10.dp + 8.dp * p) / scale)
-                            NowPlayingArtworkShape.Circle -> CircleShape
+                    }
+                    Surface(
+                        Modifier.fillMaxWidth().align(Alignment.TopStart)
+                            // 始终测量迷你端点，旋转后直接恢复展开态也能连续收起。
+                            .zIndex(if (showMini) 1f else -1f)
+                            .then(if (showMini) Modifier else Modifier.clearAndSetSemantics {})
+                            .graphicsLayer { alpha = 1f - playerMotionPhase(progress(), 0f, PlayerMiniFadeEnd) },
+                        color = Color.Transparent,
+                    ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
+                                    .navigationBarsPadding(),
+                            ) {
+                            HorizontalDivider(color = miniColors.outlineVariant.copy(alpha = 0.4f))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(miniBarContentHeight)
+                                    .padding(start = 14.dp, end = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                // 封面 + 双行信息：整块左右滑切歌、点击展开全屏播放页
+                                Row(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .graphicsLayer { translationX = swipeOffset.value }
+                                        .clickable(
+                                            enabled = showMini,
+                                            indication = null,
+                                            interactionSource = remember { MutableInteractionSource() },
+                                        ) {
+                                            backState.transitionTo(scope, PlayerSheetTransition.Expand) {
+                                                verticalPagerState.scrollToPage(0)
+                                                sheetState.animateTo(PlayerSheetAnchor.Expanded, PlayerPageSnapSpec)
+                                            }
+                                        }
+                                        .draggable(
+                                            enabled = showMini,
+                                            state = swipeDragState,
+                                            orientation = Orientation.Horizontal,
+                                            onDragStopped = { velocity ->
+                                                val offset = swipeOffset.value
+                                                when {
+                                                    velocity < -600f || offset < -swipeThresholdPx -> {
+                                                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                        PlaybackController.next()
+                                                    }
+                                                    velocity > 600f || offset > swipeThresholdPx -> {
+                                                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                        PlaybackController.previous()
+                                                    }
+                                                }
+                                                scope.launch {
+                                                    swipeOffset.animateTo(
+                                                        targetValue = 0f,
+                                                        animationSpec = spring(dampingRatio = 1f, stiffness = Spring.StiffnessMedium),
+                                                    )
+                                                }
+                                            },
+                                        )
+                                        .padding(end = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    NowPlayingArtwork(
+                                        url = track.artwork,
+                                        seed = track.uid,
+                                        style = playerCoverStyle,
+                                        rotationDegrees = vinylRotation,
+                                        modifier = Modifier.size(46.dp)
+                                            .onGloballyPositioned { child ->
+                                                val parent = sheetCoordinates
+                                                if (parent != null && parent.isAttached && child.isAttached) {
+                                                    miniBounds = parent.localBoundingBoxOf(child, clipBounds = false)
+                                                        .translate(Offset(-swipeOffset.value, 0f))
+                                                }
+                                            }
+                                            .graphicsLayer { alpha = if (morphing()) 0f else 1f },
+                                        cornerRadius = 10,
+                                    )
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .padding(start = 12.dp),
+                                    ) {
+                                        Text(
+                                            text = listOf(track.title, track.artist)
+                                                .filter { it.isNotBlank() }
+                                                .joinToString(" - "),
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = miniColors.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(top = 3.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            if (playbackStatus == null && currentLine != null) {
+                                                TimedLyricText(
+                                                    line = currentLine, position = lyricPosition,
+                                                    active = lyricFrame.focusIndex in lyricFrame.activeIndices,
+                                                    color = miniColors.onSurfaceVariant,
+                                                    style = LocalTextStyle.current.copy(fontSize = 12.sp),
+                                                    modifier = Modifier.weight(1f), maxLines = 1,
+                                                    inactiveAlpha = 1f,
+                                                )
+                                            } else Text(
+                                                text = subtitleText, fontSize = 12.sp,
+                                                color = miniColors.onSurfaceVariant, maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+                                            )
+                                            Spacer(Modifier.width(8.dp))
+                                            Text(
+                                                text = "${formatClockMs(state.positionMs)} / ${formatClockMs(state.durationMs)}",
+                                                fontSize = 11.sp,
+                                                color = miniColors.onSurfaceVariant.copy(alpha = 0.8f),
+                                            )
+                                        }
+                                    }
+                                }
+                                IconButton(enabled = showMini, onClick = { PlaybackController.toggle() }) {
+                                    Icon(
+                                        imageVector = if (state.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                        contentDescription = if (state.playing) "暂停" else "播放",
+                                        tint = miniColors.onSurface,
+                                        modifier = Modifier.size(32.dp),
+                                    )
+                                }
+                                IconButton(enabled = showMini, onClick = {
+                                    queueReturnTarget = PlayerSheetAnchor.Collapsed
+                                    backState.transitionTo(scope, PlayerSheetTransition.OpenQueue) {
+                                        verticalPagerState.scrollToPage(1)
+                                        sheetState.animateTo(PlayerSheetAnchor.Expanded, PlayerPageSnapSpec)
+                                    }
+                                }) {
+                                    Icon(
+                                        Icons.AutoMirrored.Rounded.QueueMusic,
+                                        contentDescription = "播放队列",
+                                        tint = miniColors.onSurface,
+                                        modifier = Modifier.size(26.dp),
+                                    )
+                                }
+                            }
                         }
-                        clip = true
-                        alpha = if (morphing()) 1f else 0f
-                    },
-                    cornerRadius = 0,
-                )
+                    }
+                    // A single visible artwork layer connects the two measured endpoints.
+                    // Endpoint images stay attached/cache-warm, but are hidden during the morph.
+                    val full = fullBounds
+                    val mini = miniBounds
+                    if (full != null && mini != null) {
+                        val fullSide = with(density) { full.width.toDp() }
+                        NowPlayingArtwork(
+                            url = track.artwork,
+                            seed = track.uid,
+                            style = playerCoverStyle,
+                            rotationDegrees = vinylRotation,
+                            modifier = Modifier.size(fullSide).zIndex(2f).graphicsLayer {
+                                val p = progress()
+                                val rect = playerArtworkBounds(mini.translate(Offset(swipeOffset.value, 0f)), full, p)
+                                val scale = (rect.width / full.width).coerceAtLeast(0.001f)
+                                transformOrigin = TransformOrigin(0f, 0f)
+                                translationX = rect.left
+                                translationY = rect.top
+                                scaleX = scale
+                                scaleY = scale
+                                shape = when (nowPlayingArtworkShape(playerCoverStyle)) {
+                                    NowPlayingArtworkShape.Rounded -> RoundedCornerShape((10.dp + 8.dp * p) / scale)
+                                    NowPlayingArtworkShape.Circle -> CircleShape
+                                }
+                                clip = true
+                                alpha = if (morphing()) 1f else 0f
+                            },
+                            cornerRadius = 0,
+                        )
+                    }
+                }
             }
         }
     }

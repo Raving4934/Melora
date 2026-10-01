@@ -36,27 +36,27 @@ class PlayerSheetBackDispatcherTest {
             host.openCatalog()
             host.state.sheet.dispatchRawDelta(-distance)
             host.back()
-            host.back() // Pending collapse consumes repeated back before any animation frame.
+            host.back() // The accepted Collapse transition consumes repeated back before its first animation frame.
             assertEquals("distance=$distance", listOf("Collapse", "Consume"), host.actions)
             assertFalse(host.catalog!!.isEnabled)
         }
     }
 
     @Test
-    fun pendingAtCollapsedEndpointBlocksCatalogAndReleasesOnlyAfterCompletion() {
+    fun transitionAtCollapsedEndpointBlocksCatalogAndReleasesOnlyAfterCompletion() {
         val host = Host()
         host.openCatalog()
-        host.state.pending = true // Opening was requested but coroutine/frame has not run.
+        host.state.transition = PlayerSheetTransition.Expand // Opening was requested but its first frame has not run.
         assertEquals(800f, host.state.sheet.offset, 0f)
         assertTrue(host.state.ownsBack)
         host.back()
         host.back()
-        host.state.pending = false // Completed/cancelled at the exact collapsed endpoint.
+        host.state.transition = null // Completed/cancelled at the exact collapsed endpoint.
         assertFalse(host.state.ownsBack)
         host.back()
         host.back()
         host.back()
-        assertEquals(listOf("Consume", "Consume", "catalog", "hint", "background"), host.actions)
+        assertEquals(listOf("Collapse", "Consume", "catalog", "hint", "background"), host.actions)
     }
 
     @Test
@@ -89,11 +89,15 @@ class PlayerSheetBackDispatcherTest {
                 }
                 assertTrue("animation must reach its endpoint with the test clock", animation.isCompleted)
                 assertEquals(target, host.state.sheet.settledValue)
+                if (target == PlayerSheetAnchor.Expanded) {
+                    // This loop isolates entry and exit animation dispatch; the next case starts without an owned transition.
+                    host.state.transition = null
+                }
             } finally {
                 animation.cancelAndJoin()
             }
         }
-        assertEquals(listOf("Consume", "Consume", "Consume", "Consume"), host.actions)
+        assertEquals(listOf("Collapse", "Consume", "Consume", "Consume"), host.actions)
         assertFalse(host.state.ownsBack)
         host.back()
         assertEquals("catalog", host.actions.last())
@@ -110,7 +114,7 @@ class PlayerSheetBackDispatcherTest {
         host.back()
         host.back()
         host.queueReturnTarget = null
-        host.state.pending = false
+        host.state.transition = null
         host.back()
         assertEquals(listOf("dialog", "ReturnToPlayer", "Consume", "Collapse"), host.actions)
     }
@@ -121,9 +125,9 @@ class PlayerSheetBackDispatcherTest {
         host.openCatalog()
         host.state.sheet.snapTo(PlayerSheetAnchor.Expanded)
         host.dialogOpen = true
-        host.state.pending = true
+        host.state.transition = PlayerSheetTransition.Collapse
         host.back()
-        host.state.pending = false
+        host.state.transition = null
         host.back()
         assertEquals(listOf("Consume", "dialog"), host.actions)
     }
@@ -163,8 +167,10 @@ class PlayerSheetBackDispatcherTest {
             root.reset()
             val action = state.action(queueReturnTarget)
             actions += action.name
-            if (action == PlayerSheetBackAction.Collapse || action == PlayerSheetBackAction.ReturnToPlayer) {
-                state.pending = true
+            state.transition = when (action) {
+                PlayerSheetBackAction.Collapse -> PlayerSheetTransition.Collapse
+                PlayerSheetBackAction.ReturnToPlayer -> PlayerSheetTransition.ReturnToPlayer
+                PlayerSheetBackAction.PassThrough, PlayerSheetBackAction.Consume -> state.transition
             }
         }.apply { isEnabled = false; dispatcher.addCallback(this) }
         private val dialog = callback {
@@ -187,7 +193,7 @@ class PlayerSheetBackDispatcherTest {
             player.isEnabled = action != PlayerSheetBackAction.PassThrough
             // MeloraApp supplies this to the entire underlying page tree, not to the player.
             catalog?.isEnabled = !state.ownsBack
-            dialog.isEnabled = dialogOpen && state.sheet.offset <= 8f && action != PlayerSheetBackAction.Consume
+            dialog.isEnabled = dialogOpen && state.sheet.offset <= 8f && state.transition == null
             if (state.ownsBack || catalog != null) root.reset()
             dispatcher.onBackPressed()
         }
