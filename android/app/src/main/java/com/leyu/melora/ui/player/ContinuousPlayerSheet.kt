@@ -319,6 +319,7 @@ internal fun ContinuousPlayerSheet(
                                 } },
                                 lyricPosition = lyricPosition,
                                 motionEnabled = playerMotionEnabled && expanded && (twoPanes || verticalPagerState.currentPage == 0),
+                                queueMotionEnabled = playerMotionEnabled && expanded,
                                 lyricFrame = lyricFrameState,
                                 lyricLines = lyricLines,
                                 isCollapsed = collapsed,

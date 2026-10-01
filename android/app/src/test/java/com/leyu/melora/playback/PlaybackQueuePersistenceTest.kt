@@ -11,6 +11,12 @@ import org.junit.Test
 
 class PlaybackQueuePersistenceTest {
     @Test
+    fun queueOrderDefaultsToTheRawQueueIndices() {
+        assertTrue(PlayerUiState().queueOrder.isEmpty())
+        assertEquals(listOf(0, 1), PlayerUiState(queue = listOf(track("a"), track("b"))).queueOrder)
+    }
+
+    @Test
     fun fingerprintChangesWhenSameSizedQueueContentOrIndexChanges() {
         val first = listOf(track("a"), track("b"))
         val second = listOf(track("a"), track("c"))

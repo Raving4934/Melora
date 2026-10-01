@@ -249,6 +249,7 @@ internal fun FullPlayerPageContent(
     isVisible: Boolean = true,
     isCollapsed: Boolean = false,
     onCollapse: () -> Unit = {},
+    queueMotionEnabled: Boolean = motionEnabled,
 ) {
     val track = state.current
     val autoSwitch by MeloraSettings.autoSwitchSource.collectAsStateWithLifecycle()
@@ -607,6 +608,8 @@ internal fun FullPlayerPageContent(
                             QueuePageContent(
                                 state = state,
                                 onClose = onCloseQueue,
+                                isVisible = !isCollapsed && (queuePagerState.currentPage == 1 || queuePagerState.targetPage == 1),
+                                motionEnabled = queueMotionEnabled,
                                 horizontalPadding = if (twoPanes) 0.dp else 18.dp,
                                 modifier = if (twoPanes) Modifier.padding(controlsPadding) else Modifier,
                             )

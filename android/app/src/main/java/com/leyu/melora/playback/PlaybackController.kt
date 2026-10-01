@@ -329,6 +329,7 @@ object PlaybackController {
             ready = true,
             current = currentTrack,
             queue = queue,
+            queueOrder = player.playbackQueueOrder(),
             currentIndex = if (index in queue.indices) index else -1,
             playing = isPlayingIntent && hasItems,
             buffering = hasItems && player.playbackState == Player.STATE_BUFFERING,

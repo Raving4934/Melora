@@ -62,7 +62,7 @@ class PlayerSheetNavigationInstrumentedTest {
             List(count) { LyricLine(it * 2_000L, "测试歌词第 $it 行") }, "test")
     }
 
-    private fun show(wide: Boolean = false, forcePortrait: Boolean = false, queueSize: Int = 1) {
+    private fun show(wide: Boolean = false, forcePortrait: Boolean = false, queueSize: Int = 1, currentIndex: Int = 0) {
         val shared = SongListState(mutableStateOf(emptyList()), mutableStateOf(false), mutableStateOf(null))
         restoration.setContent {
             CompositionLocalProvider(
@@ -83,7 +83,7 @@ class PlayerSheetNavigationInstrumentedTest {
                         Box(hostModifier.testTag("player-test-host")) {
                             Box(Modifier.fillMaxSize().background(Color.Magenta).testTag("player-test-underlay"))
                             ContinuousPlayerSheet(
-                                PlayerUiState(ready = true, current = track, queue = List(queueSize) { if (it == 0) track else track.copy(uid = "queue-$it", title = "队列歌曲 $it") }, currentIndex = 0),
+                                PlayerUiState(ready = true, current = track, queue = List(queueSize) { if (it == currentIndex) track else track.copy(uid = "queue-$it", title = "队列歌曲 $it") }, currentIndex = currentIndex),
                                 modifier = if (wide) Modifier.requiredSize(900.dp, 600.dp) else Modifier.fillMaxSize(),
                                 backState = back,
                             )
@@ -507,6 +507,22 @@ class PlayerSheetNavigationInstrumentedTest {
         compose.runOnIdle { assertEquals(0f, back.sheet.offset, 1f) }
         Espresso.pressBack()
         assertCollapsed()
+    }
+
+    @Test fun queueOpenedAtDistantCurrentTrackStillHandsDownwardSwipeBackToPlayer() {
+        show(forcePortrait = true, queueSize = 589, currentIndex = 330)
+        expand()
+        val headingTop = compose.onNodeWithTag("player-heading").fetchSemanticsNode().boundsInRoot.top
+        openQueue()
+        compose.onNodeWithTag("queue-track-330").assertIsDisplayed().assertIsSelected()
+        compose.onNodeWithTag("playback-queue-list").performTouchInput {
+            swipe(Offset(width * 0.4f, height * 0.15f), Offset(width * 0.4f, height * 0.85f), 400)
+        }
+        compose.waitForIdle()
+        compose.onNodeWithTag("player-page-1").assertIsDisplayed()
+        val heading = compose.onNodeWithTag("player-heading").fetchSemanticsNode().boundsInRoot
+        assertEquals("中途歌曲也必须直接交回播放器，不能先翻330行历史", headingTop, heading.top, 1f)
+        compose.runOnIdle { assertEquals(0f, back.sheet.offset, 1f) }
     }
 
     @Test fun informationContentUpwardSwipeSettlesFullyIntoQueue() {

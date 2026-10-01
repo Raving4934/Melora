@@ -2,12 +2,16 @@ package com.leyu.melora.ui.player
 
 import com.leyu.melora.ui.theme.SystemBarsVisibility
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -21,7 +25,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Remove
@@ -38,6 +43,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -45,6 +53,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -67,9 +78,59 @@ fun QueuePageContent(
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
     horizontalPadding: Dp = 18.dp,
+    isVisible: Boolean = true,
+    motionEnabled: Boolean = true,
+    onSelect: (Int) -> Unit = PlaybackController::jumpTo,
+    onRemove: (Int) -> Unit = PlaybackController::removeFromQueue,
 ) {
     val current = state.current
     var showClearConfirm by remember { mutableStateOf(false) }
+    val order = state.queueOrder
+    val currentRow = remember(order, state.currentIndex) { order.indexOf(state.currentIndex) }
+    // 身份来自原队列中的歌曲及重复次数，不随随机显示顺序/前面其他歌曲的删除改变。
+    val rowKeys = remember(state.queue) {
+        val occurrences = mutableMapOf<String, Int>()
+        state.queue.map { track ->
+            val occurrence = occurrences.getOrDefault(track.uid, 0)
+            occurrences[track.uid] = occurrence + 1
+            "${track.uid}:$occurrence"
+        }
+    }
+    val currentKey by rememberUpdatedState(rowKeys.getOrNull(state.currentIndex))
+    val listState = rememberLazyListState()
+    var followCurrent by remember { mutableStateOf(true) }
+    var browseAnchorKey by remember { mutableStateOf<String?>(null) }
+    val anchorRow = if (followCurrent) currentRow else order.indexOf(rowKeys.indexOf(browseAnchorKey))
+    // 只旋转引擎索引的展示起点，不重排播放器：当前项是真正的列表顶端，下滑仍能交回队列页。
+    val displayOrder = remember(order, anchorRow) {
+        if (anchorRow <= 0) order else order.drop(anchorRow) + order.take(anchorRow)
+    }
+    var alignedOrder by remember { mutableStateOf<List<Int>?>(null) }
+    SideEffect {
+        if (isVisible && followCurrent) {
+            if (alignedOrder != displayOrder) {
+                alignedOrder = displayOrder
+                // 在下一次测量使用新起点，不让LazyColumn把旧的首行保持到队尾；位移动画由行key接续。
+                listState.requestScrollToItem(0)
+            }
+        } else if (!isVisible) alignedOrder = null
+    }
+    LaunchedEffect(listState) {
+        listState.interactionSource.interactions.collect { interaction ->
+            if (interaction is DragInteraction.Start && followCurrent) {
+                browseAnchorKey = currentKey
+                followCurrent = false
+            } else if ((interaction is DragInteraction.Stop || interaction is DragInteraction.Cancel) &&
+                listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0
+            ) {
+                // 顶部下拉交给外层收起、不曾浏览列表的手势，不能误关歌曲跟随。
+                followCurrent = true
+            }
+        }
+    }
+    LaunchedEffect(isVisible, state.queueId) {
+        if (isVisible) followCurrent = true
+    }
 
     Column(
         modifier = modifier
@@ -103,7 +164,10 @@ fun QueuePageContent(
                 AnimatedContent(
                     targetState = current,
                     contentKey = { it.uid },
-                    transitionSpec = { (fadeIn(tween(240)) togetherWith fadeOut(tween(160))).using(null) },
+                    transitionSpec = {
+                        (fadeIn(if (motionEnabled) tween(180) else snap()) togetherWith
+                            fadeOut(if (motionEnabled) tween(120) else snap())).using(null)
+                    },
                     label = "queueCurrentTrack",
                 ) { displayed ->
                     Row(
@@ -147,7 +211,7 @@ fun QueuePageContent(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = if (state.queue.isEmpty()) "0 / 0" else "${(state.currentIndex + 1).coerceAtLeast(1)} / ${state.queue.size}",
+                text = "${(currentRow + 1).coerceAtLeast(0)} / ${state.queue.size}",
                 style = MaterialTheme.typography.bodySmall,
                 color = FullPlayerTextMuted,
                 maxLines = 1,
@@ -204,15 +268,28 @@ fun QueuePageContent(
             }
         } else {
             LazyColumn(
-                modifier = Modifier.weight(1f),
+                state = listState,
+                modifier = Modifier.weight(1f).testTag("playback-queue-list"),
             ) {
-                itemsIndexed(state.queue, key = { index, item -> "${item.uid}:$index" }) { index, track ->
+                items(displayOrder, key = { rowKeys[it] }) { index ->
+                    val track = state.queue[index]
                     val isPlaying = index == state.currentIndex
+                    val selectionColor by animateColorAsState(
+                        if (isPlaying) LocalPlayerColors.current.queueSelected else Color.Transparent,
+                        if (motionEnabled) tween(160) else snap(), label = "queueSelection",
+                    )
                     Surface(
-                        onClick = { PlaybackController.jumpTo(index) },
+                        onClick = { onSelect(index) },
                         shape = RoundedCornerShape(14.dp),
-                        color = if (isPlaying) LocalPlayerColors.current.queueSelected else Color.Transparent,
-                        modifier = Modifier.fillMaxWidth(),
+                        color = selectionColor,
+                        modifier = Modifier.fillMaxWidth()
+                            .animateItem(
+                                fadeInSpec = if (motionEnabled) tween(140) else null,
+                                placementSpec = if (motionEnabled) spring(dampingRatio = 1f, stiffness = 550f) else null,
+                                fadeOutSpec = if (motionEnabled) tween(100) else null,
+                            )
+                            .testTag("queue-track-$index")
+                            .semantics { selected = isPlaying },
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = QueueContentInset, vertical = 4.dp),
@@ -235,8 +312,8 @@ fun QueuePageContent(
                                 )
                             }
                             IconButton(
-                                onClick = { PlaybackController.removeFromQueue(index) },
-                                modifier = Modifier.size(QueueActionSize),
+                                onClick = { onRemove(index) },
+                                modifier = Modifier.size(QueueActionSize).testTag("queue-remove-$index"),
                             ) {
                                 Icon(
                                     Icons.Rounded.Remove,

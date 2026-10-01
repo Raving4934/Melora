@@ -9,6 +9,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.ShuffleOrder
 import androidx.media3.session.MediaController
 import androidx.media3.session.MediaSession
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -44,6 +45,181 @@ class PlaybackQueueAppendInstrumentedTest {
     }
     private val prefs get() = testContext.getSharedPreferences("melora-queue", 0)
     private fun track(id: String) = UiTrack(id, "同名歌曲", "测试歌手", "测试专辑")
+
+    @Test fun emptyControllerTimelinePublishesAnEmptyQueueOrder() = withPlayer(empty = true, listen = true) { _, controller ->
+        main {
+            assertEquals(0, controller.currentTimeline.windowCount)
+            assertTrue(controller.playbackQueueOrder().isEmpty())
+            PlaybackController.javaClass.getDeclaredMethod("publish")
+                .apply { isAccessible = true }
+                .invoke(PlaybackController)
+            assertTrue(PlaybackController.state.value.queue.isEmpty())
+            assertTrue(PlaybackController.state.value.queueOrder.isEmpty())
+        }
+    }
+
+    @Test fun queueOrderProjectsTheControllerTimelineAcrossPlayModesWithoutMovingPlayback() =
+        withPlayer(listen = true) { player, controller ->
+            val previousMode = main { MeloraSettings.musicPlayMode.value }
+            try {
+                installProjectionQueue(player, controller)
+                main {
+                    MeloraSettings.updateMusicPlayMode(PlayMode.List)
+                    PlaybackController.applyMusicPlayMode()
+                }
+                await {
+                    PlaybackController.state.value.mode == PlayMode.List &&
+                        PlaybackController.state.value.queueOrder == listOf(0, 1, 2, 3)
+                }
+                main {
+                    assertEquals(listOf("repeat", "b", "repeat", "d"), PlaybackController.state.value.queue.map { it.uid })
+                    assertEquals(1, PlaybackController.state.value.currentIndex)
+                }
+
+                val expectedModes = listOf(
+                    PlayMode.Single to listOf(0, 1, 2, 3),
+                    PlayMode.Shuffle to listOf(2, 0, 3, 1),
+                    PlayMode.List to listOf(0, 1, 2, 3),
+                )
+                expectedModes.forEach { (mode, order) ->
+                    val before = main {
+                        Triple(controller.currentMediaItem?.mediaId, controller.currentMediaItemIndex, controller.currentPosition)
+                    }
+                    main { PlaybackController.cycleMode() }
+                    await {
+                        PlaybackController.state.value.mode == mode && PlaybackController.state.value.queueOrder == order
+                    }
+                    main {
+                        assertEquals(before.first, controller.currentMediaItem?.mediaId)
+                        assertEquals(before.second, controller.currentMediaItemIndex)
+                        assertTrue(
+                            "切换到$mode 不应重置播放位置：${before.third} -> ${controller.currentPosition}",
+                            kotlin.math.abs(before.third - controller.currentPosition) <= 250L,
+                        )
+                    }
+                }
+            } finally {
+                main { MeloraSettings.updateMusicPlayMode(previousMode) }
+            }
+        }
+
+    @Test fun nextFollowsTheDisplayedRepeatedTracksShuffleSuccessorByRawIndex() =
+        withPlayer(listen = true) { player, controller ->
+            val previousMode = main { MeloraSettings.musicPlayMode.value }
+            try {
+                installProjectionQueue(player, controller)
+                main {
+                    MeloraSettings.updateMusicPlayMode(PlayMode.Shuffle)
+                    PlaybackController.applyMusicPlayMode()
+                }
+                await { PlaybackController.state.value.queueOrder == listOf(2, 0, 3, 1) }
+
+                val (rawIndex, expectedNextRawIndex) = main {
+                    val order = PlaybackController.state.value.queueOrder
+                    val displayIndex = 0
+                    val selectedRawIndex = order[displayIndex]
+                    val nextRawIndex = order[displayIndex + 1]
+                    assertEquals(2, selectedRawIndex)
+                    assertEquals(0, nextRawIndex)
+                    assertEquals(
+                        PlaybackController.state.value.queue[selectedRawIndex].uid,
+                        PlaybackController.state.value.queue[nextRawIndex].uid,
+                    )
+                    selectedRawIndex to nextRawIndex
+                }
+
+                main { PlaybackController.jumpTo(rawIndex) }
+                await {
+                    player.currentMediaItemIndex == rawIndex &&
+                        PlaybackController.state.value.currentIndex == rawIndex
+                }
+                main { PlaybackController.next() }
+                await {
+                    player.currentMediaItemIndex == expectedNextRawIndex &&
+                        PlaybackController.state.value.currentIndex == expectedNextRawIndex
+                }
+                main {
+                    assertEquals("repeat", controller.currentMediaItem?.mediaId)
+                    assertEquals(0, controller.currentMediaItemIndex)
+                    controller.pause()
+                }
+            } finally {
+                main { MeloraSettings.updateMusicPlayMode(previousMode) }
+            }
+        }
+
+    @Test fun largeShuffledControllerTimelinesProjectEveryIndexOnceUnderRepeatOne() {
+        val audio = silentWav()
+        val audioUri = Uri.fromFile(audio)
+        try {
+            withPlayer(empty = true, listen = true) { player, controller ->
+                for (itemCount in listOf(589, 2_000)) {
+                    val items = (0 until itemCount).map { index ->
+                        MediaItem.Builder()
+                            .setMediaId("large-projection-$itemCount-$index")
+                            .setUri(audioUri)
+                            .build()
+                    }
+                    main {
+                        controller.repeatMode = Player.REPEAT_MODE_ONE
+                        controller.shuffleModeEnabled = true
+                        controller.setMediaItems(items)
+                    }
+                    await {
+                        player.mediaItemCount == itemCount &&
+                            controller.currentTimeline.windowCount == itemCount
+                    }
+                    main {
+                        player.setShuffleOrder(ShuffleOrder.DefaultShuffleOrder(itemCount, 7L))
+                    }
+                    await {
+                        player.mediaItemCount == itemCount &&
+                            controller.currentTimeline.windowCount == itemCount &&
+                            controller.repeatMode == Player.REPEAT_MODE_ONE &&
+                            controller.shuffleModeEnabled &&
+                            PlaybackController.state.value.queueOrder.size == itemCount &&
+                            PlaybackController.state.value.queueOrder.firstOrNull() ==
+                            controller.currentTimeline.getFirstWindowIndex(/* shuffleModeEnabled= */ true)
+                    }
+
+                    val order = main { PlaybackController.state.value.queueOrder }
+                    assertEquals("$itemCount 个时间线窗口应完整投影", (0 until itemCount).toList(), order.sorted())
+                    main { assertEquals(Player.STATE_IDLE, player.playbackState) }
+                }
+            }
+        } finally {
+            audio.delete()
+        }
+    }
+
+    @Test fun removingTheDisplayedShuffledDuplicateUsesItsOriginalMediaItemIndex() =
+        withPlayer(listen = true) { player, controller ->
+            val previousMode = main { MeloraSettings.musicPlayMode.value }
+            try {
+                installProjectionQueue(player, controller)
+                main {
+                    MeloraSettings.updateMusicPlayMode(PlayMode.Shuffle)
+                    PlaybackController.applyMusicPlayMode()
+                }
+                await { PlaybackController.state.value.queueOrder == listOf(2, 0, 3, 1) }
+
+                // 展示列表第一项是原始索引 2；它与原始索引 0 是同一曲目，必须只删除索引 2。
+                val originalMediaItemIndex = main { PlaybackController.state.value.queueOrder.first() }
+                main { PlaybackController.removeFromQueue(originalMediaItemIndex) }
+                await { uids(player) == listOf("repeat", "b", "d") }
+                await {
+                    PlaybackController.state.value.queue.map { it.uid } == listOf("repeat", "b", "d") &&
+                        PlaybackController.state.value.currentIndex == 1
+                }
+                main {
+                    assertEquals("b", controller.currentMediaItem?.mediaId)
+                    assertEquals(1, controller.currentMediaItemIndex)
+                    assertEquals(listOf("repeat", "b", "d"), uids(player))
+                }
+            } finally {
+                main { MeloraSettings.updateMusicPlayMode(previousMode) }
+            }
+        }
 
     @Test fun batchAppendPreservesPausedPositionAndDeduplicatesInPlaylistOrder() = withPlayer { player, _ ->
         main { PlaybackController.addToQueue(testContext, listOf(track("b"), track("c"), track("c"), track("d"))) }
@@ -545,6 +721,32 @@ class PlaybackQueueAppendInstrumentedTest {
         } finally {
             response.cancel()
             OnlineCache.clear(key)
+        }
+    }
+
+    private fun installProjectionQueue(player: ExoPlayer, controller: MediaController) {
+        val audioUri = main { player.getMediaItemAt(0).localConfiguration!!.uri }
+        val ids = listOf("repeat", "b", "repeat", "d")
+        main {
+            TrackRegistry.registerAll(ids.distinct().map(::track))
+            controller.repeatMode = Player.REPEAT_MODE_OFF
+            controller.shuffleModeEnabled = false
+            controller.setMediaItems(
+                ids.map { MediaItem.Builder().setMediaId(it).setUri(audioUri).build() },
+                /* startIndex= */ 1,
+                /* startPositionMs= */ 12_000L,
+            )
+            controller.prepare()
+        }
+        await {
+            player.playbackState == Player.STATE_READY &&
+                controller.playbackState == Player.STATE_READY &&
+                player.currentMediaItemIndex == 1 && player.currentPosition in 11_800L..12_200L
+        }
+        main { player.setShuffleOrder(ShuffleOrder.DefaultShuffleOrder(intArrayOf(2, 0, 3, 1), 7L)) }
+        await {
+            controller.currentTimeline.getFirstWindowIndex(/* shuffleModeEnabled= */ true) == 2 &&
+                PlaybackController.state.value.queueOrder == listOf(0, 1, 2, 3)
         }
     }
 

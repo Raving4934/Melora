@@ -26,6 +26,21 @@ internal fun Player.applyPlayMode(mode: PlayMode) {
     shuffleModeEnabled = mode.shuffled
 }
 
+/** 从播放器导出的时间线读取当前引擎顺序；固定关闭重复，避免单曲循环造成遍历不终止。 */
+internal fun Player.playbackQueueOrder(): List<Int> {
+    val timeline = currentTimeline
+    val windowCount = timeline.windowCount
+    if (windowCount == 0) return emptyList()
+
+    val order = ArrayList<Int>(windowCount)
+    var index = timeline.getFirstWindowIndex(shuffleModeEnabled)
+    while (index != C.INDEX_UNSET && order.size < windowCount) {
+        order += index
+        index = timeline.getNextWindowIndex(index, Player.REPEAT_MODE_OFF, shuffleModeEnabled)
+    }
+    return order
+}
+
 /** 播放层统一曲目模型：在线与本地索引歌曲都可携带归一化 raw；raw=null 仅用于外部直链兜底。 */
 data class UiTrack(
     val uid: String,
@@ -67,6 +82,8 @@ data class PlayerUiState(
     val ready: Boolean = false,
     val current: UiTrack? = null,
     val queue: List<UiTrack> = emptyList(),
+    /** 展示播放顺序对应的原始 mediaItem 索引；queue 本身始终按原始顺序保存。 */
+    val queueOrder: List<Int> = queue.indices.toList(),
     val currentIndex: Int = -1,
     val playing: Boolean = false,
     val buffering: Boolean = false,
