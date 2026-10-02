@@ -4,30 +4,69 @@ import android.content.Context
 import android.content.ContextWrapper
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.leyu.melora.playback.local.LocalMediaStore
 import com.leyu.melora.playback.sdk.OnlineSong
 import java.io.File
 import java.io.IOException
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.json.JSONObject
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
+import org.junit.AfterClass
 import org.junit.Before
+import org.junit.BeforeClass
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class PlaylistImportStorageTest {
-    private val context by lazy {
-        PlaylistLibraryContext(InstrumentationRegistry.getInstrumentation().targetContext)
+    companion object {
+        private val context by lazy {
+            PlaylistLibraryContext(InstrumentationRegistry.getInstrumentation().targetContext)
+        }
+        private val libraryFileField = UserLibrary.javaClass.getDeclaredField("file").apply { isAccessible = true }
+        private val previousFlows = mutableListOf<Pair<MutableStateFlow<Any?>, Any?>>()
+        private var previousFile: Any? = null
+
+        @BeforeClass @JvmStatic fun isolateLibraryFixture() = LocalMediaStore.withIndexLock { _ ->
+            synchronized(BackupStateLock.monitor) {
+                context.reset()
+                previousFile = libraryFileField.get(UserLibrary)
+                for (field in UserLibrary.javaClass.declaredFields) {
+                    if (!MutableStateFlow::class.java.isAssignableFrom(field.type)) continue
+                    field.isAccessible = true
+                    @Suppress("UNCHECKED_CAST")
+                    val flow = field.get(UserLibrary) as MutableStateFlow<Any?>
+                    previousFlows += flow to flow.value
+                }
+                libraryFileField.set(UserLibrary, null)
+                UserLibrary.init(context)
+            }
+        }
+
+        @AfterClass @JvmStatic fun restoreLibraryFixture() = LocalMediaStore.withIndexLock { _ ->
+            synchronized(BackupStateLock.monitor) {
+                libraryFileField.set(UserLibrary, previousFile)
+                previousFlows.forEach { (flow, value) -> flow.value = value }
+                previousFlows.clear()
+                context.cleanup()
+            }
+        }
     }
-    private val libraryFile by lazy { File(context.filesDir, "user-library.json") }
+
+    private val libraryFile get() = File(context.filesDir, "user-library.json")
 
     @Before
-    fun resetLibrary() {
-        File(context.filesDir, "user-library.json.tmp").deleteRecursively()
-        UserLibrary.init(context)
-        UserLibrary.replaceFromBackup("{}")
+    fun resetLibrary() = LocalMediaStore.withIndexLock { _ ->
+        synchronized(BackupStateLock.monitor) {
+            val filesDir = context.filesDir
+            check(filesDir.deleteRecursively()) { "无法清理歌单存储测试目录" }
+            check(filesDir.mkdirs()) { "无法创建歌单存储测试目录" }
+            UserLibrary.init(context)
+            UserLibrary.replaceFromBackup("{}")
+        }
     }
 
     @Test
@@ -108,12 +147,19 @@ class PlaylistImportStorageTest {
             .put("singer", "合成测试歌手"),
     )
 
-    /** 与其他用户库存储测试共用独立 cache fixture，不触碰真实应用数据。 */
+    /** 独立生命周期的用户库夹具，不与备份往返测试或真实应用数据共用目录。 */
     private class PlaylistLibraryContext(base: Context) : ContextWrapper(base) {
-        private val root = File(base.cacheDir, "isolated-backup-tests")
+        private val root = File(base.cacheDir, "isolated-playlist-import-tests")
 
         override fun getApplicationContext(): Context = this
         override fun getFilesDir(): File = File(root, "files").apply { mkdirs() }
         override fun getCacheDir(): File = File(root, "cache").apply { mkdirs() }
+        fun reset() {
+            check(!root.exists() || root.deleteRecursively()) { "无法清理歌单存储测试夹具" }
+            check(root.mkdirs()) { "无法创建歌单存储测试夹具" }
+        }
+        fun cleanup() {
+            check(!root.exists() || root.deleteRecursively()) { "无法删除歌单存储测试夹具" }
+        }
     }
 }

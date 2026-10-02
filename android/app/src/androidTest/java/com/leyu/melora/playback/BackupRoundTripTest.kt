@@ -14,6 +14,7 @@ import com.leyu.melora.playback.lx.LxScriptStore
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -21,6 +22,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Before
+import org.junit.BeforeClass
 import org.junit.AfterClass
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -30,7 +32,43 @@ import org.junit.runner.RunWith
 class BackupRoundTripTest {
     companion object {
         private val context by lazy { BackupContext(InstrumentationRegistry.getInstrumentation().targetContext) }
-        @AfterClass @JvmStatic fun cleanupFixture() { context.cleanup() }
+        private val libraryFile = UserLibrary.javaClass.getDeclaredField("file").apply { isAccessible = true }
+        private val settingsPrefs = MeloraSettings.javaClass.getDeclaredField("prefs").apply { isAccessible = true }
+        private val settingsInitialized = MeloraSettings.javaClass.getDeclaredField("initialized").apply { isAccessible = true }
+        private var previousFile: Any? = null
+        private var previousPrefs: Any? = null
+        private var previousInitialized = false
+        private val previousFlows = mutableListOf<Pair<MutableStateFlow<Any?>, Any?>>()
+
+        // init是生产进程的单次绑定；测试临时目录必须独占绑定，并在删除前归还。
+        @BeforeClass @JvmStatic fun isolateFixture() = synchronized(BackupStateLock.monitor) {
+            previousFile = libraryFile.get(UserLibrary)
+            previousPrefs = settingsPrefs.get(MeloraSettings)
+            previousInitialized = settingsInitialized.getBoolean(MeloraSettings)
+            for (owner in listOf(UserLibrary, MeloraSettings)) {
+                for (field in owner.javaClass.declaredFields) {
+                    if (!MutableStateFlow::class.java.isAssignableFrom(field.type)) continue
+                    field.isAccessible = true
+                    @Suppress("UNCHECKED_CAST")
+                    val flow = field.get(owner) as MutableStateFlow<Any?>
+                    previousFlows += flow to flow.value
+                }
+            }
+            libraryFile.set(UserLibrary, null)
+            settingsPrefs.set(MeloraSettings, null)
+            settingsInitialized.setBoolean(MeloraSettings, false)
+        }
+
+        @AfterClass @JvmStatic fun cleanupFixture() {
+            synchronized(BackupStateLock.monitor) {
+                libraryFile.set(UserLibrary, previousFile)
+                settingsPrefs.set(MeloraSettings, previousPrefs)
+                settingsInitialized.setBoolean(MeloraSettings, previousInitialized)
+                previousFlows.forEach { (flow, value) -> flow.value = value }
+                previousFlows.clear()
+            }
+            context.cleanup()
+        }
     }
 
     @Before
