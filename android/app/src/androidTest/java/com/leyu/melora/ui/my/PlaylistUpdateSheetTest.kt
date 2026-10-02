@@ -107,14 +107,14 @@ class PlaylistUpdateSheetTest {
         compose.waitForIdle(); assertEquals(0, commits.get())
     }
 
-    @Test fun firstBindingExplainsSafeMergeAndRequiresLinkBeforeReading() {
-        show(playlist = local.copy(importSource = null, lastSyncedUids = null))
-        compose.onNodeWithTag("playlist-sync-submit").assertIsNotEnabled()
-        compose.onNodeWithTag("playlist-sync-link").performTextInput(link.value)
+    @Test fun firstUpdateOfImportedPlaylistWithoutBaselineKeepsSafeMerge() {
+        show(playlist = local.copy(lastSyncedUids = null))
+        compose.onNodeWithTag("playlist-sync-submit").assertIsEnabled()
+        compose.onNodeWithTag("playlist-sync-link").assertDoesNotExist()
         clickRead(); waitPreview()
-        compose.onNodeWithText("首次绑定保留全部现有歌曲，仅合并远端内容；不会猜测旧歌单中哪些歌曲已被原平台删除。")
+        compose.onNodeWithText("首次更新保留全部现有歌曲，仅合并原歌单内容，不推断历史删除记录。")
             .assertIsDisplayed()
-        compose.onNodeWithText("确认绑定并更新").assertIsDisplayed().assertIsEnabled()
+        compose.onNodeWithText("确认更新").assertIsDisplayed().assertIsEnabled()
         assertEquals(0, commits.get())
     }
 

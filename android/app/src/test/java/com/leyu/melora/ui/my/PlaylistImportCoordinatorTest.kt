@@ -88,7 +88,7 @@ class PlaylistImportCoordinatorTest {
             assertEquals(source.value, text)
             loaded.copy(importSource = source)
         }, { preview -> commits++; preview.updated })
-        controller.read("")
+        controller.read()
         assertEquals(0, saves)
         assertEquals(0, commits)
         assertNotNull(controller.state.value.preview)

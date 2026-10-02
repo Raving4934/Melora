@@ -21,7 +21,7 @@ class PlaylistMoreSheetTest {
     @get:Rule val compose = createComposeRule()
     private val actions = mutableListOf<String>()
 
-    private fun show(empty: Boolean = false, compact: Boolean = false) {
+    private fun show(empty: Boolean = false, compact: Boolean = false, onUpdate: (() -> Unit)? = null) {
         val songs = if (empty) emptyList() else listOf(OnlineSong(JSONObject()
             .put("source", "fixture").put("songmid", "1").put("name", "测试歌曲")))
         compose.setContent {
@@ -30,7 +30,7 @@ class PlaylistMoreSheetTest {
                     PlaylistMoreSheet(UserLibrary.UserPlaylist("fixture", "测试歌单", songs),
                         onDismiss = { actions += "dismiss" }, onPlayAll = { actions += "play" },
                         onAddToQueue = { actions += "append" }, onRename = { actions += "rename" },
-                        onDelete = { actions += "delete" })
+                        onDelete = { actions += "delete" }, onUpdate = onUpdate)
                 }
             }
         }
@@ -59,12 +59,22 @@ class PlaylistMoreSheetTest {
         compose.runOnIdle { assertEquals(listOf("dismiss", "append"), actions) }
     }
 
-    @Test fun emptyPlaylistKeepsRenameAndDeleteWithoutQueueActions() {
-        show(empty = true)
+    @Test fun emptyPlaylistWithUpdateCallbackDoesNotShowUpdateOrBindingEntry() {
+        show(empty = true, onUpdate = { actions += "update" })
         compose.onNodeWithText("播放全部").assertDoesNotExist()
         compose.onNodeWithText("添加全部歌曲到播放队列").assertDoesNotExist()
-        compose.onNodeWithText("重命名歌单").assertIsDisplayed()
-        compose.onNodeWithText("删除歌单").assertIsDisplayed()
+        compose.onNodeWithText("从原歌单更新").assertDoesNotExist()
+        compose.onNodeWithText("绑定来源并更新").assertDoesNotExist()
+        compose.onNodeWithText("重命名歌单").assertIsDisplayed().assertHasClickAction()
+        compose.onNodeWithText("删除歌单").assertIsDisplayed().assertHasClickAction()
+    }
+
+    @Test fun nonEmptyPlaylistWithPlatformSongSourceDoesNotShowUpdateOrBindingEntry() {
+        show(onUpdate = { actions += "update" })
+        compose.onNodeWithText("从原歌单更新").assertDoesNotExist()
+        compose.onNodeWithText("绑定来源并更新").assertDoesNotExist()
+        compose.onNodeWithText("重命名歌单").assertIsDisplayed().assertHasClickAction()
+        compose.onNodeWithText("删除歌单").assertIsDisplayed().assertHasClickAction()
     }
 
     @Test fun playAllStillUsesItsOwnAction() {

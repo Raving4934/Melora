@@ -18,21 +18,21 @@ class PlaylistUpdateControllerTest {
         var fail = false
         var commits = 0
         val controller = PlaylistUpdateController({ local }, { _, _ -> if (fail) error("网络失败") else result }, { commits++; it.updated })
-        controller.read("")
+        controller.read()
         assertNotNull(controller.state.value.preview)
         result = remote.copy(warning = "第2页失败")
-        controller.read("")
+        controller.read()
         assertNull(controller.state.value.preview)
         assertTrue(controller.state.value.error!!.contains("未获取完整"))
         assertNull(controller.confirm())
         fail = true
-        controller.read("")
+        controller.read()
         assertNull(controller.state.value.preview)
         assertTrue(controller.state.value.error!!.contains("网络失败"))
         assertFalse(controller.state.value.busy)
         assertEquals(0, commits)
         fail = false; result = remote
-        controller.read("")
+        controller.read()
         assertNotNull(controller.state.value.preview)
         assertNull(controller.state.value.error)
     }
@@ -44,7 +44,7 @@ class PlaylistUpdateControllerTest {
             withContext(NonCancellable) { entered.complete(Unit); release.await() }
             remote
         })
-        val task = launch { controller.read("") }
+        val task = launch { controller.read() }
         entered.await(); task.cancel(); release.complete(Unit); task.join()
         assertNull(controller.state.value.preview)
         assertNull(controller.state.value.error)
@@ -57,14 +57,14 @@ class PlaylistUpdateControllerTest {
         val release = CompletableDeferred<Unit>()
         var current: UserLibrary.UserPlaylist? = local
         val controller = PlaylistUpdateController({ current }, { _, _ -> reads++; entered.complete(Unit); release.await(); remote })
-        val task = launch { controller.read("") }
+        val task = launch { controller.read() }
         entered.await()
-        controller.read("")
+        controller.read()
         assertNull(controller.confirm())
         assertEquals(1, reads)
         release.complete(Unit); task.join()
         current = null
-        controller.read("")
+        controller.read()
         assertNull(controller.state.value.preview)
         assertTrue(controller.state.value.error!!.contains("删除"))
     }
@@ -72,7 +72,7 @@ class PlaylistUpdateControllerTest {
     @Test fun saveFailureKeepsPreviewForRetryAndConflictRequiresFreshRead() = runBlocking {
         var failure: Exception? = java.io.IOException("disk full")
         val controller = PlaylistUpdateController({ local }, { _, _ -> remote }, { failure?.let { throw it }; it.updated })
-        controller.read("")
+        controller.read()
         assertNull(controller.confirm())
         assertNotNull(controller.state.value.preview)
         assertTrue(controller.state.value.error!!.contains("disk full"))
@@ -81,26 +81,51 @@ class PlaylistUpdateControllerTest {
         assertNull(controller.state.value.preview)
         assertFalse(controller.state.value.busy)
         failure = null
-        controller.read("")
+        controller.read()
         assertNotNull(controller.confirm())
     }
 
-    @Test fun bindingUsesReturnedValidatedSourceAndEditingLinkInvalidatesPreview() = runBlocking {
-        val controller = PlaylistUpdateController({ local.copy(importSource = null, lastSyncedUids = null) }, { _, _ -> remote })
-        controller.read("https://music.163.com/#/playlist?id=999")
+    @Test fun sourceLessPlaylistCannotReadOrCommitEvenWithPlatformSongs() = runBlocking {
+        val before = local.copy(importSource = null, lastSyncedUids = null)
+        var reads = 0
+        var commits = 0
+        val controller = PlaylistUpdateController({ before }, { _, _ -> reads++; remote }, { commits++; it.updated })
+        repeat(2) { controller.read() }
+        assertEquals(0, reads)
+        assertNull(controller.state.value.preview)
+        assertTrue(controller.state.value.error!!.contains("没有导入来源"))
+        assertFalse(controller.state.value.busy)
+        assertNull(controller.confirm())
+        assertEquals(0, commits)
+    }
+
+    @Test fun differentReturnedSourceIsRejectedAndRereadCanRecover() = runBlocking {
+        var result = remote.copy(importSource = PlaylistImportLink.parse("https://music.163.com/#/playlist?id=999"))
+        val controller = PlaylistUpdateController({ local }, { _, _ -> result })
+        controller.read()
         assertNull(controller.state.value.preview)
         assertNotNull(controller.state.value.error)
-        controller.read(link.value)
-        assertTrue(controller.state.value.preview!!.firstBinding)
-        controller.editLink()
-        assertNull(controller.state.value.preview)
+        result = remote
+        controller.read()
+        assertNotNull(controller.state.value.preview)
         assertNull(controller.state.value.error)
+    }
+
+    @Test fun importedPlaylistWithoutBaselineKeepsExistingSongsOnFirstUpdate() = runBlocking {
+        val before = local.copy(lastSyncedUids = null)
+        val controller = PlaylistUpdateController({ before }, { _, _ -> remote })
+        controller.read()
+        val preview = controller.state.value.preview!!
+        assertTrue(preview.firstBinding)
+        assertTrue(preview.removed.isEmpty())
+        assertTrue(preview.updated.songs.map { it.uid }.containsAll(before.songs.map { it.uid }))
+        assertEquals(link, preview.updated.importSource)
     }
 
     @Test fun unchangedReadCannotBeConfirmedOrWritten() = runBlocking {
         var commits = 0
         val controller = PlaylistUpdateController({ local }, { _, _ -> remote.copy(songs = local.songs) }, { commits++; it.updated })
-        controller.read("")
+        controller.read()
         assertFalse(controller.state.value.preview!!.hasChanges)
         assertNull(controller.confirm())
         assertEquals(0, commits)
@@ -115,7 +140,7 @@ class PlaylistUpdateControllerTest {
                 progress(PlaylistImportProgress(1, 1, 1))
                 remote
             }, commit = { commits++; it.updated })
-        controller.read("ignored input for bound playlist")
+        controller.read()
         assertEquals(link.value, requested)
         assertEquals(0, commits)
         assertEquals(listOf("wy_b"), controller.state.value.preview!!.added.map { it.uid })

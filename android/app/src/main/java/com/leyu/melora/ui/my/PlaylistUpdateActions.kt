@@ -30,7 +30,6 @@ internal fun playlistUpdateActions(state: PlaylistUpdateState, canRead: Boolean)
             state.loading -> "读取中…"
             primary == PlaylistUpdateAction.DISMISS -> "完成"
             preview != null && state.error != null -> "重试保存"
-            preview?.firstBinding == true -> "确认绑定并更新"
             preview != null -> "确认更新"
             state.error != null -> "重试读取"
             else -> "读取更新"

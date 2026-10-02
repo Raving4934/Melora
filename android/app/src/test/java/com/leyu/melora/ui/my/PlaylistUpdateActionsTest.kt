@@ -18,7 +18,7 @@ class PlaylistUpdateActionsTest {
 
     @Test fun statesChooseSafeActionsAndBusyStatesCannotSubmitTwice() {
         val changed = PlaylistSyncPreview(local, local.copy(songs = listOf(song("b"))))
-        val binding = PlaylistSyncPreview(local.copy(importSource = null), local)
+        val firstUpdate = PlaylistSyncPreview(local.copy(lastSyncedUids = null), local)
         data class Case(
             val state: PlaylistUpdateState,
             val canRead: Boolean,
@@ -33,7 +33,7 @@ class PlaylistUpdateActionsTest {
             Case(PlaylistUpdateState(), true, PlaylistUpdateAction.READ, "读取更新", true, PlaylistUpdateAction.DISMISS, true),
             Case(PlaylistUpdateState(error = "网络失败"), true, PlaylistUpdateAction.READ, "重试读取", true, PlaylistUpdateAction.DISMISS, true),
             Case(PlaylistUpdateState(preview = changed), true, PlaylistUpdateAction.CONFIRM, "确认更新", true, PlaylistUpdateAction.READ, true),
-            Case(PlaylistUpdateState(preview = binding), true, PlaylistUpdateAction.CONFIRM, "确认绑定并更新", true, PlaylistUpdateAction.READ, true),
+            Case(PlaylistUpdateState(preview = firstUpdate), true, PlaylistUpdateAction.CONFIRM, "确认更新", true, PlaylistUpdateAction.READ, true),
             Case(PlaylistUpdateState(preview = changed, error = "磁盘已满"), true, PlaylistUpdateAction.CONFIRM, "重试保存", true, PlaylistUpdateAction.READ, true),
             Case(PlaylistUpdateState(loading = true), true, PlaylistUpdateAction.READ, "读取中…", false, PlaylistUpdateAction.DISMISS, true),
             Case(PlaylistUpdateState(preview = changed, saving = true), true, PlaylistUpdateAction.CONFIRM, "保存中…", false, PlaylistUpdateAction.READ, false),

@@ -2534,10 +2534,10 @@ internal fun PlaylistMoreSheet(
                     subtitle = "修改该歌单的显示名称",
                     onClick = { closeSheet { onDismiss(); onRename() } },
                 )
-                if (onUpdate != null) SheetAction(
+                if (playlist.importSource != null && onUpdate != null) SheetAction(
                     icon = Icons.Outlined.Refresh,
                     tint = BrandBlue,
-                    label = if (playlist.importSource != null) "从原歌单更新" else "绑定来源并更新",
+                    label = "从原歌单更新",
                     subtitle = "先读取完整歌单，预览差异后确认",
                     onClick = { closeSheet { onDismiss(); onUpdate() } },
                 )

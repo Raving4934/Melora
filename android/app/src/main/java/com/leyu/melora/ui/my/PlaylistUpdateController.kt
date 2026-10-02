@@ -5,7 +5,6 @@ import com.leyu.melora.playback.UserLibrary
 import com.leyu.melora.playback.previewPlaylistSync
 import com.leyu.melora.playback.sdk.PlaylistImportProgress
 import com.leyu.melora.playback.sdk.PlaylistImportResult
-import com.leyu.melora.playback.sdk.PlaylistImportLink
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -31,19 +30,14 @@ internal class PlaylistUpdateController(
     private val mutableState = MutableStateFlow(PlaylistUpdateState())
     val state = mutableState.asStateFlow()
 
-    fun editLink() {
-        if (!state.value.busy) mutableState.value = PlaylistUpdateState()
-    }
-
-    suspend fun read(text: String) {
+    suspend fun read() {
         if (state.value.busy) return
         mutableState.value = PlaylistUpdateState(loading = true)
         try {
             currentCoroutineContext().ensureActive()
             val before = checkNotNull(currentPlaylist()) { "歌单已被删除。" }
-            val input = before.importSource?.value ?: text
-            val requested = PlaylistImportLink.parse(input)
-            val result = readPlaylist(input) {
+            val requested = requireNotNull(before.importSource) { "此歌单没有导入来源，不能从原歌单更新。" }
+            val result = readPlaylist(requested.value) {
                 mutableState.value = mutableState.value.copy(progress = it)
             }
             currentCoroutineContext().ensureActive()

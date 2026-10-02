@@ -9,7 +9,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckCircle
@@ -23,14 +22,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -90,18 +86,15 @@ internal fun PlaylistUpdateContent(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val state by controller.state.collectAsStateWithLifecycle()
-    var text by rememberSaveable(playlist.id) { mutableStateOf("") }
     var sourceExpanded by rememberSaveable(playlist.id) { mutableStateOf(false) }
     var job by remember { mutableStateOf<Job?>(null) }
     val source = playlist.importSource
-    val bound = source != null
     val dismiss = { if (!controller.state.value.saving) { job?.cancel(); onDismiss() } }
     fun read() {
         if (job?.isActive == true) return
-        job = scope.launch { controller.read(text) }
+        job = scope.launch { controller.read() }
     }
-    val keyboard = LocalSoftwareKeyboardController.current
-    val actions = playlistUpdateActions(state, canRead = bound || text.isNotBlank())
+    val actions = playlistUpdateActions(state, canRead = source != null)
     val preview = state.preview
     val contentState = rememberLazyListState()
     LaunchedEffect(state.loading, state.saving, preview, state.error) {
@@ -110,7 +103,6 @@ internal fun PlaylistUpdateContent(
         contentState.scrollToItem(0)
     }
     fun act(action: PlaylistUpdateAction) {
-        keyboard?.hide()
         when (action) {
             PlaylistUpdateAction.DISMISS -> dismiss()
             PlaylistUpdateAction.READ -> read()
@@ -122,7 +114,7 @@ internal fun PlaylistUpdateContent(
     // 固定标题与操作区，正文独立滚动；状态卡保留最小高度，避免读取/完成时跳位。
     Column(Modifier.fillMaxWidth().imePadding().heightIn(max = 600.dp)
         .padding(horizontal = 20.dp).testTag("playlist-sync-sheet")) {
-        PlaylistSheetHeader(Icons.Outlined.Refresh, if (bound) "从原歌单更新" else "绑定来源并更新",
+        PlaylistSheetHeader(Icons.Outlined.Refresh, "从原歌单更新",
             "先预览变化，再确认保存")
         Spacer(Modifier.height(20.dp))
         LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false).testTag("playlist-sync-content"),
@@ -192,29 +184,8 @@ internal fun PlaylistUpdateContent(
             }
             if (preview?.firstBinding == true) {
                 item("binding-note") {
-                    Text("首次绑定保留全部现有歌曲，仅合并远端内容；不会猜测旧歌单中哪些歌曲已被原平台删除。",
+                    Text("首次更新保留全部现有歌曲，仅合并原歌单内容，不推断历史删除记录。",
                         color = TextSub, fontSize = 12.sp, lineHeight = 18.sp)
-                }
-            }
-            if (!bound) {
-                item("link-input") {
-                    Column {
-                        if (preview == null) Text("此歌单尚未绑定来源，请粘贴原歌单的公开分享链接。", color = TextSub, fontSize = 12.sp)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("歌单分享链接", color = TextSub, modifier = Modifier.weight(1f), fontSize = 12.sp)
-                            TextButton(enabled = !state.busy, onClick = {
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                val pasted = clipboard?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
-                                if (!pasted.isNullOrBlank()) { text = pasted; controller.editLink() }
-                            }) { Text("粘贴") }
-                        }
-                        Surface(shape = RoundedCornerShape(14.dp), color = MeloraAppearance.card, border = MeloraAppearance.cardBorder) {
-                            BasicTextField(value = text, onValueChange = { text = it; controller.editLink() }, enabled = !state.busy,
-                                textStyle = TextStyle(color = TextMain, fontSize = 14.sp), cursorBrush = SolidColor(BrandBlue),
-                                modifier = Modifier.fillMaxWidth().height(76.dp).padding(12.dp).testTag("playlist-sync-link"),
-                                decorationBox = { field -> Box { if (text.isBlank()) Text("粘贴链接或分享文字", color = TextSub); field() } })
-                        }
-                    }
                 }
             }
             item("rules") {

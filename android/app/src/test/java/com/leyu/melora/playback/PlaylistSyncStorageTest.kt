@@ -184,7 +184,7 @@ class PlaylistSyncStorageTest {
             },
         )
         kotlinx.coroutines.runBlocking {
-            controller.read("")
+            controller.read()
             assertEquals(listOf(1, 2), requested)
             assertNull("Overlapping pages must not preview removal of managed d", controller.state.value.preview)
             assertTrue(controller.state.value.error.orEmpty().contains("未获取完整"))
