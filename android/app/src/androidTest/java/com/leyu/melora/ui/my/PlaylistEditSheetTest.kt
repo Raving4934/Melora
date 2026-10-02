@@ -2,6 +2,9 @@ package com.leyu.melora.ui.my
 
 import android.graphics.Bitmap
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.offset
+import androidx.compose.material3.Text
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.material.icons.Icons
@@ -20,6 +23,8 @@ import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.leyu.melora.ui.awaitStable
+import com.leyu.melora.ui.awaitIme
+import com.leyu.melora.ui.boundsInSameFrame
 import com.leyu.melora.ui.theme.MeloraTheme
 import java.io.File
 import org.junit.Assert.*
@@ -44,14 +49,15 @@ class PlaylistEditSheetTest {
             }
         }
         val entry = compose.onNodeWithText("从链接导入")
+        compose.awaitIme(entry)
         compose.awaitStable(entry)
         compose.onAllNodesWithText("从链接导入").assertCountEquals(1)
         compose.onNodeWithText("从链接导入歌单").assertDoesNotExist()
         compose.onNodeWithText("为喜欢的音乐留一个位置").assertIsDisplayed().assert(hasNoClickAction())
         entry.assertHasClickAction().assertTouchHeightIsEqualTo(48.dp)
-        val title = compose.onNodeWithText("新建歌单").fetchSemanticsNode().boundsInRoot
-        val action = entry.fetchSemanticsNode().boundsInRoot
-        val field = compose.onNode(hasSetTextAction()).fetchSemanticsNode().boundsInRoot
+        val (title, action, field) = compose.boundsInSameFrame(
+            compose.onNodeWithText("新建歌单"), entry, compose.onNode(hasSetTextAction()),
+        )
         assertTrue("入口应位于标题右侧、名称输入框之上", action.left >= title.right && action.bottom <= field.top)
         assertEquals("入口与标题应在同一行居中对齐", title.center.y, action.center.y, 1f)
         val screenshot = compose.onNode(isDialog()).captureToImage().asAndroidBitmap()
@@ -104,6 +110,30 @@ class PlaylistEditSheetTest {
         compose.runOnIdle { assertEquals("本周喜欢", confirmed); assertFalse(open.value) }
     }
 
+    @Test fun sameFrameHeaderBoundsIgnoreParentMovementButPreserveRealMisalignment() {
+        val parentOffset = mutableStateOf(0.dp)
+        val actionOffset = mutableStateOf(0.dp)
+        compose.setContent {
+            MeloraTheme {
+                Row(Modifier.offset(y = parentOffset.value)) {
+                    Text("标题")
+                    Text("操作", Modifier.offset(y = actionOffset.value))
+                }
+            }
+        }
+        val title = compose.onNodeWithText("标题")
+        val action = compose.onNodeWithText("操作")
+        val (before, _) = compose.boundsInSameFrame(title, action)
+        compose.runOnIdle { parentOffset.value = 80.dp }
+        val (movedTitle, movedAction) = compose.boundsInSameFrame(title, action)
+        // 确定性反例：混用移动前后的两份坐标会误报错位，同帧结果仍必须严格对齐。
+        assertTrue(kotlin.math.abs(before.center.y - movedAction.center.y) > 1f)
+        assertEquals(movedTitle.center.y, movedAction.center.y, 1f)
+        compose.runOnIdle { actionOffset.value = 8.dp }
+        val (misalignedTitle, misalignedAction) = compose.boundsInSameFrame(title, action)
+        assertTrue("真实的子节点错位不能被同帧采样抹平", kotlin.math.abs(misalignedTitle.center.y - misalignedAction.center.y) > 1f)
+    }
+
     @Test fun narrowHeaderAtLargeFontKeepsImportLabelOnOneLine() {
         compose.setContent {
             val density = LocalDensity.current
@@ -126,8 +156,7 @@ class PlaylistEditSheetTest {
         // 用实际文字边界验证裁切，避免段落浮点宽度取整导致误判。
         assertTrue(layout.getLineRight(0) <= layout.size.width)
         assertEquals("从链接导入".length, layout.getLineEnd(0))
-        val title = compose.onNodeWithText("新建歌单").fetchSemanticsNode().boundsInRoot
-        val action = entry.fetchSemanticsNode().boundsInRoot
+        val (title, action) = compose.boundsInSameFrame(compose.onNodeWithText("新建歌单"), entry)
         assertTrue(action.left >= title.right)
         assertEquals(title.center.y, action.center.y, 1f)
         entry.assertHasClickAction()

@@ -5,6 +5,7 @@ import java.io.File
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.test.platform.app.InstrumentationRegistry
 import com.leyu.melora.ui.awaitStable
+import com.leyu.melora.ui.boundsInSameFrame
 import androidx.compose.runtime.*
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createComposeRule
@@ -91,6 +92,7 @@ class PlaylistImportDuplicateSheetTest {
         assertEquals("更新必须沿用导入窗口，不重新弹出另一张抽屉", dialogId,
             compose.onNode(isDialog()).fetchSemanticsNode().id)
         assertEquals(0, creates.get()); assertEquals(0, commits.get())
+        compose.awaitStable("playlist-sync-submit")
         compose.onNodeWithTag("playlist-sync-submit").performClick()
         compose.waitUntil(5_000) { compose.onAllNodesWithTag("playlist-sync-preview").fetchSemanticsNodes().isNotEmpty() }
         assertEquals(0, commits.get())
@@ -105,10 +107,12 @@ class PlaylistImportDuplicateSheetTest {
         compose.onNodeWithText("重新读取").assertDoesNotExist()
         compose.onNodeWithContentDescription("重新读取").assertIsDisplayed().assertIsEnabled()
         compose.onNodeWithContentDescription("关闭导入歌单").assertIsDisplayed().assertIsEnabled()
-        val copy = compose.onNodeWithTag("playlist-import-copy").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
-        val update = compose.onNodeWithTag("playlist-import-submit").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
-        val source = compose.onNodeWithTag("playlist-import-link-preview").fetchSemanticsNode().boundsInRoot
-        val refresh = compose.onNodeWithContentDescription("重新读取").fetchSemanticsNode().boundsInRoot
+        val (copy, update, source, refresh) = compose.boundsInSameFrame(
+            compose.onNodeWithTag("playlist-import-copy").assertIsDisplayed(),
+            compose.onNodeWithTag("playlist-import-submit").assertIsDisplayed(),
+            compose.onNodeWithTag("playlist-import-link-preview"),
+            compose.onNodeWithContentDescription("重新读取"),
+        )
         assertEquals(copy.top, update.top, 1f)
         assertEquals(copy.height, update.height, 1f)
         assertTrue(source.contains(refresh.center))
@@ -137,6 +141,7 @@ class PlaylistImportDuplicateSheetTest {
         compose.onNodeWithTag("playlist-import-submit").assertIsNotEnabled()
         compose.onNodeWithTag("playlist-import-target-second").performScrollTo().performClick()
         compose.onNodeWithTag("playlist-import-submit").assertIsEnabled().performClick()
+        compose.awaitStable("playlist-sync-submit")
         compose.onNodeWithTag("playlist-sync-submit").performClick()
         compose.waitUntil(5_000) { compose.onAllNodesWithTag("playlist-sync-preview").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText("确认更新").performClick()
@@ -172,6 +177,7 @@ class PlaylistImportDuplicateSheetTest {
         assertEquals(0, imports.get()); assertEquals(1, creates.get())
         compose.onNodeWithTag("playlist-import-submit").performClick()
         compose.onNodeWithTag("playlist-sync-sheet").assertExists()
+        compose.awaitStable(compose.onNodeWithText("取消"))
         compose.onNodeWithText("取消").performClick()
         assertEquals(0, commits.get()); assertEquals(0, updates.get())
     }
@@ -182,6 +188,7 @@ class PlaylistImportDuplicateSheetTest {
         compose.runOnIdle {
             library.value = listOf(original.copy(importSource = PlaylistImportLink.parse("https://music.163.com/playlist?id=999")))
         }
+        compose.awaitStable("playlist-sync-submit")
         compose.onNodeWithTag("playlist-sync-submit").performClick()
         compose.waitUntil(5_000) { compose.onAllNodesWithTag("playlist-sync-error").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("playlist-sync-preview").assertDoesNotExist()
@@ -201,6 +208,7 @@ class PlaylistImportDuplicateSheetTest {
         show(warning = "分页未完整")
         compose.onNodeWithTag("playlist-import-copy").assertTextContains("另存已获取的 1 首")
         compose.onNodeWithTag("playlist-import-submit").performClick()
+        compose.awaitStable("playlist-sync-submit")
         compose.onNodeWithTag("playlist-sync-submit").performClick()
         compose.waitUntil(5_000) { compose.onAllNodesWithTag("playlist-sync-error").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("playlist-sync-preview").assertDoesNotExist()

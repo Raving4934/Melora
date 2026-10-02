@@ -1,10 +1,12 @@
 package com.leyu.melora.ui.my
 
 import com.leyu.melora.ui.awaitStable
+import com.leyu.melora.ui.boundsInSameFrame
 
 import android.content.Context
 import android.graphics.Bitmap
 import java.io.File
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
@@ -84,10 +86,14 @@ class PlaylistImportSheetTest {
     private fun loadingCopyVisible() =
         hasText("正在识别分享链接") || hasText("正在读取歌单…")
 
-    private fun bounds(tag: String): androidx.compose.ui.geometry.Rect {
-        val sheet = compose.onNodeWithTag("playlist-import-sheet").fetchSemanticsNode().boundsInRoot
-        // 收起键盘会整体移动抽屉；这里只比较抽屉内部的状态/操作布局，不把系统IME位移当抖动。
-        return compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot.translate(-sheet.left, -sheet.top)
+    // 每个状态独立采样；容器和子节点必须同帧，避免将IME整体位移误判为内容跳动。
+    private fun bounds(vararg tags: String): List<Rect> {
+        val nodes = compose.boundsInSameFrame(
+            compose.onNodeWithTag("playlist-import-sheet"),
+            *tags.map { compose.onNodeWithTag(it) }.toTypedArray(),
+        )
+        val sheet = nodes.first()
+        return nodes.drop(1).map { it.translate(-sheet.left, -sheet.top) }
     }
 
     private fun assertSameBounds(expected: androidx.compose.ui.geometry.Rect, actual: androidx.compose.ui.geometry.Rect) {
@@ -111,16 +117,15 @@ class PlaylistImportSheetTest {
         compose.runOnIdle { assertEquals("one submit starts one read", 1, reads.get()) }
         compose.onNodeWithTag("playlist-import-submit").assertIsNotEnabled()
         compose.waitForIdle()
-        val before = bounds("playlist-import-submit")
-        val headerBefore = bounds("playlist-import-header")
-        val bodyBefore = bounds("playlist-import-body")
+        // 抽屉内相对坐标同帧采样，不把 IME 位移当抖动。
+        val (before, headerBefore, bodyBefore) = bounds("playlist-import-submit", "playlist-import-header", "playlist-import-body")
         assertEquals(0, saves.get())
         ready.complete(result())
         compose.waitUntil(5_000) { compose.onAllNodesWithText("导入 1 首").fetchSemanticsNodes().isNotEmpty() }
-        val after = bounds("playlist-import-submit")
+        val (after, headerAfter, bodyAfter) = bounds("playlist-import-submit", "playlist-import-header", "playlist-import-body")
         assertSameBounds(before, after)
-        assertSameBounds(headerBefore, bounds("playlist-import-header"))
-        assertSameBounds(bodyBefore, bounds("playlist-import-body"))
+        assertSameBounds(headerBefore, headerAfter)
+        assertSameBounds(bodyBefore, bodyAfter)
         assertEquals(0, saves.get())
         captureSheet("playlist-import-preview.png")
         compose.onNodeWithTag("playlist-import-submit").performClick()
@@ -156,24 +161,24 @@ class PlaylistImportSheetTest {
             initialLink = sharedText,
             read = { _, input, _ -> assertEquals(sharedText, input); result() },
         )
+        compose.awaitStable("playlist-import-submit")
         compose.onNodeWithTag("playlist-import-submit").performClick()
         compose.waitUntil(5_000) { compose.onAllNodesWithTag("playlist-import-link-preview").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("playlist-import-link").assertDoesNotExist()
         compose.onNodeWithTag("playlist-import-edit-link").assertIsDisplayed()
         compose.onNodeWithText("粘贴").assertDoesNotExist()
         compose.onNodeWithContentDescription("重新读取").assertIsDisplayed()
-        val loadedSubmit = bounds("playlist-import-submit")
-        val loadedHeader = bounds("playlist-import-header")
-        val loadedBody = bounds("playlist-import-body")
+        val (loadedSubmit, loadedHeader, loadedBody) = bounds("playlist-import-submit", "playlist-import-header", "playlist-import-body")
 
         compose.onNodeWithTag("playlist-import-edit-link").performClick()
         compose.onNodeWithText("粘贴").assertIsDisplayed()
         compose.onNodeWithTag("playlist-import-link").assertTextEquals(sharedText)
         compose.onNodeWithTag("playlist-import-collapse-link").performClick()
         compose.onNodeWithTag("playlist-import-link-preview").assertExists()
-        assertSameBounds(loadedSubmit, bounds("playlist-import-submit"))
-        assertSameBounds(loadedHeader, bounds("playlist-import-header"))
-        assertSameBounds(loadedBody, bounds("playlist-import-body"))
+        val (collapsedSubmit, collapsedHeader, collapsedBody) = bounds("playlist-import-submit", "playlist-import-header", "playlist-import-body")
+        assertSameBounds(loadedSubmit, collapsedSubmit)
+        assertSameBounds(loadedHeader, collapsedHeader)
+        assertSameBounds(loadedBody, collapsedBody)
     }
 
     @Test fun saveFailureKeepsPreviewAndAllowsRetryInsteadOfReportingSuccess() {
@@ -198,10 +203,12 @@ class PlaylistImportSheetTest {
             autoRead = false,
             read = { _, _, _ -> throw IllegalStateException("读取失败") },
         )
+        compose.awaitStable("playlist-import-submit")
         compose.onNodeWithTag("playlist-import-submit").performClick()
         compose.waitUntil(5_000) { reads.get() == 1 && hasText("读取失败") }
         compose.onNodeWithTag("playlist-import-error").assertExists()
 
+        compose.awaitStable("playlist-import-submit")
         compose.onNodeWithTag("playlist-import-submit").performClick()
         compose.waitUntil(5_000) { reads.get() == 2 && hasText("读取失败") }
         compose.onNodeWithTag("playlist-import-error").assertExists()
@@ -225,35 +232,39 @@ class PlaylistImportSheetTest {
         Espresso.closeSoftKeyboard()
         compose.awaitStable("playlist-import-submit")
         compose.onNodeWithTag("playlist-import-submit").assertIsDisplayed()
-        val initialSubmit = bounds("playlist-import-submit")
-        val initialBody = bounds("playlist-import-body")
-        val initialProgressSlot = bounds("playlist-import-progress-slot")
+        val (initialSubmit, initialBody, initialProgressSlot) = bounds(
+            "playlist-import-submit", "playlist-import-body", "playlist-import-progress-slot",
+        )
         captureSheet("playlist-import-initial.png")
 
         compose.onNodeWithTag("playlist-import-submit").performClick()
         compose.waitUntil(5_000) { hasText("旧读取错误") }
         compose.onNodeWithTag("playlist-import-error").assertExists()
-        assertSameBounds(initialSubmit, bounds("playlist-import-submit"))
-        assertSameBounds(initialBody, bounds("playlist-import-body"))
-        assertSameBounds(initialProgressSlot, bounds("playlist-import-progress-slot"))
+        val (errorSubmit, errorBody, errorProgressSlot) = bounds(
+            "playlist-import-submit", "playlist-import-body", "playlist-import-progress-slot",
+        )
+        assertSameBounds(initialSubmit, errorSubmit)
+        assertSameBounds(initialBody, errorBody)
+        assertSameBounds(initialProgressSlot, errorProgressSlot)
 
         compose.onNodeWithTag("playlist-import-submit").performClick()
         compose.waitUntil(5_000) { reads.get() == 2 }
         compose.onNodeWithTag("playlist-import-submit").assertIsNotEnabled()
         compose.onNodeWithText("旧读取错误").assertExists()
-        assertSameBounds(initialSubmit, bounds("playlist-import-submit"))
-
         compose.waitUntil(5_000) { loadingCopyVisible() }
         compose.onNodeWithTag("playlist-import-progress").assertExists()
-        val indicator = bounds("playlist-import-progress")
+        val (busySubmit, busyBody, busyProgressSlot, indicator) = bounds(
+            "playlist-import-submit", "playlist-import-body", "playlist-import-progress-slot", "playlist-import-progress",
+        )
+        assertSameBounds(initialSubmit, busySubmit)
         assertEquals(
             "进度指示器应位于固定进度槽的垂直中心",
             initialProgressSlot.center.y,
             indicator.center.y,
             compose.density.density,
         )
-        assertSameBounds(initialBody, bounds("playlist-import-body"))
-        assertSameBounds(initialProgressSlot, bounds("playlist-import-progress-slot"))
+        assertSameBounds(initialBody, busyBody)
+        assertSameBounds(initialProgressSlot, busyProgressSlot)
 
         compose.onNodeWithTag("playlist-import-submit").performTouchInput {
             repeat(3) { click() }
@@ -266,9 +277,12 @@ class PlaylistImportSheetTest {
                 compose.onAllNodesWithTag("playlist-import-progress").fetchSemanticsNodes().isEmpty()
         }
         compose.onNodeWithTag("playlist-import-name").assertExists()
-        assertSameBounds(initialSubmit, bounds("playlist-import-submit"))
-        assertSameBounds(initialBody, bounds("playlist-import-body"))
-        assertSameBounds(initialProgressSlot, bounds("playlist-import-progress-slot"))
+        val (completeSubmit, completeBody, completeProgressSlot) = bounds(
+            "playlist-import-submit", "playlist-import-body", "playlist-import-progress-slot",
+        )
+        assertSameBounds(initialSubmit, completeSubmit)
+        assertSameBounds(initialBody, completeBody)
+        assertSameBounds(initialProgressSlot, completeProgressSlot)
         assertEquals(0, saves.get())
     }
 
@@ -280,15 +294,15 @@ class PlaylistImportSheetTest {
             },
         )
         compose.waitUntil(5_000) { hasText("导入 1 首") }
-        val previewSubmit = bounds("playlist-import-submit")
-        val previewBody = bounds("playlist-import-body")
+        val (previewSubmit, previewBody) = bounds("playlist-import-submit", "playlist-import-body")
         compose.onNodeWithContentDescription("重新读取").performClick()
         compose.waitUntil(5_000) { reads.get() == 2 }
 
         compose.onNodeWithTag("playlist-import-name").assertExists()
         compose.onNodeWithTag("playlist-import-submit").assertIsNotEnabled()
-        assertSameBounds(previewSubmit, bounds("playlist-import-submit"))
-        assertSameBounds(previewBody, bounds("playlist-import-body"))
+        val (rereadingSubmit, rereadingBody) = bounds("playlist-import-submit", "playlist-import-body")
+        assertSameBounds(previewSubmit, rereadingSubmit)
+        assertSameBounds(previewBody, rereadingBody)
 
         reread.completeExceptionally(IllegalStateException("重读网络失败"))
         compose.waitUntil(5_000) { hasText("读取失败，保留上次预览。重读网络失败") }
@@ -298,8 +312,9 @@ class PlaylistImportSheetTest {
         compose.onNodeWithText("导入 1 首").assertExists()
         compose.onNodeWithContentDescription("重新读取").assertIsEnabled()
         compose.onNodeWithTag("playlist-import-submit").assertIsEnabled()
-        assertSameBounds(previewSubmit, bounds("playlist-import-submit"))
-        assertSameBounds(previewBody, bounds("playlist-import-body"))
+        val (rereadErrorSubmit, rereadErrorBody) = bounds("playlist-import-submit", "playlist-import-body")
+        assertSameBounds(previewSubmit, rereadErrorSubmit)
+        assertSameBounds(previewBody, rereadErrorBody)
 
         compose.onNodeWithTag("playlist-import-submit").performClick()
         compose.waitUntil(5_000) { saves.get() == 1 }

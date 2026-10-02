@@ -205,6 +205,8 @@ jobs:
           adb devices | tee "$DEVICE_LOG_DIR/devices.log"
           test "$(adb devices | awk 'NR > 1 && NF {print $1}')" = "$ANDROID_SERIAL"
           adb -s "$ANDROID_SERIAL" shell input keyevent 82
+          # 编辑弹窗回归必须覆盖真实IME，即使AVD声明了硬件键盘也要允许软键盘显示。
+          adb -s "$ANDROID_SERIAL" shell settings put secure show_ime_with_hard_keyboard 1
           # 动画回归需要真实时间比例，不能用关闭系统动画掩盖中断/回弹问题。
           for scale in window_animation_scale transition_animation_scale animator_duration_scale; do
             adb -s "$ANDROID_SERIAL" shell settings put global "$scale" 1
