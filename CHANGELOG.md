@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-10-02
+
+### 安卓客户端
+
+> 本次仅更新 Android 客户端至 0.1.8（versionCode 17）；Web / NAS、FPK 与 Docker 维持 0.1.1。
+
+【逐字歌词与阅读体验】
+- 修复播放位置周期校正造成的逐字歌词抢跑、填充回退；保留拖动进度、暂停、缓冲、倍速及切歌时的真实时间跳转。
+- 全屏与封面 mini 歌词在间奏、尾奏保留已唱句的阅读焦点，下一句到实际起唱时间才交接，不添加等待提示或伪造逐字时间。
+- 全屏歌词文字跟随播放页封面取色；普通全屏的虚化开关启用实际分层模糊，焦点句保持清晰，邻句轻虚、远句更虚。
+- 调整普通全屏焦点与非焦点歌词的视觉大小差异，通过图层缩放保持原有换行与行距；mini 字号和布局不变。
+
+【播放器与歌单】
+- 修复打开全屏播放页后，经过最近任务返回应用时，底层搜索输入框残留焦点导致输入法意外弹出的问题。
+- 修复沉浸模式进入及中途反向切换时封面下沉的问题，保持封面内容与位置连续。
+- 歌单更新仅面向已记录导入来源的歌单；手动创建及没有原歌单来源的歌单不再显示绑定来源、从原歌单更新入口。
+
+【构建与验证】
+- 修复 Android CI 设备路径初始化和 SDK 命令行工具包列表识别问题。
+- 补充播放时钟、服务连续播放、输入焦点、间奏阅读焦点、浅深色歌词取色及模糊层次回归测试。
+
+### 关键提交
+
+- Android CI 修复：[`1e887f8`](https://github.com/Raving4934/Melora/commit/1e887f8b034d12a0efd61ce9132960c9ca95c388)、[`ebea79e`](https://github.com/Raving4934/Melora/commit/ebea79ec841b3f2cf4c21daa2f578cc6822ed192)。
+- 沉浸封面位置：[`bae4dca`](https://github.com/Raving4934/Melora/commit/bae4dca4d2a46bf8c54d58f8dbd3bcc72df437ee)；歌单更新来源：[`62bea41`](https://github.com/Raving4934/Melora/commit/62bea417627ccb07e7920bab2b20928db30b66e5)。
+- 输入法焦点：[`1d8c608`](https://github.com/Raving4934/Melora/commit/1d8c60862cc0f69277f73064e35e4f2433cf4bad)；逐字歌词时钟：[`6f9e331`](https://github.com/Raving4934/Melora/commit/6f9e331c812a6e2379b5cc3716cfb82d3fab69ef)。
+- 歌词阅读焦点与取色景深：[`4dc892e`](https://github.com/Raving4934/Melora/commit/4dc892e517a34c3f8a858f2bd88c7e8b8eea3a99)。
+
+### 安卓安装包
+
+- Android 0.1.8 APK（arm64-v8a）：由 Android 发布工作流构建、校验并上传。
+
 ## [0.1.7] - 2026-10-01
 
 ### 安卓客户端
@@ -340,9 +372,11 @@
 
 **Docker 镜像：** `ghcr.io/raving4934/melora:0.1.0`（支持 `linux/amd64`、`linux/arm64`）。
 
-[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.7...HEAD
-[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.7...HEAD
+[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.8...HEAD
+[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.8...HEAD
 [Web Unreleased]: https://github.com/Raving4934/Melora/compare/v0.1.1...HEAD
+[0.1.8]: https://github.com/Raving4934/Melora/compare/android-v0.1.7...android-v0.1.8
+[Android 0.1.8]: https://github.com/Raving4934/Melora/compare/android-v0.1.7...android-v0.1.8
 [0.1.7]: https://github.com/Raving4934/Melora/compare/android-v0.1.6...android-v0.1.7
 [Android 0.1.7]: https://github.com/Raving4934/Melora/compare/android-v0.1.6...android-v0.1.7
 [0.1.6]: https://github.com/Raving4934/Melora/compare/android-v0.1.5...android-v0.1.6
