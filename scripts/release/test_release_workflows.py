@@ -133,6 +133,32 @@ class ReleaseWorkflowTest(unittest.TestCase):
             with self.subTest(workflow=filename):
                 self.assertIn("scripts/release/test_release_workflows.py", (WORKFLOWS / filename).read_text())
 
+    def test_general_ci_skips_only_android_specific_changes(self) -> None:
+        workflow = (WORKFLOWS / "ci.yml").read_text()
+        triggers = workflow.split("\non:\n", 1)[1].split("\npermissions:", 1)[0]
+        for event in ("push", "pull_request"):
+            block = re.search(rf"^  {event}:\n((?:    .*\n)+)", triggers, re.MULTILINE)
+            self.assertIsNotNone(block)
+            self.assertIn("    paths-ignore:\n", block.group(1))
+            self.assertNotIn("    paths:\n", block.group(1))
+            ignored = re.findall(r"^      - '([^']+)'$", block.group(1), re.MULTILINE)
+            self.assertEqual(ignored, [
+                "android/**", ".github/workflows/android-ci.yml", ".github/workflows/android-release.yml",
+            ])
+            for changed, expected in (
+                (["android/app/src/main/AndroidManifest.xml"], False),
+                (["android/tools/sdk/package-lock.json"], False),
+                ([".github/workflows/android-ci.yml", ".github/workflows/android-release.yml"], False),
+                (["android/app/build.gradle.kts", "apps/web/src/App.tsx"], True),
+                (["android/app/build.gradle.kts", "apps/server/go.mod"], True),
+                (["android/app/build.gradle.kts", "scripts/release/test_release_workflows.py"], True),
+                (["package-lock.json"], True),
+                ([".github/workflows/ci.yml"], True),
+                (["README.md"], True),
+            ):
+                with self.subTest(event=event, changed=changed):
+                    self.assertEqual(any(not any(fnmatchcase(path, rule) for rule in ignored) for path in changed), expected)
+
     def test_deleting_historical_tags_never_starts_a_new_release(self) -> None:
         for name in ("android-release.yml", "release.yml"):
             self.assertIn("if: github.event.deleted != true", (WORKFLOWS / name).read_text())
