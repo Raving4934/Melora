@@ -116,16 +116,31 @@ class ImmersivePlayerInstrumentedTest {
     @Test
     fun longPressCoverPickerEntersImmersionAndBackRestoresNormalPlayer() {
         showPlayer()
+        compose.waitUntil(5_000) {
+            ViewCompat.getRootWindowInsets(view)?.isVisible(WindowInsetsCompat.Type.statusBars()) ==
+                !MeloraSettings.hideStatusBar.value
+        }
+        compose.awaitStable("player-pages")
         val normal = compose.onNodeWithTag("player-pages").fetchSemanticsNode().boundsInRoot
         compose.onNodeWithTag("player-artwork").performTouchInput { longClick() }
         compose.onNodeWithTag("player-cover-immersive").performScrollTo().also { compose.awaitStable(it) }.performClick()
         compose.runOnIdle { assertTrue(immersive.value) }
+        compose.waitUntil(5_000) {
+            ViewCompat.getRootWindowInsets(view)?.isVisible(WindowInsetsCompat.Type.statusBars()) == false
+        }
+        compose.awaitStable("player-pages")
         val enlarged = compose.onNodeWithTag("player-pages").fetchSemanticsNode().boundsInRoot
         assertTrue("隐藏栏位应释放给正文", enlarged.height > normal.height + 100f)
         compose.onNodeWithTag("player-heading").assertDoesNotExist()
         compose.onNodeWithTag("player-transport").assertDoesNotExist()
         Espresso.pressBack()
         compose.runOnIdle { assertFalse(immersive.value) }
+        // 退出状态已提交不等于系统栏 Insets 已恢复并完成布局；仍要求原高度及 1px 精度。
+        compose.waitUntil(5_000) {
+            val restored = compose.onNodeWithTag("player-pages").fetchSemanticsNode().boundsInRoot
+            ViewCompat.getRootWindowInsets(view)?.isVisible(WindowInsetsCompat.Type.statusBars()) ==
+                !MeloraSettings.hideStatusBar.value && kotlin.math.abs(normal.height - restored.height) <= 1f
+        }
         assertEquals(normal.height, compose.onNodeWithTag("player-pages").fetchSemanticsNode().boundsInRoot.height, 1f)
     }
 
