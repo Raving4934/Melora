@@ -1317,7 +1317,8 @@ private fun PlayerCoverPage(
             else minOf(maxWidth * 0.85f, maxHeight * 0.70f, 420.dp)
         val side = normalSide * (1f - t) + floatingSide * t
         val normalBelowCover = if (miniLyricsEnabled && lyricsInCover) previewHeight + 24.dp else 12.dp
-        val remaining = (maxHeight - side - normalBelowCover).coerceAtLeast(0.dp)
+        // 普通态留白只能由普通态封面计算；用插值中的 side 会把缩小释放的空间再次加到顶部，导致先下沉再上移。
+        val remaining = (maxHeight - normalSide - normalBelowCover).coerceAtLeast(0.dp)
         val centering = if (!lyricsInCover || maxWidth >= 600.dp) 1f else c
         val roomyLyrics = largePortrait && miniLyricsEnabled && lyricsInCover
         val normalTop = if (roomyLyrics) minOf(12.dp, remaining) else remaining * (1f - centering * 0.5f)

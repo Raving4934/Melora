@@ -272,7 +272,8 @@ class ImmersivePlayerInstrumentedTest {
         compose.mainClock.advanceTimeBy(160)
         val during = compose.onNodeWithTag("player-artwork").fetchSemanticsNode()
         assertEquals("封面必须沿用同一节点", original.id, during.id)
-        assertTrue("进入沉浸时封面应上移", during.boundsInRoot.center.y < originalCenter.y)
+        val duringCenter = during.boundsInRoot.center
+        assertTrue("进入沉浸时封面应上移: original=$originalCenter during=$duringCenter", duringCenter.y < originalCenter.y)
         compose.runOnIdle { immersive.value = false }
         compose.mainClock.advanceTimeBy(1_600)
         compose.mainClock.autoAdvance = true
