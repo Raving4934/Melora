@@ -287,7 +287,7 @@ class DeviceWorkflowTest(unittest.TestCase):
 
     def test_emulator_boot_is_bounded_and_checks_runtime_api_and_abi(self) -> None:
         boot = step(self.workflow, "启动并校验独立模拟器")
-        for required in ("timeout 360 bash -c", "-port 5554", "-no-snapshot", "-gpu swiftshader", "-accel on",
+        for required in ("timeout 360 bash -c", "-port 5554", "-no-snapshot", "-gpu swangle", "-accel on",
                          "getprop sys.boot_completed", "getprop ro.build.version.sdk", '= "$API_LEVEL"',
                          "getprop ro.product.cpu.abi", "= x86_64", 'adb -s "$ANDROID_SERIAL"'):
             self.assertIn(required, boot)
