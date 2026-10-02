@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -250,14 +251,15 @@ class LyricsRendererInstrumentedTest {
     }
 
     @Test
-    fun lightFullLyricsUseNeutralInkInsteadOfTheCoverTint() {
+    fun lightWordFillUsesTheSameCoverInkAsPlayerControls() {
         val line = LyricLine(0, "Hello world", words = listOf(LyricWord("Hello", 0, 1000), LyricWord(" world", 1000, 2000)))
         setViewport(listOf(line), mutableLongStateOf(1500L), height = 180.dp, playerDark = false)
         composeRule.waitForIdle()
         val image = composeRule.onNodeWithTag(VIEWPORT_TAG).captureToImage()
         val bitmap = image.asAndroidBitmap()
         var dark = 0
-        var tinted = 0
+        var matchedInk = 0
+        val ink = playerColorsFor(false, Color(0xFF3A78FF)).textPrimary.toArgb()
         for (y in 0 until bitmap.height) for (x in 0 until bitmap.width) {
             val pixel = bitmap.getPixel(x, y)
             val red = android.graphics.Color.red(pixel)
@@ -265,12 +267,14 @@ class LyricsRendererInstrumentedTest {
             val blue = android.graphics.Color.blue(pixel)
             if (minOf(red, green, blue) < 70) {
                 dark++
-                if (maxOf(red, green, blue) - minOf(red, green, blue) > 16) tinted++
+                if (abs(red - android.graphics.Color.red(ink)) <= 8 &&
+                    abs(green - android.graphics.Color.green(ink)) <= 8 &&
+                    abs(blue - android.graphics.Color.blue(ink)) <= 8) matchedInk++
             }
         }
         assertTrue("no readable filled glyphs", dark > 50)
-        assertEquals("cover tint leaked into lyric ink", 0, tinted)
-        saveProof("monochrome-light", image)
+        assertTrue("逐字填充必须跟随播放页墨水", matchedInk > 50)
+        saveProof("themed-fill-light", image)
     }
 
     @Test
@@ -414,6 +418,153 @@ class LyricsRendererInstrumentedTest {
             "word highlight must change rendered pixels as the manual position advances",
             countDifferentPixels(before, after) > 24,
         )
+    }
+
+    @Test fun interludeKeepsFinishedLineAsReadingFocusWithoutEarlyHighlightOrScroll() {
+        val lines = listOf(
+            LyricLine(0L, "上一句", endMs = 1_000L, words = listOf(LyricWord("上一句", 0L, 1_000L))),
+            LyricLine(7_000L, "下一句", endMs = 8_000L),
+        )
+        val position = mutableLongStateOf(500L)
+        setViewport(lines, position, height = 320.dp, motionEnabled = false)
+        composeRule.waitForIdle()
+        val viewport = viewportBounds()
+        val nextBounds = textBounds("下一句")
+        fun brightPixels(text: String): Int {
+            val image = composeRule.onNodeWithText(text, useUnmergedTree = true).captureToImage().asAndroidBitmap()
+            var count = 0
+            for (y in 0 until image.height) for (x in 0 until image.width) {
+                if (android.graphics.Color.blue(image.getPixel(x, y)) > 210) count++
+            }
+            return count
+        }
+        assertTrue(brightPixels("上一句") > 10)
+        composeRule.runOnIdle { position.longValue = 2_000L }
+        composeRule.onNodeWithTag("lyric-gap-indicator").assertDoesNotExist()
+        assertTrue("间奏必须保留一行清晰的阅读焦点", brightPixels("上一句") > 10)
+        saveProof("reading-focus", composeRule.onNodeWithTag(VIEWPORT_TAG).captureToImage())
+        assertEquals(viewport, viewportBounds())
+        assertEquals("间奏期间歌词不得被占位内容顶动", nextBounds, textBounds("下一句"))
+        composeRule.runOnIdle { position.longValue = 6_999L }
+        assertEquals("不能提前点亮下一句", 0, brightPixels("下一句"))
+        composeRule.runOnIdle { position.longValue = 7_000L }
+        assertTrue(brightPixels("下一句") > 10)
+        assertEquals("焦点交接后上一句恢复弱化", 0, brightPixels("上一句"))
+        composeRule.runOnIdle { position.longValue = 9_000L }
+        composeRule.onNodeWithTag("lyric-gap-indicator").assertDoesNotExist()
+        assertTrue("尾奏保留最后一句阅读焦点而非全屏同灰", brightPixels("下一句") > 10)
+    }
+
+    @Test fun miniRetainsReadingFocusDuringSilenceAndHandsOffAtTheNextStart() {
+        val lines = listOf(LyricLine(0L, "mini上一句", endMs = 1_000L,
+            words = listOf(LyricWord("mini上一句", 0L, 1_000L))), LyricLine(7_000L, "mini下一句", endMs = 8_000L))
+        val position = mutableLongStateOf(500L)
+        setViewport(lines, position, height = 160.dp, mini = true, motionEnabled = false)
+        composeRule.waitForIdle()
+        val viewport = viewportBounds()
+        val previousBounds = textBounds("mini上一句")
+        val nextBounds = textBounds("mini下一句")
+        fun brightPixels(text: String): Int {
+            val image = composeRule.onNodeWithText(text, useUnmergedTree = true).captureToImage().asAndroidBitmap()
+            var count = 0
+            for (y in 0 until image.height) for (x in 0 until image.width) {
+                // mini沿用封面蓝色墨水，检查蓝通道而非全屏的中性白色。
+                if (android.graphics.Color.blue(image.getPixel(x, y)) > 210) count++
+            }
+            return count
+        }
+        composeRule.runOnIdle { position.longValue = 2_000L }
+        assertTrue("mini间奏保留已唱句而非全灰", brightPixels("mini上一句") > 10)
+        assertEquals(viewport, viewportBounds())
+        assertEquals(previousBounds, textBounds("mini上一句"))
+        assertEquals(nextBounds, textBounds("mini下一句"))
+        saveProof("mini-reading-focus", composeRule.onNodeWithTag(VIEWPORT_TAG).captureToImage())
+        composeRule.runOnIdle { position.longValue = 6_999L }
+        assertEquals("mini不能提前点亮下一句", 0, brightPixels("mini下一句"))
+        composeRule.runOnIdle { position.longValue = 7_000L }
+        assertTrue(brightPixels("mini下一句") > 10)
+        assertEquals("交接后上一句恢复弱化", 0, brightPixels("mini上一句"))
+        composeRule.runOnIdle { position.longValue = 9_000L }
+        assertTrue("mini尾奏保留最后一句", brightPixels("mini下一句") > 10)
+        composeRule.runOnIdle { position.longValue = 2_000L }
+        assertTrue("回拖后恢复正确阅读焦点", brightPixels("mini上一句") > 10)
+        assertEquals(0, brightPixels("mini下一句"))
+        composeRule.onNodeWithTag("lyric-gap-indicator").assertDoesNotExist()
+    }
+
+    @Test fun lightThemeInterludeKeepsOneDarkReadingAnchorInsteadOfUniformGray() {
+        setViewport(listOf(LyricLine(0L, "已唱完的焦点句", endMs = 1_000L,
+            words = listOf(LyricWord("已唱完的焦点句", 0L, 1_000L))), LyricLine(7_000L, "尚未开唱的下一句", endMs = 8_000L)),
+            mutableLongStateOf(2_000L), height = 320.dp, motionEnabled = false, playerDark = false)
+        fun darkPixels(text: String): Int {
+            val image = composeRule.onNodeWithText(text, useUnmergedTree = true).captureToImage().asAndroidBitmap()
+            var count = 0
+            for (y in 0 until image.height) for (x in 0 until image.width) {
+                if (android.graphics.Color.red(image.getPixel(x, y)) < 70) count++
+            }
+            return count
+        }
+        assertTrue("浅色模式的阅读焦点必须清晰", darkPixels("已唱完的焦点句") > 30)
+        assertEquals("下一句必须维持非焦点灰色", 0, darkPixels("尚未开唱的下一句"))
+        saveProof("reading-focus-light", composeRule.onNodeWithTag(VIEWPORT_TAG).captureToImage())
+    }
+
+    @Test fun darkLyricsUsePlayerInkAndBlurOnlyNonFocusRows() = verifyThemedDepth(dark = true)
+
+    @Test fun lightLyricsUsePlayerInkAndBlurOnlyNonFocusRows() = verifyThemedDepth(dark = false)
+
+    @Test fun miniKeepsItsSizeAndRenderingWhenFullPageBlurIsToggled() = verifyThemedDepth(dark = true, mini = true)
+
+    private fun verifyThemedDepth(dark: Boolean, mini: Boolean = false) {
+        val artwork = Color(0xFFB34B20)
+        val colors = playerColorsFor(dark, artwork)
+        val config = mutableStateOf(LyricsUiConfig(fontSizeSp = 24f))
+        val lines = listOf("远处已唱歌词", "相邻已唱歌词", "当前焦点歌词", "相邻等待歌词", "远处等待歌词")
+            .mapIndexed { index, text -> LyricLine(index * 1_000L, text) }
+        val position = mutableLongStateOf(2_500L)
+        composeRule.setContent {
+            MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme()) {
+                PlayerAppearanceProvider(dark = dark, artworkColor = artwork) {
+                    LyricsViewport(lines, position, config.value,
+                        modifier = Modifier.fillMaxWidth().height(480.dp).background(colors.background).testTag(VIEWPORT_TAG),
+                        mini = mini, motionEnabled = false, onLineClick = {})
+                }
+            }
+        }
+        composeRule.waitForIdle()
+        fun image(text: String) = composeRule.onNodeWithText(text, useUnmergedTree = true).captureToImage()
+        val focusBefore = image("当前焦点歌词")
+        val nextBefore = image("相邻等待歌词")
+        val farBefore = image("远处等待歌词")
+        val focusBounds = textBounds("当前焦点歌词")
+        val nextBounds = textBounds("相邻等待歌词")
+        val ink = colors.textPrimary.toArgb()
+        val pixels = focusBefore.asAndroidBitmap()
+        var inkPixels = 0
+        for (y in 0 until pixels.height) for (x in 0 until pixels.width) {
+            val pixel = pixels.getPixel(x, y)
+            if (abs(android.graphics.Color.red(pixel) - android.graphics.Color.red(ink)) <= 8 &&
+                abs(android.graphics.Color.green(pixel) - android.graphics.Color.green(ink)) <= 8 &&
+                abs(android.graphics.Color.blue(pixel) - android.graphics.Color.blue(ink)) <= 8) inkPixels++
+        }
+        assertTrue("焦点必须使用播放页封面墨水而非固定黑白", inkPixels > 30)
+        if (!mini) assertEquals("焦点只做约6%视觉放大，不重排字号", 1f / 0.94f,
+            focusBounds.width / nextBounds.width, 0.01f)
+        composeRule.runOnIdle { config.value = config.value.copy(isBlurEnabled = true) }
+        assertEquals("虚化不能影响焦点清晰度", 0, countDifferentPixels(focusBefore, image("当前焦点歌词")))
+        assertEquals("开关虚化不能挤动歌词", focusBounds, textBounds("当前焦点歌词"))
+        assertEquals(nextBounds, textBounds("相邻等待歌词"))
+        if (mini) {
+            assertEquals(0, countDifferentPixels(nextBefore, image("相邻等待歌词")))
+            assertEquals(0, countDifferentPixels(farBefore, image("远处等待歌词")))
+        } else {
+            assertTrue("邻句应有实际虚化而非仅改灰色", countDifferentPixels(nextBefore, image("相邻等待歌词")) > 30)
+            assertTrue("远句也必须进入景深", countDifferentPixels(farBefore, image("远处等待歌词")) > 30)
+        }
+        saveProof("depth-${if (dark) "dark" else "light"}${if (mini) "-mini" else ""}",
+            composeRule.onNodeWithTag(VIEWPORT_TAG).captureToImage())
+        composeRule.runOnIdle { config.value = config.value.copy(isBlurEnabled = false) }
+        assertEquals("关闭后恢复原清晰文字", 0, countDifferentPixels(nextBefore, image("相邻等待歌词")))
     }
 
     @Test

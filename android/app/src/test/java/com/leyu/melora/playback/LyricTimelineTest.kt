@@ -66,6 +66,28 @@ class LyricTimelineTest {
         assertEquals(0f, lyricWordProgress(word.copy(endMs = 1000), 999), 0f)
     }
 
+    @Test fun knownLineEndsLeaveAQuietGapWithoutAdvancingTheFocusEarly() {
+        val timeline = LyricTimeline(listOf(
+            LyricLine(1000, "上一句", endMs = 2000),
+            LyricLine(8000, "下一句", endMs = 9000),
+        ))
+        assertEquals(setOf(0), timeline.at(1999).activeIndices)
+        for (time in listOf(2000L, 3000L, 7999L)) {
+            val frame = timeline.at(time)
+            assertEquals("间奏不能提前滚到下一句", 0, frame.focusIndex)
+            assertTrue("唱完后不能保持演唱高亮", frame.activeIndices.isEmpty())
+        }
+        assertEquals(setOf(1), timeline.at(8000).activeIndices)
+        assertTrue(timeline.at(9000).activeIndices.isEmpty())
+        assertEquals(setOf(0), timeline.at(1500).activeIndices)
+    }
+
+    @Test fun unknownLrcEndDoesNotInventASilentInterval() {
+        val timeline = LyricTimeline(listOf(LyricLine(0, "普通LRC"), LyricLine(10_000, "下一句")))
+        assertEquals(setOf(0), timeline.at(9_999).activeIndices)
+        assertEquals(setOf(1), timeline.at(10_000).activeIndices)
+    }
+
     @Test fun emptyAndSimultaneousLinesUseStableBoundaries() {
         assertEquals(LyricFrame(), LyricTimeline(emptyList()).at(5000))
         val lines = listOf(LyricLine(1000, "a"), LyricLine(1000, "b"), LyricLine(2000, "c"))

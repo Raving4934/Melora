@@ -7,6 +7,7 @@ import android.os.SystemClock
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.*
@@ -239,11 +240,8 @@ internal fun LyricsViewport(
     val frame by frameState
     val density = LocalDensity.current
     val baseStyle = LocalTextStyle.current
-    val dark = LocalPlayerColors.current.isDark
-    val ink = if (mini) FullPlayerTextPrimary else if (dark) Color(0xFFF5F5F5) else Color(0xFF252525)
-    val muted = if (dark) {
-        if (config.isBlurEnabled) Color(0xFF5B5B5B) else Color(0xFF858585)
-    } else if (config.isBlurEnabled) Color(0xFFB4B4B4) else Color(0xFF969696)
+    // 歌词与标题、控件使用同一封面墨水；弱化只调透明度，不叠加中性灰。
+    val ink = FullPlayerTextPrimary
     val immersiveMode = immersive && !mini
     val forceCenter = immersive || centered || config.isCentered
     val centerFraction = animateFloatAsState(if (forceCenter) 1f else 0f,
@@ -330,25 +328,24 @@ internal fun LyricsViewport(
                 itemsIndexed(lines, key = { index, _ -> index }) { index, line ->
                     CompositionLocalProvider(LocalViewConfiguration provides viewConfiguration) {
                         val active = index in frame.activeIndices
+                        // 间奏保留已唱句的阅读焦点，不改变真实演唱区间或逐字时间。
+                        val emphasized = active || (frame.activeIndices.isEmpty() && index == frame.focusIndex)
                         val distance = kotlin.math.abs(index - frame.focusIndex)
                         val immersiveRow = immersiveMode
                         // 对唱/背景声部可能同时在演唱，正在唱的行都应清晰，不能只照亮焦点索引。
-                        val depthDistance = if (active) 0 else distance
+                        val depthDistance = if (emphasized) 0 else distance
                         val scale = animateFloatAsState(
                             if (immersiveRow) immersiveLyricsScale(depthDistance)
                             else if (mini) when (distance) { 0 -> 1f; 1 -> 0.82f; else -> 0.75f }
-                            else if (active) 1f else 0.97f,
+                            else if (emphasized) 1f else 0.94f,
                             if (motionEnabled) spring(dampingRatio = 0.9f, stiffness = 300f) else snap(), label = "lyricFocusScale",
                         )
-                        val blurRadiusDp = if (immersiveRow) immersiveLyricsBlurDp(depthDistance) else 0f
-                        val blurEffect = remember(blurRadiusDp, density.density) {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && blurRadiusDp > 0f) {
-                                with(density) {
-                                    val radiusPx = blurRadiusDp.dp.toPx()
-                                    BlurEffect(radiusX = radiusPx, radiusY = radiusPx)
-                                }
-                            } else null
-                        }
+                        val depthEnabled = !mini && (immersiveRow || config.isBlurEnabled)
+                        val blurRadius = animateFloatAsState(
+                            if (depthEnabled) immersiveLyricsBlurDp(depthDistance) * (if (immersiveRow) 1f else 0.65f) else 0f,
+                            if (motionEnabled) tween(180) else snap(), label = "lyricDepthBlur",
+                        )
+                        val muted = ink.copy(alpha = if (emphasized) 0.38f else 0.50f)
                         Column(Modifier.fillMaxWidth().clickable {
                             onLineClick(line)
                             if (!mini) { browsing = false; scope.launch { follow(index) } }
@@ -359,17 +356,19 @@ internal fun LyricsViewport(
                                     alpha = (if (line.isBackground) 0.78f else 1f) * depthAlpha
                                     scaleX = scale.value; scaleY = scale.value
                                     transformOrigin = TransformOrigin(if (mini) centerFraction.value * 0.5f else if (alignment == Alignment.CenterHorizontally) 0.5f else 0f, 0.5f)
-                                    renderEffect = blurEffect
+                                    val radiusPx = blurRadius.value * density.density
+                                    renderEffect = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && radiusPx > 0f)
+                                        BlurEffect(radiusX = radiusPx, radiusY = radiusPx) else null
                                 }) {
-                                TimedLyricText(line, position, active, ink, style,
+                                TimedLyricText(line, position, emphasized, ink, style,
                                     modifier = if (mini) Modifier.fillMaxWidth().height(with(density) { miniLineHeight.toDp() }) else Modifier.fillMaxWidth(),
                                     maxLines = if (mini) 1 else Int.MAX_VALUE,
                                     mutedColor = if (mini) null else muted, marquee = mini && active && motionEnabled,
                                     centerFraction = if (mini) centerFraction else null,
-                                    inactiveAlpha = if (mini) { if (distance == 1) 0.47f else 0.27f } else if (config.isBlurEnabled) 0.24f else 0.36f)
+                                    inactiveAlpha = if (distance == 1) 0.47f else 0.27f)
                                 if (!mini) for (text in listOfNotNull(line.translation, line.romanization)) Text(
                                     text, style = subStyle,
-                                    color = if (!active) muted else if (dark) Color(0xFFBDBDBD) else Color(0xFF686868),
+                                    color = ink.copy(alpha = if (emphasized) 0.72f else 0.50f),
                                     modifier = Modifier.fillMaxWidth().padding(top = 3.dp),
                                 )
                             }
