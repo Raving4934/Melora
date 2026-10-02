@@ -2,6 +2,7 @@ package com.leyu.melora.ui.common
 
 import android.graphics.Bitmap
 import android.graphics.Color as AndroidColor
+import androidx.core.graphics.ColorUtils
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -20,8 +21,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
@@ -31,7 +35,6 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import com.leyu.melora.ui.awaitStable
 import com.leyu.melora.ui.theme.MeloraTheme
 import org.junit.Assert.assertEquals
@@ -200,7 +203,7 @@ class MeloraBottomSheetTest {
             assertTrue("the test host must expose both sheet anchors", state.hasPartiallyExpandedState)
             assertEquals(SheetValue.PartiallyExpanded, state.currentValue)
         }
-        assertScrimMatchesPhysicalOffset(captureScrimFrame(state, viewportHeightPx))
+        assertScrimMatchesPhysicalOffset(captureScrimFrame(root, state))
 
         // Expand with an actual pointer gesture; a viewport-relative panel height keeps the
         // partially-expanded anchor available on both phone and tablet screens.
@@ -218,7 +221,7 @@ class MeloraBottomSheetTest {
         }
         compose.awaitStable(SHEET_CONTENT_TAG)
         compose.runOnIdle { assertEquals(SheetValue.Expanded, state.currentValue) }
-        val expandedFrame = captureScrimFrame(state, viewportHeightPx)
+        val expandedFrame = captureScrimFrame(root, state)
         assertScrimMatchesPhysicalOffset(expandedFrame)
 
         val start = Offset(root.fetchSemanticsNode().size.width / 2f, state.requireOffset() + 100f)
@@ -236,7 +239,7 @@ class MeloraBottomSheetTest {
                 pointer = to
                 // Events are injected on leaving performTouchInput; sample only after drawing.
                 compose.waitForIdle()
-                return captureScrimFrame(state, viewportHeightPx)
+                return captureScrimFrame(root, state)
             }
             val first = dragTo(viewportHeightPx * 0.48f)
             val farther = dragTo(viewportHeightPx * 0.60f)
@@ -331,18 +334,20 @@ private data class ScrimFrame(
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
-private fun captureScrimFrame(sheetState: SheetState, viewportHeightPx: Int): ScrimFrame {
-    check(viewportHeightPx > 0) { "test host viewport has not been measured" }
-    val bitmap: Bitmap = requireNotNull(
-        InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot(),
-    )
+private fun captureScrimFrame(root: SemanticsNodeInteraction, sheetState: SheetState): ScrimFrame {
+    // 从当前Dialog窗口强制重绘并PixelCopy，不能把上一帧全屏截图与新offset混合比较。
+    val bitmap: Bitmap = root.captureToImage().asAndroidBitmap()
     return try {
-        // Sample within the app viewport, clear of status/navigation bars and the bottom sheet.
-        val pixel = bitmap.getPixel((bitmap.width * 0.1f).toInt(), (bitmap.height * 0.15f).toInt())
+        // 在同一Dialog视口内取样，避开系统栏和面板内容。
+        // PixelCopy保留Dialog透明通道；按TestSheetHost真实白底合成后再比较屏幕颜色。
+        val pixel = ColorUtils.compositeColors(
+            bitmap.getPixel((bitmap.width * 0.1f).toInt(), (bitmap.height * 0.15f).toInt()),
+            AndroidColor.WHITE,
+        )
         ScrimFrame(
             pixel = pixel,
             sheetOffsetPx = sheetState.requireOffset(),
-            viewportHeightPx = viewportHeightPx.toFloat(),
+            viewportHeightPx = bitmap.height.toFloat(),
             hasPartialAnchor = sheetState.hasPartiallyExpandedState,
         )
     } finally {

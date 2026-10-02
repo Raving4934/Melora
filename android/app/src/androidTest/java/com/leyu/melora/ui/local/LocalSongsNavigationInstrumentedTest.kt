@@ -134,11 +134,27 @@ class LocalSongsNavigationInstrumentedTest {
     fun nonAlphabeticalSortAndEmptyLibraryHaveNoMisleadingRail() {
         showPage()
         compose.onNodeWithTag("local-song-index").assertIsDisplayed()
+
+        val sizeContent = LocalSongsContent(
+            sortLocalSongs(songs.value, LocalSortField.Size, true),
+            emptyMap(),
+        )
         compose.runOnIdle { field.value = LocalSortField.Size }
+        compose.waitUntil(5_000) { published == sizeContent }
         compose.onNodeWithTag("local-song-index").assertDoesNotExist()
+
+        val artistSongs = sortLocalSongs(songs.value, LocalSortField.Artist, true)
+        val artistContent = LocalSongsContent(
+            artistSongs,
+            localSongSectionStarts(artistSongs, LocalSortField.Artist),
+        )
         compose.runOnIdle { field.value = LocalSortField.Artist }
+        // Size 的空索引快照先确认提交，因此旧的文件名快照不能提前满足此条件。
+        compose.waitUntil(5_000) { published == artistContent }
         compose.onNodeWithTag("local-song-index").assertIsDisplayed()
+
         compose.runOnIdle { songs.value = emptyList() }
+        compose.waitUntil(5_000) { published == LocalSongsContent() }
         compose.onNodeWithTag("local-song-index").assertDoesNotExist()
         compose.onNodeWithText("还没有本地歌曲").assertIsDisplayed()
     }

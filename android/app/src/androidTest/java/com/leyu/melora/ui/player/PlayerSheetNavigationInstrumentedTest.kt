@@ -98,7 +98,8 @@ class PlayerSheetNavigationInstrumentedTest {
         val mini = compose.onAllNodesWithText(track.title, substring = true).onLast()
         compose.awaitStable(mini)
         mini.performClick()
-        compose.waitUntil(5_000) {
+        // 播放器动画由 Compose 虚拟时钟驱动；低帧率设备的5秒墙钟不等于5秒动画。
+        compose.mainClock.advanceTimeUntil(5_000) {
             back.sheet.settledValue == PlayerSheetAnchor.Expanded && back.transition == null
         }
         compose.awaitStable("player-heading")
@@ -108,11 +109,12 @@ class PlayerSheetNavigationInstrumentedTest {
         val button = compose.onNodeWithContentDescription("播放队列")
         compose.awaitStable(button)
         button.performClick()
+        compose.mainClock.advanceTimeUntil(5_000) { back.transition == null }
         compose.awaitStable(compose.onNodeWithText("收起播放队列"))
     }
 
     private fun assertCollapsed() {
-        compose.waitUntil(5_000) { back.sheet.settledValue == PlayerSheetAnchor.Collapsed && !back.ownsBack }
+        compose.mainClock.advanceTimeUntil(5_000) { back.sheet.settledValue == PlayerSheetAnchor.Collapsed && !back.ownsBack }
     }
 
     private fun pressBackDuringQueueOpening() {
@@ -376,7 +378,7 @@ class PlayerSheetNavigationInstrumentedTest {
         } finally {
             compose.mainClock.autoAdvance = true
         }
-        compose.waitUntil(5_000) {
+        compose.mainClock.advanceTimeUntil(5_000) {
             back.sheet.settledValue == PlayerSheetAnchor.Expanded && back.transition == null
         }
     }
