@@ -43,7 +43,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
-@androidx.annotation.OptIn(UnstableApi::class)
+@androidx.annotation.OptIn(UnstableApi::class, androidx.media3.common.util.ExperimentalApi::class)
 class PlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
     private var playbackProgress: PlaybackProgress? = null
@@ -94,6 +94,9 @@ class PlaybackService : MediaSessionService() {
             }
         }
         val player = ExoPlayer.Builder(this, renderers)
+            // Media3 1.11 动态调度会让非 offload 的位置按约250ms跳变，周期同步时逐字高亮会倒退。
+            // 使用实时播放循环提供准确采样，不在歌词层钳制进度或伪造延迟。
+            .experimentalSetDynamicSchedulingEnabled(false)
             .setLoadControl(playbackLoadControl())
             .setMediaSourceFactory(DefaultMediaSourceFactory(cacheDataSourceFactory))
             .setAudioAttributes(

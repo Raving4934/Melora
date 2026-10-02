@@ -60,10 +60,11 @@ import kotlinx.coroutines.launch
 @Composable
 internal fun rememberLyricPosition(state: PlayerUiState, visible: Boolean): State<Long> {
     val latest by rememberUpdatedState(state)
-    val position = remember(state.current?.uid) { mutableLongStateOf(state.positionMs) }
+    val position = remember(state.current?.uid) { mutableLongStateOf(lyricPositionAt(state, SystemClock.elapsedRealtime())) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(state.current?.uid, state.positionSampleRealtimeMs, state.positionAdvancing, visible) {
-        position.longValue = state.positionMs
+        // 采样抵达界面时已过时；重锚与逐帧绘制必须使用同一时刻，不能先回写旧位置再追赶。
+        position.longValue = lyricPositionAt(state, SystemClock.elapsedRealtime())
         if (!visible || !state.positionAdvancing) return@LaunchedEffect
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (isActive) {

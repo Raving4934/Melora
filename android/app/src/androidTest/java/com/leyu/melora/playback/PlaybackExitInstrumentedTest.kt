@@ -7,6 +7,8 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
+import androidx.activity.ComponentActivity
+import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
@@ -22,6 +24,7 @@ import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -29,15 +32,20 @@ import org.junit.runner.RunWith
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @RunWith(AndroidJUnit4::class)
 class PlaybackExitInstrumentedTest {
+    // Android 15+ 只允许前台应用/合规前台服务取得音频焦点；测试需提供真实前台宿主。
+    @get:Rule val activity = ActivityScenarioRule(ComponentActivity::class.java)
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
     private val prefs get() = context.getSharedPreferences("melora-queue", Context.MODE_PRIVATE)
     private lateinit var audio: File
     private var autoPlay = false
     private var rememberProgress = true
+    private var librarySnapshot: String? = null
 
     @Before fun setUp() {
         check(context.packageName.endsWith(".debug")) { "Service tests require an isolated debug package" }
+        UserLibrary.init(context)
+        librarySnapshot = UserLibrary.exportSnapshot()
         main {
             autoPlay = MeloraSettings.autoPlayOnStart.value
             rememberProgress = MeloraSettings.rememberProgress.value
@@ -95,6 +103,32 @@ class PlaybackExitInstrumentedTest {
         }
         prefs.edit().clear().commit()
         if (::audio.isInitialized) audio.delete()
+        librarySnapshot?.let(UserLibrary::replaceFromBackup)
+    }
+
+    @Test fun continuousPlaybackKeepsLyricSamplesStableAcrossSessionPositionUpdates() {
+        main { controller().volume = 0f; controller().play() }
+        await { PlaybackController.state.value.positionAdvancing && controller().isPlaying }
+        // 等待 AudioTrack 起播，随后跨过至少两个 MediaSession 周期校正点。
+        Thread.sleep(800)
+        var previous = main { lyricPositionAt(PlaybackController.state.value, SystemClock.elapsedRealtime()) }
+        val first = previous
+        var largestRetreat = 0L
+        val deadline = SystemClock.elapsedRealtime() + 7_000L
+        while (SystemClock.elapsedRealtime() < deadline) {
+            val current = main { lyricPositionAt(PlaybackController.state.value, SystemClock.elapsedRealtime()) }
+            largestRetreat = maxOf(largestRetreat, previous - current)
+            previous = current
+            Thread.sleep(16)
+        }
+        assertTrue("歌词时钟必须持续前进", previous > first + 6_000L)
+        assertTrue("连续播放出现可见的周期校正回退: ${largestRetreat}ms", largestRetreat <= 32L)
+        main { controller().pause(); controller().seekTo(1_000L) }
+        await { !PlaybackController.state.value.positionAdvancing && PlaybackController.state.value.positionMs == 1_000L }
+        main {
+            assertEquals("真实向后Seek不能被当成抖动吞掉", 1_000L,
+                lyricPositionAt(PlaybackController.state.value, SystemClock.elapsedRealtime() + 1_000L))
+        }
     }
 
     @Test fun notificationExitStopsServiceAndReopeningRestoresPausedMiniWithoutSelectingASong() {

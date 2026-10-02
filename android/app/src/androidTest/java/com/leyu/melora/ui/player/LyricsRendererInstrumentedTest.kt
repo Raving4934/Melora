@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import android.graphics.Bitmap
+import android.os.SystemClock
 import java.io.File
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.compose.material3.lightColorScheme
@@ -19,6 +20,7 @@ import androidx.compose.runtime.SideEffect
 import java.util.concurrent.atomic.AtomicInteger
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -45,6 +47,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.leyu.melora.playback.LyricAlignment
 import com.leyu.melora.playback.LyricLine
 import com.leyu.melora.playback.LyricWord
+import com.leyu.melora.playback.PlayerUiState
+import com.leyu.melora.playback.UiTrack
 import kotlin.math.abs
 import kotlin.math.min
 import org.junit.Assert.assertEquals
@@ -58,6 +62,60 @@ import org.junit.runner.RunWith
 class LyricsRendererInstrumentedTest {
     @get:Rule
     val composeRule = createComposeRule()
+
+    @Test
+    fun delayedPlaybackSamplesAreProjectedBeforeFirstDrawAndEachRefresh() {
+        composeRule.mainClock.autoAdvance = false
+        val state = mutableStateOf(PlayerUiState(current = UiTrack("clock", "时钟测试", "", ""),
+            positionMs = 1_000L, positionSampleRealtimeMs = SystemClock.elapsedRealtime() - 250L,
+            positionAdvancing = true, durationMs = 100_000L))
+        lateinit var position: State<Long>
+        composeRule.setContent { position = rememberLyricPosition(state.value, visible = true) }
+        try {
+            composeRule.runOnIdle {
+                assertTrue("初次展示不能先画过期采样值: ${position.value}", position.value >= 1_250L)
+            }
+            repeat(3) { index ->
+                val sample = 2_000L + index * 1_000L
+                composeRule.runOnIdle {
+                    state.value = state.value.copy(positionMs = sample,
+                        positionSampleRealtimeMs = SystemClock.elapsedRealtime() - 250L)
+                }
+                composeRule.mainClock.advanceTimeByFrame()
+                composeRule.runOnIdle {
+                    assertTrue("刷新锚点不能让已填充文字退回旧采样: ${position.value}", position.value >= sample + 250L)
+                }
+            }
+        } finally { composeRule.mainClock.autoAdvance = true }
+    }
+
+    @Test
+    fun lyricClockStillReanchorsForPausedSeekBufferingSpeedAndTrackChange() {
+        composeRule.mainClock.autoAdvance = false
+        val state = mutableStateOf(PlayerUiState(current = UiTrack("clock", "时钟测试", "", ""),
+            positionMs = 4_000L, positionSampleRealtimeMs = SystemClock.elapsedRealtime(),
+            positionAdvancing = false, durationMs = 100_000L))
+        lateinit var position: State<Long>
+        composeRule.setContent { position = rememberLyricPosition(state.value, visible = true) }
+        fun publish(next: PlayerUiState, expected: Long, advancing: Boolean = false) {
+            composeRule.runOnIdle { state.value = next }
+            composeRule.mainClock.advanceTimeByFrame()
+            composeRule.runOnIdle {
+                if (advancing) assertTrue(position.value >= expected) else assertEquals(expected, position.value)
+            }
+        }
+        try {
+            publish(state.value.copy(positionMs = 500L, positionSampleRealtimeMs = SystemClock.elapsedRealtime()), 500L)
+            publish(state.value.copy(positionMs = 900L, positionAdvancing = true, buffering = true,
+                positionSampleRealtimeMs = SystemClock.elapsedRealtime() - 250L), 900L)
+            publish(state.value.copy(buffering = false, resolving = true,
+                positionSampleRealtimeMs = SystemClock.elapsedRealtime() - 500L), 900L)
+            publish(state.value.copy(resolving = false, speed = 2f,
+                positionSampleRealtimeMs = SystemClock.elapsedRealtime() - 250L), 1_400L, advancing = true)
+            publish(state.value.copy(current = UiTrack("next", "下一首", "", ""), positionMs = 0L,
+                positionAdvancing = false, positionSampleRealtimeMs = SystemClock.elapsedRealtime()), 0L)
+        } finally { composeRule.mainClock.autoAdvance = true }
+    }
 
     @Test
     fun miniViewportKeepsFixedHeightAndCentersFirstMiddleAndLastLine() {
