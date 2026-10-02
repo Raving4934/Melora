@@ -48,6 +48,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.font.FontWeight
@@ -93,6 +94,7 @@ internal fun ContinuousPlayerSheet(
     // 迷你条属于普通页面，全屏页面主题不能改变其底色、前景和系统栏。
     val miniColors = MaterialTheme.colorScheme
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
     val haptics = LocalHapticFeedback.current
@@ -159,7 +161,11 @@ internal fun ContinuousPlayerSheet(
             derivedStateOf { playerSheetIsCollapsed(sheetState.settledValue, sheetState.targetValue, progress()) }
         }
         val showMini by remember(progress) { derivedStateOf { progress() < 0.22f } }
-        LaunchedEffect(collapsed) { if (collapsed) immersive = false }
+        LaunchedEffect(collapsed) {
+            if (collapsed) immersive = false
+            // 全屏接管交互时结束底层搜索输入；只在展开边界执行，不干扰播放器内的输入弹窗。
+            else focusManager.clearFocus(force = true)
+        }
         val canCollapse = remember(playbackPage, backState) {
             { backState.transition == null && playbackPage() && !pageBlocksCollapse && !immersive }
         }
