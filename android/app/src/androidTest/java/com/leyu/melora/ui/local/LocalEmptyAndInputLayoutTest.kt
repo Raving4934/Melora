@@ -1,6 +1,23 @@
 package com.leyu.melora.ui.local
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toPixelMap
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.onNodeWithTag
+import com.leyu.melora.ui.common.ChromeScaffold
+import dev.chrisbanes.haze.blur.HazeBlurDefaults
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.CompositionLocalProvider
@@ -28,6 +45,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.assertTextContains
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -105,6 +123,45 @@ class LocalEmptyAndInputLayoutTest {
                 assertTrue("空态不能绘制到固定栏背后", list.layoutInfo.beforeContentPadding >= minimumPadding)
             }
         }
+    }
+
+    @OptIn(dev.chrisbanes.haze.ExperimentalHazeApi::class)
+    @Test fun chromeBlurUpdatesSourceClearsRemovedContentAndKeepsLayoutWhenToggled() {
+        val sourceColor = mutableStateOf(Color.Red)
+        val showSource = mutableStateOf(true)
+        compose.runOnIdle { MeloraSettings.blurTopBar.value = true }
+        compose.setContent {
+            val source = rememberHazeState()
+            MaterialTheme {
+                ChromeScaffold(
+                    modifier = Modifier.requiredSize(240.dp, 300.dp),
+                    containerColor = Color.White, headerColor = Color.White,
+                    contentSource = source, expectedTopBarHeight = 100.dp,
+                    topBar = { Box(Modifier.fillMaxWidth().height(100.dp).testTag("blur-header")) },
+                ) {
+                    if (showSource.value) Box(Modifier.fillMaxSize().hazeSource(source).background(sourceColor.value))
+                }
+            }
+        }
+        val header = compose.onNodeWithTag("blur-header")
+        fun awaitColor(predicate: (Color) -> Boolean) = compose.waitUntil(5_000) {
+            val pixels = header.captureToImage().toPixelMap()
+            predicate(pixels[pixels.width / 2, pixels.height * 3 / 5])
+        }
+        fun awaitWhite() = awaitColor { it.red > 0.95f && it.green > 0.95f && it.blue > 0.95f }
+        val supportsBlur = HazeBlurDefaults.isBlurEnabledByDefault()
+        if (supportsBlur) awaitColor { it.red > it.blue + 0.15f } else awaitWhite()
+        val bounds = header.getUnclippedBoundsInRoot()
+        compose.runOnIdle { sourceColor.value = Color.Blue }
+        if (supportsBlur) awaitColor { it.blue > it.red + 0.15f } else awaitWhite()
+        compose.runOnIdle { MeloraSettings.blurTopBar.value = false }
+        awaitWhite()
+        assertEquals(bounds, header.getUnclippedBoundsInRoot())
+        compose.runOnIdle { MeloraSettings.blurTopBar.value = true }
+        if (supportsBlur) awaitColor { it.blue > it.red + 0.15f } else awaitWhite()
+        assertEquals(bounds, header.getUnclippedBoundsInRoot())
+        compose.runOnIdle { showSource.value = false }
+        awaitWhite()
     }
 
     @Test fun emptyCursorAndPlaceholderShareTheSameVerticalCenterAtDifferentFontScales() {

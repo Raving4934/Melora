@@ -19,6 +19,7 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -115,9 +116,9 @@ class PlaylistEditSheetTest {
         val actionOffset = mutableStateOf(0.dp)
         compose.setContent {
             MeloraTheme {
-                Row(Modifier.offset(y = parentOffset.value)) {
+                Row(Modifier.offset { IntOffset(0, parentOffset.value.roundToPx()) }) {
                     Text("标题")
-                    Text("操作", Modifier.offset(y = actionOffset.value))
+                    Text("操作", Modifier.offset { IntOffset(0, actionOffset.value.roundToPx()) })
                 }
             }
         }

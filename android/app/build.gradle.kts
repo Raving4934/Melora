@@ -93,7 +93,7 @@ androidComponents.finalizeDsl { extension ->
     }
     // 插件复用release的sourceSet；离线测试目录提供器仅显式加入benchmark变体。
     extension.sourceSets.getByName("benchmarkRelease").apply {
-        java.srcDir("src/benchmarkRelease/java")
+        java.directories.add("src/benchmarkRelease/java")
         manifest.srcFile("src/benchmarkRelease/AndroidManifest.xml")
     }
 }
@@ -111,7 +111,7 @@ dependencies {
     implementation(libs.androidx.media3.datasource.okhttp)
     implementation(project(":quickjs-android"))
     implementation(libs.okhttp)
-    implementation(libs.haze)
+    implementation(libs.haze.blur)
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
 

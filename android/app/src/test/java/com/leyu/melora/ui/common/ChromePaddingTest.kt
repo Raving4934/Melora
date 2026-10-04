@@ -20,7 +20,7 @@ import org.junit.Test
 class ChromePaddingTest {
     @Test fun selfRegistrationDoesNotInvalidateUnchangedMaterialButNestedHeadersDo() {
         val geometry = ChromeHeaderGeometry()
-        val own = HazeState(initialBlurEnabled = true)
+        val own = HazeState()
         val source = derivedStateOf { geometry.sourceFor(1, own) }
         val bounds = derivedStateOf { geometry.minimumTop to geometry.materialBottom(96.dp) }
         val observer = SnapshotStateObserver { it() }
@@ -34,7 +34,7 @@ class ChromePaddingTest {
             geometry.update(Any(), 0.dp, 96.dp, 1, own)
             Snapshot.sendApplyNotifications()
             assertEquals(0, invalidations)
-            val child = HazeState(initialBlurEnabled = true)
+            val child = HazeState()
             geometry.update(Any(), 96.dp, 144.dp, 2, child)
             Snapshot.sendApplyNotifications()
             assertEquals(1, invalidations)
@@ -60,8 +60,8 @@ class ChromePaddingTest {
     fun movingPagesKeepIndependentStatusAndTitleGradients() {
         val hub = ChromeHeaderGeometry()
         val detail = ChromeHeaderGeometry()
-        val hubSource = HazeState(initialBlurEnabled = true)
-        val detailSource = HazeState(initialBlurEnabled = true)
+        val hubSource = HazeState()
+        val detailSource = HazeState()
         hub.update(Any(), 0.dp, 96.dp, 1, hubSource)
         detail.update(Any(), 0.dp, 144.dp, 1, detailSource)
         // 导航目标变化不能让离场页的渐变范围/采样源跳到另一页。
@@ -152,8 +152,8 @@ class ChromePaddingTest {
         val geometry = ChromeHeaderGeometry()
         val title = Any()
         val actions = Any()
-        val titleSource = HazeState(initialBlurEnabled = true)
-        val actionsSource = HazeState(initialBlurEnabled = true)
+        val titleSource = HazeState()
+        val actionsSource = HazeState()
 
         geometry.update(title, 0.dp, 96.dp, depth = 1, source = titleSource)
         geometry.update(actions, 96.dp, 144.dp, depth = 1, source = actionsSource)
@@ -174,8 +174,8 @@ class ChromePaddingTest {
     @Test
     fun statusBarAndBothHeaderRowsShareTheGradientFromScreenTop() {
         val geometry = ChromeHeaderGeometry()
-        val titleSource = HazeState(initialBlurEnabled = true)
-        val actionsSource = HazeState(initialBlurEnabled = true)
+        val titleSource = HazeState()
+        val actionsSource = HazeState()
 
         geometry.update(Any(), 0.dp, 96.dp, depth = 1, source = titleSource)
         geometry.update(Any(), 96.dp, 144.dp, depth = 1, source = actionsSource)
@@ -187,8 +187,8 @@ class ChromePaddingTest {
     @Test
     fun nestedBodyChoosesInnermostSourceAndFloatingBarDoesNotStealIt() {
         val geometry = ChromeHeaderGeometry()
-        val outerBodySource = HazeState(initialBlurEnabled = true)
-        val innerBodySource = HazeState(initialBlurEnabled = true)
+        val outerBodySource = HazeState()
+        val innerBodySource = HazeState()
 
         geometry.update(Any(), 0.dp, 96.dp, depth = 1, source = outerBodySource)
         geometry.update(Any(), 96.dp, 144.dp, depth = 2, source = innerBodySource)
@@ -204,8 +204,8 @@ class ChromePaddingTest {
         val geometry = ChromeHeaderGeometry()
         val parent = Any()
         val child = Any()
-        val parentSource = HazeState(initialBlurEnabled = true)
-        val childSource = HazeState(initialBlurEnabled = true)
+        val parentSource = HazeState()
+        val childSource = HazeState()
 
         geometry.update(parent, 0.dp, 96.dp, depth = 1, source = parentSource)
         geometry.update(child, 96.dp, 144.dp, depth = 2, source = childSource)
@@ -224,8 +224,8 @@ class ChromePaddingTest {
         val geometry = ChromeHeaderGeometry()
         val title = Any()
         val actions = Any()
-        val titleSource = HazeState(initialBlurEnabled = true)
-        val actionsSource = HazeState(initialBlurEnabled = true)
+        val titleSource = HazeState()
+        val actionsSource = HazeState()
         val visibleTitleTop = 0.dp
         val visibleTitleBottom = 96.dp
         val visibleActionsTop = 96.dp
@@ -252,8 +252,8 @@ class ChromePaddingTest {
     fun duplicateRegistrationReplacesTheSameOwnerWithoutLeavingStaleGeometry() {
         val geometry = ChromeHeaderGeometry()
         val owner = Any()
-        val staleSource = HazeState(initialBlurEnabled = true)
-        val currentSource = HazeState(initialBlurEnabled = true)
+        val staleSource = HazeState()
+        val currentSource = HazeState()
 
         geometry.update(owner, 32.dp, 96.dp, depth = 1, source = staleSource)
         geometry.update(owner, 64.dp, 128.dp, depth = 2, source = currentSource)
@@ -290,8 +290,8 @@ class ChromePaddingTest {
     @Test
     fun statusOnlyParentAndDetailTitleUseTheSameBodySource() {
         val geometry = ChromeHeaderGeometry()
-        val statusSource = HazeState(initialBlurEnabled = true)
-        val detailSource = HazeState(initialBlurEnabled = true)
+        val statusSource = HazeState()
+        val detailSource = HazeState()
         geometry.update(Any(), 0.dp, 32.dp, depth = 1, source = statusSource)
         geometry.update(Any(), 32.dp, 96.dp, depth = 2, source = detailSource)
         geometry.update(Any(), 96.dp, 146.dp, depth = 2, source = null)

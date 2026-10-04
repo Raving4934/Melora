@@ -50,11 +50,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.ui.theme.MeloraAppearance
 import dev.chrisbanes.haze.ExperimentalHazeApi
-import dev.chrisbanes.haze.HazeInputScale
+import dev.chrisbanes.haze.HazeInput
+import dev.chrisbanes.haze.HazePerformanceMode
+import dev.chrisbanes.haze.HazeSourceRetention
 import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.HazeStyle
-import dev.chrisbanes.haze.HazeTint
-import dev.chrisbanes.haze.hazeEffect
+import dev.chrisbanes.haze.blur.HazeBlurStyle
+import dev.chrisbanes.haze.blur.HazeColorEffect
+import dev.chrisbanes.haze.blur.hazeBlur
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 
@@ -327,22 +329,21 @@ private fun Modifier.chromeMaterial(
             endY = end,
         )
     }
-    return hazeEffect(
-        state = state,
-        style = HazeStyle(
-            backgroundColor = canvas,
-            tint = HazeTint(Color.Transparent),
-            blurRadius = 20.dp,
-            noiseFactor = 0f,
-            fallbackTint = HazeTint(canvas),
-        ),
-    ) {
-        // 保留全分辨率采样，避免降采样改变渐变末端的边缘与细节。
-        inputScale = HazeInputScale.None
-        // 使用系统高斯与渐隐遮罩，避开自定义可变半径内核的裁切暗边。
-        progressive = null
-        mask = fade
-    }.drawBehind { drawRect(veil) }
+    return hazeBlur(
+        input = HazeInput.Sources(state, retention = HazeSourceRetention.ClearWhenUnavailable),
+        style = HazeBlurStyle {
+            backgroundColor(canvas)
+            colorEffects(emptyList())
+            blurRadius(20.dp)
+            noiseFactor(0f)
+            fallbackColorEffect(HazeColorEffect.tint(canvas))
+            // 使用系统高斯与渐隐遮罩，不引入可变半径内核。
+            progressive(null)
+            mask(fade)
+        },
+        // 对应原全分辨率采样，避免降采样改变渐变末端的边缘与细节。
+        performanceMode = HazePerformanceMode.Quality,
+    ).drawBehind { drawRect(veil) }
 
 }
 

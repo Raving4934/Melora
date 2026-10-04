@@ -65,7 +65,7 @@ class LicenseManifestTest(unittest.TestCase):
         patterns = [pattern for entry in self.entries for pattern in entry.get("artifactPatterns", [])]
         dependencies = declared_runtime_dependencies()
         self.assertIn("androidx.core:core-ktx", dependencies)
-        self.assertIn("dev.chrisbanes.haze:haze", dependencies)
+        self.assertIn("dev.chrisbanes.haze:haze-blur", dependencies)
         self.assertIn("io.coil-kt.coil3:coil-compose", dependencies)
         self.assertIn("com.squareup.okhttp3:okhttp", dependencies)
         self.assertIn("project:quickjs-android", dependencies)
