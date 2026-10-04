@@ -25,7 +25,7 @@ class BookChapterPickerInstrumentedTest {
         val selections = mutableListOf<Int>()
         compose.setContent {
             MeloraTheme {
-                if (open.value) BookChapterPicker(1568, 1, false, { open.value = false }, selections::add)
+                if (open.value) BookChapterPicker(1568, 1, false, { open.value = false }, selections::add, {})
             }
         }
         val field = compose.onNode(hasSetTextAction())
@@ -43,24 +43,24 @@ class BookChapterPickerInstrumentedTest {
         assertFalse(open.value)
     }
 
-    @Test fun descendingRangeStartsAtItsRealLastChapter() {
+    @Test fun descendingRangeSelectsSourcePageRatherThanInventingAnEpisode() {
         val selected = mutableListOf<Int>()
         val open = mutableStateOf(true)
         compose.setContent {
             MeloraTheme {
-                if (open.value) BookChapterPicker(1568, 1, true, { open.value = false }, selected::add)
+                if (open.value) BookChapterPicker(1568, 1, true, { open.value = false }, {}, selected::add)
             }
         }
-        val range = compose.onNodeWithContentDescription("第 1501–1568 章")
+        val range = compose.onNodeWithContentDescription("目录 1501–1568")
         compose.awaitStable(range)
         range.performClick()
         compose.waitUntil(5_000) { selected.isNotEmpty() }
-        assertEquals(listOf(1568), selected)
+        assertEquals(listOf(16), selected)
     }
 
     @Test fun invalidOrdinalCannotBeSubmittedAndUnknownTotalDoesNotInventRanges() {
-        compose.setContent { MeloraTheme { BookChapterPicker(null, null, false, {}, {}) } }
-        compose.onNodeWithContentDescription("第 1–100 章").assertDoesNotExist()
+        compose.setContent { MeloraTheme { BookChapterPicker(null, 1, false, {}, {}, {}) } }
+        compose.onNodeWithContentDescription("目录 1–100").assertDoesNotExist()
         compose.onNodeWithText("定位").assertIsNotEnabled()
         val field = compose.onNode(hasSetTextAction())
         field.performTextReplacement("0")

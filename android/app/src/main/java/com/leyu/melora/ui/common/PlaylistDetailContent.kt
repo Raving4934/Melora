@@ -111,11 +111,10 @@ fun PlaylistDetailContent(
         var activeBookPage by rememberSaveable(detailCacheKey) { mutableIntStateOf(1) }
         var bookDescending by rememberSaveable(detailCacheKey) { mutableStateOf(false) }
         var bookPickerOpen by remember { mutableStateOf(false) }
-        var pendingBookOrdinal by remember { mutableStateOf<Int?>(null) }
         var pendingBookUid by remember { mutableStateOf<String?>(null) }
         var bookPageLoading by remember { mutableStateOf(false) }
         var bookRequestJob by remember(detailCacheKey) { mutableStateOf<Job?>(null) }
-        // 页窗口单独缓存；detailCacheKey 仍只存第 1 页，供播放队列按原契约续页。
+        // 目录连续展示，缓存仍按原始页保存；detailCacheKey 只存第1页供播放队列续页。
         val initialBookWindow = remember(detailCacheKey) {
             if (!isBook) null else OnlineCache.peek<KwBookApi.BookChapters>(
                 bookCatalogPageCacheKey(detailCacheKey, activeBookPage),
@@ -123,20 +122,29 @@ fun PlaylistDetailContent(
                 OnlineCache.peek<KwBookApi.BookChapters>(detailCacheKey)?.takeIf { it.page == 1 }
             } else null
         }
-        var bookWindow by remember(detailCacheKey) {
-            mutableStateOf(BookCatalogWindowState(initialBookWindow?.page ?: activeBookPage, initialBookWindow))
+        var bookCatalog by remember(detailCacheKey) {
+            mutableStateOf(BookCatalogState(initialBookWindow?.let { mapOf(it.page to it) }.orEmpty()))
         }
-        val bookSnapshot = bookWindow.chapters
+        val bookSnapshot = bookCatalog.pages.values.lastOrNull()
         var songSnapshot by remember(detailCacheKey) {
             mutableStateOf(if (!isBook) OnlineCache.peek<SongPage>(detailCacheKey) else null)
         }
-        val songs = bookSnapshot?.items ?: songSnapshot?.list.orEmpty()
+        val songs = remember(bookCatalog, songSnapshot) {
+            if (isBook) bookCatalog.items else songSnapshot?.list.orEmpty()
+        }
         val displaySongs = if (isBook && bookDescending) songs.asReversed() else songs
         val bookTotal = bookSnapshot?.total?.takeIf { isBook && it > 0 }
         val totalCount = if (isBook) bookTotal ?: songs.size
             else songSnapshot?.total?.takeIf { it > 0 } ?: songs.size
-        val activePage = bookSnapshot?.page ?: activeBookPage
-        val hasMore = songSnapshot?.hasMore() ?: false
+        val chapterPages = remember(bookCatalog) {
+            bookCatalog.pages.toSortedMap().flatMap { (page, data) -> data.items.map { it.uid to page } }
+                .distinctBy { it.first }.toMap()
+        }
+        val visibleBookPage by remember(chapterPages, listState) {
+            derivedStateOf { listState.layoutInfo.visibleItemsInfo.firstNotNullOfOrNull { chapterPages[it.key] } }
+        }
+        val activePage = visibleBookPage ?: activeBookPage
+        val hasMore = if (isBook) bookCatalog.nextPage(bookDescending) != null else songSnapshot?.hasMore() ?: false
         var loading by remember(detailCacheKey) { mutableStateOf(songs.isEmpty()) }
         var error by remember(detailCacheKey) { mutableStateOf<String?>(null) }
         var loadingMore by remember(detailCacheKey) { mutableStateOf(false) }
@@ -174,12 +182,12 @@ fun PlaylistDetailContent(
             generation: Long,
             requestedPage: Int,
             response: KwBookApi.BookChapters,
-            targetOrdinal: Int?,
             targetUid: String?,
             preserveScroll: Boolean,
             directionOnAccept: Boolean?,
+            append: Boolean,
         ) {
-            if (!bookWindow.isCurrentRequest(generation)) return
+            if (!bookCatalog.isCurrentRequest(generation)) return
             if (response.items.isEmpty()) {
                 if (bookSnapshot?.items.isNullOrEmpty()) error = "听书目录加载失败，请重试"
                 else PlaybackController.postMessage(context, "目录加载失败，已保留当前章节")
@@ -200,19 +208,21 @@ fun PlaylistDetailContent(
                 language = response.metadata.language.ifBlank { previousMetadata?.language.orEmpty() },
             )
             val enriched = response.copy(page = requestedPage, metadata = metadata)
-            val nextWindow = bookWindow.accept(generation, requestedPage, enriched)
-            if (nextWindow === bookWindow) return
-            bookWindow = nextWindow
-            val accepted = checkNotNull(nextWindow.chapters)
-            activeBookPage = requestedPage
+            val nextWindow = bookCatalog.accept(generation, requestedPage, enriched, append)
+            if (nextWindow === bookCatalog) {
+                PlaybackController.postMessage(context, "目录返回了重复内容，请稍后重试")
+                return
+            }
+            bookCatalog = nextWindow
+            val accepted = checkNotNull(nextWindow.pages[requestedPage])
+            if (!append) activeBookPage = requestedPage
             directionOnAccept?.let { bookDescending = it }
             OnlineCache.put(bookCatalogPageCacheKey(detailCacheKey, requestedPage), accepted)
             if (requestedPage == 1) OnlineCache.put(detailCacheKey, accepted)
             error = null
-            if (!preserveScroll) {
-                pendingBookOrdinal = targetOrdinal
+            if (!preserveScroll && !append) {
                 pendingBookUid = targetUid
-                if (targetOrdinal == null && targetUid == null) {
+                if (targetUid == null) {
                     // 排序只替换目录。页头还可见时保留原位置；已吸顶时保持操作栏原位，
                     // 从新窗口首章开始。与数据一起交给下一次布局，避免先跳页再纠正的闪动。
                     val index = listState.firstVisibleItemIndex
@@ -226,58 +236,75 @@ fun PlaylistDetailContent(
 
         fun requestBookPage(
             requestedPage: Int,
-            targetOrdinal: Int? = null,
+            targetEpisode: Int? = null,
             targetUid: String? = null,
             preserveScroll: Boolean = false,
             directionOnAccept: Boolean? = null,
+            append: Boolean = false,
         ) {
             if (!isBook) return
-            val (requestState, generation) = bookWindow.beginRequest()
-            bookWindow = requestState
+            val hasTarget = targetUid != null || targetEpisode != null
+            val matches: (OnlineSong) -> Boolean = { song ->
+                if (targetUid != null) song.uid == targetUid else bookEpisodeNumber(song.name) == targetEpisode
+            }
+            val (requestState, generation) = bookCatalog.beginRequest()
+            bookCatalog = requestState
             bookRequestJob?.cancel()
+            if (hasTarget) {
+                val loaded = songs.firstOrNull(matches)
+                if (loaded != null) {
+                    pendingBookUid = loaded.uid
+                    bookRequestJob = null
+                    bookPageLoading = false
+                    loading = false
+                    return
+                }
+            }
             bookPageLoading = true
             loading = bookSnapshot?.items.isNullOrEmpty()
             error = null
             bookRequestJob = scope.launch {
-                var cachedWindowShown = false
                 try {
-                    val windowKey = bookCatalogPageCacheKey(detailCacheKey, requestedPage)
-                    val cached = OnlineCache.peek<KwBookApi.BookChapters>(windowKey)
-                        ?.takeIf { it.page == requestedPage && it.items.isNotEmpty() }
-                        ?: if (requestedPage == 1) OnlineCache.peek<KwBookApi.BookChapters>(detailCacheKey)
-                            ?.takeIf { it.page == 1 && it.items.isNotEmpty() } else null
-                    if (cached != null) {
-                        applyBookResponse(
-                            generation,
-                            requestedPage,
-                            cached,
-                            targetOrdinal,
-                            targetUid,
-                            preserveScroll,
-                            directionOnAccept,
-                        )
-                        cachedWindowShown = bookWindow.page == requestedPage && bookSnapshot?.items?.isNotEmpty() == true
+                    if (hasTarget) {
+                        val found = findBookChapterPage(requestedPage, matches) { page ->
+                            loadBookPage(playlist.id, page)
+                        }
+                        if (!bookCatalog.isCurrentRequest(generation)) return@launch
+                        if (found == null) {
+                            val target = targetEpisode?.let { "第 $it 集／章" } ?: "当前章节"
+                            PlaybackController.postMessage(context, "未找到$target，已保留原位置")
+                        } else {
+                            applyBookResponse(generation, found.page, found, found.items.first(matches).uid,
+                                false, directionOnAccept, false)
+                        }
+                    } else {
+                        val windowKey = bookCatalogPageCacheKey(detailCacheKey, requestedPage)
+                        // 续载只在新页成功后一次性追加，旧末页缓存不能提前关闭重试入口。
+                        val cached = if (append) null else {
+                            OnlineCache.peek<KwBookApi.BookChapters>(windowKey)
+                                ?.takeIf { it.page == requestedPage && it.items.isNotEmpty() }
+                                ?: if (requestedPage == 1) OnlineCache.peek<KwBookApi.BookChapters>(detailCacheKey)
+                                    ?.takeIf { it.page == 1 && it.items.isNotEmpty() } else null
+                        }
+                        if (cached != null) {
+                            applyBookResponse(generation, requestedPage, cached, null,
+                                preserveScroll, directionOnAccept, append)
+                        }
+                        val fresh = loadBookPage(playlist.id, requestedPage)
+                        if (!bookCatalog.isCurrentRequest(generation)) return@launch
+                        applyBookResponse(generation, requestedPage, fresh, null,
+                            preserveScroll = preserveScroll || cached != null,
+                            directionOnAccept = directionOnAccept, append = append)
                     }
-                    val fresh = loadBookPage(playlist.id, requestedPage)
-                    if (!bookWindow.isCurrentRequest(generation)) return@launch
-                    applyBookResponse(
-                        generation,
-                        requestedPage,
-                        fresh,
-                        targetOrdinal,
-                        targetUid,
-                        preserveScroll = preserveScroll || cachedWindowShown,
-                        directionOnAccept = directionOnAccept,
-                    )
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (failure: Exception) {
-                    if (bookWindow.isCurrentRequest(generation)) {
+                    if (bookCatalog.isCurrentRequest(generation)) {
                         if (bookSnapshot?.items.isNullOrEmpty()) error = failure.message ?: "听书目录加载失败"
                         else PlaybackController.postMessage(context, failure.message ?: "目录加载失败，已保留当前章节")
                     }
                 } finally {
-                    if (bookWindow.isCurrentRequest(generation)) {
+                    if (bookCatalog.isCurrentRequest(generation)) {
                         loading = false
                         bookPageLoading = false
                         bookRequestJob = null
@@ -314,6 +341,12 @@ fun PlaylistDetailContent(
         }
 
         fun loadMore() {
+            if (isBook) {
+                if (!bookPageLoading && pendingBookUid == null) {
+                    bookCatalog.nextPage(bookDescending)?.let { requestBookPage(it, append = true) }
+                }
+                return
+            }
             if (loadingMore) return
             val previousSongs = songSnapshot ?: return
             if (!previousSongs.hasMore()) return
@@ -336,65 +369,33 @@ fun PlaylistDetailContent(
         // 批量管理模式：收藏右侧"批量管理"进入，顶栏/列表行/底部工具条联动
         val selection = remember { SongSelectionState() }
         LaunchedEffect(
-            bookSnapshot?.page,
-            pendingBookOrdinal,
+            bookCatalog,
             pendingBookUid,
             selection.active,
             bookDescending,
         ) {
-            if (!isBook || (pendingBookOrdinal == null && pendingBookUid == null)) {
+            if (!isBook || pendingBookUid == null) {
                 return@LaunchedEffect
             }
-            val window = bookSnapshot ?: return@LaunchedEffect
-            fun ordinalIndex(ordinal: Int): Int? {
-                val exact = window.items.indexOfFirst { it.raw.optInt("bookOrdinal") == ordinal }
-                if (exact >= 0) return exact
-                // 旧缓存完全没有 bookOrdinal 时，沿用 100 条页内偏移；新缓存缺项则明确报未找到。
-                if (window.items.none { it.raw.optInt("bookOrdinal") > 0 }) {
-                    val offset = ordinal - BookCatalogPaging.rangeStart(window.page)
-                    return offset.takeIf { it in window.items.indices }
-                }
-                return null
-            }
-            val itemIndex = when {
-                pendingBookUid != null -> window.items.indexOfFirst { it.uid == pendingBookUid }
-                    .takeIf { it >= 0 }
-                    ?: pendingBookOrdinal?.let(::ordinalIndex)
-                pendingBookOrdinal != null -> ordinalIndex(pendingBookOrdinal!!)
-                else -> 0
-            }
-            if (itemIndex == null || itemIndex !in window.items.indices) {
-                val target = pendingBookOrdinal?.let { "第 $it 章" } ?: "当前章节"
-                PlaybackController.postMessage(context, "目录中未找到$target")
-                pendingBookOrdinal = null
+            val itemIndex = displaySongs.indexOfFirst { it.uid == pendingBookUid }
+            if (itemIndex !in displaySongs.indices) {
+                PlaybackController.postMessage(context, "目录中未找到当前章节")
                 pendingBookUid = null
                 return@LaunchedEffect
             }
-            val shownIndex = if (bookDescending) window.items.lastIndex - itemIndex else itemIndex
             val headerItems = if (selection.active) 0 else 2
             // LazyColumn的顶部padding只包含标题栏；必须额外让开覆盖式吸顶操作栏。
-            listState.scrollToItem((shownIndex + headerItems).coerceAtLeast(0),
+            listState.scrollToItem((itemIndex + headerItems).coerceAtLeast(0),
                 scrollOffset = if (selection.active) 0 else -bookScrollInsetPx)
-            pendingBookOrdinal = null
             pendingBookUid = null
         }
 
         fun locateCurrentBookChapter() {
             val chapter = currentBookSong ?: return
-            val currentIndex = songs.indexOfFirst { it.uid == chapter.uid }
-            if (currentIndex >= 0) {
-                pendingBookOrdinal = chapter.raw.optInt("bookOrdinal").takeIf { it > 0 }
-                pendingBookUid = chapter.uid
-                return
-            }
             val ordinal = chapter.raw.optInt("bookOrdinal").takeIf { it > 0 }
             val page = ordinal?.let { BookCatalogPaging.pageForOrdinal(it) }
                 ?: chapter.raw.optInt("bookPage").takeIf { it > 0 }
-            if (page == null) {
-                PlaybackController.postMessage(context, "无法定位这条旧章节记录")
-                return
-            }
-            requestBookPage(page, targetOrdinal = ordinal, targetUid = chapter.uid)
+            requestBookPage(page ?: 1, targetUid = chapter.uid)
         }
 
         BackHandler { if (selection.active) selection.finish() else onBack() }
@@ -589,11 +590,12 @@ fun PlaylistDetailContent(
                     Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current),
                 )
                 else -> {
-                    // 听书是单页替换窗口；滚动定位到页尾不得触发下一页覆盖目标章。
-                    if (!isBook) LoadMoreOnScroll(listState, hasMore, loadingMore, onLoadMore = ::loadMore)
+                    LoadMoreOnScroll(listState,
+                        enabled = hasMore && pendingBookUid == null,
+                        loading = loadingMore || bookPageLoading, onLoadMore = ::loadMore)
                     LazyColumn(
                         state = listState,
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxSize().testTag("collection-song-list"),
                         contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
                         verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
@@ -655,7 +657,7 @@ fun PlaylistDetailContent(
                                 )
                             }
                         }
-                        if (hasMore && !isBook) {
+                        if (hasMore) {
                             item {
                                 Box(
                                     modifier = Modifier
@@ -664,7 +666,7 @@ fun PlaylistDetailContent(
                                         .padding(vertical = 16.dp),
                                     contentAlignment = Alignment.Center,
                                 ) {
-                                    if (loadingMore) {
+                                    if (loadingMore || bookPageLoading) {
                                         Text("正在加载…", fontSize = 13.sp, color = TextMuted)
                                     } else {
                                         Text(
@@ -710,14 +712,13 @@ fun PlaylistDetailContent(
         if (bookPickerOpen && isBook) {
             BookChapterPicker(
                 total = bookTotal,
-                currentOrdinal = BookCatalogPaging.rangeStart(activePage),
+                currentPage = activePage,
                 descending = bookDescending,
                 onDismiss = { bookPickerOpen = false },
-                onSelectOrdinal = { ordinal ->
-                    BookCatalogPaging.pageForOrdinal(ordinal)?.let { page ->
-                        requestBookPage(page, targetOrdinal = ordinal)
-                    }
+                onSelectEpisode = { episode ->
+                    requestBookPage(BookCatalogPaging.pageForOrdinal(episode) ?: 1, targetEpisode = episode)
                 },
+                onSelectPage = { page -> requestBookPage(page) },
             )
         }
         moreSong?.let { song ->
