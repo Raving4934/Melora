@@ -61,7 +61,8 @@ object UserLibrary {
         val updatedAt: Long,
         val artist: String = "",
     ) {
-        val key: String get() = "${kind}_$id"
+        /** 容器 ID 按来源命名空间隔离；长度前缀避免分隔符出现在字段值时产生碰撞。 */
+        val key: String get() = "${kind.length}:$kind:${source.length}:$source:$id"
     }
 
     /** 播放容器时登记的信息（与 RecentContainer 相同，但不含时间戳）。 */
@@ -203,7 +204,7 @@ object UserLibrary {
                     artist = node.optString("artist"),
                 )
             }
-        }.orEmpty()
+        }.orEmpty().distinctBy { it.key }
         snapshot.searchHistory = root.optJSONArray("searchHistory")?.let { array ->
             (0 until array.length()).mapNotNull { array.optString(it).takeIf(String::isNotBlank) }
         }.orEmpty()
