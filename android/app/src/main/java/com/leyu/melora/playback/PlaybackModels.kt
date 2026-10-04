@@ -106,6 +106,8 @@ data class PlayerUiState(
     // 当前播放队列的来源标识（如 board.kw.93 / playlist.kw.xxx），供卡片播放按钮跟随状态
     val queueId: String? = null,
     val pendingQueueId: String? = null,
+    /** 连续采样校正时的显示下界；实际positionMs和保存断点始终保留播放器原值。 */
+    val lyricPositionFloorMs: Long = 0,
 )
 
 /** 全屏歌词外观；由设置中心持久化，mini与桌面悬浮歌词保持各自字号。 */

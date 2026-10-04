@@ -202,6 +202,7 @@ object PlaybackController {
         )
         // 以当前控制器为边界维护上一首身份，避免旧 MediaController 的索引泄漏到新控制器。
         var previousMediaId = player.currentMediaItem?.mediaId
+        var positionDiscontinuity = false
         player.addListener(
             object : Player.Listener {
                 override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -222,11 +223,13 @@ object PlaybackController {
                         if (previousIndex != null) player.removeMediaItem(previousIndex)
                     }
                     previousMediaId = currentMediaId
-                    publish()
+                    publish(resetPosition = true)
                     saveQueue()
                 }
 
                 override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+                    if (controller !== player || !player.isConnected) return
+                    positionDiscontinuity = true
                     if (reason == Player.DISCONTINUITY_REASON_SEEK) interruptRecovery()
                 }
 
@@ -239,7 +242,8 @@ object PlaybackController {
                     if (player.playbackState == Player.STATE_READY &&
                         (events.contains(Player.EVENT_TRACKS_CHANGED) || events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED))
                     ) confirmAudioQuality(player)
-                    publish()
+                    publish(resetPosition = positionDiscontinuity)
+                    positionDiscontinuity = false
                     updateRecentPlayback(player)
                     if (player.playbackState == Player.STATE_READY) consecutiveErrors = 0
                     val timelineChanged = events.contains(Player.EVENT_TIMELINE_CHANGED)
@@ -307,7 +311,7 @@ object PlaybackController {
         }
     }
 
-    private fun publish() {
+    private fun publish(resetPosition: Boolean = false) {
         if (editingQueue) return
         val player = controller?.takeIf { it.isConnected } ?: return
         val queue = (0 until player.mediaItemCount).map { index ->
@@ -326,7 +330,13 @@ object PlaybackController {
         val audioSpec = readAudioSpec(player)
         val isPlayingIntent = player.playWhenReady &&
             (player.playbackState == Player.STATE_READY || player.playbackState == Player.STATE_BUFFERING)
-        _state.value = _state.value.copy(
+        val previous = _state.value
+        _state.value = previous.samplePosition(
+            positionMs = player.currentPosition.coerceAtLeast(0),
+            nowMs = SystemClock.elapsedRealtime(),
+            advancing = player.isPlaying,
+            reset = resetPosition || previous.current?.uid != currentTrack?.uid || previous.currentIndex != index,
+        ).copy(
             ready = true,
             current = currentTrack,
             queue = queue,
@@ -338,9 +348,6 @@ object PlaybackController {
             resolving = currentTrack?.isOnline == true &&
                 resolution == null && DownloadCenter.saved(currentTrack.uid) == null &&
                 player.playbackState == Player.STATE_BUFFERING,
-            positionMs = player.currentPosition.coerceAtLeast(0),
-            positionSampleRealtimeMs = SystemClock.elapsedRealtime(),
-            positionAdvancing = player.isPlaying,
             durationMs = player.duration.takeIf { it > 0 } ?: 0,
             mode = player.playMode(),
             speed = player.playbackParameters.speed,
@@ -363,15 +370,12 @@ object PlaybackController {
     private fun refreshPosition() {
         val player = controller ?: return
         val snapshot = _state.value
-        if (!snapshot.ready) return
+        if (!snapshot.ready || snapshot.current?.uid != player.currentMediaItem?.mediaId ||
+            snapshot.currentIndex != player.currentMediaItemIndex) return
         val position = player.currentPosition.coerceAtLeast(0)
         val duration = player.duration.takeIf { it > 0 } ?: snapshot.durationMs
-        if (position != snapshot.positionMs || duration != snapshot.durationMs) {
-            _state.value = snapshot.copy(
-                positionMs = position, durationMs = duration,
-                positionSampleRealtimeMs = SystemClock.elapsedRealtime(),
-                positionAdvancing = player.isPlaying,
-            )
+        if (position != snapshot.positionMs || duration != snapshot.durationMs || player.isPlaying) {
+            _state.value = snapshot.samplePosition(position, SystemClock.elapsedRealtime(), player.isPlaying, duration)
         }
         updateRecentPlayback(player)
         if (recoveryJob != null && !MeloraSettings.autoSwitchSource.value) interruptRecovery()

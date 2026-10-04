@@ -16,6 +16,39 @@ class LyricTimelineTest {
         assertEquals(0L, lyricPositionAt(anchor.copy(positionMs = 0, positionSampleRealtimeMs = 2250), 2250))
     }
 
+    @Test fun delayedPositionCorrectionHoldsBrieflyThenCatchesUpWithoutRewinding() {
+        val before = PlayerUiState(positionMs = 1000, positionSampleRealtimeMs = 1000,
+            positionAdvancing = true, durationMs = 10_000)
+        val corrected = before.samplePosition(1420, 1500, true)
+        assertEquals("真实播放进度不得被显示校正覆盖", 1420L, corrected.positionMs)
+        assertEquals(1500L, lyricPositionAt(corrected, 1500))
+        assertEquals(1500L, lyricPositionAt(corrected, 1540))
+        assertEquals(1520L, lyricPositionAt(corrected, 1600))
+        val next = corrected.samplePosition(1920, 2000, true)
+        assertEquals("不能永久累积超前量", 1920L, lyricPositionAt(next, 2000))
+        assertEquals(2020L, lyricPositionAt(next, 2100))
+    }
+
+    @Test fun stalledAudioDoesNotAccumulateAnEverAdvancingLyricFloor() {
+        var state = PlayerUiState(positionMs = 1000, positionSampleRealtimeMs = 1000, positionAdvancing = true)
+        for (time in 1500L..5000L step 500) {
+            state = state.samplePosition(1000, time, true)
+            assertEquals(1500L, lyricPositionAt(state, time))
+        }
+    }
+
+    @Test fun explicitSeekPauseAndBufferingResetThePresentationFloorImmediately() {
+        val corrected = PlayerUiState(positionMs = 1000, positionSampleRealtimeMs = 1000, positionAdvancing = true)
+            .samplePosition(1420, 1500, true)
+        val seek = corrected.samplePosition(500, 1600, true, reset = true)
+        assertEquals(500L, lyricPositionAt(seek, 1600))
+        assertEquals(600L, lyricPositionAt(seek, 1700))
+        val pause = corrected.samplePosition(1420, 1600, false)
+        assertEquals(1420L, lyricPositionAt(pause, 5000))
+        val resume = corrected.copy(buffering = true).samplePosition(1400, 1700, true).copy(buffering = false)
+        assertEquals(1400L, lyricPositionAt(resume, 1700))
+    }
+
     @Test fun overlapsBackgroundAndSeekHaveIndependentActiveIntervals() {
         val lines = listOf(
             LyricLine(1000, "A", endMs = 4000),

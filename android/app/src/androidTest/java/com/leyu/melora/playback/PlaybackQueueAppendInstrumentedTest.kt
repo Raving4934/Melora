@@ -51,9 +51,9 @@ class PlaybackQueueAppendInstrumentedTest {
         main {
             assertEquals(0, controller.currentTimeline.windowCount)
             assertTrue(controller.playbackQueueOrder().isEmpty())
-            PlaybackController.javaClass.getDeclaredMethod("publish")
+            PlaybackController.javaClass.getDeclaredMethod("publish", Boolean::class.javaPrimitiveType!!)
                 .apply { isAccessible = true }
-                .invoke(PlaybackController)
+                .invoke(PlaybackController, false)
             assertTrue(PlaybackController.state.value.queue.isEmpty())
             assertTrue(PlaybackController.state.value.queueOrder.isEmpty())
         }
@@ -563,8 +563,8 @@ class PlaybackQueueAppendInstrumentedTest {
         }
         main {
             // 空队列重复发布/清理应幂等，不得重新挂起旧身份。
-            PlaybackController.javaClass.getDeclaredMethod("publish").apply { isAccessible = true }
-                .invoke(PlaybackController)
+            PlaybackController.javaClass.getDeclaredMethod("publish", Boolean::class.javaPrimitiveType!!).apply { isAccessible = true }
+                .invoke(PlaybackController, false)
             PlaybackController.clearQueue()
             assertTrue(lyricJob.isCancelled)
             assertNull(field("lyricJob").get(PlaybackController))

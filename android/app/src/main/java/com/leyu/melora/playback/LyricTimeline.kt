@@ -1,13 +1,30 @@
 package com.leyu.melora.playback
 
-/** 只在播放器采样锚点之间插值；暂停/缓冲/切歌由播放器事实重锚，不发射全局逐帧状态。 */
+/** 只在采样间插值；校正落后时短暂停住直到真实时间线追上，不累积永久超前量。 */
 internal fun lyricPositionAt(state: PlayerUiState, nowMs: Long): Long {
-    val elapsed = if (state.positionAdvancing && !state.buffering && !state.resolving) {
-        (nowMs - state.positionSampleRealtimeMs).coerceAtLeast(0)
-    } else 0L
+    val advancing = state.positionAdvancing && !state.buffering && !state.resolving
+    val elapsed = if (advancing) (nowMs - state.positionSampleRealtimeMs).coerceAtLeast(0) else 0L
     val position = state.positionMs + (elapsed * state.speed).toLong()
-    return position.coerceIn(0L, state.durationMs.takeIf { it > 0 } ?: Long.MAX_VALUE)
+    return (if (advancing) maxOf(position, state.lyricPositionFloorMs) else position)
+        .coerceIn(0L, state.durationMs.takeIf { it > 0 } ?: Long.MAX_VALUE)
 }
+
+/** 发布事件和周期采样共用同一校时规则；Seek/切歌等真正不连续事件必须立即重锚。 */
+internal fun PlayerUiState.samplePosition(
+    positionMs: Long,
+    nowMs: Long,
+    advancing: Boolean,
+    durationMs: Long = this.durationMs,
+    reset: Boolean = false,
+): PlayerUiState = copy(
+    positionMs = positionMs,
+    positionSampleRealtimeMs = nowMs,
+    positionAdvancing = advancing,
+    durationMs = durationMs,
+    lyricPositionFloorMs = if (!reset && advancing && positionAdvancing && !buffering && !resolving) {
+        lyricPositionAt(this, nowMs)
+    } else positionMs,
+)
 
 internal fun lyricIndexAt(lines: List<LyricLine>, positionMs: Long, includeBackground: Boolean = false): Int {
     var low = 0
