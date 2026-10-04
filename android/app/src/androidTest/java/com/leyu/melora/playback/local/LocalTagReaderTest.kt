@@ -145,7 +145,7 @@ class LocalTagReaderTest {
             MeloraSettings.localAutoFillInfo.value = true
             declined += song.id
             try {
-                LocalMediaIoCoordinator.withExclusive(context, android.net.Uri.fromFile(file)) {
+                LocalMediaIoCoordinator.withWrite(context, android.net.Uri.fromFile(file)) {
                     LocalTagFiller.consider(context, requireNotNull(player.value.current))
                     assertFalse("已拒绝授权的自动请求不能再次进入标签读取/网络匹配", song.id in inFlight)
                 }

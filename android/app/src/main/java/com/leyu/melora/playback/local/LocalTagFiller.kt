@@ -326,7 +326,7 @@ object LocalTagFiller {
             val uri = local.uri.toUri()
             // file读取仍在写租约前进行，避免嵌套读锁；拿到写租约后重新核对真实文件版本。
             val prepared = if (uri.scheme == "file") request.preservingContent(context, local, local.uri) else request
-            LocalMediaIoCoordinator.withExclusive(context, uri) {
+            LocalMediaIoCoordinator.withWrite(context, uri) {
                 if (shouldDeferWrite(request)) TagWriteOutcome.Deferred else {
                     check(request.local.sameFileVersion(LocalMediaStore.find(local.id))) {
                         "本地文件已删除或发生变化，请重新读取后再写入"

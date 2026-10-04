@@ -8,9 +8,12 @@ import androidx.activity.result.IntentSenderRequest
 import androidx.annotation.RequiresApi
 import androidx.documentfile.provider.DocumentFile
 import androidx.core.net.toUri
+import com.leyu.melora.playback.local.LocalMediaIoCoordinator
 import com.leyu.melora.playback.local.LocalSong
 import java.io.File
 import java.util.ArrayDeque
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
 
 /** 删除链路只使用一份顺序状态：物理删除成功后，调用方才可以移除本地索引。 */
 internal data class LocalDeletionTarget(
@@ -61,7 +64,7 @@ internal interface LocalDeletionOperations<Request> {
     val supportsSystemDeleteRequest: Boolean
 
     fun isMediaStore(target: LocalDeletionTarget): Boolean
-    fun delete(target: LocalDeletionTarget): LocalDeletionAttempt<Request>
+    suspend fun delete(target: LocalDeletionTarget): LocalDeletionAttempt<Request>
     fun createSystemDeleteRequest(targets: List<LocalDeletionTarget>): Request?
 }
 
@@ -78,54 +81,66 @@ internal class LocalSongDeletion<Request>(
     var isBusy: Boolean = false
         private set
 
+    private val mutex = Mutex()
     private val remaining = ArrayDeque<LocalDeletionTarget>()
     private val deleted = ArrayList<LocalDeletionTarget>()
     private val failed = ArrayList<LocalDeletionTarget>()
     private var pending: LocalDeletionRequest<Request>? = null
 
-    @Synchronized
-    fun start(targets: List<LocalDeletionTarget>): LocalDeletionStep<Request> {
-        if (isBusy) return LocalDeletionStep.Busy
-        val unique = distinctLocalDeletionTargets(targets)
-        if (unique.isEmpty()) return LocalDeletionStep.Finished(LocalDeletionResult(emptyList(), emptyList()))
-
-        remaining.clear()
-        remaining += unique
-        deleted.clear()
-        failed.clear()
-        pending = null
-        isBusy = true
-        return advanceLocked()
+    suspend fun start(targets: List<LocalDeletionTarget>): LocalDeletionStep<Request> {
+        if (!mutex.tryLock()) return LocalDeletionStep.Busy
+        try {
+            if (isBusy) return LocalDeletionStep.Busy
+            val unique = distinctLocalDeletionTargets(targets)
+            if (unique.isEmpty()) return LocalDeletionStep.Finished(LocalDeletionResult(emptyList(), emptyList()))
+            remaining.clear()
+            remaining.addAll(unique)
+            deleted.clear()
+            failed.clear()
+            pending = null
+            isBusy = true
+            return advance()
+        } catch (cancelled: CancellationException) {
+            cancelBatch()
+            throw cancelled
+        } finally {
+            mutex.unlock()
+        }
     }
 
-    @Synchronized
-    fun onAuthorizationResult(approved: Boolean): LocalDeletionStep<Request> {
-        val authorization = pending ?: return LocalDeletionStep.Ignored
-        pending = null
-        if (!approved) {
-            failed += authorization.targets
-            failed += remaining
-            remaining.clear()
-            return finishLocked(cancelled = true)
-        }
+    suspend fun onAuthorizationResult(approved: Boolean): LocalDeletionStep<Request> {
+        if (!mutex.tryLock()) return LocalDeletionStep.Ignored
+        try {
+            val authorization = pending ?: return LocalDeletionStep.Ignored
+            pending = null
+            if (!approved) {
+                failed += authorization.targets
+                failed += remaining
+                remaining.clear()
+                return finish(cancelled = true)
+            }
 
-        when (authorization) {
-            is LocalDeletionRequest.Recoverable -> {
-                when (operations.delete(authorization.target)) {
+            when (authorization) {
+                is LocalDeletionRequest.Recoverable -> when (operations.delete(authorization.target)) {
                     LocalDeletionAttempt.Deleted -> deleted += authorization.target
-                    LocalDeletionAttempt.Failed -> failed += authorization.target
+                    LocalDeletionAttempt.Failed,
                     is LocalDeletionAttempt.NeedsAuthorization -> failed += authorization.target
                 }
+                is LocalDeletionRequest.System -> deleted += authorization.targets
             }
-            is LocalDeletionRequest.System -> deleted += authorization.targets
+            return advance()
+        } catch (cancelled: CancellationException) {
+            cancelBatch()
+            throw cancelled
+        } finally {
+            mutex.unlock()
         }
-        return advanceLocked()
     }
 
-    private fun advanceLocked(): LocalDeletionStep<Request> {
+    private suspend fun advance(): LocalDeletionStep<Request> {
         while (remaining.isNotEmpty()) {
             if (operations.supportsSystemDeleteRequest && operations.isMediaStore(remaining.first())) {
-                // Android 16+ 限制每次系统授权最多 2000 个 URI；逐批确认，取消时保留未处理项。
+                // 系统确认后的物理删除由 OS 执行，不能跨授权 UI 持有文件租约。
                 val batch = remaining.asSequence().filter(operations::isMediaStore).take(2_000).toList()
                 remaining.removeAll(batch.toSet())
                 val request = operations.createSystemDeleteRequest(batch)
@@ -133,9 +148,9 @@ internal class LocalSongDeletion<Request>(
                     failed += batch
                     continue
                 }
-                val systemRequest = LocalDeletionRequest.System(batch, request)
-                pending = systemRequest
-                return LocalDeletionStep.Awaiting(systemRequest)
+                val authorization = LocalDeletionRequest.System(batch, request)
+                pending = authorization
+                return LocalDeletionStep.Awaiting(authorization)
             }
 
             val target = remaining.removeFirst()
@@ -143,25 +158,28 @@ internal class LocalSongDeletion<Request>(
                 LocalDeletionAttempt.Deleted -> deleted += target
                 LocalDeletionAttempt.Failed -> failed += target
                 is LocalDeletionAttempt.NeedsAuthorization -> {
-                    val recoverableRequest = LocalDeletionRequest.Recoverable(target, attempt.request)
-                    pending = recoverableRequest
-                    return LocalDeletionStep.Awaiting(recoverableRequest)
+                    val request = LocalDeletionRequest.Recoverable(target, attempt.request)
+                    pending = request
+                    return LocalDeletionStep.Awaiting(request)
                 }
             }
         }
-        return finishLocked(cancelled = false)
+        return finish(cancelled = false)
     }
 
-    private fun finishLocked(cancelled: Boolean): LocalDeletionStep.Finished {
+    private fun cancelBatch() {
+        isBusy = false
+        pending = null
+        remaining.clear()
+    }
+
+    private fun finish(cancelled: Boolean): LocalDeletionStep.Finished {
         isBusy = false
         return LocalDeletionStep.Finished(
-            LocalDeletionResult(
-                deleted = deleted.toList(),
-                failed = failed.toList(),
-                cancelled = cancelled,
-            ),
+            LocalDeletionResult(deleted.toList(), failed.toList(), cancelled),
         )
     }
+
 }
 
 internal fun LocalSong.toLocalDeletionTarget(): LocalDeletionTarget = LocalDeletionTarget(id = id, uri = uri)
@@ -193,26 +211,28 @@ internal class AndroidLocalDeletionOperations(context: Context) : LocalDeletionO
         return uri.scheme == "content" && uri.authority?.startsWith("media") == true
     }
 
-    override fun delete(target: LocalDeletionTarget): LocalDeletionAttempt<IntentSenderRequest> {
+    override suspend fun delete(target: LocalDeletionTarget): LocalDeletionAttempt<IntentSenderRequest> {
         val uri = target.uri.toUri()
-        return try {
-            val didDelete = when {
-                isMediaStore(target) -> resolver.delete(uri, null, null) > 0
-                uri.scheme == "file" -> uri.path?.let(::File)?.delete() == true
-                uri.scheme == "content" -> DocumentFile.fromSingleUri(context, uri)?.delete() == true ||
-                    resolver.delete(uri, null, null) > 0
-                else -> false
+        return LocalMediaIoCoordinator.withWrite(context, uri, allowOpenReaders = true) {
+            try {
+                val didDelete = when {
+                    isMediaStore(target) -> resolver.delete(uri, null, null) > 0
+                    uri.scheme == "file" -> uri.path?.let(::File)?.delete() == true
+                    uri.scheme == "content" -> DocumentFile.fromSingleUri(context, uri)?.delete() == true ||
+                        resolver.delete(uri, null, null) > 0
+                    else -> false
+                }
+                if (didDelete) LocalDeletionAttempt.Deleted else LocalDeletionAttempt.Failed
+            } catch (security: SecurityException) {
+                val request = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    recoverableRequest(security)
+                } else {
+                    null
+                }
+                if (request != null) LocalDeletionAttempt.NeedsAuthorization(request) else LocalDeletionAttempt.Failed
+            } catch (_: Throwable) {
+                LocalDeletionAttempt.Failed
             }
-            if (didDelete) LocalDeletionAttempt.Deleted else LocalDeletionAttempt.Failed
-        } catch (security: SecurityException) {
-            val request = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                recoverableRequest(security)
-            } else {
-                null
-            }
-            if (request != null) LocalDeletionAttempt.NeedsAuthorization(request) else LocalDeletionAttempt.Failed
-        } catch (_: Throwable) {
-            LocalDeletionAttempt.Failed
         }
     }
 

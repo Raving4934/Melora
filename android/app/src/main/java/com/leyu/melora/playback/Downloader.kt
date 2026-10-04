@@ -13,6 +13,7 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.provider.DocumentsContract
 import com.leyu.melora.playback.local.LocalMediaStore
+import com.leyu.melora.playback.local.LocalMediaIoCoordinator
 import com.leyu.melora.playback.local.LocalSong
 import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
@@ -36,6 +37,7 @@ import java.nio.file.StandardCopyOption
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -486,7 +488,13 @@ object Downloader {
                     val label = if (input.completeCacheHit) "已从缓存导出" else "已下载"
                     finish(saved, "$label$note")
                 } catch (failure: CancellationException) {
-                    runCatching { deleteUri(context, uri) }
+                    runCatching {
+                        withContext(NonCancellable) {
+                            LocalMediaIoCoordinator.withWrite(context, uri, allowOpenReaders = true) {
+                                deleteUri(context, uri)
+                            }
+                        }
+                    }
                     throw failure
                 }
             }
@@ -706,7 +714,9 @@ object Downloader {
                         inspectDownloadAudio(context, candidate)?.matches(identity, trustedIdentity = false) == true
                     }
                 } ?: error("无法确认待删除的本地文件，原文件未修改")
-                val deleted = deleteUri(context, uri)
+                val deleted = LocalMediaIoCoordinator.withWrite(context, uri, allowOpenReaders = true) {
+                    deleteUri(context, uri)
+                }
                 check(deleted) { "删除失败，请检查文件或目录权限" }
                 // 旧格式没有URI时，仅在当前记录仍是同一快照时清理；新记录严格按URI绑定。
                 if (record.savedUri != null || DownloadCenter.saved(record.id) == record) {

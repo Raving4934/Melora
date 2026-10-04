@@ -35,27 +35,28 @@ internal object LocalMediaIoCoordinator {
         return try { block() } finally { lease.close() }
     }
 
-    /** 等待写入可取消且不占 IO 线程；真实写盘固定在 IO dispatcher。 */
-    internal suspend fun <T> withExclusive(context: Context, uri: Uri, block: () -> T): T =
-        withContext(Dispatchers.IO) {
-            val key = resourceKey(context, uri) ?: return@withContext block()
-            val entry = retain(key)
-            var acquired = false
-            try {
-                while (!acquireWriter(entry)) {
-                    currentCoroutineContext().ensureActive()
-                    delay(WAIT_SLICE_MS)
-                }
-                acquired = true
-                try { currentCoroutineContext().ensureActive(); block() } finally {
-                    state.withLock { entry.writer = false; changed.signalAll() }
-                    release(key, entry)
-                }
-            } catch (error: Throwable) {
-                if (!acquired) release(key, entry)
-                throw error
+    /** 普通写等待播放 reader；删除可允许既有 reader，但仍与 writer 互斥。 */
+    internal suspend fun <T> withWrite(
+        context: Context,
+        uri: Uri,
+        allowOpenReaders: Boolean = false,
+        block: () -> T,
+    ): T = withContext(Dispatchers.IO) {
+        val key = resourceKey(context, uri) ?: return@withContext block()
+        val entry = retain(key)
+        var acquired = false
+        try {
+            while (!acquireWriter(entry, allowOpenReaders)) {
+                currentCoroutineContext().ensureActive()
+                delay(WAIT_SLICE_MS)
             }
+            acquired = true
+            currentCoroutineContext().ensureActive()
+            block()
+        } finally {
+            if (acquired) releaseWriter(key, entry) else release(key, entry)
         }
+    }
 
     /** 同步 DataSource.open 只在 Media3 加载线程等待，closeRequested 可中止等待。 */
     internal fun acquireRead(
@@ -88,10 +89,15 @@ internal object LocalMediaIoCoordinator {
 
     internal fun entryCount(): Int = state.withLock { entries.size }
 
-    private fun acquireWriter(entry: Entry): Boolean = state.withLock {
-        if (entry.writer || entry.readers != 0) return@withLock false
+    private fun acquireWriter(entry: Entry, allowOpenReaders: Boolean): Boolean = state.withLock {
+        if (entry.writer || (!allowOpenReaders && entry.readers != 0)) return@withLock false
         entry.writer = true
         true
+    }
+
+    private fun releaseWriter(key: String, entry: Entry) {
+        state.withLock { entry.writer = false; changed.signalAll() }
+        release(key, entry)
     }
 
     private class ReadLease(private val key: String, private val entry: Entry) : Lease {

@@ -1,6 +1,9 @@
 package com.leyu.melora.playback.local
 
 import android.net.Uri
+import com.leyu.melora.ui.local.AndroidLocalDeletionOperations
+import com.leyu.melora.ui.local.LocalDeletionAttempt
+import com.leyu.melora.ui.local.LocalDeletionTarget
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.TransferListener
@@ -36,7 +39,7 @@ class LocalMediaIoCoordinatorTest {
                     start.await()
                     if (index % 5 == 0) {
                         runBlocking {
-                            LocalMediaIoCoordinator.withExclusive(context, uri) {
+                            LocalMediaIoCoordinator.withWrite(context, uri) {
                                 if (readers.get() != 0 || writers.incrementAndGet() != 1) violation.set(true)
                                 Thread.sleep(2)
                                 writers.decrementAndGet()
@@ -66,12 +69,12 @@ class LocalMediaIoCoordinatorTest {
         val uri = Uri.parse("file:///tmp/melora-cancel-${System.nanoTime()}.mp3")
         val reader = LocalMediaIoCoordinator.acquireRead(context, uri)
         val writer = async(Dispatchers.Default) {
-            LocalMediaIoCoordinator.withExclusive(context, uri) { error("取消前不应拿到写租约") }
+            LocalMediaIoCoordinator.withWrite(context, uri) { error("取消前不应拿到写租约") }
         }
         delay(60)
         writer.cancelAndJoin()
         reader.close()
-        LocalMediaIoCoordinator.withExclusive(context, uri) { Unit }
+        LocalMediaIoCoordinator.withWrite(context, uri) { Unit }
         assertEquals(0, LocalMediaIoCoordinator.entryCount())
     }
 
@@ -81,7 +84,7 @@ class LocalMediaIoCoordinatorTest {
         val first = LocalMediaIoCoordinator.acquireRead(context, uri)
         val writerEntered = CountDownLatch(1)
         val writer = async(Dispatchers.Default) {
-            LocalMediaIoCoordinator.withExclusive(context, uri) {
+            LocalMediaIoCoordinator.withWrite(context, uri) {
                 writerEntered.countDown()
             }
         }
@@ -107,7 +110,7 @@ class LocalMediaIoCoordinatorTest {
     fun writerExceptionReleasesExclusiveState() = runBlocking {
         val uri = Uri.parse("file:///tmp/melora-error-${System.nanoTime()}.mp3")
         val failed = runCatching {
-            LocalMediaIoCoordinator.withExclusive(context, uri) { error("模拟标签写入异常") }
+            LocalMediaIoCoordinator.withWrite(context, uri) { error("模拟标签写入异常") }
         }
         assertTrue(failed.isFailure)
         LocalMediaIoCoordinator.withRead(context, uri) { Unit }
@@ -124,7 +127,7 @@ class LocalMediaIoCoordinatorTest {
             source.open(DataSpec(uri))
             val writer = executor.submit {
                 runBlocking {
-                    LocalMediaIoCoordinator.withExclusive(context, uri) { Unit }
+                    LocalMediaIoCoordinator.withWrite(context, uri) { Unit }
                 }
             }
             Thread.sleep(60)
@@ -152,7 +155,7 @@ class LocalMediaIoCoordinatorTest {
             Thread.sleep(60)
             assertFalse(closing.isDone)
             val writer = executor.submit {
-                runBlocking { LocalMediaIoCoordinator.withExclusive(context, uri) { Unit } }
+                runBlocking { LocalMediaIoCoordinator.withWrite(context, uri) { Unit } }
             }
             Thread.sleep(60)
             assertFalse(writer.isDone)
@@ -179,7 +182,7 @@ class LocalMediaIoCoordinatorTest {
         try {
             val writer = executor.submit {
                 runBlocking {
-                    LocalMediaIoCoordinator.withExclusive(context, uri) {
+                    LocalMediaIoCoordinator.withWrite(context, uri) {
                         entered.countDown()
                         release.await()
                     }
@@ -212,7 +215,7 @@ class LocalMediaIoCoordinatorTest {
         try {
             source.open(DataSpec(uri))
             val writer = executor.submit {
-                runBlocking { LocalMediaIoCoordinator.withExclusive(context, uri) { file.writeBytes(byteArrayOf(4, 5, 6)) } }
+                runBlocking { LocalMediaIoCoordinator.withWrite(context, uri) { file.writeBytes(byteArrayOf(4, 5, 6)) } }
             }
             Thread.sleep(60)
             assertFalse(writer.isDone)
@@ -244,7 +247,7 @@ class LocalMediaIoCoordinatorTest {
         val executor = Executors.newSingleThreadExecutor()
         try {
             val writer = executor.submit {
-                runBlocking { LocalMediaIoCoordinator.withExclusive(context, child) { Unit } }
+                runBlocking { LocalMediaIoCoordinator.withWrite(context, child) { Unit } }
             }
             Thread.sleep(60)
             assertFalse(writer.isDone)
@@ -253,6 +256,108 @@ class LocalMediaIoCoordinatorTest {
             assertEquals(0, LocalMediaIoCoordinator.entryCount())
         } finally {
             reader.close()
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun physicalDeleteWaitsForTagReplacementAndFileDoesNotReappear() = runBlocking {
+        val file = java.io.File.createTempFile("melora-delete-race-", ".mp3", context.cacheDir)
+        val staged = java.io.File(file.parentFile, "${file.name}.stage")
+        file.writeBytes(byteArrayOf(1))
+        staged.writeBytes(byteArrayOf(2))
+        val uri = Uri.fromFile(file)
+        val writerEntered = CountDownLatch(1)
+        val releaseWriter = CountDownLatch(1)
+        val deleteEntered = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val writer = executor.submit {
+                runBlocking {
+                    LocalMediaIoCoordinator.withWrite(context, uri) {
+                        writerEntered.countDown()
+                        releaseWriter.await()
+                        java.nio.file.Files.move(
+                            staged.toPath(), file.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                        )
+                    }
+                }
+            }
+            assertTrue(writerEntered.await(5, TimeUnit.SECONDS))
+            val deleter = executor.submit {
+                deleteEntered.countDown()
+                runBlocking {
+                    assertEquals(LocalDeletionAttempt.Deleted,
+                        AndroidLocalDeletionOperations(context).delete(LocalDeletionTarget("writer-fixture", uri.toString())))
+                }
+            }
+            assertTrue(deleteEntered.await(5, TimeUnit.SECONDS))
+            Thread.sleep(60)
+            assertFalse("实际文件删除必须等标签替换完成", deleter.isDone)
+            assertTrue(file.exists())
+            releaseWriter.countDown()
+            writer.get(5, TimeUnit.SECONDS)
+            deleter.get(5, TimeUnit.SECONDS)
+            assertFalse(file.exists())
+            assertEquals(0, LocalMediaIoCoordinator.entryCount())
+        } finally {
+            releaseWriter.countDown()
+            executor.shutdownNow()
+            executor.awaitTermination(5, TimeUnit.SECONDS)
+            file.delete()
+            staged.delete()
+        }
+    }
+
+    @Test
+    fun deleteDoesNotWaitForAnActiveReaderLease() = runBlocking {
+        val file = java.io.File.createTempFile("melora-active-reader-delete-", ".mp3", context.cacheDir)
+        file.writeBytes(byteArrayOf(1, 2, 3))
+        val uri = Uri.fromFile(file)
+        val reader = LocalMediaIoCoordinator.acquireRead(context, uri)
+        try {
+            kotlinx.coroutines.withTimeout(2_000) {
+                assertEquals(LocalDeletionAttempt.Deleted,
+                    AndroidLocalDeletionOperations(context).delete(LocalDeletionTarget("reader-fixture", uri.toString())))
+            }
+            assertFalse(file.exists())
+        } finally {
+            reader.close()
+            file.delete()
+        }
+        assertEquals(0, LocalMediaIoCoordinator.entryCount())
+    }
+
+    @Test
+    fun cancelledDeleteWaitingForWriterReleasesItsEntry() = runBlocking {
+        val uri = Uri.parse("file:///tmp/melora-delete-cancel-${System.nanoTime()}.mp3")
+        val writerEntered = CountDownLatch(1)
+        val releaseWriter = CountDownLatch(1)
+        val deleteBlockRan = AtomicBoolean(false)
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val writer = executor.submit {
+                runBlocking {
+                    LocalMediaIoCoordinator.withWrite(context, uri) {
+                        writerEntered.countDown()
+                        releaseWriter.await()
+                    }
+                }
+            }
+            assertTrue(writerEntered.await(5, TimeUnit.SECONDS))
+            val delete = async(Dispatchers.Default) {
+                LocalMediaIoCoordinator.withWrite(context, uri, allowOpenReaders = true) {
+                    deleteBlockRan.set(true)
+                }
+            }
+            delay(60)
+            delete.cancelAndJoin()
+            releaseWriter.countDown()
+            writer.get(5, TimeUnit.SECONDS)
+            assertFalse(deleteBlockRan.get())
+            assertEquals(0, LocalMediaIoCoordinator.entryCount())
+        } finally {
+            releaseWriter.countDown()
             executor.shutdownNow()
         }
     }

@@ -4,10 +4,15 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 
 class LocalSongDeletionTest {
     @Test
-    fun android10AuthorizationRetriesTheSameUriBeforeMarkingItDeleted() {
+    fun android10AuthorizationRetriesTheSameUriBeforeMarkingItDeleted() = runBlocking<Unit> {
         val first = target("1")
         val second = target("2")
         val operations = FakeOperations(
@@ -31,7 +36,7 @@ class LocalSongDeletionTest {
     }
 
     @Test
-    fun android10BatchProcessesMultipleRecoverableItemsInOriginalOrder() {
+    fun android10BatchProcessesMultipleRecoverableItemsInOriginalOrder() = runBlocking<Unit> {
         val first = target("1")
         val second = target("2")
         val third = target("3")
@@ -56,7 +61,7 @@ class LocalSongDeletionTest {
     }
 
     @Test
-    fun cancellingAuthorizationDoesNotReportAnyUnattemptedTargetAsDeleted() {
+    fun cancellingAuthorizationDoesNotReportAnyUnattemptedTargetAsDeleted() = runBlocking<Unit> {
         val first = target("1")
         val second = target("2")
         val operations = FakeOperations(
@@ -74,7 +79,7 @@ class LocalSongDeletionTest {
     }
 
     @Test
-    fun partialFailuresRemainVisibleWithoutInflatingDeletedCount() {
+    fun partialFailuresRemainVisibleWithoutInflatingDeletedCount() = runBlocking<Unit> {
         val first = target("1")
         val second = target("2")
         val third = target("3")
@@ -93,7 +98,7 @@ class LocalSongDeletionTest {
     }
 
     @Test
-    fun duplicateIdsOrUrisAreDeletedOnlyOnceAndBusyRepeatIsIgnored() {
+    fun duplicateIdsOrUrisAreDeletedOnlyOnceAndBusyRepeatIsIgnored() = runBlocking<Unit> {
         val first = target("1", "content://media/1")
         val sameId = target("1", "content://media/other")
         val sameUri = target("2", "content://media/1")
@@ -113,7 +118,7 @@ class LocalSongDeletionTest {
     }
 
     @Test
-    fun android11SystemRequestOnlyDeletesAfterSystemConfirmation() {
+    fun android11SystemRequestOnlyDeletesAfterSystemConfirmation() = runBlocking<Unit> {
         val first = target("1", "content://media/1")
         val second = target("2", "content://media/2")
         val operations = FakeOperations(
@@ -138,7 +143,7 @@ class LocalSongDeletionTest {
     }
 
     @Test
-    fun authorizationRetryFailureKeepsFileOutOfDeletedResults() {
+    fun authorizationRetryFailureKeepsFileOutOfDeletedResults() = runBlocking<Unit> {
         val item = target("1")
         val operations = FakeOperations(
             outcomes = mapOf(item to LocalDeletionAttempt.NeedsAuthorization("retry")),
@@ -155,7 +160,7 @@ class LocalSongDeletionTest {
     }
 
     @Test
-    fun cancellingAfterPartialSuccessPreservesCompletedResults() {
+    fun cancellingAfterPartialSuccessPreservesCompletedResults() = runBlocking<Unit> {
         val done = target("1")
         val pending = target("2")
         val operations = FakeOperations(outcomes = mapOf(
@@ -171,7 +176,7 @@ class LocalSongDeletionTest {
     }
 
     @Test
-    fun deniedAgainAfterAuthorizationDoesNotLoopOrDropRemainingItems() {
+    fun deniedAgainAfterAuthorizationDoesNotLoopOrDropRemainingItems() = runBlocking<Unit> {
         val denied = target("1")
         val other = target("2")
         val operations = FakeOperations(outcomes = mapOf(
@@ -187,7 +192,7 @@ class LocalSongDeletionTest {
     }
 
     @Test
-    fun systemRequestCreationFailureDoesNotLoseRemainingDirectFiles() {
+    fun systemRequestCreationFailureDoesNotLoseRemainingDirectFiles() = runBlocking<Unit> {
         val media = target("1", "content://media/1")
         val direct = target("2")
         val operations = FakeOperations(
@@ -202,7 +207,7 @@ class LocalSongDeletionTest {
     }
 
     @Test
-    fun largeMediaStoreSelectionUsesBoundedRequestsUntilAllAreConfirmed() {
+    fun largeMediaStoreSelectionUsesBoundedRequestsUntilAllAreConfirmed() = runBlocking<Unit> {
         val targets = (1..4_001).map { target("$it", "content://media/external/audio/media/$it") }
         val operations = FakeOperations(supportsSystemDeleteRequest = true, mediaStoreTargets = targets.toSet())
         val deletion = LocalSongDeletion(operations)
@@ -222,7 +227,7 @@ class LocalSongDeletionTest {
     }
 
     @Test
-    fun cancellingSecondMediaStoreBatchKeepsUnconfirmedAndDirectFiles() {
+    fun cancellingSecondMediaStoreBatchKeepsUnconfirmedAndDirectFiles() = runBlocking<Unit> {
         val media = (1..4_001).map { target("$it", "content://media/external/audio/media/$it") }
         val direct = target("direct")
         val operations = FakeOperations(supportsSystemDeleteRequest = true, mediaStoreTargets = media.toSet())
@@ -238,18 +243,42 @@ class LocalSongDeletionTest {
         assertEquals(2, operations.systemRequests.size)
     }
 
+    @Test
+    fun cancellationWhileWaitingForFileLeaseReleasesBatchAndAllowsRetry() = runBlocking<Unit> {
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val file = target("cancel-wait")
+        val operations = FakeOperations(outcomes = mapOf(file to LocalDeletionAttempt.Deleted), beforeDelete = {
+            started.complete(Unit)
+            release.await()
+        })
+        val deletion = LocalSongDeletion(operations)
+        val pending = async(start = CoroutineStart.UNDISPATCHED) { deletion.start(listOf(file)) }
+        started.await()
+        assertTrue(deletion.isBusy)
+        assertEquals(LocalDeletionStep.Busy, deletion.start(listOf(file)))
+        pending.cancelAndJoin()
+        assertFalse(deletion.isBusy)
+        release.complete(Unit)
+        val result = deletion.start(listOf(file)) as LocalDeletionStep.Finished
+        assertEquals(listOf(file), result.result.deleted)
+        assertFalse(deletion.isBusy)
+    }
+
     private class FakeOperations(
         override val supportsSystemDeleteRequest: Boolean = false,
         private val mediaStoreTargets: Set<LocalDeletionTarget> = emptySet(),
         private val outcomes: Map<LocalDeletionTarget, LocalDeletionAttempt<String>> = emptyMap(),
         private val retryResults: Map<LocalDeletionTarget, Boolean> = emptyMap(),
         private val systemRequest: String? = "system-request",
+        private val beforeDelete: suspend () -> Unit = {},
     ) : LocalDeletionOperations<String> {
         val deleteCalls = mutableListOf<LocalDeletionTarget>()
         val systemRequests = mutableListOf<List<LocalDeletionTarget>>()
         override fun isMediaStore(target: LocalDeletionTarget): Boolean = target in mediaStoreTargets
 
-        override fun delete(target: LocalDeletionTarget): LocalDeletionAttempt<String> {
+        override suspend fun delete(target: LocalDeletionTarget): LocalDeletionAttempt<String> {
+            beforeDelete()
             deleteCalls += target
             val repeated = deleteCalls.count { it == target } > 1
             if (repeated && target in retryResults) {
