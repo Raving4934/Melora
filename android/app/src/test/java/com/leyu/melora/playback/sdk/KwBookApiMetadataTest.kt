@@ -31,6 +31,73 @@ class KwBookApiMetadataTest {
     }
 
     @Test
+    fun detailMetadataFallsBackFromZeroTotalToMusicnum() {
+        val metadata = KwBookApi.bookMetadataFromDetail(JSONObject("""
+            {"total": "0", "musicnum": "125", "songnum": "250"}
+        """))
+
+        assertEquals(125, metadata.total)
+    }
+
+    @Test
+    fun detailMetadataFallsBackFromInvalidAliasesToSongnum() {
+        val metadata = KwBookApi.bookMetadataFromDetail(JSONObject("""
+            {"total": "unknown", "musicnum": "invalid", "songnum": "250"}
+        """))
+
+        assertEquals(250, metadata.total)
+    }
+
+    @Test
+    fun detailMetadataPrefersValidTotalOverFallbackAliases() {
+        val metadata = KwBookApi.bookMetadataFromDetail(JSONObject("""
+            {"total": "300", "musicnum": "125", "songnum": "250"}
+        """))
+
+        assertEquals(300, metadata.total)
+    }
+
+    @Test
+    fun liveGhostCatalogKeepsPromosAndEpisode100AtItsSourceOrdinal() {
+        val firstResponse = catalogResponse(page = 1)
+        val firstRows = firstResponse.getJSONObject("data").getJSONArray("musicList")
+        assertEquals(listOf(1, 2, 8), (0 until firstRows.length()).map { firstRows.getJSONObject(it).getInt("track") })
+
+        val firstPage = KwBookApi.albumPageFromResponse("70703385", 1, firstResponse)
+        assertEquals(
+            listOf("484763691", "481362179", "481592686"),
+            firstPage.items.map { it.raw.optString("rid") },
+        )
+        assertEquals(
+            listOf(
+                "【鬼吹灯主题曲】磷火（剧情版) - 郑希&景向谁依合唱",
+                "全新《鬼吹灯》有声剧-悬疑概念先行预告",
+                "全新《鬼吹灯》有声剧-剧情预告，精彩抢先听",
+            ),
+            firstPage.items.map { it.name },
+        )
+        assertTrue(firstPage.items.all { !Regex("第\\d+集").containsMatchIn(it.name) })
+        assertEquals(listOf(1, 2, 3), firstPage.items.map { it.raw.getInt("bookOrdinal") })
+        assertEquals(listOf(1, 1, 1), firstPage.items.map { it.raw.getInt("bookPage") })
+        assertTrue(firstPage.hasMore)
+
+        val secondResponse = catalogResponse(page = 2)
+        val secondRows = secondResponse.getJSONObject("data").getJSONArray("musicList")
+        assertEquals(listOf(106, 107, 108), (0 until secondRows.length()).map { secondRows.getJSONObject(it).getInt("track") })
+
+        val secondPage = KwBookApi.albumPageFromResponse("70703385", 2, secondResponse)
+        assertEquals(
+            listOf("482611833", "482612023", "482611838"),
+            secondPage.items.map { it.raw.optString("rid") },
+        )
+        assertEquals(listOf(101, 102, 103), secondPage.items.map { it.raw.getInt("bookOrdinal") })
+        assertEquals(listOf(2, 2, 2), secondPage.items.map { it.raw.getInt("bookPage") })
+        assertEquals("第100集 龙岭迷窟 41 藏宝洞", secondPage.items[2].name)
+        assertEquals(297, secondPage.total)
+        assertTrue(secondPage.hasMore)
+    }
+
+    @Test
     fun chapterCarriesOnlyReliableBookTotalAndKeepsPerformerMetadata() {
         val row = JSONObject()
             .put("rid", "chapter-id")
@@ -82,6 +149,12 @@ class KwBookApiMetadataTest {
         assertEquals(3, duplicate.page)
         assertEquals(200, duplicate.items.size)
         assertFalse(duplicate.hasMore)
+    }
+
+    private fun catalogResponse(page: Int): JSONObject {
+        val stream = checkNotNull(javaClass.getResourceAsStream("/book-catalog-70703385.json"))
+        val fixture = stream.bufferedReader().use { JSONObject(it.readText()) }
+        return fixture.getJSONObject("pages").getJSONObject(page.toString())
     }
 
     private fun chapter(id: String) = OnlineSong(

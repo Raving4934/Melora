@@ -406,20 +406,24 @@ object KwBookApi {
         val url = "https://wapi.kuwo.cn/api/www/album/albumInfo" +
             "?albumId=${urlencode(rid)}&pn=$page&rn=$BOOK_CATALOG_PAGE_SIZE&httpsStatus=1"
         val response = getObject(url) ?: return BookChapters(emptyList(), false, page = page)
+        return albumPageFromResponse(rid, page, response)
+    }
+
+    internal fun albumPageFromResponse(albumId: String, page: Int, response: JSONObject): BookChapters {
         if (response.optInt("code", -1) != 200) return BookChapters(emptyList(), false, page = page)
         val data = response.optJSONObject("data") ?: return BookChapters(emptyList(), false, page = page)
         val actualId = optText(data, "albumid", "albumId").substringBefore(".")
-        if (actualId.isNotBlank() && actualId != rid) return BookChapters(emptyList(), false, page = page)
+        if (actualId.isNotBlank() && actualId != albumId) return BookChapters(emptyList(), false, page = page)
         val albumTitle = clean(optText(data, "album"))
         val metadata = bookMetadataFromDetail(data)
         val rows = data.optJSONArray("musicList") ?: return BookChapters(emptyList(), false, metadata, page)
         if (rows.length() > BOOK_CATALOG_PAGE_SIZE) return BookChapters(emptyList(), false, metadata, page)
         // 章节接口的行有时不带 albumid：用已校验的专辑 id 兜底，保证播放页“出自专辑”能复用章节顺序
-        val albumId = actualId.ifBlank { rid }
+        val resolvedAlbumId = actualId.ifBlank { albumId }
         val items = mutableListOf<OnlineSong>()
         val seen = mutableSetOf<String>()
         for (i in 0 until rows.length()) {
-            val song = chapter(rows.optJSONObject(i) ?: continue, albumTitle, albumId, metadata) ?: continue
+            val song = chapter(rows.optJSONObject(i) ?: continue, albumTitle, resolvedAlbumId, metadata) ?: continue
             if (!seen.add(song.uid)) continue
             song.raw.put("bookOrdinal", (page - 1) * BOOK_CATALOG_PAGE_SIZE + i + 1)
             items += song
@@ -436,7 +440,8 @@ object KwBookApi {
     internal fun bookMetadataFromDetail(data: JSONObject): BookMetadata = BookMetadata(
         description = clean(optText(data, "albuminfo", "info", "desc", "description")),
         playCount = optLong(data, "playCnt", "listencnt", "play_count", "playCount"),
-        total = optText(data, "total", "musicnum", "songnum").toIntOrNull()?.coerceAtLeast(0) ?: 0,
+        total = optLong(data, "total", "musicnum", "songnum")
+            .coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
         author = clean(optText(data, "artist", "author", "singer")),
         artwork = normalizeImage(optText(data, "pic", "img", "albumpic")).takeIf { it.isNotBlank() },
         releaseDate = clean(optText(data, "releaseDate", "publish", "publishTime")),
