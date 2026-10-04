@@ -15,6 +15,7 @@ import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.onNodeWithTag
 import com.leyu.melora.ui.common.ChromeScaffold
+import com.leyu.melora.ui.common.LocalChromeBesideDrawer
 import dev.chrisbanes.haze.blur.HazeBlurDefaults
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
@@ -22,6 +23,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.test.filters.SdkSuppress
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
@@ -162,6 +166,63 @@ class LocalEmptyAndInputLayoutTest {
         assertEquals(bounds, header.getUnclippedBoundsInRoot())
         compose.runOnIdle { showSource.value = false }
         awaitWhite()
+    }
+
+    @OptIn(dev.chrisbanes.haze.ExperimentalHazeApi::class)
+    @SdkSuppress(minSdkVersion = 31)
+    @Test fun drawerEdgeFeathersOnlyTheMaterialWithoutMovingHeaderAndMirrorsInRtl() {
+        val besideDrawer = mutableStateOf(false)
+        val direction = mutableStateOf(LayoutDirection.Ltr)
+        compose.runOnIdle { MeloraSettings.blurTopBar.value = true }
+        compose.setContent {
+            val source = rememberHazeState()
+            MaterialTheme {
+                CompositionLocalProvider(
+                    LocalChromeBesideDrawer provides besideDrawer.value,
+                    LocalLayoutDirection provides direction.value,
+                ) {
+                    ChromeScaffold(
+                        modifier = Modifier.requiredSize(240.dp, 300.dp),
+                        containerColor = Color.White, headerColor = Color.White,
+                        contentSource = source, expectedTopBarHeight = 100.dp,
+                        topBar = { Box(Modifier.fillMaxWidth().height(100.dp).testTag("edge-header")) },
+                    ) {
+                        Box(Modifier.fillMaxSize().hazeSource(source).background(Color.Red))
+                    }
+                }
+            }
+        }
+        val header = compose.onNodeWithTag("edge-header")
+        val bounds = header.getUnclippedBoundsInRoot()
+        fun awaitEdge(feathered: Boolean, rtl: Boolean = false) = compose.waitUntil(5_000) {
+            val pixels = header.captureToImage().toPixelMap()
+            val y = pixels.height / 3
+            val edge = pixels[if (rtl) pixels.width - 1 else 0, y]
+            val middle = pixels[pixels.width / 2, y]
+            val halfway = pixels[if (rtl) pixels.width - 1 - pixels.width / 15 else pixels.width / 15, y]
+            middle.green < 0.85f && if (feathered) {
+                // 侧缘回到侧栏画布色，32dp 内连续过渡，正文中央仍保留真实模糊。
+                edge.green > 0.95f && halfway.green > middle.green + 0.05f &&
+                    halfway.green < edge.green - 0.05f
+            } else abs(edge.green - middle.green) < 0.05f
+        }
+        awaitEdge(feathered = false)
+        compose.runOnIdle { besideDrawer.value = true }
+        awaitEdge(feathered = true)
+        assertEquals(bounds, header.getUnclippedBoundsInRoot())
+        fun assertBottomHasNoTintBlock(rtl: Boolean) {
+            val pixels = header.captureToImage().toPixelMap()
+            val edge = if (rtl) pixels.width - 1 else 0
+            assertTrue("侧边渐隐在标题栏底部同步结束，不能残留色块",
+                abs(pixels[edge, pixels.height - 1].green - pixels[pixels.width / 2, pixels.height - 1].green) < 0.08f)
+        }
+        assertBottomHasNoTintBlock(rtl = false)
+        compose.runOnIdle { direction.value = LayoutDirection.Rtl }
+        awaitEdge(feathered = true, rtl = true)
+        assertBottomHasNoTintBlock(rtl = true)
+        assertEquals(bounds, header.getUnclippedBoundsInRoot())
+        compose.runOnIdle { besideDrawer.value = false }
+        awaitEdge(feathered = false, rtl = true)
     }
 
     @Test fun emptyCursorAndPlaceholderShareTheSameVerticalCenterAtDifferentFontScales() {

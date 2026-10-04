@@ -34,6 +34,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.LinearGradientShader
+import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.Brush
@@ -62,6 +67,8 @@ import dev.chrisbanes.haze.rememberHazeState
 
 /** 当前页面固定栏累计占用高度。仅加入全页列表 contentPadding，不裁切滚动视口。 */
 internal val LocalChromeTopInset = compositionLocalOf { 0.dp }
+/** 仅常驻侧栏旁的正文材质收敛到画布色，不影响手机或全屏播放页。 */
+internal val LocalChromeBesideDrawer = compositionLocalOf { false }
 // 系统安全区与导航栏高度分离：替换导航的详情页不能继承上一帧仍可见的主栏高度。
 private val LocalChromeSystemTopInset = compositionLocalOf { 0.dp }
 
@@ -329,6 +336,24 @@ private fun Modifier.chromeMaterial(
             endY = end,
         )
     }
+    val besideDrawer = LocalChromeBesideDrawer.current
+    val direction = LocalLayoutDirection.current
+    val edgeWidth = with(density) { 32.dp.toPx() }
+    val (materialMask, materialVeil) = remember(fade, veil, besideDrawer, direction, edgeWidth, canvas) {
+        if (!besideDrawer) fade to veil else {
+            val edge = object : ShaderBrush() {
+                override fun createShader(size: Size) = LinearGradientShader(
+                    from = Offset(if (direction == LayoutDirection.Ltr) 0f else size.width, 0f),
+                    to = Offset(if (direction == LayoutDirection.Ltr) edgeWidth else size.width - edgeWidth, 0f),
+                    colors = listOf(canvas, canvas.copy(alpha = 0f)),
+                )
+            }
+            // 同时收敛模糊与遮色，并复用纵向渐隐，避免把竖缝换成底部色块。
+            Brush.composite(fade, edge, BlendMode.DstOut) to Brush.composite(
+                veil, Brush.composite(edge, fade, BlendMode.DstIn), BlendMode.SrcOver,
+            )
+        }
+    }
     return hazeBlur(
         input = HazeInput.Sources(state, retention = HazeSourceRetention.ClearWhenUnavailable),
         style = HazeBlurStyle {
@@ -339,11 +364,11 @@ private fun Modifier.chromeMaterial(
             fallbackColorEffect(HazeColorEffect.tint(canvas))
             // 使用系统高斯与渐隐遮罩，不引入可变半径内核。
             progressive(null)
-            mask(fade)
+            mask(materialMask)
         },
         // 对应原全分辨率采样，避免降采样改变渐变末端的边缘与细节。
         performanceMode = HazePerformanceMode.Quality,
-    ).drawBehind { drawRect(veil) }
+    ).drawBehind { drawRect(materialVeil) }
 
 }
 

@@ -137,6 +137,7 @@ import com.leyu.melora.ui.settings.SettingsMasterScreen
 import com.leyu.melora.ui.settings.SettingsSubPage
 import com.leyu.melora.ui.common.ChromeActionSurface
 import com.leyu.melora.ui.common.ChromeScaffold
+import com.leyu.melora.ui.common.LocalChromeBesideDrawer
 import com.leyu.melora.ui.common.DetailPageHost
 import com.leyu.melora.ui.common.chromeHeaderColor
 import com.leyu.melora.ui.player.ContinuousPlayerSheet
@@ -598,7 +599,10 @@ fun MeloraApp(initialTab: Int = 5) {
                     .testTag("main-navigation-content"),
             ) {
                 // 底页可能晚于 mini 播放器注册返回，不能依赖 dispatcher 的注册顺序。
-                CompositionLocalProvider(LocalPageActive provides (!drawerOpen && !playerOwnsBack)) {
+                CompositionLocalProvider(
+                    LocalPageActive provides (!drawerOpen && !playerOwnsBack),
+                    LocalChromeBesideDrawer provides isPersistentDrawer,
+                ) {
                     // 同级切换由抽屉收回提供唯一运动，不再叠加横移/交叉淡化。
                     key(currentTab) {
                         val visibleTab = currentTab
