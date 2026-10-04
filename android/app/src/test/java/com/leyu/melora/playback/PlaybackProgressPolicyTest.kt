@@ -32,18 +32,29 @@ class PlaybackProgressPolicyTest {
 
     @Test
     fun bookAndLongTrackResumeUnlessFinished() {
+        assertFalse(shouldRestoreProgress(isBookChapter = true, durationMs = 180_000, savedMs = 0))
+        assertTrue("听书任意正位置均恢复", shouldRestoreProgress(isBookChapter = true, durationMs = 180_000, savedMs = 1))
         assertTrue(shouldRestoreProgress(isBookChapter = true, durationMs = 180_000, savedMs = 60_000))
-        assertFalse(shouldRestoreProgress(isBookChapter = true, durationMs = 180_000, savedMs = 175_000))
+        assertTrue("未完成的听书近尾断点仍可恢复", shouldRestoreProgress(isBookChapter = true, durationMs = 180_000, savedMs = 175_000))
         assertTrue(shouldRestoreProgress(isBookChapter = false, durationMs = 12 * 60 * 1000L, savedMs = 60_000))
         assertTrue(shouldRestoreProgress(isBookChapter = true, durationMs = 0, savedMs = 60_000))
     }
 
     @Test
     fun resumeThresholdsAreExactAndUnknownDurationOnlyAllowsBooks() {
-        assertFalse(shouldRestoreProgress(true, 60_000, 5_000))
+        assertFalse(shouldRestoreProgress(true, 60_000, 0))
+        assertTrue(shouldRestoreProgress(true, 60_000, 1))
+        assertTrue(shouldRestoreProgress(true, 60_000, 5_000))
         assertTrue(shouldRestoreProgress(true, 60_000, 5_001))
         assertTrue(shouldRestoreProgress(true, 60_000, 49_999))
-        assertFalse(shouldRestoreProgress(true, 60_000, 50_000))
+        assertTrue("听书在原近尾阈值也继续恢复", shouldRestoreProgress(true, 60_000, 50_000))
+        assertTrue(shouldRestoreProgress(true, 60_000, 59_999))
+        assertFalse(shouldRestoreProgress(false, 600_000, 5_000))
+        assertTrue(shouldRestoreProgress(false, 600_000, 5_001))
+        assertTrue(shouldRestoreProgress(false, 600_000, 589_999))
+        assertFalse("普通长音频在10秒近尾边界仍不恢复", shouldRestoreProgress(false, 600_000, 590_000))
+        assertFalse(shouldRestoreProgress(true, 60_000, 60_000))
+        assertFalse(shouldRestoreProgress(true, 60_000, 61_000))
         assertFalse(shouldRestoreProgress(false, 599_999, 30_000))
         assertTrue(shouldRestoreProgress(false, 600_000, 30_000))
         assertFalse(shouldRestoreProgress(false, 0, 30_000))

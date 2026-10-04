@@ -61,9 +61,11 @@ internal data class PendingPlaybackSelection(
     val index: Int = 0,
     val queueId: String? = null,
     val insertSingle: Boolean = false,
+    val startPositionMs: Long? = null,
 ) {
     fun without(deleted: DeletedLocalFiles): PendingPlaybackSelection {
         val kept = tracks.indices.filterNot { deleted.matches(tracks[it]) }
-        return copy(tracks = kept.map(tracks::get), index = kept.indexOfFirst { it >= index }.takeIf { it >= 0 } ?: 0)
+        return copy(tracks = kept.map(tracks::get), index = kept.indexOfFirst { it >= index }.takeIf { it >= 0 } ?: 0,
+            startPositionMs = startPositionMs.takeIf { index in kept })
     }
 }

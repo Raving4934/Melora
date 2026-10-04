@@ -5,6 +5,9 @@ import androidx.core.content.edit
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import com.leyu.melora.playback.sdk.OnlineSong
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import org.json.JSONObject
 
 /**
  * 进度只由服务内的实际播放器读写。所有控制入口共享Media3事件，不使用UI轮询快照。
@@ -46,11 +49,15 @@ internal class PlaybackProgress(
         } else if (reason == Player.DISCONTINUITY_REASON_SEEK) {
             // 包括拖动到0秒；显式seek优先于尚未获得时长的历史恢复。
             pendingUid = null
-            newPosition.mediaItem?.let { persist(it, newPosition.positionMs, knownDuration(it)) }
+            newPosition.mediaItem?.let { item ->
+                val duration = knownDuration(item)
+                persist(item, newPosition.positionMs, duration)
+            }
         }
     }
 
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+        mediaItem?.let(::selectBook)
         pendingUid = mediaItem?.mediaId?.takeIf {
             reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT && it != explicitStartUid
         }
@@ -59,6 +66,7 @@ internal class PlaybackProgress(
 
     override fun onEvents(player: Player, events: Player.Events) {
         val item = player.currentMediaItem ?: return
+        selectBook(item)
         if (player.duration > 0) {
             durationUid = item.mediaId
             durationMs = player.duration
@@ -96,6 +104,7 @@ internal class PlaybackProgress(
         if (pendingUid == item.mediaId) return
         val position = player.currentPosition.coerceAtLeast(0L)
         val finished = player.playbackState == Player.STATE_ENDED
+        // 仅装载到0秒并不代表重新收听；明确从头播放/seek由对应入口清除完成标记。
         if (position == 0L && !finished) return
         val duration = player.duration.takeIf { it > 0 } ?: knownDuration(item)
         if (duration > 0) {
@@ -105,6 +114,16 @@ internal class PlaybackProgress(
         persist(item, position, duration, finished)
     }
 
+    private fun selectBook(item: MediaItem) {
+        if (!isEnabled()) return
+        bookSong(item)?.let { BookListeningProgress.select(prefs, it) }
+    }
+
+    /** 只有 raw UID 与真实 Player mediaId 一致时，才允许进入按书索引/完成标记路径。 */
+    private fun bookSong(item: MediaItem): OnlineSong? =
+        OnlineSong.from(trackFor(item.mediaId)?.raw)
+            ?.takeIf { it.uid == item.mediaId && it.isBookChapter }
+
     private fun knownDuration(item: MediaItem): Long =
         durationMs.takeIf { durationUid == item.mediaId && it > 0 }
             ?: prefs.getLong("duration:${item.mediaId}", 0L).takeIf { it > 0 }
@@ -112,6 +131,11 @@ internal class PlaybackProgress(
 
     private fun persist(item: MediaItem, position: Long, duration: Long, finished: Boolean = false) {
         if (!isEnabled() || item.mediaId.isBlank()) return
+        val song = bookSong(item)
+        if (song != null) {
+            BookListeningProgress.persist(prefs, song, position, duration, finished)
+            return
+        }
         val value = if (finished) 0L else persistedProgressMs(position.coerceAtLeast(0L), duration)
         val durationKey = "duration:${item.mediaId}"
         if (prefs.getLong(item.mediaId, 0L) == value &&
@@ -136,10 +160,178 @@ internal fun shouldRestoreProgress(
     nearEndMs: Long = 10_000L,
     longTrackMs: Long = 10 * 60 * 1000L,
 ): Boolean {
+    if (isBookChapter) return savedMs > 0L && (durationMs <= 0L || savedMs < durationMs)
     if (savedMs <= 5_000L) return false
     if (durationMs > 0 && savedMs >= durationMs - nearEndMs) return false
-    return isBookChapter || durationMs >= longTrackMs
+    return durationMs >= longTrackMs
 }
 
 internal fun persistedProgressMs(positionMs: Long, durationMs: Long, nearEndMs: Long = 2_000L): Long =
     if (durationMs > 0 && positionMs >= durationMs - nearEndMs) 0L else positionMs
+
+internal data class BookResumePoint(
+    val song: OnlineSong,
+    val positionMs: Long,
+    val durationMs: Long,
+    val completed: Boolean,
+)
+
+/** 以章节序号和本章断点计算整书进度；目录或断点信息不足时不显示百分比。 */
+internal fun bookAlbumProgressPercent(point: BookResumePoint, total: Int = 0): Int? {
+    val ordinal = point.song.raw.optInt("bookOrdinal", 0)
+    val storedTotal = point.song.raw.optInt("bookTotal", 0)
+    val bookTotal = storedTotal.takeIf { it > 0 } ?: total.takeIf { it > 0 } ?: return null
+    if (ordinal !in 1..bookTotal) return null
+
+    val chapterProgress = when {
+        point.completed -> 1.0
+        point.durationMs > 0L -> point.positionMs.coerceIn(0L, point.durationMs).toDouble() / point.durationMs
+        else -> 0.0
+    }
+    return (((ordinal - 1 + chapterProgress) * 100.0) / bookTotal).toInt().coerceIn(0, 100)
+}
+
+/** 统一听书专辑 ID 归一化，调用方仍须将 source 与结果一起作为身份。 */
+internal fun canonicalBookId(source: String, id: String): String? {
+    val rawId = id.trim().takeIf(String::isNotBlank) ?: return null
+    val canonical = if (source == "kw") {
+        rawId.removePrefix("kw:").removePrefix("book_album_")
+    } else {
+        rawId
+    }
+    return canonical.takeIf(String::isNotBlank)
+}
+
+/** 按书保存最后章节元数据指针；每章位置仍只存放在原有 UID Long 键中。 */
+internal object BookListeningProgress {
+    private const val PREFS = "melora-progress"
+    private const val BOOK_PREFIX = "book:"
+    private const val COMPLETED_PREFIX = "completed:"
+    private val lock = Any()
+    private val mutableUpdates = MutableStateFlow(0L)
+
+    val updates: StateFlow<Long> = mutableUpdates
+
+    fun read(context: android.content.Context, fallback: OnlineSong): BookResumePoint =
+        read(context.applicationContext.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE), fallback)
+
+    /** 仅读取已有的同平台、同专辑有效断点；无记录时不构造替代章节。 */
+    fun readAlbum(context: android.content.Context, source: String, albumId: String): BookResumePoint? =
+        readAlbum(context.applicationContext.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE), source, albumId)
+
+    internal fun readAlbum(prefs: SharedPreferences, source: String, albumId: String): BookResumePoint? = synchronized(lock) {
+        if (!MeloraSettings.rememberProgress.value || source.isBlank()) return@synchronized null
+        val id = canonicalBookId(source, albumId) ?: return@synchronized null
+        val song = prefs.getString(bookKey(source, id), null)
+            ?.let(::parseBookPointer)
+            ?.takeIf { bookIdentity(it) == (source to id) }
+            ?: return@synchronized null
+        val saved = point(prefs, song)
+        saved.takeIf {
+            it.completed || (it.positionMs > 0L && (it.durationMs <= 0L || it.positionMs < it.durationMs))
+        }
+    }
+
+    internal fun read(prefs: SharedPreferences, fallback: OnlineSong): BookResumePoint = synchronized(lock) {
+        if (!MeloraSettings.rememberProgress.value) {
+            return@synchronized BookResumePoint(
+                song = fallback,
+                positionMs = 0L,
+                durationMs = fallback.intervalSeconds * 1_000L,
+                completed = false,
+            )
+        }
+        val identity = bookIdentity(fallback)
+        val saved = identity?.let { (source, id) ->
+            prefs.getString(bookKey(source, id), null)?.let(::parseBookPointer)
+        }?.takeIf { bookIdentity(it) == identity }
+        point(prefs, saved ?: fallback)
+    }
+
+    fun restart(context: android.content.Context, song: OnlineSong) =
+        restart(context.applicationContext.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE), song)
+
+    internal fun restart(prefs: SharedPreferences, song: OnlineSong) = synchronized(lock) {
+        write(prefs, song, positionMs = 0L, durationMs = 0L, completed = false, restart = true)
+    }
+
+    /** 切换章节时只移动每书元数据指针；UID断点和完成标记留给恢复/有效播放事件处理。 */
+    internal fun select(prefs: SharedPreferences, song: OnlineSong) = synchronized(lock) {
+        val identity = bookIdentity(song) ?: return@synchronized
+        val key = bookKey(identity.first, identity.second)
+        val pointer = pointerJson(song)
+        if (prefs.getString(key, null) == pointer) return@synchronized
+        prefs.edit { putString(key, pointer) }
+        mutableUpdates.value += 1L
+    }
+
+    /** PlaybackProgress 的既有 checkpoint/seek/切轨/结束入口复用此单次 prefs 事务。 */
+    internal fun persist(
+        prefs: SharedPreferences,
+        song: OnlineSong,
+        positionMs: Long,
+        durationMs: Long,
+        completed: Boolean,
+    ) = synchronized(lock) {
+        write(prefs, song, positionMs, durationMs, completed, restart = false)
+    }
+
+    private fun write(
+        prefs: SharedPreferences,
+        song: OnlineSong,
+        positionMs: Long,
+        durationMs: Long,
+        completed: Boolean,
+        restart: Boolean,
+    ) {
+        val position = if (completed || restart) 0L else positionMs.coerceAtLeast(0L)
+        val durationKey = "duration:${song.uid}"
+        val completedKey = "$COMPLETED_PREFIX${song.uid}"
+        val identity = bookIdentity(song)
+        val bookKey = identity?.let { (source, id) -> bookKey(source, id) }
+        val pointer = identity?.let { pointerJson(song) }
+        val changed = prefs.getLong(song.uid, 0L) != position ||
+            (durationMs > 0L && prefs.getLong(durationKey, 0L) != durationMs) ||
+            prefs.getBoolean(completedKey, false) != completed ||
+            (bookKey != null && prefs.getString(bookKey, null) != pointer)
+        if (!changed) return
+        prefs.edit {
+            if (position > 0L) putLong(song.uid, position) else remove(song.uid)
+            if (durationMs > 0L) putLong(durationKey, durationMs)
+            if (completed) putBoolean(completedKey, true) else remove(completedKey)
+            if (bookKey != null && pointer != null) putString(bookKey, pointer)
+        }
+        mutableUpdates.value += 1L
+    }
+
+    private fun point(prefs: SharedPreferences, song: OnlineSong): BookResumePoint {
+        val completed = prefs.getBoolean("$COMPLETED_PREFIX${song.uid}", false)
+        val duration = prefs.getLong("duration:${song.uid}", 0L)
+            .takeIf { it > 0L } ?: song.intervalSeconds * 1_000L
+        return BookResumePoint(
+            song = song,
+            positionMs = if (completed) 0L else prefs.getLong(song.uid, 0L).coerceAtLeast(0L),
+            durationMs = duration,
+            completed = completed,
+        )
+    }
+
+    private fun pointerJson(song: OnlineSong): String = JSONObject()
+        .put("uid", song.uid)
+        .put("raw", JSONObject(song.raw.toString()))
+        .toString()
+
+    private fun parseBookPointer(value: String): OnlineSong? = runCatching {
+        val record = JSONObject(value)
+        OnlineSong.from(record.optJSONObject("raw"))?.takeIf { it.uid == record.optString("uid") }
+    }.getOrNull()
+
+    internal fun bookIdentity(song: OnlineSong): Pair<String, String>? {
+        if (!song.isBookChapter) return null
+        val id = canonicalBookId(song.source, song.albumId) ?: return null
+        return song.source to id
+    }
+
+    private fun bookKey(source: String, bookId: String): String =
+        "$BOOK_PREFIX${source.length}:$source:$bookId"
+}

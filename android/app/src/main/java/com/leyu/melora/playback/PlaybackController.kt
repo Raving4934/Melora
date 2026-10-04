@@ -172,7 +172,7 @@ object PlaybackController {
                             pending == null -> restoreQueue(it)
                             pending.tracks.isEmpty() -> restoreQueue(it, autoPlay = false)
                             pending.insertSingle -> playTrackNow(pending.tracks.single())
-                            else -> playQueueNow(pending.tracks, pending.index, pending.queueId)
+                            else -> playQueueNow(pending.tracks, pending.index, pending.queueId, pending.startPositionMs)
                         }
                         applyMusicPlayMode()
                         checkLocalQueue(application)
@@ -632,12 +632,12 @@ object PlaybackController {
             .build()
     }
 
-    private fun playQueueNow(tracks: List<UiTrack>, startIndex: Int, queueId: String?) {
+    private fun playQueueNow(tracks: List<UiTrack>, startIndex: Int, queueId: String?, startPositionMs: Long? = null) {
         interruptRecovery()
         if (tracks.isEmpty()) return
         val player = controller
         if (player == null) {
-            pendingPlayback = PendingPlaybackSelection(tracks, startIndex, queueId)
+            pendingPlayback = PendingPlaybackSelection(tracks, startIndex, queueId, startPositionMs = startPositionMs)
             _state.value = _state.value.copy(pendingQueueId = queueId)
             return
         }
@@ -650,7 +650,14 @@ object PlaybackController {
         val items = tracks.map(::buildItem)
         val index = startIndex.coerceIn(0, items.lastIndex)
         prefetchTrack(tracks[index])
-        player.setMediaItems(items, index, C.TIME_UNSET)
+        if (startPositionMs == 0L) {
+            // 相同章节重建队列前先归零，避免离场事件把旧位置写回刚清除的断点。
+            if (player.currentMediaItem?.mediaId == tracks[index].uid) player.seekTo(0L)
+            OnlineSong.from(tracks[index].raw)?.takeIf { it.isBookChapter }?.let { song ->
+                appContext?.let { BookListeningProgress.restart(it, song) }
+            }
+        }
+        player.setMediaItems(items, index, startPositionMs ?: C.TIME_UNSET)
         val bookId = OnlineSong.from(tracks[index].raw)?.bookId()
         if (bookId != null && queueId == bookQueueId(bookId) &&
             tracks.all { OnlineSong.from(it.raw)?.bookId() == bookId }
@@ -734,7 +741,7 @@ object PlaybackController {
         val id = playlist.id.removePrefix("kw:").removePrefix("book_album_")
         if (id.isBlank()) return
         UserLibrary.markContainerPlayed(
-            UserLibrary.PlayContainer("book", playlist.id, playlist.name, playlist.img, playlist.source, bookQueueId(id)),
+            UserLibrary.PlayContainer("book", playlist.id, playlist.name, playlist.img, playlist.source, bookQueueId(id), artist = playlist.author),
         )
         requestQueue<KwBookApi.BookChapters>(
             context, bookQueueId(id), "playlistDetail.book.book_album_$id", { it.items },
@@ -742,13 +749,16 @@ object PlaybackController {
     }
 
     /** 任意单章入口都在这里接入同书目录；不会把听书语义散落到各个页面。 */
-    private fun playBookChapterNow(track: UiTrack, id: String) {
+    private fun playBookChapterNow(track: UiTrack, id: String, restart: Boolean = false) {
         val player = controller
         if (player != null && bookQueue?.albumId == id) {
             val index = (0 until player.mediaItemCount).firstOrNull { player.getMediaItemAt(it).mediaId == track.uid }
             if (index != null) {
                 if (player.playerError != null) { errorRecovery.reset(); consecutiveErrors = 0 }
-                if (player.currentMediaItemIndex != index || player.playbackState == Player.STATE_ENDED) {
+                if (restart) {
+                    OnlineSong.from(track.raw)?.let { song -> appContext?.let { BookListeningProgress.restart(it, song) } }
+                    player.seekTo(index, 0L)
+                } else if (player.currentMediaItemIndex != index || player.playbackState == Player.STATE_ENDED) {
                     player.seekToDefaultPosition(index)
                 }
                 bookQueue?.retry()
@@ -761,7 +771,79 @@ object PlaybackController {
         val cached = OnlineCache.peek<KwBookApi.BookChapters>("playlistDetail.book.book_album_$id")?.items.orEmpty()
         val index = cached.indexOfFirst { it.uid == track.uid }
         val tracks = if (index >= 0) cached.map(UiTrack::fromOnline) else listOf(track)
-        playQueueNow(tracks, index.coerceAtLeast(0), bookQueueId(id))
+        playQueueNow(tracks, index.coerceAtLeast(0), bookQueueId(id), if (restart) 0L else null)
+    }
+
+    /** 最近节目按书续听；正在播放同一本书时保留当前章节和实时位置。 */
+    fun resumeBook(context: Context, song: OnlineSong) {
+        val id = song.bookId()
+        if (id == null) {
+            // 旧记录或其它平台没有可用目录身份，只续听此章节，不猜测专辑或下一章。
+            playTrack(context, UiTrack.fromOnline(song))
+            return
+        }
+        val active = controller?.takeIf { it.isConnected }
+        val current = active?.currentMediaItem?.mediaId?.let(TrackRegistry::get)
+        val currentSong = OnlineSong.from(current?.raw)?.takeIf { it.bookId() == id }
+        if (active != null && currentSong != null && active.playbackState != Player.STATE_ENDED) {
+            playTrack(context, checkNotNull(current))
+            return
+        }
+        if (active != null && currentSong != null && bookQueue?.albumId == id && active.hasNextMediaItem()) {
+            // 结束后才补回的下一章已经在队列中，不再依赖网络重复查目录。
+            cancelPendingPlayback()
+            next()
+            saveQueue(force = true)
+            publish()
+            return
+        }
+        val saved = BookListeningProgress.read(context, song)
+        val chapter = currentSong ?: saved.song
+        val completed = (currentSong != null && active?.playbackState == Player.STATE_ENDED) ||
+            (saved.completed && saved.song.uid == chapter.uid)
+        if (!completed) {
+            playTrack(context, UiTrack.fromOnline(chapter))
+            return
+        }
+        // 只在明确播完时查下一章；目录请求可取消，不打断当前音频，不顺序预载整本书。
+        appContext = context.applicationContext
+        cancelPendingPlayback()
+        _state.value = _state.value.copy(pendingQueueId = bookQueueId(id), message = null)
+        queueLoadJob = scope.launch(start = CoroutineStart.LAZY) {
+            try {
+                val following = withContext(Dispatchers.IO) { followingBookChapters(chapter, KwBookApi::album) }
+                if (queueLoadJob !== coroutineContext[Job]) return@launch
+                queueLoadJob = null
+                _state.value = _state.value.copy(pendingQueueId = null)
+                if (following.isEmpty()) postMessage(context, "这本书已听完")
+                else playQueue(context, following.map(UiTrack::fromOnline), 0, bookQueueId(id),
+                    UserLibrary.PlayContainer("book", "book_album_$id", chapter.albumName.ifBlank { chapter.name },
+                        chapter.img, chapter.source, bookQueueId(id), artist = chapter.singer))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (queueLoadJob === coroutineContext[Job]) postMessage(context, error.message ?: "续听失败，请打开专辑选择章节")
+            } finally {
+                if (queueLoadJob === coroutineContext[Job]) {
+                    queueLoadJob = null
+                    _state.value = _state.value.copy(pendingQueueId = null)
+                }
+            }
+        }
+        queueLoadJob?.start()
+    }
+
+    fun restartBookChapter(context: Context, song: OnlineSong) {
+        val id = song.bookId()
+        val track = UiTrack.fromOnline(song)
+        val container = id?.let { UserLibrary.PlayContainer(
+            "book", "book_album_$it", song.albumName.ifBlank { song.name }, song.img, song.source, bookQueueId(it),
+            artist = song.singer,
+        ) }
+        requestPlayback(context, track, container) {
+            if (id != null) playBookChapterNow(track, id, restart = true)
+            else playQueueNow(listOf(track), 0, null, startPositionMs = 0L)
+        }
     }
 
     /** 仅用于明确的播放全部、随机播放或批量播放操作；单曲入口使用 playTrack。 */
@@ -830,7 +912,7 @@ object PlaybackController {
     fun playTrack(context: Context, track: UiTrack, container: UserLibrary.PlayContainer? = null) {
         val bookId = OnlineSong.from(track.raw)?.bookId()
         val origin = container ?: bookId?.let {
-            UserLibrary.PlayContainer("book", "book_album_$it", track.album.ifBlank { track.title }, track.artwork, track.source, bookQueueId(it))
+            UserLibrary.PlayContainer("book", "book_album_$it", track.album.ifBlank { track.title }, track.artwork, track.source, bookQueueId(it), artist = track.artist)
         }
         requestPlayback(context, track, origin) {
             if (bookId != null) playBookChapterNow(track, bookId) else playTrackNow(track)

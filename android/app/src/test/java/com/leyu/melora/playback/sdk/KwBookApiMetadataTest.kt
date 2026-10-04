@@ -31,6 +31,23 @@ class KwBookApiMetadataTest {
     }
 
     @Test
+    fun chapterCarriesOnlyReliableBookTotalAndKeepsPerformerMetadata() {
+        val row = JSONObject()
+            .put("rid", "chapter-id")
+            .put("name", "章节")
+            .put("artist", "章节主播")
+
+        val chapter = checkNotNull(KwBookApi.chapter(row, "专辑", "album-id", KwBookApi.BookMetadata(total = 125, author = "专辑作者")))
+        assertEquals(125, chapter.raw.optInt("bookTotal"))
+        assertEquals("章节主播", chapter.singer)
+
+        row.remove("artist")
+        val fallbackAuthor = checkNotNull(KwBookApi.chapter(row, "专辑", "album-id", KwBookApi.BookMetadata(total = 0, author = "专辑作者")))
+        assertFalse(fallbackAuthor.raw.has("bookTotal"))
+        assertEquals("专辑作者", fallbackAuthor.singer)
+    }
+
+    @Test
     fun bookPageHasMoreUsesTotalToStopOnAnExactLastPage() {
         assertFalse(KwBookApi.bookPageHasMore(page = 1, total = 100, itemCount = 100))
         assertTrue(KwBookApi.bookPageHasMore(page = 1, total = 101, itemCount = 100))

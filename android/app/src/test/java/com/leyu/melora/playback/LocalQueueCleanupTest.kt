@@ -96,6 +96,15 @@ class LocalQueueCleanupTest {
         assertEquals("fixture", kept.queueId)
     }
 
+    @Test fun explicitRestartSurvivesColdSelectionUntilItsTargetIsDeleted() {
+        val pending = PendingPlaybackSelection(listOf(local("a"), local("b")), index = 1, startPositionMs = 0L)
+        val kept = pending.without(DeletedLocalFiles(setOf("a"), emptySet()))
+        assertEquals(0, kept.index)
+        assertEquals(0L, kept.startPositionMs)
+        val replaced = pending.without(DeletedLocalFiles(setOf("b"), emptySet()))
+        assertNull("不能把已删除章节的重播意图套在替代曲目上", replaced.startPositionMs)
+    }
+
     @Test fun deletedPendingSingleBecomesAnExplicitEmptyIntentNotOldQueueAutoplay() {
         val pending = PendingPlaybackSelection(listOf(local("a")), insertSingle = true)
         val kept = pending.without(DeletedLocalFiles(setOf("a"), emptySet()))

@@ -15,6 +15,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.MediaSession
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.leyu.melora.playback.sdk.OnlineSong
 import java.io.File
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
@@ -26,6 +27,7 @@ import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -39,12 +41,18 @@ class PlaybackProgressInstrumentedTest {
     private val context = instrumentation.targetContext
     private val progressPrefs: SharedPreferences
         get() = context.getSharedPreferences(PROGRESS_PREFS, Context.MODE_PRIVATE)
+    private val bookProgressPrefs: SharedPreferences
+        get() = context.getSharedPreferences("melora-progress", Context.MODE_PRIVATE)
 
     private lateinit var shortWav: File
     private lateinit var longWav: File
+    private var previousRememberProgress = true
 
     @Before
     fun setUp() {
+        previousRememberProgress = MeloraSettings.rememberProgress.value
+        MeloraSettings.rememberProgress.value = true
+        bookProgressPrefs.edit().clear().commit()
         progressPrefs.edit().clear().commit()
         shortWav = createSilentWav(SHORT_DURATION_MS)
         longWav = createSilentWav(LONG_DURATION_MS)
@@ -53,6 +61,8 @@ class PlaybackProgressInstrumentedTest {
     @After
     fun tearDown() {
         progressPrefs.edit().clear().commit()
+        bookProgressPrefs.edit().clear().commit()
+        MeloraSettings.rememberProgress.value = previousRememberProgress
         if (::shortWav.isInitialized) shortWav.delete()
         if (::longWav.isInitialized) longWav.delete()
     }
@@ -386,19 +396,158 @@ class PlaybackProgressInstrumentedTest {
     }
 
     @Test
-    fun nearEndCheckpointRemovesUidProgressButKeepsActualDuration() {
+    fun nearEndCheckpointKeepsBookUidProgressAndActualDuration() {
         val track = onlineTrack("test_near_end", book = true, interval = "00:08")
         val tracks = mapOf(track.uid to track)
 
         withSession { player, controller ->
-            val progress = progressFor(player, tracks)
+            val progress = progressFor(player, tracks, bookProgressPrefs)
             try {
                 prepare(controller, listOf(track to shortWav))
                 seekPaused(controller, SHORT_DURATION_MS - 1_000L)
                 onMain { progress.checkpoint() }
-                await { !progressPrefs.contains(track.uid) }
+                await { bookProgressPrefs.getLong(track.uid, 0L) > 5_000L }
                 val duration = onMain { controller.duration }
-                assertEquals(duration, progressPrefs.getLong(durationKey(track.uid), 0L))
+                assertEquals(duration, bookProgressPrefs.getLong(durationKey(track.uid), 0L))
+            } finally {
+                onMain { progress.close() }
+            }
+        }
+    }
+
+    @Test
+    fun inconsistentBookRawFallsBackToActualMediaItemUidWithoutCreatingBookPointer() {
+        val consistentTrack = onlineTrack("uid-contract-book", book = true)
+        val rawSong = requireNotNull(OnlineSong.from(consistentTrack.raw))
+        val actualMediaId = "legacy-media-${rawSong.uid}"
+        val inconsistentTrack = consistentTrack.copy(uid = actualMediaId)
+        assertNotEquals("负面对照必须制造真实 UID 不一致", rawSong.uid, actualMediaId)
+        bookProgressPrefs.edit().putLong(rawSong.uid, 83_000L).commit()
+
+        withSession { player, controller ->
+            val progress = progressFor(
+                player,
+                mapOf(actualMediaId to inconsistentTrack),
+                bookProgressPrefs,
+            )
+            try {
+                prepare(controller, listOf(inconsistentTrack to longWav))
+                onMain { controller.pause() }
+                await { !controller.playWhenReady && controller.currentMediaItem?.mediaId == actualMediaId }
+                assertTrue("不一致 raw 不得把别的 UID 断点恢复到当前章节", onMain { player.currentPosition < 5_000L })
+
+                seekPaused(controller, 37_000L)
+                onMain { progress.checkpoint() }
+                await { bookProgressPrefs.getLong(actualMediaId, 0L) in 36_000L..38_000L }
+
+                assertEquals("原 raw UID 的已有 Long 断点必须保持不变", 83_000L, bookProgressPrefs.getLong(rawSong.uid, 0L))
+                assertTrue("实际 Player UID 应独立保存 Long 位置", bookProgressPrefs.getLong(actualMediaId, 0L) in 36_000L..38_000L)
+                assertTrue("不一致 raw 不得创建按书章节指针", bookProgressPrefs.all.keys.none { it.startsWith("book:") })
+                assertFalse("不一致 raw 不得创建错误完成标记", bookProgressPrefs.contains("completed:${rawSong.uid}"))
+                assertTrue("实际 UID 时长沿用原进度键", bookProgressPrefs.getLong(durationKey(actualMediaId), 0L) > 0L)
+                assertFalse("不得为 raw 派生 UID 创建时长别名", bookProgressPrefs.contains(durationKey(rawSong.uid)))
+            } finally {
+                onMain { progress.close() }
+            }
+        }
+    }
+
+    @Test
+    fun nearEndSeekStaysIncompleteUntilThePlayerActuallyFinishes() {
+        val seekTrack = onlineTrack("test_book_seek_end", book = true, interval = "00:08")
+        val naturalTrack = onlineTrack("test_book_natural_end", book = true, interval = "00:08")
+        val tracks = listOf(seekTrack, naturalTrack).associateBy { it.uid }
+
+        withSession { player, controller ->
+            val progress = progressFor(player, tracks, bookProgressPrefs)
+            try {
+                prepare(controller, listOf(seekTrack to shortWav, naturalTrack to shortWav))
+                onMain {
+                    controller.pause()
+                    controller.seekTo(SHORT_DURATION_MS - 500L)
+                }
+                await {
+                    !controller.playWhenReady && controller.playbackState == Player.STATE_READY &&
+                        near(controller.currentPosition, SHORT_DURATION_MS - 500L, 100L)
+                }
+                val seekPoint = BookListeningProgress.read(context, OnlineSong.from(seekTrack.raw)!!)
+                assertFalse("接近末尾但未结束不能标记听完", seekPoint.completed)
+                assertTrue("听书末尾未完成片段应保留 UID 位置", seekPoint.positionMs > 5_000L)
+
+                onMain { controller.seekToDefaultPosition(1); controller.prepare() }
+                await { controller.currentMediaItem?.mediaId == naturalTrack.uid && controller.playbackState == Player.STATE_READY }
+                seekPaused(controller, SHORT_DURATION_MS - 1_500L)
+                onMain { controller.play() }
+                await(timeoutMs = 5_000L) { player.playbackState == Player.STATE_ENDED }
+                val completedPoint = BookListeningProgress.read(context, OnlineSong.from(naturalTrack.raw)!!)
+                assertTrue("播放器自然进入 STATE_ENDED 后必须留下明确完成标记", completedPoint.completed)
+                assertEquals(0L, completedPoint.positionMs)
+            } finally {
+                onMain { progress.close() }
+            }
+        }
+    }
+
+    @Test
+    fun switchingBetweenBooksSavesEachBookLastChapterSeparately() {
+        val chapterA = onlineTrack("test_switch_book_a", book = true, bookId = "book_a")
+        val chapterB = onlineTrack("test_switch_book_b", book = true, bookId = "book_b")
+        val tracks = listOf(chapterA, chapterB).associateBy { it.uid }
+
+        withSession { player, controller ->
+            val progress = progressFor(player, tracks, bookProgressPrefs)
+            try {
+                prepare(controller, listOf(chapterA to longWav, chapterB to longWav))
+                seekPaused(controller, 24_000L)
+                onMain { controller.seekToDefaultPosition(1) }
+                await { controller.currentMediaItem?.mediaId == chapterB.uid && controller.playbackState == Player.STATE_READY }
+                seekPaused(controller, 37_000L)
+
+                val pointA = BookListeningProgress.read(context, OnlineSong.from(chapterA.raw)!!)
+                val pointB = BookListeningProgress.read(context, OnlineSong.from(chapterB.raw)!!)
+                assertEquals(chapterA.uid, pointA.song.uid)
+                assertTrue(pointA.positionMs in 23_000L..25_000L)
+                assertEquals(chapterB.uid, pointB.song.uid)
+                assertTrue(pointB.positionMs in 36_000L..38_000L)
+            } finally {
+                onMain { progress.close() }
+            }
+        }
+    }
+
+    @Test
+    fun zeroPositionChapterSwitchSelectsNewBookPointerWithoutClearingItsBookmark() {
+        val chapterA = onlineTrack("test_zero_switch_a", book = true, bookId = "shared_book")
+        val chapterB = onlineTrack("test_zero_switch_b", book = true, bookId = "shared_book")
+        val songA = OnlineSong.from(chapterA.raw)!!
+        val songB = OnlineSong.from(chapterB.raw)!!
+        BookListeningProgress.persist(bookProgressPrefs, songA, 0L, LONG_DURATION_MS, completed = true)
+        BookListeningProgress.persist(bookProgressPrefs, songB, 2_500L, LONG_DURATION_MS, completed = false)
+        BookListeningProgress.select(bookProgressPrefs, songA)
+
+        withSession { player, controller ->
+            val progress = progressFor(
+                player,
+                mapOf(chapterA.uid to chapterA, chapterB.uid to chapterB),
+                bookProgressPrefs,
+            )
+            try {
+                prepare(controller, listOf(chapterA to longWav, chapterB to longWav))
+                onMain {
+                    controller.pause()
+                    controller.seekToDefaultPosition(1)
+                    controller.pause()
+                }
+                await { controller.currentMediaItem?.mediaId == chapterB.uid }
+                // 模拟立即退出：零位 checkpoint 不得覆盖/删除 B 的旧 UID 断点。
+                onMain { progress.close() }
+
+                assertEquals(2_500L, bookProgressPrefs.getLong(chapterB.uid, 0L))
+                assertTrue("A章历史完成标记仍按UID独立保留", bookProgressPrefs.getBoolean("completed:${chapterA.uid}", false))
+                val point = BookListeningProgress.read(context, songA)
+                assertEquals(chapterB.uid, point.song.uid)
+                assertEquals(2_500L, point.positionMs)
+                assertFalse("A章完成标记不能冒充B章完成", point.completed)
             } finally {
                 onMain { progress.close() }
             }
@@ -465,6 +614,26 @@ class PlaybackProgressInstrumentedTest {
     }
 
     @Test
+    fun shortBookBookmarkBelowFiveSecondsRestores() {
+        val track = onlineTrack("short-book-bookmark", book = true)
+        bookProgressPrefs.edit()
+            .putLong(track.uid, 3_000L)
+            .putLong(durationKey(track.uid), LONG_DURATION_MS)
+            .commit()
+
+        withSession { player, controller ->
+            val progress = progressFor(player, mapOf(track.uid to track), bookProgressPrefs)
+            try {
+                prepare(controller, listOf(track to longWav))
+                await { near(controller.currentPosition, 3_000L, 1_000L) }
+                assertTrue(onMain { player.currentPosition > 0L })
+            } finally {
+                onMain { progress.close() }
+            }
+        }
+    }
+
+    @Test
     fun explicitSeekWhilePreparingWinsOverPendingUnknownDurationRestore() {
         val track = onlineTrack("preparation-seek", interval = null)
         progressPrefs.edit().putLong(track.uid, 75_000L).commit()
@@ -498,11 +667,12 @@ class PlaybackProgressInstrumentedTest {
     private fun progressFor(
         player: Player,
         tracks: Map<String, UiTrack>,
+        prefs: SharedPreferences = progressPrefs,
         isEnabled: () -> Boolean = { true },
     ): PlaybackProgress = onMain {
         PlaybackProgress(
             player = player,
-            prefs = progressPrefs,
+            prefs = prefs,
             trackFor = { uid -> tracks[uid] },
             isEnabled = isEnabled,
         )
@@ -611,6 +781,7 @@ class PlaybackProgressInstrumentedTest {
         uid: String,
         book: Boolean = false,
         interval: String? = "12:00",
+        bookId: String = "fixture_book",
     ): UiTrack {
         val raw = JSONObject()
             .put("source", "test")
@@ -619,15 +790,9 @@ class PlaybackProgressInstrumentedTest {
             .put("singer", "Instrumented Test")
             .put("albumName", "Local Silent WAV")
         if (book) raw.put("isBookChapter", true)
+        if (book) raw.put("albumId", bookId)
         if (interval != null) raw.put("interval", interval)
-        return UiTrack(
-            uid = uid,
-            title = uid,
-            artist = "Instrumented Test",
-            album = "Local Silent WAV",
-            source = "test",
-            raw = raw,
-        )
+        return UiTrack.fromOnline(checkNotNull(OnlineSong.from(raw)))
     }
 
     private fun createSilentWav(durationMs: Long): File {

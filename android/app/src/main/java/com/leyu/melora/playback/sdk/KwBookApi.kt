@@ -9,6 +9,8 @@ import org.json.JSONObject
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
+internal const val BOOK_CATALOG_PAGE_SIZE = 100
+
 /**
  * 酷我听书目录（与 Web 版 /api/v1/audiobooks 完全同源）：
  * - 专区橱窗 mobileinterfaces.kuwo.cn/er.s (digest=13 即有声专辑)
@@ -19,7 +21,6 @@ import java.util.concurrent.TimeUnit
  */
 object KwBookApi {
     private const val TAG = "KwBookApi"
-    private const val PAGE_SIZE_ALBUM = 100
     private const val PAGE_SIZE_RANK = 50
     private const val PAGE_SIZE_SEARCH = 20
     private const val CHANNEL_SECTIONS_ID = "18"
@@ -83,8 +84,8 @@ object KwBookApi {
 
     /** 已知总数时按请求页判断，避免总数恰好为整页时把尾页误判为可继续。 */
     internal fun bookPageHasMore(page: Int, total: Int, itemCount: Int): Boolean = itemCount > 0 && when {
-        total > 0 -> page.coerceAtLeast(1) * PAGE_SIZE_ALBUM < total
-        else -> itemCount >= PAGE_SIZE_ALBUM
+        total > 0 -> page.coerceAtLeast(1) * BOOK_CATALOG_PAGE_SIZE < total
+        else -> itemCount >= BOOK_CATALOG_PAGE_SIZE
     }
 
     // ---------- 网络 ----------
@@ -403,7 +404,7 @@ object KwBookApi {
         val rid = albumRef.removePrefix("book_album_").removePrefix("kw:book_album_")
         if (rid.isBlank()) return BookChapters(emptyList(), false, page = page)
         val url = "https://wapi.kuwo.cn/api/www/album/albumInfo" +
-            "?albumId=${urlencode(rid)}&pn=$page&rn=$PAGE_SIZE_ALBUM&httpsStatus=1"
+            "?albumId=${urlencode(rid)}&pn=$page&rn=$BOOK_CATALOG_PAGE_SIZE&httpsStatus=1"
         val response = getObject(url) ?: return BookChapters(emptyList(), false, page = page)
         if (response.optInt("code", -1) != 200) return BookChapters(emptyList(), false, page = page)
         val data = response.optJSONObject("data") ?: return BookChapters(emptyList(), false, page = page)
@@ -412,7 +413,7 @@ object KwBookApi {
         val albumTitle = clean(optText(data, "album"))
         val metadata = bookMetadataFromDetail(data)
         val rows = data.optJSONArray("musicList") ?: return BookChapters(emptyList(), false, metadata, page)
-        if (rows.length() > PAGE_SIZE_ALBUM) return BookChapters(emptyList(), false, metadata, page)
+        if (rows.length() > BOOK_CATALOG_PAGE_SIZE) return BookChapters(emptyList(), false, metadata, page)
         // 章节接口的行有时不带 albumid：用已校验的专辑 id 兜底，保证播放页“出自专辑”能复用章节顺序
         val albumId = actualId.ifBlank { rid }
         val items = mutableListOf<OnlineSong>()
@@ -420,6 +421,7 @@ object KwBookApi {
         for (i in 0 until rows.length()) {
             val song = chapter(rows.optJSONObject(i) ?: continue, albumTitle, albumId, metadata) ?: continue
             if (!seen.add(song.uid)) continue
+            song.raw.put("bookOrdinal", (page - 1) * BOOK_CATALOG_PAGE_SIZE + i + 1)
             items += song
         }
         val hasMore = bookPageHasMore(page, metadata.total, rows.length())
@@ -441,7 +443,7 @@ object KwBookApi {
         language = clean(optText(data, "lang", "language")),
     )
 
-    private fun chapter(row: JSONObject, albumTitle: String, albumId: String, metadata: BookMetadata): OnlineSong? {
+    internal fun chapter(row: JSONObject, albumTitle: String, albumId: String, metadata: BookMetadata): OnlineSong? {
         var rid = row.optString("rid")
         if (rid.isBlank()) {
             rid = optText(row, "musicrid", "musicrId", "MUSICRID").removePrefix("MUSIC_")
@@ -471,6 +473,7 @@ object KwBookApi {
             .put("types", org.json.JSONArray().put(JSONObject().put("type", "128k")))
             .put("_types", JSONObject().put("128k", JSONObject()))
             .put("img", normalizeImage(optText(row, "pic", "albumpic")))
+        if (metadata.total > 0) raw.put("bookTotal", metadata.total)
         return OnlineSong.from(raw)
     }
 }

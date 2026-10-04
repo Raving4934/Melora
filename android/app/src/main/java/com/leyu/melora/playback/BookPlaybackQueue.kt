@@ -16,9 +16,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** 章节坐标随曲目保存，裁剪持久化队列后仍从窗口尾章继续，而不是跳过未保存的章节。 */
-internal fun OnlineSong.bookId(): String? = albumId
-    .removePrefix("kw:").removePrefix("book_album_")
-    .takeIf { source == "kw" && isBookChapter && it.isNotBlank() }
+internal fun OnlineSong.bookId(): String? = canonicalBookId(source, albumId)
+    ?.takeIf { source == "kw" && isBookChapter }
 
 internal fun bookQueueId(id: String): String = "playlist.kw.book_album_$id"
 

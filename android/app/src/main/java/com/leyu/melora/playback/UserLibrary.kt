@@ -299,6 +299,25 @@ object UserLibrary {
         recents = (listOf(song) + recents.filterNot { it.uid == song.uid }).take(MAX_RECENTS)
     }
 
+    /** 移除一本听书在“最近播放”中的章节与容器记录，不影响断点、收藏或其它书籍。 */
+    fun removeRecentProgram(song: OnlineSong) {
+        if (!song.isBookChapter) return
+        val identity = BookListeningProgress.bookIdentity(song)
+        mutate(shouldPersist = { it }) {
+            val nextRecents = recents.filterNot {
+                if (identity == null) it.uid == song.uid else BookListeningProgress.bookIdentity(it) == identity
+            }
+            val nextContainers = if (identity == null) recentContainers else recentContainers.filterNot { container ->
+                container.kind == "book" && container.source == identity.first &&
+                    canonicalBookId(container.source, container.id) == identity.second
+            }
+            val changed = nextRecents != recents || nextContainers != recentContainers
+            recents = nextRecents
+            recentContainers = nextContainers
+            changed
+        }
+    }
+
     /**
      * 本地索引提交后刷新收藏/最近/自建歌单里的 source=local 快照；
      * 索引快照在 LocalMediaStore 锁内读取，避免调用方把旧 map 写回来。
