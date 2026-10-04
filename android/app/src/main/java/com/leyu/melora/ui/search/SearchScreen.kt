@@ -130,43 +130,31 @@ fun SearchScreen(
     }
 
     fun runSearch(keyword: String, targetPage: Int, append: Boolean) {
-        if (keyword.isBlank() || (append && loadingMore)) return
+        if (keyword.isBlank() || (append && searchJob?.isActive == true)) return
         searchJob?.cancel()
         val requestId = ++searchRequestId
         val requestCategory = category
         val requestPlatform = selectedPlatform
         searchJob = scope.launch {
-            if (append) loadingMore = true else loading = true
+            if (append) loadingMore = true else {
+                loading = true
+                hasMore = false
+            }
             error = null
             try {
                 when (requestCategory) {
                     SearchCategory.Song -> {
-                        if (requestPlatform == PlatformSource.All && !append) {
-                            var firstBatch = true
-                            var receivedBatch = false
-                            hasMore = false
-                            searchSongsProgressive(context, requestPlatform, keyword, targetPage) { batch, more ->
-                                if (requestId != searchRequestId) return@searchSongsProgressive
-                                receivedBatch = true
-                                if (firstBatch) {
-                                    songs = batch.distinctBy { "${it.name}|${it.singer}" }
-                                    loading = false
-                                    firstBatch = false
-                                } else {
-                                    songs = (songs + batch).distinctBy { "${it.name}|${it.singer}" }
+                        val onUpdate: ((SongSearchOutcome) -> Unit)? =
+                            if (requestPlatform == PlatformSource.All && !append) { outcome ->
+                                if (requestId == searchRequestId) {
+                                    songs = outcome.songs
+                                    if (songs.isNotEmpty()) loading = false
                                 }
-                                if (more) hasMore = true
-                            }
-                            if (requestId == searchRequestId && !receivedBatch) {
-                                songs = emptyList()
-                                hasMore = false
-                            }
-                        } else {
-                            val outcome = searchSongs(context, requestPlatform, keyword, targetPage)
-                            if (requestId != searchRequestId) return@launch
-                            songs = if (append) (songs + outcome.songs).distinctBy(OnlineSong::uid) else outcome.songs
-                            hasMore = outcome.hasMore
-                        }
+                            } else null
+                        val outcome = searchSongs(context, requestPlatform, keyword, targetPage, onUpdate)
+                        if (requestId != searchRequestId) return@launch
+                        songs = if (append) (songs + outcome.songs).distinctBy(OnlineSong::uid) else outcome.songs
+                        hasMore = outcome.hasMore
                     }
                     SearchCategory.Playlist -> {
                         val outcome = searchPlaylists(context, requestPlatform, keyword, targetPage)

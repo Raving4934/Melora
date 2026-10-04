@@ -1,8 +1,5 @@
 package com.leyu.melora.ui.search
 
-import androidx.compose.foundation.layout.size
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import com.leyu.melora.playback.sdk.KwBookApi
 import com.leyu.melora.playback.sdk.OnlineCache
@@ -68,45 +65,40 @@ private suspend fun cachedSongSearch(
     OnlineRepository.search(context, source, keyword, page, 30, timeoutMs = timeoutMs)
 }
 
-internal suspend fun searchSongsProgressive(
-    context: android.content.Context,
-    platform: PlatformSource,
-    keyword: String,
-    page: Int,
-    onBatch: (List<OnlineSong>, Boolean) -> Unit,
-) = supervisorScope {
-    val targets = if (platform == PlatformSource.All) platformIds else listOf(platform.id)
-    val jobs = targets.map { source ->
-        launch {
-            val key = songSearchCacheKey(source, keyword, page)
-            val snapshot = OnlineCache.peek<SongPage>(key)
-            if (!snapshot?.list.isNullOrEmpty()) {
-                onBatch(snapshot.list, snapshot.list.size >= 30)
-            }
-            if (OnlineCache.get<SongPage>(key, SEARCH_CACHE_TTL_MS) != null) return@launch
-            val fresh = recoverSearch { cachedSongSearch(context, source, keyword, page, timeoutMs = 6_000L) }
-            if (fresh != null && fresh.list.isNotEmpty() && fresh.list.map(OnlineSong::uid) != snapshot?.list?.map(OnlineSong::uid)) {
-                onBatch(fresh.list, fresh.list.size >= 30)
-            }
-        }
-    }
-    jobs.joinAll()
-}
-
+/** 首屏渐进返回与后续分页共用一条聚合链路；同来源刷新替换快照，不追加过时歌曲。 */
 internal suspend fun searchSongs(
     context: android.content.Context,
     platform: PlatformSource,
     keyword: String,
     page: Int,
+    onUpdate: ((SongSearchOutcome) -> Unit)? = null,
 ): SongSearchOutcome = supervisorScope {
     val targets = if (platform == PlatformSource.All) platformIds else listOf(platform.id)
-    val pages = targets.map { source ->
-        async { recoverSearch { cachedSongSearch(context, source, keyword, page) } }
-    }.awaitAll().filterNotNull()
-    SongSearchOutcome(
-        songs = pages.flatMap { it.list }.distinctBy { "${it.name}|${it.singer}" },
-        hasMore = pages.any { it.list.size >= 30 },
-    )
+    val pages = linkedMapOf<String, SongPage>()
+    fun outcome(): SongSearchOutcome {
+        val available = if (onUpdate == null) targets.mapNotNull(pages::get) else pages.values
+        return SongSearchOutcome(
+            songs = available.flatMap { it.list }.distinctBy { "${it.name}|${it.singer}" },
+            hasMore = available.any { it.hasMore(loadedCount = (page - 1) * it.pageSize + it.rawCount) },
+        )
+    }
+    fun accept(source: String, result: SongPage) {
+        // 页码由请求决定；部分平台不返回page，不能让后续页被误认为第一页。
+        pages[source] = result.copy(page = page)
+        onUpdate?.invoke(outcome())
+    }
+    targets.map { source ->
+        launch {
+            if (onUpdate != null) {
+                OnlineCache.peek<SongPage>(songSearchCacheKey(source, keyword, page))?.let { accept(source, it) }
+            }
+            val fresh = recoverSearch {
+                cachedSongSearch(context, source, keyword, page, timeoutMs = if (onUpdate == null) 25_000L else 6_000L)
+            }
+            if (fresh != null && fresh != pages[source]) accept(source, fresh)
+        }
+    }.joinAll()
+    outcome()
 }
 
 internal suspend fun searchPlaylists(
