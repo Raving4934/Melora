@@ -144,8 +144,9 @@ class DownloadQualityInstrumentedTest {
         MeloraSettings.downloadQuality.value = "128k"
         DownloadCenter.start(song.uid, song, "等待下载")
         val record = DownloadCenter.records.value.first { it.id == song.uid }
-        val indexLock = LocalMediaStore.javaClass.getDeclaredField("lock").apply { isAccessible = true }
-            .get(LocalMediaStore)
+        val indexLock = requireNotNull(
+            LocalMediaStore.javaClass.getDeclaredField("lock").apply { isAccessible = true }.get(LocalMediaStore),
+        )
         var task: kotlinx.coroutines.Deferred<Result<String>>? = null
         val pauseFailure = java.util.concurrent.atomic.AtomicReference<Throwable?>()
         val pause = Thread({
@@ -221,6 +222,79 @@ class DownloadQualityInstrumentedTest {
             assertNull(DownloadCenter.records.value.firstOrNull { it.id == song.uid })
         } finally {
             if (!slotReleased) gate.release()
+        }
+    }
+
+    @Test fun deletingOldSnapshotAfterUpgradeKeepsNewFileRecordAndLocalEntry() = runBlocking<Unit> {
+        seed("128k", "fixture-128.mp3")
+        download("128k")
+        val oldRecord = requireNotNull(DownloadCenter.saved(song.uid))
+        val oldUri = requireNotNull(oldRecord.savedUri)
+        val oldName = requireNotNull(oldRecord.fileName)
+
+        seed("flac24bit", "fixture-24.flac")
+        download("flac24bit")
+        val upgraded = requireNotNull(DownloadCenter.saved(song.uid))
+        val newUri = requireNotNull(upgraded.savedUri)
+        val newName = requireNotNull(upgraded.fileName)
+        val upgradedBytes = bytes(newUri)
+        assertNotEquals(oldUri, newUri)
+        assertTrue(LocalMediaStore.songs.value.any { it.uri == oldUri })
+        assertTrue(LocalMediaStore.songs.value.any { it.uri == newUri })
+
+        Downloader.deletePermanently(context, oldRecord).getOrThrow()
+
+        assertFalse(files().contains(oldName))
+        assertTrue(files().contains(newName))
+        assertArrayEquals(upgradedBytes, bytes(newUri))
+        assertFalse(LocalMediaStore.songs.value.any { it.uri == oldUri })
+        assertTrue(LocalMediaStore.songs.value.any { it.uri == newUri })
+        assertEquals(newUri, DownloadCenter.saved(song.uid)?.savedUri)
+    }
+
+    @Test fun sameIdRetryDuringPermanentDeleteIsRejectedWithoutLosingDeletionState() = runBlocking<Unit> {
+        seed("128k", "fixture-128.mp3")
+        download("128k")
+        val record = requireNotNull(DownloadCenter.saved(song.uid))
+        val indexLock = requireNotNull(
+            LocalMediaStore.javaClass.getDeclaredField("lock").apply { isAccessible = true }.get(LocalMediaStore),
+        )
+        val gate = downloadGate()
+        gate.acquire()
+        var slotReleased = false
+        var deletion: kotlinx.coroutines.Deferred<Result<String>>? = null
+        var retry: kotlinx.coroutines.Deferred<Result<String>>? = null
+        fun awaitCondition(message: String, condition: () -> Boolean) {
+            val deadline = android.os.SystemClock.uptimeMillis() + 5_000
+            while (!condition()) {
+                assertTrue(message, android.os.SystemClock.uptimeMillis() < deadline)
+                Thread.sleep(5)
+            }
+        }
+
+        try {
+            synchronized(indexLock) {
+                deletion = async(Dispatchers.IO) { Downloader.deletePermanently(context, record) }
+                // 删除已清除旧URI、正等待本地索引同步；此时让同ID重试尝试提交。
+                awaitCondition("永久删除未到达索引交接") { DownloadCenter.saved(song.uid) == null }
+                retry = Downloader.retry(context, record)
+            }
+            requireNotNull(deletion).await().getOrThrow()
+            gate.release()
+            slotReleased = true
+            val retryResult = requireNotNull(retry).await()
+            assertTrue(retryResult.isFailure)
+            assertTrue(retryResult.exceptionOrNull()?.message.orEmpty().contains("删除"))
+            assertTrue(files().isEmpty())
+            assertNull(DownloadCenter.records.value.firstOrNull { it.id == song.uid })
+            assertFalse(LocalMediaStore.songs.value.any { it.uri == record.savedUri })
+        } finally {
+            if (!slotReleased) gate.release()
+            retry?.cancel()
+            retry?.join()
+            if (deletion?.isCompleted == false) {
+                runCatching { withTimeout(5_000) { requireNotNull(deletion).await() } }
+            }
         }
     }
 

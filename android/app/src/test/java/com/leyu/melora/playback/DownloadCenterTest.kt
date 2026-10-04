@@ -437,6 +437,35 @@ class DownloadCenterTest {
     }
 
     @Test
+    fun removingDeletedOldResourceDoesNotRemoveUpgradedRecord() {
+        val song = OnlineSong(songJson(null).put("songmid", "delete-stale-upgrade"))
+        val high = AudioSpecification("audio/flac", 48000, -1, 24)
+        try {
+            DownloadCenter.start(song, "test")
+            DownloadCenter.done(song.uid, "old", "old.mp3", "content://media/old")
+            val old = DownloadCenter.saved(song.uid)!!
+            DownloadCenter.done(song.uid, "upgraded", "new.flac", "content://media/new", high)
+
+            DownloadCenter.removeDeletedResource(old)
+            assertEquals("content://media/new", DownloadCenter.saved(song.uid)?.savedUri)
+            assertEquals(high, DownloadCenter.saved(song.uid)?.audioSpec)
+        } finally { DownloadCenter.remove(song.uid) }
+    }
+
+    @Test
+    fun removingDeletedMatchingResourceRemovesItsRecord() {
+        val song = OnlineSong(songJson(null).put("songmid", "delete-matching-resource"))
+        try {
+            DownloadCenter.start(song, "test")
+            DownloadCenter.done(song.uid, "saved", "saved.mp3", "content://media/saved")
+            val saved = DownloadCenter.saved(song.uid)!!
+
+            DownloadCenter.removeDeletedResource(saved)
+            assertNull(DownloadCenter.records.value.firstOrNull { it.id == song.uid })
+        } finally { DownloadCenter.remove(song.uid) }
+    }
+
+    @Test
     fun deletingSharedFileClearsAliasesButPreservesUpgradedRecord() {
         val original = OnlineSong(songJson(null).put("songmid", "shared-file-original"))
         val alias = OnlineSong(songJson(null).put("source", "tx").put("songmid", "shared-file-alias"))

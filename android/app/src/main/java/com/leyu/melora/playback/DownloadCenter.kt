@@ -191,6 +191,19 @@ object DownloadCenter {
         list.filterNot { it.id == id }
     }
 
+    /** 文件已删除后，仅移除仍对应被删资源的记录；已切换到新 URI 的同 ID 记录必须保留。 */
+    internal fun removeDeletedResource(expected: Record) = update(persist = true) { list ->
+        list.filterNot { current ->
+            current.id == expected.id &&
+                (!current.hasSavedResource || expected.hasSavedResource && sameResourceAddress(
+                    current.fileName,
+                    current.savedUri,
+                    expected.fileName,
+                    expected.savedUri,
+                ))
+        }
+    }
+
     /** 清空已结束记录，保留进行中与已暂停的任务。 */
     fun clearFinished() = update(persist = true) { list ->
         list.filter { it.status == Status.Downloading || it.status == Status.Paused }

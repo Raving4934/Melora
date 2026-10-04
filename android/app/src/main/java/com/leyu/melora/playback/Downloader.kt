@@ -97,6 +97,7 @@ object Downloader {
     private val slots = DynamicDownloadGate(MeloraSettings.downloadConcurrentTasks)
     private val taskScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val taskLock = Any()
+    private val deletingTasks = mutableSetOf<String>()
     private data class DownloadRequest(
         val quality: String, val path: String, val nameFormat: String,
         val skipExisting: Boolean, val autoSwitch: Boolean, val embedCover: Boolean, val embedLyric: Boolean,
@@ -113,6 +114,7 @@ object Downloader {
     private var nextTaskToken = 0L
 
     private const val CONFLICT_MESSAGE = "已有任务在进行，请先暂停后重试"
+    private const val DELETE_IN_PROGRESS_MESSAGE = "下载文件正在删除，请稍后重试"
 
     /** 与提交任务使用同一把锁，避免“一键清空”删除正在写入/尚待导出的临时音频。 */
     internal fun clearTemporaryFiles(directory: File): Boolean = synchronized(taskLock) {
@@ -156,33 +158,41 @@ object Downloader {
 
     /** 彻底删除：取消任务，并在物理文件删除成功后移除记录。删除失败时保留记录便于重试。 */
     suspend fun deletePermanently(context: Context, record: DownloadCenter.Record): Result<String> {
-        val cancelled = cancel(record.id)
-        DownloadNotifications.cancel(context, record.id.hashCode())
-        // 用户点下删除到取得任务锁之间可能刚好完成发布。未持有文件快照的在途记录，
-        // 必须读取取消同步后的最终地址；已有文件快照仍绑定原URI，不误删后续升级文件。
-        val target = if (record.hasSavedResource) record
-            else DownloadCenter.records.value.firstOrNull { it.id == record.id } ?: record
-        val result = if (target.hasSavedResource && (target.fileName != null || target.savedUri != null)) {
-            deleteSaved(context.applicationContext, target)
-        } else {
-            Result.success(if (cancelled || record.status == DownloadCenter.Status.Paused) "下载任务已删除" else "下载记录已删除")
-        }
-        result.onSuccess { DownloadCenter.remove(record.id) }
-            .onFailure {
-                if (cancelled || record.status == DownloadCenter.Status.Paused) {
-                    DownloadCenter.paused(record.id, "删除失败，任务已暂停")
-                }
+        val reserved = synchronized(taskLock) { deletingTasks.add(record.id) }
+        if (!reserved) return Result.failure(IllegalStateException(DELETE_IN_PROGRESS_MESSAGE))
+        try {
+            val cancelled = cancel(record.id)
+            DownloadNotifications.cancel(context, record.id.hashCode())
+            // 无旧文件快照时读取取消同步后的最终地址；已有快照仍绑定原URI。
+            val target = if (record.hasSavedResource) record
+                else DownloadCenter.records.value.firstOrNull { it.id == record.id } ?: record
+            val result = if (target.hasSavedResource && (target.fileName != null || target.savedUri != null)) {
+                deleteSaved(context.applicationContext, target)
+            } else {
+                Result.success(if (cancelled || record.status == DownloadCenter.Status.Paused) "下载任务已删除" else "下载记录已删除")
             }
-        return result
+            result.onSuccess { DownloadCenter.removeDeletedResource(target) }
+                .onFailure {
+                    if (cancelled || record.status == DownloadCenter.Status.Paused) {
+                        DownloadCenter.paused(record.id, "删除失败，任务已暂停")
+                    }
+                }
+            return result
+        } finally {
+            synchronized(taskLock) { deletingTasks.remove(record.id) }
+        }
     }
 
     /** 仅移除已结束记录，绝不停止任务、绝不删除本地文件。 */
     fun removeRecordOnly(context: Context, id: String): Boolean {
-        val record = DownloadCenter.records.value.firstOrNull { it.id == id } ?: return false
-        if (record.status == DownloadCenter.Status.Downloading || record.status == DownloadCenter.Status.Paused) return false
-        DownloadNotifications.cancel(context, id.hashCode())
-        DownloadCenter.remove(id)
-        return true
+        return synchronized(taskLock) {
+            if (id in deletingTasks) return@synchronized false
+            val record = DownloadCenter.records.value.firstOrNull { it.id == id } ?: return@synchronized false
+            if (record.status == DownloadCenter.Status.Downloading || record.status == DownloadCenter.Status.Paused) return@synchronized false
+            DownloadNotifications.cancel(context, id.hashCode())
+            DownloadCenter.remove(id)
+            true
+        }
     }
 
     /**
@@ -215,6 +225,12 @@ object Downloader {
         val task = synchronized(taskLock) {
             val active = tasks[taskId]?.takeUnless { it.task.isCompleted }
             when {
+                taskId in deletingTasks -> {
+                    conflicted = true
+                    CompletableDeferred<Result<String>>().apply {
+                        complete(Result.failure(IllegalStateException(DELETE_IN_PROGRESS_MESSAGE)))
+                    }
+                }
                 active == null -> {
                     val token = ++nextTaskToken
                     val deferred = taskScope.async(start = CoroutineStart.LAZY) {
