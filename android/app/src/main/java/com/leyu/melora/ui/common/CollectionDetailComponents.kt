@@ -73,23 +73,30 @@ internal fun CollectionActionsRow(
     onPlay: () -> Unit,
     onFavorite: (() -> Unit)?,
     onSelect: () -> Unit,
+    modifier: Modifier = Modifier,
+    loading: Boolean = false,
+    middleActions: (@Composable RowScope.() -> Unit)? = null,
 ) {
     val playColor = if (canPlay) MeloraAppearance.brand else MeloraAppearance.textMuted
-    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 11.5.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        ChromeActionSurface(onClick = onPlay, enabled = canPlay, shape = RoundedCornerShape(17.dp), modifier = Modifier.height(34.dp)) {
+    Row(modifier.fillMaxWidth().padding(start = 16.dp, end = 11.5.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        ChromeActionSurface(onClick = onPlay, enabled = canPlay && !loading, shape = RoundedCornerShape(17.dp), modifier = Modifier.height(34.dp)) {
             Row(Modifier.padding(end = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.PlayArrow, null, tint = playColor, modifier = Modifier.size(16.dp))
+                if (loading) ShimmerBox(Modifier.size(16.dp), cornerRadius = 4.dp)
+                else Icon(Icons.Rounded.PlayArrow, null, tint = playColor, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(4.dp))
-                Text("播放全部", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = playColor)
+                if (loading) ShimmerTextLine("播放全部", fontSize = 12.5.sp,
+                    modifier = Modifier.width(IntrinsicSize.Max), fontWeight = FontWeight.SemiBold)
+                else Text("播放全部", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = playColor)
             }
         }
-        Spacer(Modifier.weight(1f))
+        if (middleActions != null) middleActions() else Spacer(Modifier.weight(1f))
         ChromeActionSurface(
-            onClick = { onFavorite?.invoke() }, enabled = onFavorite != null,
+            onClick = { onFavorite?.invoke() }, enabled = onFavorite != null && !loading,
             shape = RoundedCornerShape(17.dp), modifier = Modifier.size(34.dp),
         ) {
             Box(contentAlignment = Alignment.Center) {
-                Icon(
+                if (loading) ShimmerBox(Modifier.size(18.dp), cornerRadius = 9.dp)
+                else Icon(
                     if (favorite) Icons.Rounded.Favorite else Icons.Outlined.FavoriteBorder,
                     if (favorite) "取消收藏" else "收藏",
                     tint = if (favorite) MeloraAppearance.accent else MeloraAppearance.textSub,
@@ -98,7 +105,11 @@ internal fun CollectionActionsRow(
             }
         }
         Spacer(Modifier.width(8.dp))
-        SongSelectionButton(onClick = onSelect, enabled = canPlay)
+        if (loading) {
+            Box(Modifier.size(34.dp), contentAlignment = Alignment.Center) {
+                ShimmerBox(Modifier.size(18.dp), cornerRadius = 5.dp)
+            }
+        } else SongSelectionButton(onClick = onSelect, enabled = canPlay)
     }
 }
 

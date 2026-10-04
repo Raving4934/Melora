@@ -40,11 +40,16 @@ class PlayerCollectionGestureTest {
         OnlineCache.clear("book.author.$artist")
         OnlineCache.clear("catalog.artist.$artist")
         OnlineCache.clear("playlistDetail.book.book_album_gesture-fixture")
+        OnlineCache.clear("playlistDetail.book.book_album_gesture-fixture.window.1")
     }
 
     @Test fun albumScrollCannotCollapsePlayerAndToolbarBackStillWorks() {
         show()
         compose.onNodeWithContentDescription("查看专辑歌曲").performClick()
+        // 听书专辑必须复用共享详情：缓存章节与选集工具栏都由公共目录页提供。
+        compose.awaitStable(compose.onNodeWithTag("book-chapter-toolbar"))
+        compose.onNodeWithTag("book-chapter-toolbar").assertIsDisplayed()
+        compose.onNodeWithText("测试章节2").assertIsDisplayed()
         assertDetailKeepsItsPositionDuringScroll()
         compose.onNodeWithContentDescription("返回").performClick()
         compose.awaitStable(compose.onNodeWithText("出自专辑"))

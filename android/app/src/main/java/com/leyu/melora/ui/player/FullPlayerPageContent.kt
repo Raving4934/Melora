@@ -54,7 +54,6 @@ import com.leyu.melora.ui.common.CollectionActionsRow
 import com.leyu.melora.ui.common.CollectionInfoHeader
 import com.leyu.melora.ui.common.albumHeaderCopy
 import com.leyu.melora.ui.common.artistHeaderCopy
-import com.leyu.melora.ui.common.bookHeaderCopy
 import com.leyu.melora.ui.common.ChromeScaffold
 import com.leyu.melora.ui.theme.MeloraAppearance
 import com.leyu.melora.ui.common.LocalChromeTopInset
@@ -69,6 +68,7 @@ import android.content.Intent
 import android.media.MediaRouter2
 import android.os.Build
 import android.provider.Settings
+import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.shrinkHorizontally
@@ -201,7 +201,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.leyu.melora.playback.LyricLine
 import com.leyu.melora.playback.PlayerCoverStyle
 import com.leyu.melora.playback.AudioEffects
-import com.leyu.melora.playback.bookId
+import com.leyu.melora.playback.canonicalBookId
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlayerUiState
@@ -211,7 +211,6 @@ import com.leyu.melora.playback.sdk.CoverLoader
 import com.leyu.melora.playback.sdk.KwBookApi
 import com.leyu.melora.playback.sdk.OnlineRepository
 import com.leyu.melora.playback.sdk.OnlineSong
-import com.leyu.melora.playback.sdk.formatPlayCountLabel
 import com.leyu.melora.ui.common.EmptyState
 import com.leyu.melora.ui.common.ErrorState
 import com.leyu.melora.ui.common.OnlineSongRow
@@ -222,6 +221,7 @@ import com.leyu.melora.ui.common.SongMoreSheet
 import com.leyu.melora.ui.common.sourceAliasDisplay
 import com.leyu.melora.ui.common.toUiTracks
 import com.leyu.melora.ui.common.runCatchingCancellable
+import com.leyu.melora.ui.common.PlaylistDetailContent
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
@@ -274,8 +274,23 @@ internal fun FullPlayerPageContent(
     var showLyricsSource by remember { mutableStateOf(false) }
     LaunchedEffect(track?.uid, isVisible, isCollapsed) { showLyricsSource = false }
     LaunchedEffect(isVisible, isCollapsed) { if (!isVisible || isCollapsed) showCoverPicker = false }
-    // 专辑/歌手聚合页（从音频信息页点击进入）
-    var openedCollection by remember(isCollapsed) { mutableStateOf<SongsCollection?>(null) }
+    // 音乐聚合页保留旧详情；听书专辑统一进入公共目录页。
+    var openedDetail by remember(isCollapsed) { mutableStateOf<FullPlayerDetailTarget?>(null) }
+    var pendingBookCollection by remember(isCollapsed) { mutableStateOf<SongsCollection?>(null) }
+    LaunchedEffect(pendingBookCollection) {
+        val pending = pendingBookCollection ?: return@LaunchedEffect
+        val destination = runCatchingCancellable {
+            playerAlbumDestination(pending, emptyList()) ?: playerAlbumDestination(
+                pending,
+                KwBookApi.search(pending.albumName ?: pending.keyword, 1).items,
+            )
+        }.getOrNull()
+        if (pendingBookCollection == pending) {
+            pendingBookCollection = null
+            if (destination != null) openedDetail = destination
+            else Toast.makeText(context, "未能找到对应的有声专辑", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     // 音效预设与歌词由全局设置/播放层统一提供，切换歌曲不会丢失。
     val audioEffectPreset by MeloraSettings.audioEffectPreset.collectAsStateWithLifecycle()
@@ -285,16 +300,27 @@ internal fun FullPlayerPageContent(
     LaunchedEffect(immersive) { if (immersive) queuePagerState.scrollToPage(0) }
 
     // 聚合页与“我的列表”复用，跟随App主题；返回后恢复播放器自己的主题。
-    val collection = openedCollection
-    val pageIsLight = playerPageIsLight(collection != null, playerColors.isDark, MeloraAppearance.isDark)
+    val detailTarget = openedDetail
+    val pageIsLight = playerPageIsLight(detailTarget != null, playerColors.isDark, MeloraAppearance.isDark)
     DetailPageHost(
-        target = collection,
+        target = detailTarget,
         modifier = modifier,
-        detail = { detailCollection ->
-            SongsCollectionPage(
-                collection = detailCollection,
-                onBack = { openedCollection = null },
-            )
+        contentKey = { target -> when (target) {
+            is FullPlayerDetailTarget.Collection -> "collection:${target.value.source}:${target.value.keyword}:${target.value.title}"
+            is FullPlayerDetailTarget.Playlist -> "playlist:${target.value.source}:${target.value.id}"
+        } },
+        detail = { target ->
+            when (target) {
+                is FullPlayerDetailTarget.Collection -> SongsCollectionPage(
+                    collection = target.value,
+                    onBack = { openedDetail = null },
+                )
+                is FullPlayerDetailTarget.Playlist -> PlaylistDetailContent(
+                    playlist = target.value,
+                    onBack = { openedDetail = null },
+                    emptyHint = "该有声专辑暂无可播放音频",
+                )
+            }
         },
     ) {
     BoxWithConstraints(
@@ -315,12 +341,12 @@ internal fun FullPlayerPageContent(
         }
         // 播放分页是同级视图，不消费返回；仅沉浸态先退出，再由外层收起播放器。
         BackHandler(enabled = isVisible && immersive) { onImmersiveChange(false) }
-        LaunchedEffect(collection != null, coverPagerState.currentPage, coverPagerState.isScrollInProgress, pageIsLight, immersive, expandedLayout) {
+        LaunchedEffect(detailTarget != null, coverPagerState.currentPage, coverPagerState.isScrollInProgress, pageIsLight, immersive, expandedLayout) {
             onPageVisualChanged(
-                !immersive && collection == null && (expandedLayout || (currentPage == 1 && !coverPagerState.isScrollInProgress)),
+                !immersive && detailTarget == null && (expandedLayout || (currentPage == 1 && !coverPagerState.isScrollInProgress)),
                 pageIsLight,
                 // 宽屏封面区允许下拉；右侧阅读区在自己的边界消费剩余滚动。
-                collection != null || (!expandedLayout && currentPage == 2),
+                detailTarget != null || (!expandedLayout && currentPage == 2),
             )
         }
         val t = immersion.value
@@ -438,7 +464,7 @@ internal fun FullPlayerPageContent(
                                     .takeIf { isBookChapter && it.isNotBlank() }
                                 val onlineSource = track?.source
                                     ?.takeIf { it.isNotBlank() && it != "local" } ?: "kw"
-                                openedCollection = SongsCollection(
+                                val collection = SongsCollection(
                                     title = album,
                                     subtitle = if (isBookChapter) "有声专辑 · 按集数顺序" else "专辑 · 收录歌曲",
                                     keyword = album,
@@ -451,10 +477,18 @@ internal fun FullPlayerPageContent(
                                     description = raw?.optString("description").orEmpty(),
                                     playCountLabel = raw?.optString("play_count").orEmpty(),
                                 )
+                                pendingBookCollection = null
+                                if (isBookChapter) {
+                                    playerAlbumDestination(collection, emptyList())?.let { openedDetail = it }
+                                        ?: run { pendingBookCollection = collection }
+                                } else {
+                                    openedDetail = FullPlayerDetailTarget.Collection(collection)
+                                }
                             },
                             onOpenArtist = { artist ->
                                 onImmersiveChange(false)
-                                openedCollection = artistCollection(track, artist)
+                                pendingBookCollection = null
+                                openedDetail = FullPlayerDetailTarget.Collection(artistCollection(track, artist))
                             },
                         )
                         1 -> cover()
@@ -566,7 +600,7 @@ internal fun FullPlayerPageContent(
         val viewConfiguration = LocalViewConfiguration.current
         val verticalViewConfiguration = rememberPlayerVerticalViewConfiguration()
         val queueGestureEnabled by rememberUpdatedState(
-            LocalPageActive.current && !immersive && !expandedLayout && collection == null,
+            LocalPageActive.current && !immersive && !expandedLayout && detailTarget == null,
         )
         val queueFling = PagerDefaults.flingBehavior(queuePagerState, snapAnimationSpec = PlayerPageSnapSpec)
         val defaultQueueScroll = PagerDefaults.pageNestedScrollConnection(queuePagerState, Orientation.Vertical)
@@ -875,7 +909,7 @@ data class SongsCollection(
     val source: String,
     val albumName: String? = null,
     val artistName: String? = null,
-    // 有声专辑：走 KwBookApi 章节接口，顺序与听书页一致
+    // 播放页听书专辑入口使用真实专辑 ID 导航到公共听书目录。
     val bookAlbumId: String? = null,
     // 听书专辑进入章节；听书创作者进入作品目录，不走音乐单曲搜索。
     val preferBook: Boolean = false,
@@ -884,6 +918,49 @@ data class SongsCollection(
     val playCountLabel: String = "",
 ) {
     val isBookAuthor: Boolean get() = preferBook && albumName == null && bookAlbumId == null
+}
+
+internal sealed interface FullPlayerDetailTarget {
+    data class Collection(val value: SongsCollection) : FullPlayerDetailTarget
+    data class Playlist(val value: OnlinePlaylist) : FullPlayerDetailTarget
+}
+
+/** 将全屏页的听书专辑入口转换成共享目录需要的真实专辑实体。 */
+internal fun playerAlbumDestination(
+    collection: SongsCollection,
+    searchResults: List<OnlinePlaylist>,
+): FullPlayerDetailTarget? {
+    if (collection.isBookAuthor) return null
+    if (!collection.preferBook && collection.bookAlbumId == null) {
+        return FullPlayerDetailTarget.Collection(collection)
+    }
+
+    val title = (collection.albumName ?: collection.keyword).trim()
+    if (title.isBlank()) return null
+    fun canonicalId(source: String, value: String): String? = canonicalBookId(source, value)
+        ?.takeUnless { it.equals("null", ignoreCase = true) }
+
+    val knownId = collection.bookAlbumId?.let { canonicalId(collection.source, it) }
+    val matched = if (knownId == null) {
+        searchResults.firstOrNull { it.isBookAlbum && it.name.trim().equals(title, ignoreCase = true) }
+            ?: searchResults.firstOrNull {
+                it.isBookAlbum && (it.name.contains(title, ignoreCase = true) || title.contains(it.name, ignoreCase = true))
+            }
+    } else null
+    val id = knownId ?: matched?.let { canonicalId(it.source, it.id) } ?: return null
+    val source = if (knownId != null) collection.source else matched?.source?.ifBlank { "kw" } ?: "kw"
+
+    return FullPlayerDetailTarget.Playlist(
+        OnlinePlaylist(JSONObject()
+            .put("id", "book_album_$id")
+            .put("name", matched?.name?.takeIf(String::isNotBlank) ?: collection.title)
+            .put("source", source.ifBlank { "kw" })
+            .put("kind", "book")
+            .put("img", collection.artwork ?: matched?.img.orEmpty())
+            .put("author", collection.artistName ?: matched?.author.orEmpty())
+            .put("description", collection.description.ifBlank { matched?.description.orEmpty() })
+            .put("play_count", collection.playCountLabel.ifBlank { matched?.playCount.orEmpty() })),
+    )
 }
 
 internal fun artistCollection(track: UiTrack?, artist: String): SongsCollection {
@@ -920,8 +997,6 @@ internal fun SongsCollectionPage(
         collection.title,
         collection.albumName,
         collection.artistName,
-        collection.bookAlbumId,
-        collection.preferBook,
     ) { rememberLazyListState() }
     val scrollToTop = rememberFastScrollToTop(listState)
     val selection = remember(collection) { SongSelectionState() }
@@ -932,20 +1007,13 @@ internal fun SongsCollectionPage(
     val favoriteUids by UserLibrary.favoriteUids.collectAsStateWithLifecycle()
     val favoriteAlbums by UserLibrary.favoriteAlbums.collectAsStateWithLifecycle()
     val favoriteArtists by UserLibrary.favoriteArtists.collectAsStateWithLifecycle()
-    val favoritePlaylists by UserLibrary.favoritePlaylists.collectAsStateWithLifecycle()
-    val isBook = collection.preferBook || collection.bookAlbumId != null
-    val isArtist = !isBook && collection.albumName == null
+    val isArtist = collection.albumName == null
     val artistName = collection.artistName?.takeIf { it.isNotBlank() } ?: collection.title
     val artistKey = "${collection.source}_$artistName"
-    var resolvedBookId by remember(collection) { mutableStateOf(collection.bookAlbumId?.removePrefix("book_album_")) }
     var artwork by remember(collection) { mutableStateOf(collection.artwork) }
     var albumProfile by remember(collection) { mutableStateOf<AlbumProfile?>(null) }
     var artistProfile by remember(collection) { mutableStateOf<ArtistProfile?>(null) }
-    var bookIntro by remember(collection) { mutableStateOf(collection.description) }
-    var bookHeat by remember(collection) { mutableStateOf(collection.playCountLabel) }
-    var bookAuthor by remember(collection) { mutableStateOf(collection.artistName.orEmpty()) }
     val albumKey = collection.albumName
-        ?.takeIf { collection.bookAlbumId == null && !collection.preferBook }
         ?.let { "${collection.source}_${it}_${collection.artistName.orEmpty()}" }
 
     var songs by remember(collection) { mutableStateOf<List<OnlineSong>>(emptyList()) }
@@ -966,9 +1034,9 @@ internal fun SongsCollectionPage(
             if (artwork.isNullOrBlank()) artwork = artistProfile?.image
         }
     }
-    LaunchedEffect(collection, isBook, isArtist, collection.albumName, artistName) {
+    LaunchedEffect(collection, isArtist, collection.albumName, artistName) {
         val album = collection.albumName
-        if (!isBook && !isArtist && !album.isNullOrBlank()) {
+        if (!isArtist && !album.isNullOrBlank()) {
             albumProfile = CatalogMetadata.album(album, artistName)
             if (artwork.isNullOrBlank()) artwork = albumProfile?.image
         }
@@ -992,22 +1060,11 @@ internal fun SongsCollectionPage(
         return true
     }
 
-    // 播放来源容器：专辑/歌手/有声专辑，登记到「我的 → 最近播放」并可回跳
+    // 播放来源容器：音乐专辑/歌手，登记到「我的 → 最近播放」并可回跳。
     fun playContainer(): UserLibrary.PlayContainer? {
         val album = collection.albumName?.trim().orEmpty()
         val img = artwork ?: if (isArtist) null else songs.firstOrNull()?.let { CoverLoader.cachedUrl(it) }
-        val bookId = resolvedBookId ?: songs.firstOrNull()?.takeIf { collection.preferBook }?.bookId()
         return when {
-            collection.preferBook || bookId != null -> bookId?.let {
-                UserLibrary.PlayContainer(
-                    kind = "book",
-                    id = "book_album_$it",
-                    name = album.ifBlank { collection.title },
-                    img = img,
-                    source = collection.source,
-                    queueId = "playlist.${collection.source}.book_album_$it",
-                )
-            }
             album.isNotEmpty() -> UserLibrary.PlayContainer(
                 kind = "album",
                 id = "album_${collection.source}_$album",
@@ -1040,40 +1097,18 @@ internal fun SongsCollectionPage(
             var current = targetPage
             var extra = 0
             runCatchingCancellable {
-                // 旧队列缺 albumId 时，先按专辑名反查有声专辑 id，保证仍走章节顺序
-                val target = (collection.albumName ?: collection.keyword).trim()
-                val bookAlbumId = resolvedBookId ?: if (collection.preferBook) {
-                    runCatchingCancellable {
-                        val books = KwBookApi.search(target, 1).items
-                        (books.firstOrNull { it.name.trim() == target }
-                            ?: books.firstOrNull { it.name.contains(target, true) || target.contains(it.name, true) })
-                            ?.id
-                            ?.removePrefix("book_album_")
-                    }.getOrNull()
-                } else null
-                if (bookAlbumId != null) {
-                    resolvedBookId = bookAlbumId
-                    // 有声专辑：直接复用书籍章节接口（100 集/页，顺序正确）
-                    val result = KwBookApi.album("book_album_$bookAlbumId", current)
-                    if (result.metadata.description.isNotBlank()) bookIntro = result.metadata.description
-                    if (result.metadata.playCount > 0) bookHeat = formatPlayCountLabel(result.metadata.playCount.toString())
-                    if (result.metadata.author.isNotBlank()) bookAuthor = result.metadata.author
-                    if (artwork.isNullOrBlank()) artwork = result.metadata.artwork
-                    result.items to result.hasMore
-                } else {
-                    val collected = mutableListOf<OnlineSong>()
-                    var more = true
-                    while (more && collected.isEmpty() && extra <= 2) {
-                        val result = OnlineRepository.search(context, collection.source, collection.keyword, current, 30)
-                        collected += result.list.filter(::matches)
-                        more = result.list.size >= 30
-                        if (collected.isEmpty() && more) {
-                            current += 1
-                            extra += 1
-                        }
+                val collected = mutableListOf<OnlineSong>()
+                var more = true
+                while (more && collected.isEmpty() && extra <= 2) {
+                    val result = OnlineRepository.search(context, collection.source, collection.keyword, current, 30)
+                    collected += result.list.filter(::matches)
+                    more = result.list.size >= 30
+                    if (collected.isEmpty() && more) {
+                        current += 1
+                        extra += 1
                     }
-                    collected to more
                 }
+                collected to more
             }
                 .onSuccess { (list, more) ->
                     songs = if (targetPage > 1) (songs + list).distinctBy { it.uid } else list.distinctBy { it.uid }
@@ -1113,15 +1148,9 @@ internal fun SongsCollectionPage(
             }
     }
 
-    val bookPlaylist = resolvedBookId?.let { id ->
-        OnlinePlaylist(JSONObject().put("id", "book_album_$id").put("name", collection.title)
-            .put("source", collection.source).put("kind", "book").put("img", artwork ?: "")
-            .put("author", bookAuthor).put("description", bookIntro).put("play_count", bookHeat))
-    }
     val isFavorite = when {
         isArtist -> favoriteArtists.any { it.key == artistKey }
         albumKey != null -> favoriteAlbums.any { it.key == albumKey }
-        bookPlaylist != null -> favoritePlaylists.any { it.id == bookPlaylist.id && it.source == bookPlaylist.source }
         else -> false
     }
     val onFavorite: (() -> Unit)? = when {
@@ -1129,7 +1158,6 @@ internal fun SongsCollectionPage(
         albumKey != null -> { { UserLibrary.toggleFavoriteAlbum(UserLibrary.FavoriteAlbum(
             collection.albumName, collection.artistName.orEmpty(), collection.source, artwork,
         )) } }
-        bookPlaylist != null -> { { UserLibrary.toggleFavoritePlaylist(bookPlaylist) } }
         else -> null
     }
     ChromeScaffold(
@@ -1202,7 +1230,6 @@ internal fun SongsCollectionPage(
             if (!selection.active) {
                 item(key = "detailHeader") {
                     val header = when {
-                        isBook -> bookHeaderCopy(bookIntro, bookAuthor, bookHeat)
                         isArtist -> artistHeaderCopy(artistProfile, songs)
                         else -> albumHeaderCopy(albumProfile, artistName, songs)
                     }

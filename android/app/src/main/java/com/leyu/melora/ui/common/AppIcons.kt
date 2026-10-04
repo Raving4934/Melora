@@ -116,3 +116,23 @@ internal val MusicShuffleIcon: ImageVector by lazy {
         )
     }.build()
 }
+
+/** 升/降序 SVG：保留原始路径、2px 圆端线条与 24×24 视口。 */
+internal val ChapterAscendingIcon: ImageVector by lazy {
+    chapterOrderIcon("ChapterAscending", "M11 6h7M11 12h4M11 18h2", "M4 8l2-2v12")
+}
+
+internal val ChapterDescendingIcon: ImageVector by lazy {
+    chapterOrderIcon("ChapterDescending", "M11 6h2M11 12h4M11 18h7", "M6 16l-2 2V6")
+}
+
+private fun chapterOrderIcon(name: String, lines: String, direction: String): ImageVector =
+    ImageVector.Builder(name, 24.dp, 24.dp, 24f, 24f).apply {
+        for (path in listOf(lines, direction)) addPath(
+            pathData = addPathNodes(path),
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 2f,
+            strokeLineCap = StrokeCap.Round,
+            strokeLineJoin = StrokeJoin.Round,
+        )
+    }.build()
