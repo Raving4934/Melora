@@ -122,6 +122,7 @@ class PlaybackService : MediaSessionService() {
             while (isActive) {
                 delay(5_000)
                 progress.checkpoint()
+                PlaybackController.checkpointQueuePosition(player)
             }
         }
 
@@ -274,7 +275,7 @@ class PlaybackService : MediaSessionService() {
         playbackProgress?.checkpoint()
         val player = mediaSession?.player
         PlaybackController.saveQueue(player = player)
-        if (player == null || !player.playWhenReady || player.mediaItemCount == 0) {
+        if (player == null || !player.canContinuePlaybackAfterTaskRemoved()) {
             exitPlayback()
         }
     }
@@ -365,3 +366,8 @@ internal fun syncNotificationMetadata(
 /** 对外提供标准媒体控制；用户库修改和退出等私有命令只允许本应用/系统信任的控制器。 */
 internal fun canUsePrivateMediaCommands(controllerUid: Int, appUid: Int, trusted: Boolean): Boolean =
     controllerUid == appUid || trusted
+
+/** 移除任务后只保留有播放意图且处于可播放/缓冲状态的会话。 */
+internal fun Player.canContinuePlaybackAfterTaskRemoved(): Boolean =
+    playWhenReady && mediaItemCount > 0 &&
+        (playbackState == Player.STATE_READY || playbackState == Player.STATE_BUFFERING)

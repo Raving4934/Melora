@@ -131,6 +131,20 @@ class PlaybackExitInstrumentedTest {
         }
     }
 
+    @Test fun standardStopIsNotConsideredContinuableByTaskRemovalPolicy() {
+        main { controller().play() }
+        await { controller().playbackState == Player.STATE_READY && controller().isPlaying }
+        main { controller().stop() }
+        await { controller().playbackState == Player.STATE_IDLE }
+
+        main {
+            val player = controller()
+            assertTrue("Media3 standard Stop retains playWhenReady", player.playWhenReady)
+            assertEquals(2, player.mediaItemCount)
+            assertFalse(player.canContinuePlaybackAfterTaskRemoved())
+        }
+    }
+
     @Test fun notificationExitStopsServiceAndReopeningRestoresPausedMiniWithoutSelectingASong() {
         exitFromNotification()
         assertEquals(1, prefs.getInt("index", -1))

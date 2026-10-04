@@ -123,7 +123,7 @@ class LocalQueueDeletionInstrumentedTest {
     }
 
     private fun withPlaybackController(controller: MediaController, tracks: Map<String, UiTrack>, test: () -> Unit) {
-        val fields = listOf("controller", "appContext", "lastQueueFingerprint", "detailUid").associateWith {
+        val fields = listOf("controller", "appContext", "lastSavedQueue", "detailUid").associateWith {
             PlaybackController.javaClass.getDeclaredField(it).apply { isAccessible = true }
         }
         val previous = main { fields.mapValues { it.value.get(PlaybackController) } }

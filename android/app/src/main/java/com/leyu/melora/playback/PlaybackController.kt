@@ -130,7 +130,8 @@ object PlaybackController {
     private var detailUid: String? = null
     private var consecutiveErrors = 0
     // 队列持久化指纹：避免同一队列反复写盘
-    private var lastQueueFingerprint: String? = null
+    private data class SavedQueueSelection(val fingerprint: String, val uid: String, val index: Int)
+    private var lastSavedQueue: SavedQueueSelection? = null
     private var sleepJob: Job? = null
     // 当前队列来源标识（卡片播放按钮据此显示播放/暂停）
     private var currentQueueId: String? = null
@@ -1012,7 +1013,7 @@ object PlaybackController {
         pendingPlayback = pendingPlayback?.without(deleted)
         if (pendingPlayback?.tracks?.isEmpty() == true) _state.value = _state.value.copy(pendingQueueId = null)
         queuePrefs()?.let { pruneSavedLocalQueue(it, deleted) }
-        lastQueueFingerprint = null
+        lastSavedQueue = null
         val player = controller ?: return@launch
         val current = player.currentMediaItem?.mediaId?.let(TrackRegistry::get)
         val restartOnline = current != null && current.source != LocalSong.SOURCE &&
@@ -1348,11 +1349,8 @@ object PlaybackController {
         val bookId = bookQueue?.albumId ?: player.bookAlbumId(TrackRegistry::get)
         val fingerprint = "${bookId}:${currentQueueId}:" + playbackQueueFingerprint(all, index)
         val position = player.currentPosition.coerceAtLeast(0L)
-        if (!force && fingerprint == lastQueueFingerprint) {
-            // 当前位置属于队列快照，不新增另一套逐曲历史断点；位置改变无需重写整份队列。
-            if (prefs.getLong(KEY_QUEUE_POSITION, C.TIME_UNSET) != position) {
-                prefs.edit { putLong(KEY_QUEUE_POSITION, position) }
-            }
+        if (!force && fingerprint == lastSavedQueue?.fingerprint) {
+            checkpointQueuePosition(player)
             return
         }
         val window = if (count <= MAX_SAVED_QUEUE) {
@@ -1370,12 +1368,24 @@ object PlaybackController {
             putString("bookId", bookId)
             putString("queueId", currentQueueId)
         }
-        lastQueueFingerprint = fingerprint
+        lastSavedQueue = SavedQueueSelection(fingerprint, all[index].uid, index)
+    }
+
+    /** 服务定时只更新现有快照的位置；曲目/索引不一致时等待结构保存，绝不把B的断点写给A。 */
+    internal fun checkpointQueuePosition(player: Player) {
+        if (editingQueue) return
+        val saved = lastSavedQueue ?: return
+        if (player.currentMediaItemIndex != saved.index || player.currentMediaItem?.mediaId != saved.uid) return
+        val prefs = queuePrefs() ?: return
+        val position = player.currentPosition.coerceAtLeast(0L)
+        if (prefs.getLong(KEY_QUEUE_POSITION, C.TIME_UNSET) != position) {
+            prefs.edit { putLong(KEY_QUEUE_POSITION, position) }
+        }
     }
 
     private fun clearSavedQueue() {
         queuePrefs()?.edit { clear() }
-        lastQueueFingerprint = null
+        lastSavedQueue = null
     }
 
     /** 冷启动恢复上次队列（不自动播放时保持暂停，仅让 mini 播放条出现）。 */
@@ -1405,7 +1415,9 @@ object PlaybackController {
         if (autoPlay) {
             player.prepareAndPlay()
         }
-        lastQueueFingerprint = "${bookQueue?.albumId}:${currentQueueId}:" + playbackQueueFingerprint(tracks, index)
+        lastSavedQueue = SavedQueueSelection(
+            "${bookQueue?.albumId}:${currentQueueId}:" + playbackQueueFingerprint(tracks, index), tracks[index].uid, index,
+        )
         Log.d(TAG, "已恢复上次播放队列：${tracks.size} 首，当前第 ${index + 1} 首")
     }
 

@@ -5,6 +5,7 @@ import android.content.ContextWrapper
 import android.content.SharedPreferences
 import android.net.Uri
 import android.os.SystemClock
+import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -375,6 +376,68 @@ class PlaybackQueueAppendInstrumentedTest {
                 }
             }
         }
+
+    @Test fun periodicQueueCheckpointSurvivesColdRestoreWithoutExitSaving() = withPlayer { player, _ ->
+        val rememberProgress = main {
+            MeloraSettings.rememberProgress.value.also { MeloraSettings.rememberProgress.value = true }
+        }
+        try {
+            main { PlaybackController.saveQueue(force = true, player = player) }
+            val queueJson = prefs.getString("queue", null)
+            main { player.seekTo(37_000) }
+            await { player.currentPosition == 37_000L }
+            main { PlaybackController.checkpointQueuePosition(player) }
+            assertEquals("不能重写整份队列", queueJson, prefs.getString("queue", null))
+            assertEquals(37_000L, prefs.getLong("positionMs", -1L))
+            // 不执行exitPlayback/saveQueue；仅从已落盘快照新建会话，模拟异常终止后的冷恢复。
+            withFreshController { _, restored ->
+                restoreQueue(restored, autoPlay = false)
+                await { restored.mediaItemCount == 2 }
+                main {
+                    assertEquals("a", restored.currentMediaItem?.mediaId)
+                    assertEquals(37_000L, restored.currentPosition)
+                    assertFalse(restored.playWhenReady)
+                }
+            }
+        } finally { main { MeloraSettings.rememberProgress.value = rememberProgress } }
+    }
+
+    @Test fun periodicPositionCannotBeWrittenIntoAnotherSongsSnapshot() = withPlayer { player, _ ->
+        main { PlaybackController.saveQueue(force = true, player = player) }
+        val before = prefs.getLong("positionMs", -1L)
+        main { player.seekTo(1, 37_000) }
+        await { player.currentMediaItemIndex == 1 && player.currentPosition == 37_000L }
+        main { PlaybackController.checkpointQueuePosition(player) }
+        assertEquals(0, prefs.getInt("index", -1))
+        assertEquals("结构快照还是A，不能写入B的37秒", before, prefs.getLong("positionMs", -1L))
+        main {
+            PlaybackController.saveQueue(player = player)
+            player.seekTo(41_000)
+        }
+        await { player.currentPosition == 41_000L }
+        main { PlaybackController.checkpointQueuePosition(player) }
+        assertEquals(1, prefs.getInt("index", -1))
+        assertEquals(41_000L, prefs.getLong("positionMs", -1L))
+    }
+
+    @Test fun periodicCheckpointDoesNotEnumerateQueueAndDoesNotRewriteUnchangedPosition() = withPlayer { player, _ ->
+        main { PlaybackController.saveQueue(force = true, player = player); player.seekTo(37_000) }
+        await { player.currentPosition == 37_000L }
+        val changedKeys = mutableListOf<String?>()
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key -> changedKeys += key }
+        main {
+            val bounded = object : ForwardingPlayer(player) {
+                override fun getMediaItemCount(): Int = error("定时位置保存不能读取或遍历全队列")
+                override fun getMediaItemAt(index: Int): MediaItem = error("定时位置保存不能读取或遍历全队列")
+            }
+            prefs.registerOnSharedPreferenceChangeListener(listener)
+            try {
+                PlaybackController.checkpointQueuePosition(bounded)
+                PlaybackController.checkpointQueuePosition(bounded)
+                assertEquals(listOf("positionMs"), changedKeys)
+            } finally { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+        }
+    }
 
     @Test fun restoreQueueRestoresPausedShortMusicSnapshotAtNonFirstIndex() = withPlayer(empty = true) { _, controller ->
         val audio = silentWav()
@@ -822,7 +885,7 @@ class PlaybackQueueAppendInstrumentedTest {
                 .setListener(field("controllerListener").get(PlaybackController) as MediaController.Listener)
                 .buildAsync()
         }.get(5, TimeUnit.SECONDS)
-        val fields = listOf("controller", "controllerFuture", "bookQueue", "appContext", "lastQueueFingerprint", "detailUid", "currentQueueId", "playbackPreflight", "queueLoadJob", "pendingPlayback", "lyricJob", "positionJob").associateWith(::field)
+        val fields = listOf("controller", "controllerFuture", "bookQueue", "appContext", "lastSavedQueue", "detailUid", "currentQueueId", "playbackPreflight", "queueLoadJob", "pendingPlayback", "lyricJob", "positionJob").associateWith(::field)
         val previous = main { fields.mapValues { it.value.get(PlaybackController) } }
         @Suppress("UNCHECKED_CAST")
         val state = field("_state").get(PlaybackController) as MutableStateFlow<PlayerUiState>

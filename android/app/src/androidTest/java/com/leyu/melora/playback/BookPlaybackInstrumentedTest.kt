@@ -366,7 +366,7 @@ class BookPlaybackInstrumentedTest {
     ) {
         val names = listOf(
             "controller", "controllerFuture", "bookQueue", "appContext", "currentQueueId",
-            "lastQueueFingerprint", "playbackPreflight", "queueLoadJob", "urlPrefetchJob",
+            "lastSavedQueue", "playbackPreflight", "queueLoadJob", "urlPrefetchJob",
             "urlPrefetchUid", "pendingPlayback",
         )
         val fields = names.associateWith { name ->
@@ -391,7 +391,7 @@ class BookPlaybackInstrumentedTest {
                 fields.getValue("bookQueue").set(PlaybackController, queue)
                 fields.getValue("appContext").set(PlaybackController, testContext.applicationContext)
                 fields.getValue("currentQueueId").set(PlaybackController, bookQueueId("fixture"))
-                fields.getValue("lastQueueFingerprint").set(PlaybackController, null)
+                fields.getValue("lastSavedQueue").set(PlaybackController, null)
             }
             block()
             main {
