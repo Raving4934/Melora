@@ -38,9 +38,10 @@ class LocalMediaDownloadRegistrationTest {
     }
 
     @Test
-    fun registerDownloadedUsesScannerDocHashAndReusesSameUriId() {
+    fun registerDownloadedUsesScannerIdentityAndReusesSameUriId() {
         val uri = "content://com.android.externalstorage.documents/tree/primary%3AMusic/document/primary%3AMusic%2FMelora%2F%E5%A4%9C%E6%9B%B2.flac"
-        val expectedId = "doc_${uri.hashCode().toUInt().toString(16)}"
+        val expectedId = LocalMediaStore.idForUri(uri)
+        assertTrue(expectedId.matches(Regex("doc_[0-9a-f]{64}")))
         val first = LocalMediaStore.registerDownloaded(
             song = online(),
             uri = uri,
@@ -105,6 +106,44 @@ class LocalMediaDownloadRegistrationTest {
         assertEquals(24, registered.bitDepth)
         assertEquals(181_000L, registered.durationMs)
         assertEquals(10_000_000L, registered.sizeBytes)
+    }
+
+    @Test
+    fun collidingDocumentNamesKeepBothFilesInLocalIndex() {
+        val prefix = "content://com.android.externalstorage.documents/tree/primary%3AMusic/document/primary%3AMusic%2F"
+        val uris = listOf("${prefix}Aa.mp3", "${prefix}BB.mp3")
+        assertEquals("夹具必须复现旧32位哈希碰撞", uris[0].hashCode(), uris[1].hashCode())
+        val registered = uris.map { uri -> LocalMediaStore.registerDownloaded(
+            song = online(), uri = uri, spec = AudioSpecification("audio/mpeg", 44_100, 320_000),
+            durationMs = 180_000, sizeBytes = 4_200_000, displayName = uri.substringAfterLast("%2F"),
+        ) }
+        assertEquals(2, registered.map { it.id }.toSet().size)
+        assertEquals(uris.toSet(), LocalMediaStore.songs.value.map { it.uri }.toSet())
+        registered.forEach { assertEquals(it, LocalMediaStore.find(it.id)) }
+    }
+
+    @Test
+    fun oldDocumentIdSurvivesRescanAlongsideNewCollidingFile() {
+        val prefix = "content://com.android.externalstorage.documents/tree/primary%3AMusic/document/primary%3AMusic%2F"
+        val oldUri = "${prefix}Aa.mp3"
+        val newUri = "${prefix}BB.mp3"
+        val old = localSong(id = "doc_${oldUri.hashCode().toUInt().toString(16)}", uri = oldUri)
+        // 旧文件载入仍保留原ID；已有收藏/队列/播放进度不需要重写身份。
+        LocalMediaStore.replaceAll(listOf(old))
+        val baseline = LocalMediaStore.snapshot()
+        val idsByUri = baseline.associate { it.uri to it.id }
+        val scanned = listOf(oldUri, newUri).map { uri ->
+            localSong(id = LocalMediaStore.idForUri(uri, idsByUri[uri]), uri = uri)
+        }
+        LocalMediaStore.commitScanned(baseline, scanned)
+        assertEquals(old.id, LocalMediaStore.findByUri(oldUri)?.id)
+        assertEquals(2, LocalMediaStore.count)
+        assertEquals(LocalMediaStore.idForUri(newUri), LocalMediaStore.findByUri(newUri)?.id)
+        // 同一基线上的并发删除不能被新的身份生成器重新加入。
+        val secondBaseline = LocalMediaStore.snapshot()
+        LocalMediaStore.removeIds(setOf(old.id))
+        LocalMediaStore.commitScanned(secondBaseline, scanned)
+        assertEquals(listOf(newUri), LocalMediaStore.songs.value.map { it.uri })
     }
 
     @Test

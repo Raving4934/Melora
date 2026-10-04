@@ -9,6 +9,7 @@ import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.sdk.SourceResolver
 import com.leyu.melora.playback.writeTextAtomically
 import java.io.File
+import java.security.MessageDigest
 import java.util.Locale
 import kotlin.math.abs
 import kotlinx.coroutines.CoroutineScope
@@ -220,7 +221,7 @@ object LocalMediaStore {
 
     // MediaStore的external和external_primary可指向同一媒体ID，不能按地址字符串拆成两首。
     fun findByUri(uri: String): LocalSong? = byUri[uri]
-        ?: byId[downloadedId(uri)]?.takeIf { it.id.startsWith("ms_") }
+        ?: byId[idForUri(uri)]?.takeIf { it.id.startsWith("ms_") }
 
     fun match(title: String, artist: String): LocalSong? = byMatch[LocalSong.matchKeyOf(title, artist)]
 
@@ -368,7 +369,7 @@ object LocalMediaStore {
                 ?: displayName.substringBeforeLast('.', displayName).trim().ifBlank { "未知歌曲" }
         }
         val downloaded = LocalSong(
-            id = existing?.id ?: downloadedId(uri),
+            id = idForUri(uri, existing?.id),
             uri = uri,
             title = title,
             artist = song.singer.trim(),
@@ -398,12 +399,15 @@ object LocalMediaStore {
         )
     }
 
-    private fun downloadedId(uri: String): String {
+    /** 扫描与下载共用文件身份；已入库ID原样保留，新文档不再使用易碰撞的32位哈希。 */
+    internal fun idForUri(uri: String, existingId: String? = null): String {
+        if (existingId != null) return existingId
         val parsed = runCatching { java.net.URI(uri) }.getOrNull()
         val mediaId = parsed?.takeIf {
             it.authority == "media" && it.path?.substringBeforeLast('/')?.endsWith("/audio/media") == true
         }?.path?.substringAfterLast('/')?.toLongOrNull()
-        return if (mediaId != null) "ms_$mediaId" else "doc_${uri.hashCode().toUInt().toString(16)}"
+        return if (mediaId != null) "ms_$mediaId" else "doc_" + MessageDigest.getInstance("SHA-256")
+            .digest(uri.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
     }
 
     private fun mimeTypeFromDisplayName(displayName: String): String? = when (

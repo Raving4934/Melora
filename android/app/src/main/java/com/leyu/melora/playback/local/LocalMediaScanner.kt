@@ -51,6 +51,7 @@ object LocalMediaScanner {
                 val appContext = context.applicationContext
                 LocalMediaStore.withScanning {
                     val baseline = LocalMediaStore.snapshot()
+                    val idsByUri = baseline.associate { it.uri to it.id }
                     val folders = MeloraSettings.localFolders.value
                     val useMediaStore = requiresAudioPermission()
                     val successful = mutableListOf<LocalSong>()
@@ -69,7 +70,7 @@ object LocalMediaScanner {
 
                     for (tree in folders) {
                         currentCoroutineContext().ensureActive()
-                        val folder = scanSource { scanFolderTree(appContext, tree) }
+                        val folder = scanSource { scanFolderTree(appContext, tree, idsByUri) }
                         if (folder.successful) {
                             successful += folder.songs
                         } else {
@@ -273,7 +274,7 @@ object LocalMediaScanner {
         }
     }
 
-    private suspend fun scanFolderTree(context: Context, treeUri: String): List<LocalSong> {
+    private suspend fun scanFolderTree(context: Context, treeUri: String, idsByUri: Map<String, String>): List<LocalSong> {
         val root = DocumentFile.fromTreeUri(context, treeUri.toUri()) ?: error("无法读取自定义目录")
         require(root.exists() && root.isDirectory && root.canRead()) { "自定义目录权限已失效" }
         val result = mutableListOf<LocalSong>()
@@ -311,7 +312,7 @@ object LocalMediaScanner {
                     val (title, artist) = restoreFromFileName(tag?.title?.ifBlank { null } ?: stem, tag?.artist.orEmpty(), stem)
                     val modifiedAt = it.getLong(4)
                     result += LocalSong(
-                        id = "doc_${uri.toString().hashCode().toUInt().toString(16)}",
+                        id = LocalMediaStore.idForUri(uri.toString(), idsByUri[uri.toString()]),
                         uri = uri.toString(), title = title, artist = artist,
                         album = cleanFolderAlbum(tag?.album.orEmpty(), folderName),
                         durationMs = tag?.durationMs ?: 0L, sizeBytes = it.getLong(3),

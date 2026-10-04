@@ -11,6 +11,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
 import com.leyu.melora.playback.local.LocalMediaStore
+import com.leyu.melora.playback.local.LocalMediaScanner
 import com.leyu.melora.playback.local.LocalSong
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.sdk.SourceResolver
@@ -74,6 +75,68 @@ class DownloadQualityInstrumentedTest {
         context.contentResolver.call(tree, "reset", null, null)
         context.getSharedPreferences(MeloraSettings.PREFS, 0).edit().clear().commit()
         context.root.deleteRecursively()
+    }
+
+    @Test fun safScanKeepsOpaqueLegacyIdsAcrossDocumentHashCollision() = runBlocking<Unit> {
+        val oldUseMediaStore = MeloraSettings.localUseMediaStore.value
+        val oldFolders = MeloraSettings.localFolders.value.toList()
+        val oldExcludeShort = MeloraSettings.localExcludeShort.value
+        val oldExcludeSmall = MeloraSettings.localExcludeSmall.value
+        val previousSongs = LocalMediaStore.songs.value
+        try {
+            MeloraSettings.updateLocalUseMediaStore(false)
+            MeloraSettings.updateLocalFolders(listOf(tree.toString()))
+            MeloraSettings.updateLocalExcludeShort(false)
+            MeloraSettings.updateLocalExcludeSmall(false)
+
+            val bytes = instrumentation.context.assets.open("audio/fixture-128.mp3").use { it.readBytes() }
+            fun create(name: String): Uri {
+                val created = requireNotNull(DocumentsContract.createDocument(context.contentResolver, DocumentsContract.buildDocumentUriUsingTree(tree, "root"), "audio/mpeg", name))
+                context.contentResolver.openOutputStream(created, "w")!!.use { it.write(bytes) }
+                val documentId = DocumentsContract.getDocumentId(created)
+                return DocumentsContract.buildDocumentUriUsingTree(tree, documentId)
+            }
+            val firstUri = create("Aa.mp3")
+            val secondUri = create("BB.mp3")
+            val oldId = "doc_${firstUri.toString().hashCode().toUInt().toString(16)}"
+            LocalMediaStore.replaceAll(listOf(LocalSong(
+                id = oldId,
+                uri = firstUri.toString(),
+                title = "legacy entry",
+                artist = "",
+                album = "",
+                durationMs = 0,
+                sizeBytes = bytes.size.toLong(),
+                mimeType = "audio/mpeg",
+                sampleRate = 0,
+                bitrate = 0,
+                modifiedAt = 0,
+                addedAt = 0,
+                folder = "root",
+            )))
+
+            LocalMediaScanner.scan(context)
+            val scanned = LocalMediaStore.songs.value
+            assertEquals(2, scanned.size)
+            val first = scanned.single { it.uri == firstUri.toString() }
+            val second = scanned.single { it.uri == secondUri.toString() }
+            assertEquals(oldId, first.id)
+            assertNotEquals(first.id, second.id)
+            val firstSnapshot = scanned.map { it.id to it.uri }.toSet()
+
+            LocalMediaScanner.scan(context)
+            assertEquals(firstSnapshot, LocalMediaStore.songs.value.map { it.id to it.uri }.toSet())
+            LocalMediaStore.init(context)
+            assertEquals(firstSnapshot, LocalMediaStore.songs.value.map { it.id to it.uri }.toSet())
+            assertEquals(oldId, LocalMediaStore.songs.value.single { it.uri == firstUri.toString() }.id)
+        } finally {
+            LocalMediaStore.replaceAll(previousSongs)
+            MeloraSettings.updateLocalUseMediaStore(oldUseMediaStore)
+            MeloraSettings.updateLocalFolders(oldFolders)
+            MeloraSettings.updateLocalExcludeShort(oldExcludeShort)
+            MeloraSettings.updateLocalExcludeSmall(oldExcludeSmall)
+            context.contentResolver.call(tree, "reset", null, null)
+        }
     }
 
     private fun seed(requested: String, file: String, reported: String = requested, payloadOverride: ByteArray? = null) {
