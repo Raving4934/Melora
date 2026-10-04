@@ -1,6 +1,14 @@
 package com.leyu.melora.ui.my
 
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.bookAlbumOf
+import com.leyu.melora.playback.bookId
+import com.leyu.melora.playback.canonicalBookId
+import com.leyu.melora.playback.BookListeningProgress
+import com.leyu.melora.ui.common.chapterTitle
+import com.leyu.melora.ui.common.rememberBookAlbumSubtitle
+import com.leyu.melora.ui.common.rememberBookResumePoint
+import com.leyu.melora.ui.common.bookResumeSubtitle
 import com.leyu.melora.ui.common.rememberSheetDismiss
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -108,6 +116,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -191,6 +200,7 @@ private enum class MyPage {
 fun MyLibraryScreen(
     modifier: Modifier = Modifier,
     onOpenDrawer: (() -> Unit)? = null,
+    onOpenPlayer: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val hubListState = rememberLazyListState()
@@ -212,6 +222,12 @@ fun MyLibraryScreen(
     var favoritesTab by rememberSaveable { mutableIntStateOf(0) }
     var detail by remember { mutableStateOf<LibraryDetail?>(null) }
     var moreSong by remember { mutableStateOf<OnlineSong?>(null) }
+    val resumeProgram: (OnlineSong) -> Unit = { song ->
+        val current = OnlineSong.from(PlaybackController.state.value.current?.raw)
+        val alreadyListening = song.bookId() != null && current?.bookId() == song.bookId()
+        PlaybackController.resumeBook(context, song)
+        if (alreadyListening) onOpenPlayer()
+    }
     var showCreateSheet by remember { mutableStateOf(false) }
     var showImportSheet by remember { mutableStateOf(false) }
     var playlistToRename by remember { mutableStateOf<UserLibrary.UserPlaylist?>(null) }
@@ -316,7 +332,13 @@ fun MyLibraryScreen(
         )
     }
 
-    moreSong?.let { song -> SongMoreSheet(song, onDismiss = { moreSong = null }) }
+    moreSong?.let { song ->
+        SongMoreSheet(song, onDismiss = { moreSong = null },
+            onOpenBookAlbum = { detail = LibraryDetail.Playlist(it) },
+            onResumeBook = if (page == MyPage.Recents && song.isBookChapter) ({ resumeProgram(song) }) else null,
+            onRemoveRecentProgram = if (page == MyPage.Recents && song.isBookChapter) ({ UserLibrary.removeRecentProgram(song) }) else null,
+        )
+    }
 
     DetailPageHost(target = detail, modifier = modifier, detail = { target ->
         when (target) {
@@ -383,7 +405,7 @@ fun MyLibraryScreen(
                     recentContainers = recentContainers,
                     onBack = { page = null },
                     onOpenContainer = openContainer,
-                    onOpenBookAlbum = { detail = LibraryDetail.Playlist(it) },
+                    onResumeProgram = resumeProgram,
                     onMoreSong = { moreSong = it },
                 )
                 MyPage.UserPlaylists -> UserPlaylistsPage(
@@ -432,7 +454,7 @@ fun MyLibraryScreen(
                     userPlaylists = userPlaylists,
                     onOpenPage = { page = it },
                     onOpenContainer = openContainer,
-                    onOpenBookProgram = { detail = LibraryDetail.Playlist(it) },
+                    onResumeProgram = resumeProgram,
                     onOpenUserPlaylist = { detail = LibraryDetail.UserPlaylist(it) },
                     onOpenPlaylist = { detail = LibraryDetail.Playlist(it) },
                     onOpenFavoritesTab = { favoritesTab = it; page = MyPage.Favorites },
@@ -458,7 +480,7 @@ private fun MyHubPage(
     userPlaylists: List<UserLibrary.UserPlaylist>,
     onOpenPage: (MyPage) -> Unit,
     onOpenContainer: (UserLibrary.RecentContainer) -> Unit,
-    onOpenBookProgram: (OnlinePlaylist) -> Unit,
+    onResumeProgram: (OnlineSong) -> Unit,
     onOpenUserPlaylist: (UserLibrary.UserPlaylist) -> Unit,
     onOpenPlaylist: (OnlinePlaylist) -> Unit,
     onOpenFavoritesTab: (Int) -> Unit,
@@ -473,10 +495,10 @@ private fun MyHubPage(
     val aggregateCover = recentContainers.firstOrNull()?.img?.takeIf(String::isNotBlank)
         ?: latestSongCover
         ?: latestSong?.img
-    // 最近节目卡：按听书专辑去重，点击进对应专辑
+    // 最近节目卡：按平台与听书专辑去重，点击续听最后章节。
     val recentPrograms = recentSongs
         .filter { it.isBookChapter }
-        .distinctBy { it.albumId.ifBlank { it.uid } }
+        .distinctBy { BookListeningProgress.bookIdentity(it) ?: (it.source to it.uid) }
         .take(3)
     val recentTotal = recentEntryCount(recentSongs, recentContainers)
     LazyColumn(
@@ -572,13 +594,16 @@ private fun MyHubPage(
                             )
                         }
                         itemsIndexed(recentPrograms, key = { _, song -> "p:${song.uid}" }) { _, song ->
-                            val cover = rememberOnlineSongCover(song, enabled = true)
+                            val progress = rememberBookResumePoint(song)
+                            val cover = rememberOnlineSongCover(progress.song, enabled = true)
                             RecentContainerCard(
-                                name = chapterTitle(song),
-                                label = "节目",
-                                cover = cover ?: song.img,
+                                name = progress.song.albumName.ifBlank { progress.song.name },
+                                label = if (progress.completed) "本集已听完" else if (progress.positionMs > 0) {
+                                    "续听 · ${com.leyu.melora.playback.local.LocalSong.formatDuration(progress.positionMs / 1000)}"
+                                } else chapterTitle(progress.song),
+                                cover = cover ?: progress.song.img,
                                 seed = "program:${song.uid}",
-                                onClick = { bookAlbumOf(song)?.let(onOpenBookProgram) },
+                                onClick = { onResumeProgram(progress.song) },
                             )
                         }
                     }
@@ -862,9 +887,9 @@ private fun RecentContainerCard(
     seed: String,
     onClick: () -> Unit,
 ) {
-    val fallbackIcon = when (label) {
-        "听书", "节目" -> Icons.Outlined.Headphones
-        "专辑" -> Icons.Outlined.Album
+    val fallbackIcon = when {
+        seed.startsWith("program:") || label == "听书" || label == "节目" -> Icons.Outlined.Headphones
+        label == "专辑" -> Icons.Outlined.Album
         else -> Icons.AutoMirrored.Rounded.QueueMusic
     }
     Column(
@@ -933,10 +958,15 @@ private fun containerCoverSong(container: UserLibrary.RecentContainer): OnlineSo
     else -> null
 }
 
-/** 由最近收听容器反推歌单实体（有声专辑 id 已带 book_album_ 前缀）。 */
-private fun playlistFromContainer(container: UserLibrary.RecentContainer): OnlinePlaylist {
+/** 由最近容器恢复真实类型和作者；旧听书裸ID也统一进入章节目录。 */
+internal fun playlistFromContainer(container: UserLibrary.RecentContainer): OnlinePlaylist {
     val raw = JSONObject().apply {
-        put("id", container.id)
+        val id = if (container.kind == "book") {
+            canonicalBookId(container.source, container.id)?.let { "book_album_$it" } ?: container.id
+        } else container.id
+        put("id", id)
+        put("kind", container.kind)
+        put("author", container.artist)
         put("name", container.name)
         put("source", container.source)
         put("img", container.img ?: "")
@@ -968,8 +998,8 @@ private fun PlaylistListRow(
                 .background(MeloraAppearance.tintBlue),
             contentAlignment = Alignment.Center,
         ) {
-            if (!img.isNullOrBlank() && img.startsWith("http")) {
-                SongArtwork(img, seed, Modifier.fillMaxSize(), cornerRadius = 10)
+            if (!img.isNullOrBlank()) {
+                SongArtwork(img, seed, Modifier.fillMaxSize(), cornerRadius = 10, crossfade = false)
             } else {
                 Icon(fallback, contentDescription = null, tint = BrandBlue, modifier = Modifier.size(21.dp))
             }
@@ -993,8 +1023,7 @@ private fun PlaylistListRow(
                 modifier = Modifier.padding(top = 2.dp),
             )
         }
-        trailing?.invoke()
-        Icon(
+        if (trailing != null) trailing() else Icon(
             Icons.AutoMirrored.Filled.KeyboardArrowRight,
             contentDescription = null,
             tint = TextMuted,
@@ -1070,7 +1099,7 @@ private fun SubPageScaffold(
 // ---------- 我的收藏子页 ----------
 
 @Composable
-private fun FavoritesPage(
+internal fun FavoritesPage(
     singleSongs: List<OnlineSong>,
     favoriteCollections: List<OnlinePlaylist>,
     favoriteAlbums: List<UserLibrary.FavoriteAlbum>,
@@ -1240,7 +1269,7 @@ private fun FavoritesPage(
                         LazyColumn(
                             state = listState,
                             modifier = Modifier.fillMaxSize(),
-                            contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
+                            contentPadding = chromeContentPadding(PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 24.dp)),
                         ) {
                             itemsIndexed(favoriteChapters, key = { index, song -> "${song.uid}:$index" }) { _, song ->
                                 BookProgramRow(
@@ -1272,7 +1301,9 @@ private fun PlaylistListColumn(
         itemsIndexed(playlists, key = { _, item -> "${item.source}_${item.id}" }) { _, playlist ->
             PlaylistListRow(
                 name = playlist.name,
-                meta = listOfNotNull(
+                meta = if (playlist.isBookAlbum) {
+                    rememberBookAlbumSubtitle(playlist.source, playlist.id, playlist.author, playlist.total)
+                } else listOfNotNull(
                     playlist.author.takeIf { it.isNotBlank() },
                     playlist.total.takeIf { it > 0 }?.let { "$it 首" },
                 ).joinToString(" · ").ifBlank { "歌单" },
@@ -1290,19 +1321,19 @@ private fun PlaylistListColumn(
 /** 首页入口采用与最近页「全部」相同口径：单曲 + 容器 + 按专辑聚合的节目。 */
 internal fun recentEntryCount(songs: List<OnlineSong>, containers: List<UserLibrary.RecentContainer>): Int =
     songs.count { !it.isBookChapter } + containers.size +
-        songs.filter { it.isBookChapter }.distinctBy { it.albumId.ifBlank { it.uid } }.size
+        songs.filter { it.isBookChapter }.distinctBy { BookListeningProgress.bookIdentity(it) ?: (it.source to it.uid) }.size
 
 /** 全部数量与四个可见分类相加一致，听书容器不可漏计。 */
 internal fun recentTabCounts(songs: Int, collections: Int, books: Int, programs: Int): List<Int> =
     listOf(songs + collections + books + programs, songs, collections, books, programs)
 
 @Composable
-private fun RecentsPage(
+internal fun RecentsPage(
     recentSongs: List<OnlineSong>,
     recentContainers: List<UserLibrary.RecentContainer>,
     onBack: () -> Unit,
     onOpenContainer: (UserLibrary.RecentContainer) -> Unit,
-    onOpenBookAlbum: (OnlinePlaylist) -> Unit,
+    onResumeProgram: (OnlineSong) -> Unit,
     onMoreSong: (OnlineSong) -> Unit,
 ) {
     val context = LocalContext.current
@@ -1318,10 +1349,19 @@ private fun RecentsPage(
     val listState = listStates[tab]
     val scrollToTop = rememberFastScrollToTop(listState)
     val songs = recentSongs.filterNot { it.isBookChapter }
-    val chapters = recentSongs.filter { it.isBookChapter }.distinctBy { it.albumId.ifBlank { it.uid } }
+    val chapters = recentSongs.filter { it.isBookChapter }.distinctBy { BookListeningProgress.bookIdentity(it) ?: (it.source to it.uid) }
     // 容器按类型分流：歌单/榜单/推荐 与 听书专辑
     val collectionContainers = recentContainers.filter { it.kind != "book" }
     val bookContainers = recentContainers.filter { it.kind == "book" }
+
+    val visibleContainers = when (tab) {
+        0 -> recentContainers
+        2 -> collectionContainers
+        3 -> bookContainers
+        else -> emptyList()
+    }
+    val visibleSongs = if (tab == 0 || tab == 1) songs else emptyList()
+    val visiblePrograms = if (tab == 0 || tab == 4) chapters else emptyList()
 
     SubPageScaffold(
         title = "最近播放",
@@ -1346,142 +1386,62 @@ private fun RecentsPage(
                 counts = recentTabCounts(songs.size, collectionContainers.size, bookContainers.size, chapters.size),
                 selected = tab,
                 onSelect = { tab = it },
+                modifier = Modifier.testTag("recent-tabs"),
             )
-            if (tab == 1 && songs.isNotEmpty()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(Icons.Outlined.History, contentDescription = null, tint = TextSub, modifier = Modifier.size(15.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("${songs.size} 条记录", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextSub)
-                    Spacer(Modifier.weight(1f))
-                    PlayAllPill { PlaybackController.playQueue(context, songs.toUiTracks(), 0) }
-                }
-            } else if (tab == 4 && chapters.isNotEmpty()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(Icons.Outlined.Headphones, contentDescription = null, tint = TextSub, modifier = Modifier.size(15.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("${chapters.size} 个节目", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextSub)
-                }
-            }
         },
     ) {
-        when (tab) {
-            // 全部：容器/单曲/节目各用自己的视图混排
-            0 -> if (collectionContainers.isEmpty() && bookContainers.isEmpty() && songs.isEmpty() && chapters.isEmpty()) {
-                EmptyState("暂无播放记录", Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current))
-            } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
-                ) {
-                    if (recentContainers.isNotEmpty()) {
-                        item(contentType = "section") { RecentSectionTitle("最近收听") }
-                        items(recentContainers, key = { "c:${it.key}" }, contentType = { "container" }) { container ->
-                            RecentContainerRow(container, onOpenContainer)
-                        }
-                    }
-                    if (songs.isNotEmpty()) {
-                        item(contentType = "section") { RecentSectionTitle("单曲") }
-                        itemsIndexed(songs, key = { index, song -> "s:${song.uid}:$index" }, contentType = { _, _ -> "song" }) { index, song ->
-                            OnlineSongRow(
-                                song = song,
-                                onMore = { onMoreSong(song) },
-                                onClick = { PlaybackController.playTrack(context, UiTrack.fromOnline(song)) },
-                            )
-                        }
-                    }
-                    if (chapters.isNotEmpty()) {
-                        item(contentType = "section") { RecentSectionTitle("节目") }
-                        itemsIndexed(chapters, key = { index, song -> "b:${song.albumId}:$index" }, contentType = { _, _ -> "program" }) { _, song ->
-                            BookProgramRow(
-                                song = song,
-                                subtitle = "最近播放：${chapterTitle(song)}",
-                                onClick = { bookAlbumOf(song)?.let(onOpenBookAlbum) },
-                                onMore = { onMoreSong(song) },
-                            )
-                        }
-                    }
-                }
-            }
-
-            // 单曲
-            1 -> if (songs.isEmpty()) {
-                EmptyState("暂无播放记录", Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current))
-            } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
-                ) {
-                    itemsIndexed(songs, key = { index, song -> "${song.uid}:$index" }) { index, song ->
-                        OnlineSongRow(
-                            song = song,
-                            onMore = { onMoreSong(song) },
-                            onClick = { PlaybackController.playTrack(context, UiTrack.fromOnline(song)) },
+        // 标题和分类栏高度恒定；摘要属于对应列表，切页时不再触发Scaffold顶栏/正文二次测量。
+        if (visibleContainers.isEmpty() && visibleSongs.isEmpty() && visiblePrograms.isEmpty()) {
+            EmptyState(
+                when (tab) {
+                    2 -> "暂无歌单/专辑播放记录"
+                    3 -> "暂无听书播放记录"
+                    4 -> "暂无节目播放记录"
+                    else -> "暂无播放记录"
+                },
+                Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current),
+            )
+        } else key(tab) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize().testTag("recent-tab-list"),
+                contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
+            ) {
+                if (tab <= 1) {
+                    item(key = "summary", contentType = "section") {
+                        RecentSectionTitle(
+                            text = if (tab == 0) "最近收听" else "${songs.size} 条记录",
+                            leadingIcon = if (tab == 1) Icons.Outlined.History else null,
+                            onPlayAll = if (tab == 1) {
+                                { PlaybackController.playQueue(context, songs.toUiTracks(), 0) }
+                            } else null,
                         )
                     }
                 }
-            }
-
-            // 歌单/专辑/榜单/推荐
-            2 -> if (collectionContainers.isEmpty()) {
-                EmptyState("暂无歌单/专辑播放记录", Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current))
-            } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    contentPadding = chromeContentPadding(PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 24.dp)),
-                ) {
-                    items(collectionContainers, key = { it.key }) { container ->
-                        RecentContainerRow(container, onOpenContainer, showCard = true)
-                    }
+                items(visibleContainers, key = { "c:${it.source}:${it.key}" }, contentType = { "container" }) { container ->
+                    RecentContainerRow(container, onOpenContainer)
                 }
-            }
-
-            // 听书专辑
-            3 -> if (bookContainers.isEmpty()) {
-                EmptyState("暂无听书播放记录", Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current))
-            } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    contentPadding = chromeContentPadding(PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 24.dp)),
-                ) {
-                    items(bookContainers, key = { it.key }) { container ->
-                        RecentContainerRow(container, onOpenContainer, showCard = true)
-                    }
+                if (tab == 0 && visibleSongs.isNotEmpty()) {
+                    item(key = "songs-section", contentType = "section") { RecentSectionTitle("单曲") }
                 }
-            }
-
-            // 节目（听书章节）
-            else -> if (chapters.isEmpty()) {
-                EmptyState("暂无节目播放记录", Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current))
-            } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
-                ) {
-                    itemsIndexed(chapters, key = { index, song -> "b:${song.albumId}:$index" }, contentType = { _, _ -> "program" }) { _, song ->
-                        BookProgramRow(
-                            song = song,
-                            subtitle = "最近播放：${chapterTitle(song)}",
-                            onClick = { bookAlbumOf(song)?.let(onOpenBookAlbum) },
-                            onMore = { onMoreSong(song) },
-                        )
-                    }
+                itemsIndexed(visibleSongs, key = { index, song -> "s:${song.uid}:$index" }, contentType = { _, _ -> "song" }) { _, song ->
+                    OnlineSongRow(
+                        song = song,
+                        onMore = { onMoreSong(song) },
+                        onClick = { PlaybackController.playTrack(context, UiTrack.fromOnline(song)) },
+                    )
+                }
+                if (tab == 0 && visiblePrograms.isNotEmpty()) {
+                    item(key = "programs-section", contentType = "section") { RecentSectionTitle("节目") }
+                }
+                itemsIndexed(visiblePrograms, key = { index, song -> "b:${song.uid}:$index" }, contentType = { _, _ -> "program" }) { _, song ->
+                    val progress = rememberBookResumePoint(song)
+                    BookProgramRow(
+                        song = progress.song,
+                        subtitle = bookResumeSubtitle(progress),
+                        onClick = { onResumeProgram(progress.song) },
+                        onMore = { onMoreSong(progress.song) },
+                    )
                 }
             }
         }
@@ -1489,121 +1449,65 @@ private fun RecentsPage(
 }
 
 @Composable
-private fun RecentSectionTitle(text: String) {
-    Text(
-        text = text,
-        fontSize = 13.sp,
-        fontWeight = FontWeight.SemiBold,
-        color = TextSub,
-        modifier = Modifier.padding(start = 16.dp, top = 10.dp, bottom = 2.dp),
-    )
+private fun RecentSectionTitle(
+    text: String,
+    leadingIcon: ImageVector? = null,
+    onPlayAll: (() -> Unit)? = null,
+) {
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (leadingIcon != null) {
+            Icon(leadingIcon, contentDescription = "播放记录", tint = TextSub, modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(6.dp))
+        }
+        Text(text, modifier = Modifier.weight(1f), fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold, color = TextSub)
+        onPlayAll?.let { PlayAllPill(it) }
+    }
 }
 
-/** 最近收听容器行：封面 + 名称 + 类型标签，点击进入对应页面。 */
+/** 全部与分类共用平铺容器行，听书副标题来自作者/主播和已保存的收听进度。 */
 @Composable
 private fun RecentContainerRow(
     container: UserLibrary.RecentContainer,
     onOpen: (UserLibrary.RecentContainer) -> Unit,
-    showCard: Boolean = false,
 ) {
-    val row: @Composable () -> Unit = {
-        PlaylistListRow(
-            name = container.name,
-            meta = containerLabel(container.kind),
-            img = container.img,
-            seed = container.key,
-            fallback = if (container.kind == "book") Icons.Outlined.Headphones else Icons.AutoMirrored.Rounded.QueueMusic,
-            onClick = { onOpen(container) },
-        )
-    }
-    if (showCard) {
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = CardWhite,
-            shadowElevation = 0.dp,
-            border = MeloraAppearance.cardBorder,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            row()
-        }
-    } else {
-        row()
-    }
+    PlaylistListRow(
+        name = container.name,
+        meta = if (container.kind == "book") {
+            rememberBookAlbumSubtitle(container.source, container.id, container.artist)
+        } else containerLabel(container.kind),
+        img = container.img,
+        seed = container.key,
+        fallback = if (container.kind == "book") Icons.Outlined.Headphones else Icons.AutoMirrored.Rounded.QueueMusic,
+        onClick = { onOpen(container) },
+    )
 }
 
-/** 章节显示名：去掉专辑名前缀，保留"第xx集 标题"。 */
-internal fun chapterTitle(song: OnlineSong): String =
-    song.name.removePrefix(song.albumName).trim().ifBlank { song.name }
-
-/** 由章节歌曲反推有声专辑实体，供点击进入节目页复用。 */
-internal fun bookAlbumOf(song: OnlineSong): OnlinePlaylist? {
-    val albumId = song.albumId
-    if (albumId.isBlank()) return null
-    val raw = JSONObject().apply {
-        put("id", "book_album_$albumId")
-        put("name", song.albumName.ifBlank { song.name })
-        put("source", song.source)
-        put("author", song.singer)
-        put("img", song.img ?: "")
-        put("description", song.raw.optString("description"))
-        put("play_count", song.raw.optString("play_count"))
-    }
-    return OnlinePlaylist.from(raw)
-}
-
-/** 听书节目行：标题=节目名，副标题=最近播到哪一集；点击进节目。 */
+/** 节目与听书专辑共用行规格；仅保留自己的续听/更多操作。 */
 @Composable
 private fun BookProgramRow(
     song: OnlineSong,
     subtitle: String,
     onClick: () -> Unit,
-    onMore: (() -> Unit)? = null,
+    onMore: () -> Unit,
 ) {
     val cover = rememberOnlineSongCover(song, enabled = true)
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(46.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(MeloraAppearance.tintBlue),
-            contentAlignment = Alignment.Center,
-        ) {
-            SongArtwork(cover ?: song.img, song.uid, Modifier.fillMaxSize(), cornerRadius = 8)
-        }
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .padding(horizontal = 12.dp),
-        ) {
-            Text(
-                text = song.albumName.ifBlank { song.name },
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Medium,
-                color = TextMain,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = subtitle,
-                fontSize = 12.sp,
-                color = TextSub,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 2.dp),
-            )
-        }
-        if (onMore != null) {
-            IconButton(onClick = onMore, modifier = Modifier.size(32.dp)) {
+    PlaylistListRow(
+        name = song.albumName.ifBlank { song.name },
+        meta = subtitle,
+        img = cover ?: song.img,
+        seed = song.uid,
+        fallback = Icons.Outlined.Headphones,
+        onClick = onClick,
+        trailing = {
+            IconButton(onClick = onMore, modifier = Modifier.size(34.dp)) {
                 Icon(Icons.Outlined.MoreVert, contentDescription = "更多", tint = TextMuted, modifier = Modifier.size(18.dp))
             }
-        }
-    }
+        },
+    )
 }
 
 // ---------- 下载记录子页 ----------

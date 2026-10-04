@@ -149,6 +149,15 @@ internal fun ContinuousPlayerSheet(
             )
         }
         // Read animated values in drawing/gesture lambdas, not throughout the player composition.
+        fun expandPlayer() {
+            backState.transitionTo(scope, PlayerSheetTransition.Expand) {
+                verticalPagerState.scrollToPage(0)
+                sheetState.animateTo(PlayerSheetAnchor.Expanded, PlayerPageSnapSpec)
+            }
+        }
+        LaunchedEffect(backState.expandRequest) {
+            if (backState.expandRequest != 0) expandPlayer()
+        }
         val offset = remember(sheetState, travel) {
             { sheetState.offset.takeIf(Float::isFinite)?.coerceIn(0f, travel) ?: travel }
         }
@@ -387,10 +396,7 @@ internal fun ContinuousPlayerSheet(
                                             indication = null,
                                             interactionSource = remember { MutableInteractionSource() },
                                         ) {
-                                            backState.transitionTo(scope, PlayerSheetTransition.Expand) {
-                                                verticalPagerState.scrollToPage(0)
-                                                sheetState.animateTo(PlayerSheetAnchor.Expanded, PlayerPageSnapSpec)
-                                            }
+                                            expandPlayer()
                                         }
                                         .draggable(
                                             enabled = showMini,

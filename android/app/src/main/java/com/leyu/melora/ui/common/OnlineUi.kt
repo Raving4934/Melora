@@ -88,6 +88,18 @@ import kotlinx.coroutines.withContext
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import com.leyu.melora.playback.Downloader
+import com.leyu.melora.playback.bookAlbumProgressPercent
+import com.leyu.melora.playback.sdk.KwBookApi
+import com.leyu.melora.playback.sdk.OnlineCache
+import com.leyu.melora.playback.BookListeningProgress
+import com.leyu.melora.playback.BookResumePoint
+import com.leyu.melora.playback.canonicalBookId
+import com.leyu.melora.playback.DownloadCenter
+import androidx.compose.material.icons.outlined.Replay
+import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.MenuBook
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.PlayerCoverStyle
@@ -97,6 +109,8 @@ import com.leyu.melora.playback.local.LocalMediaStore
 import com.leyu.melora.playback.local.LocalSong
 import com.leyu.melora.playback.sdk.CoverLoader
 import com.leyu.melora.playback.sdk.OnlineSong
+import com.leyu.melora.playback.sdk.OnlinePlaylist
+import org.json.JSONObject
 import com.leyu.melora.ui.player.ArtworkPlaceholder
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.map
@@ -389,6 +403,71 @@ fun ErrorState(
     }
 }
 
+/** 章节显示名：去掉专辑名前缀，保留"第xx集 标题"。 */
+internal fun chapterTitle(song: OnlineSong): String =
+    song.name.removePrefix(song.albumName).trim().ifBlank { song.name }
+
+/** 由章节歌曲反推有声专辑实体，供点击进入节目页复用。 */
+internal fun bookAlbumOf(song: OnlineSong): OnlinePlaylist? {
+    val albumId = canonicalBookId(song.source, song.albumId) ?: return null
+    val raw = JSONObject().apply {
+        put("id", "book_album_$albumId")
+        put("name", song.albumName.ifBlank { song.name })
+        put("source", song.source)
+        put("author", song.singer)
+        put("img", song.img ?: "")
+        put("description", song.raw.optString("description"))
+        put("play_count", song.raw.optString("play_count"))
+    }
+    return OnlinePlaylist.from(raw)
+}
+
+@Composable
+internal fun rememberBookResumePoint(song: OnlineSong): BookResumePoint {
+    val context = LocalContext.current
+    val revision by BookListeningProgress.updates.collectAsStateWithLifecycle()
+    val enabled by MeloraSettings.rememberProgress.collectAsStateWithLifecycle()
+    return remember(song.uid, revision, enabled) { BookListeningProgress.read(context, song) }
+}
+
+/** 最近与收藏听书只读已有元数据/断点，不为展示卡片发起网络请求。 */
+@Composable
+internal fun rememberBookAlbumSubtitle(source: String, albumId: String, author: String, total: Int = 0): String {
+    val context = LocalContext.current
+    val revision by BookListeningProgress.updates.collectAsStateWithLifecycle()
+    val enabled by MeloraSettings.rememberProgress.collectAsStateWithLifecycle()
+    val recents by UserLibrary.recents.collectAsStateWithLifecycle()
+    val id = remember(source, albumId) { canonicalBookId(source, albumId) }
+    val recentChapter = remember(source, id, recents) {
+        if (id == null) null else recents.firstOrNull { BookListeningProgress.bookIdentity(it) == (source to id) }
+    }
+    return remember(source, id, author, total, revision, enabled, recentChapter) {
+        val point = if (!enabled || id == null) null else {
+            BookListeningProgress.readAlbum(context, source, id)
+                ?: recentChapter?.let { BookListeningProgress.read(context, it) }
+        }
+        val metadata = if (source == "kw" && id != null) {
+            OnlineCache.peek<KwBookApi.BookChapters>("playlistDetail.book.book_album_$id")?.metadata
+        } else null
+        val resolvedAuthor = listOf(author, point?.song?.singer.orEmpty(), recentChapter?.singer.orEmpty(),
+            metadata?.author.orEmpty()).firstOrNull { it.isNotBlank() && !it.equals("null", true) }.orEmpty()
+        bookAlbumSubtitle(resolvedAuthor, point, total.takeIf { it > 0 } ?: metadata?.total ?: 0)
+    }
+}
+
+internal fun bookAlbumSubtitle(author: String, point: BookResumePoint?, total: Int = 0): String {
+    val creator = author.trim().ifBlank { "未知作者/主播" }
+    val progress = point?.let { bookAlbumProgressPercent(it, total) }?.let { "进度 $it%" }
+    return listOfNotNull(creator, progress).joinToString(" · ")
+}
+
+internal fun bookResumeSubtitle(point: BookResumePoint): String {
+    val status = if (point.completed) "已听完本集" else if (point.positionMs > 0) {
+        "已听 ${LocalSong.formatDuration(point.positionMs / 1000)}"
+    } else "继续收听"
+    return "${chapterTitle(point.song)} · $status"
+}
+
 /** 歌曲更多操作面板：收藏 / 下一首播放 / 添加到歌单 / 下载；歌单内额外提供"从歌单移除"。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -399,14 +478,21 @@ fun SongMoreSheet(
     allowDownload: Boolean = true,
     onDeleteLocal: (() -> Unit)? = null,
     localCoverSong: com.leyu.melora.playback.local.LocalSong? = null,
+    onOpenBookAlbum: ((OnlinePlaylist) -> Unit)? = null,
+    onRemoveRecentProgram: (() -> Unit)? = null,
+    onResumeBook: (() -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val sheetState = rememberModalBottomSheetState()
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = song.isBookChapter)
     val closeSheet = rememberSheetDismiss(sheetState)
     val favoriteUids by UserLibrary.favoriteUids.collectAsStateWithLifecycle()
     val isFavorite = song.uid in favoriteUids
+    val isBook = song.isBookChapter
+    val book = remember(song.uid) { if (isBook) bookAlbumOf(song) else null }
+    val favoriteBooks by UserLibrary.favoritePlaylists.collectAsStateWithLifecycle()
+    val isBookFavorite = book != null && favoriteBooks.any { it.id == book.id && it.source == book.source }
     // 本地索引、播放器与抽屉只使用一条实时链路：当前歌曲先复用播放器已解析封面，
     // 文件内嵌封面/本地缓存就绪后再无闪烁地接管，避免抽屉保留点击瞬间的陈旧 LocalSong 快照。
     val shared = LocalSongListState.current
@@ -435,11 +521,11 @@ fun SongMoreSheet(
     val onlineCover = rememberOnlineSongCover(song, enabled = matchedLocal == null)
     val cover = localCover ?: playbackCover ?: onlineCover
     // 已有低音质本地文件不能挡住升级入口，是否重复由下载器依据真实规格判断。
-    val downloadAllowed = allowDownload
+    val downloadAllowed = allowDownload && (!isBook || (matchedLocal == null && DownloadCenter.saved(song.uid) == null))
     var showPlaylistPicker by remember { mutableStateOf(false) }
     val startDownload: () -> Unit = {
         val local = matchedLocal
-        if (local != null) {
+        if (local != null && !isBook) {
             // 检查归下载器应用级任务所有，关闭抽屉也能收到结果，不产生一闪而过的下载记录。
             Downloader.upgrade(context, song, local)
         } else {
@@ -494,7 +580,7 @@ fun SongMoreSheet(
             }
         },
     ) {
-        Column(modifier = Modifier.padding(bottom = 28.dp)) {
+        Column(modifier = Modifier.verticalScroll(rememberScrollState()).padding(bottom = 28.dp)) {
             // 头部：48dp 封面缩略图 + 歌名/歌手与专辑
             Row(
                 modifier = Modifier
@@ -511,7 +597,7 @@ fun SongMoreSheet(
                 Spacer(Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = song.name,
+                        text = if (isBook) song.albumName.ifBlank { song.name } else song.name,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Medium,
                         color = TextMain,
@@ -520,7 +606,7 @@ fun SongMoreSheet(
                     )
                     Spacer(Modifier.height(3.dp))
                     Text(
-                        text = listOfNotNull(
+                        text = if (isBook) chapterTitle(song) else listOfNotNull(
                             song.singer.takeIf { it.isNotBlank() },
                             song.albumName.takeIf { it.isNotBlank() },
                         ).joinToString(" · ").ifBlank { "未知歌手" },
@@ -542,35 +628,62 @@ fun SongMoreSheet(
                     .padding(horizontal = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                SheetAction(
-                    icon = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                    tint = if (isFavorite) AccentRed else BrandBlue,
-                    label = if (isFavorite) "取消收藏" else "收藏到我的列表",
-                    subtitle = if (isFavorite) "从「我的列表」收藏夹中移除" else "保存到「我的列表」收藏夹",
-                ) {
-                    closeSheet {
-                        UserLibrary.toggleFavorite(song)
-                        onDismiss()
+                if (isBook) {
+                    SheetAction(Icons.Outlined.PlayArrow, BrandBlue, if (onResumeBook != null) "继续收听" else "播放本集") {
+                        closeSheet {
+                            onDismiss()
+                            if (onResumeBook != null) onResumeBook() else PlaybackController.playTrack(context, UiTrack.fromOnline(song))
+                        }
                     }
-                }
-                SheetAction(
-                    icon = Icons.AutoMirrored.Outlined.PlaylistPlay,
-                    tint = Color(0xFF0284C7),
-                    label = "下一首播放",
-                    subtitle = "加入当前播放队列的下一顺位",
-                ) {
-                    closeSheet {
-                        PlaybackController.addToQueueNext(context, UiTrack.fromOnline(song))
-                        onDismiss()
+                    SheetAction(Icons.Outlined.Replay, BrandBlue, "从头播放本集") {
+                        closeSheet { onDismiss(); PlaybackController.restartBookChapter(context, song) }
                     }
-                }
-                SheetAction(
-                    icon = Icons.AutoMirrored.Outlined.PlaylistAdd,
-                    tint = Color(0xFF7C3AED),
-                    label = "添加到歌单",
-                    subtitle = "收录到自建歌单中分类管理",
-                ) {
-                    closeSheet { showPlaylistPicker = true }
+                    if (book != null && onOpenBookAlbum != null) {
+                        SheetAction(Icons.Outlined.MenuBook, BrandBlue, "查看专辑") {
+                            closeSheet { onDismiss(); onOpenBookAlbum(book) }
+                        }
+                    }
+                    if (book != null) SheetAction(if (isBookFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                        if (isBookFavorite) AccentRed else BrandBlue, if (isBookFavorite) "取消收藏专辑" else "收藏专辑") {
+                        closeSheet { UserLibrary.toggleFavoritePlaylist(book); onDismiss() }
+                    }
+                    if (onResumeBook == null || isFavorite) {
+                        SheetAction(if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                            if (isFavorite) AccentRed else BrandBlue, if (isFavorite) "取消收藏本集" else "收藏本集") {
+                            closeSheet { UserLibrary.toggleFavorite(song); onDismiss() }
+                        }
+                    }
+                } else {
+                    SheetAction(
+                        icon = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                        tint = if (isFavorite) AccentRed else BrandBlue,
+                        label = if (isFavorite) "取消收藏" else "收藏到我的列表",
+                        subtitle = if (isFavorite) "从「我的列表」收藏夹中移除" else "保存到「我的列表」收藏夹",
+                    ) {
+                        closeSheet {
+                            UserLibrary.toggleFavorite(song)
+                            onDismiss()
+                        }
+                    }
+                    SheetAction(
+                        icon = Icons.AutoMirrored.Outlined.PlaylistPlay,
+                        tint = Color(0xFF0284C7),
+                        label = "下一首播放",
+                        subtitle = "加入当前播放队列的下一顺位",
+                    ) {
+                        closeSheet {
+                            PlaybackController.addToQueueNext(context, UiTrack.fromOnline(song))
+                            onDismiss()
+                        }
+                    }
+                    SheetAction(
+                        icon = Icons.AutoMirrored.Outlined.PlaylistAdd,
+                        tint = Color(0xFF7C3AED),
+                        label = "添加到歌单",
+                        subtitle = "收录到自建歌单中分类管理",
+                    ) {
+                        closeSheet { showPlaylistPicker = true }
+                    }
                 }
                 if (onRemoveFromPlaylist != null) {
                     SheetAction(
@@ -586,30 +699,35 @@ fun SongMoreSheet(
                     }
                 }
                 if (downloadAllowed) {
-                SheetAction(
-                    icon = Icons.Outlined.Download,
-                    tint = Color(0xFF1E88E5),
-                    label = if (matchedLocal != null) "下载更高音质" else "下载音频",
-                    subtitle = if (matchedLocal != null) "先检查音质提升，无更优版本不新增记录" else "按下载设置保存",
-                ) {
-                    val needsStorage = Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
-                        ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
-                        PackageManager.PERMISSION_GRANTED
-                    val needsNotification = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
-                        PackageManager.PERMISSION_GRANTED
-                    when {
-                        needsStorage -> storagePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                        needsNotification -> {
-                            // 下载前申请通知权限，用于通知栏展示进度；拒绝也不阻断下载
-                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                        }
-                        else -> closeSheet {
-                            startDownload()
-                            onDismiss()
+                    SheetAction(
+                        icon = Icons.Outlined.Download,
+                        tint = Color(0xFF1E88E5),
+                        label = if (isBook) "下载本集" else if (matchedLocal != null) "下载更高音质" else "下载音频",
+                        subtitle = if (isBook) null else if (matchedLocal != null) "先检查音质提升，无更优版本不新增记录" else "按下载设置保存",
+                    ) {
+                        val needsStorage = Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+                            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
+                            PackageManager.PERMISSION_GRANTED
+                        val needsNotification = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+                            PackageManager.PERMISSION_GRANTED
+                        when {
+                            needsStorage -> storagePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                            needsNotification -> {
+                                // 下载前申请通知权限，用于通知栏展示进度；拒绝也不阻断下载
+                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            }
+                            else -> closeSheet {
+                                startDownload()
+                                onDismiss()
+                            }
                         }
                     }
                 }
+                if (isBook && onRemoveRecentProgram != null) {
+                    SheetAction(Icons.Rounded.RemoveCircleOutline, AccentRed, "移除播放记录") {
+                        closeSheet { onRemoveRecentProgram(); onDismiss() }
+                    }
                 }
                 if (onDeleteLocal != null) {
                     SheetAction(

@@ -683,6 +683,7 @@ fun MeloraApp(initialTab: Int = 5) {
                                 )
                                 6 -> MyLibraryScreen(
                                     onOpenDrawer = openDrawer,
+                                    onOpenPlayer = { playerSheetBackState?.requestExpand() },
                                 )
                                 7 -> SettingsMasterScreen(
                                     onOpenDrawer = openDrawer,

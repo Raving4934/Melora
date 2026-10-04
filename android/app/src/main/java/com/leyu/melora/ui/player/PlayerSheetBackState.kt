@@ -5,6 +5,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -18,6 +19,10 @@ import kotlinx.coroutines.launch
 internal class PlayerSheetBackState(val sheet: AnchoredDraggableState<PlayerSheetAnchor>) {
     var transition by mutableStateOf<PlayerSheetTransition?>(null)
     private var transitionJob: Job? = null
+    var expandRequest by mutableIntStateOf(0)
+        private set
+
+    fun requestExpand() { expandRequest++ }
 
     /** 新意图接替旧任务；被取消任务的finally不能清掉后继返回的所有权。 */
     fun transitionTo(scope: CoroutineScope, intent: PlayerSheetTransition, block: suspend () -> Unit) {

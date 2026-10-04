@@ -168,6 +168,19 @@ class PlayerSheetNavigationInstrumentedTest {
         )
     }
 
+    @Test fun externalResumeRequestUsesTheSameExpansionAndBackTransition() {
+        show()
+        repeat(2) {
+            compose.runOnIdle { back.requestExpand() }
+            compose.mainClock.advanceTimeUntil(5_000) {
+                back.sheet.settledValue == PlayerSheetAnchor.Expanded && back.transition == null
+            }
+            compose.onNodeWithTag("player-heading").assertIsDisplayed()
+            Espresso.pressBack()
+            assertCollapsed()
+        }
+    }
+
     @Test fun partialCollapseKeepsTheUnderlyingPageCoveredFromEveryPlayerPage() {
         show(forcePortrait = true)
         expand()

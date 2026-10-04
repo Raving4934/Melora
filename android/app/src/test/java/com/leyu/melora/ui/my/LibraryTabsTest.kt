@@ -3,9 +3,12 @@ package com.leyu.melora.ui.my
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import com.leyu.melora.ui.common.bookAlbumSubtitle
+import com.leyu.melora.playback.BookResumePoint
 import com.leyu.melora.playback.UserLibrary
 import com.leyu.melora.playback.sdk.OnlinePlaylist
 import com.leyu.melora.playback.sdk.OnlineSong
+import com.leyu.melora.ui.common.bookAlbumOf
 import com.leyu.melora.ui.common.countedTabLabel
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -100,6 +103,14 @@ class LibraryTabsTest {
         assertFalse(OnlineSong(JSONObject().put("name", "第三集").put("albumId", "42")).isBookChapter)
     }
 
+    @Test fun recentProgramsGroupCanonicalBookIdsWithoutMixingPlatforms() {
+        fun chapter(id: String, source: String, album: String) = OnlineSong(JSONObject()
+            .put("source", source).put("songmid", id).put("name", id)
+            .put("albumId", album).put("isBookChapter", true))
+        val chapters = listOf(chapter("a", "kw", "42"), chapter("b", "kw", "kw:book_album_42"), chapter("c", "wy", "42"))
+        assertEquals(2, recentEntryCount(chapters, emptyList()))
+    }
+
     @Test
     fun musicAlbumIdentityRemainsSeparateByPlatformAndArtist() {
         val album = UserLibrary.FavoriteAlbum("叶惠美", "周杰伦", "kw", null)
@@ -107,4 +118,28 @@ class LibraryTabsTest {
         assertNotEquals(album.key, album.copy(artist = "其他歌手").key)
         assertEquals(album.key, album.copy(img = "https://cover.test/album.png").key)
     }
+    @Test fun bookSubtitleDoesNotInventAlbumProgressWhenOnlyChapterTimingIsKnown() {
+        val song = OnlineSong(JSONObject().put("source", "kw").put("songmid", "subtitle-chapter")
+            .put("isBookChapter", true))
+        val point = BookResumePoint(song, 15_000L, 60_000L, false)
+        assertEquals("主播", bookAlbumSubtitle("主播", point))
+        assertEquals("主播", bookAlbumSubtitle("主播", point.copy(completed = true)))
+        assertEquals("主播", bookAlbumSubtitle("主播", null))
+        assertEquals("主播", bookAlbumSubtitle("主播", point.copy(durationMs = 0)))
+        assertEquals("未知作者/主播", bookAlbumSubtitle("", null))
+    }
+
+    @Test fun recentContainerRetainsBookKindAuthorAndCanonicalIdWhenOpeningDetails() {
+        val recent = UserLibrary.RecentContainer("book", "kw:book_album_42", "作品", null, "kw", "book.42", 1L, "主播")
+        for (id in listOf("42", "book_album_42", "kw:book_album_42")) {
+            val book = playlistFromContainer(recent.copy(id = id))
+            assertEquals("book_album_42", book.id)
+            assertEquals("主播", book.author)
+            assertTrue(book.isBookAlbum)
+        }
+        val music = playlistFromContainer(recent.copy(kind = "playlist", id = "42"))
+        assertEquals("42", music.id)
+        assertFalse(music.isBookAlbum)
+    }
+
 }
