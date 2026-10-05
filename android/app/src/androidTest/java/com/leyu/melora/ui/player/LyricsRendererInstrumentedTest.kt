@@ -10,6 +10,18 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import android.graphics.Bitmap
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Canvas
+import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.LayoutDirection
 import android.os.SystemClock
 import java.io.File
 import androidx.test.platform.app.InstrumentationRegistry
@@ -48,6 +60,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.leyu.melora.playback.LyricAlignment
 import com.leyu.melora.playback.LyricLine
 import com.leyu.melora.playback.LyricWord
+import com.leyu.melora.playback.lyricWordProgress
 import com.leyu.melora.playback.PlayerUiState
 import com.leyu.melora.playback.UiTrack
 import kotlin.math.abs
@@ -63,6 +76,130 @@ import org.junit.runner.RunWith
 class LyricsRendererInstrumentedTest {
     @get:Rule
     val composeRule = createComposeRule()
+
+    @Test fun batchedWordFillPreservesPixelsAcrossWrappingBidiLigaturesAndSeek() {
+        val samples = listOf(
+            listOf("游", "天", "地", "寻", "龙", "鳞", " ", "龙", "的", "血", "脉", "蔚", "然", "成", "林"),
+            listOf("f", "f", "i", " office ", "A", "V", "a", "t", "a", "r"),
+            listOf("مر", "حب", "ا", " ", "با", "لع", "الم"),
+            listOf("你好 ", "مرحبا", " 123 ", "world", " 🎵", "e\u0301", "\n", "下一行"),
+        )
+        val widths = listOf(173, 560)
+        val layouts = mutableListOf<Pair<LyricLine, TextLayoutResult>>()
+        composeRule.setContent {
+            val measurer = rememberTextMeasurer()
+            SideEffect {
+                if (layouts.isEmpty()) samples.forEach { words -> widths.forEach { width -> (0..1).forEach { timing ->
+                    val line = LyricLine(0, words.joinToString(""), words = words.mapIndexed { i, text ->
+                        val start = if (timing == 0) i * 100L else (i / 2) * 100L
+                        LyricWord(text, start, start + if (timing == 1 && i % 3 == 0) 0L else 100L)
+                    })
+                    layouts += line to measurer.measure(line.text, TextStyle(fontSize = 27.sp),
+                        constraints = Constraints(maxWidth = width), maxLines = 3)
+                } } }
+            }
+        }
+        composeRule.runOnIdle {
+            var compared = 0
+            var maximumDelta = 0
+            for ((line, text) in layouts) {
+                val runs = wordRuns(line, text)
+                for (color in listOf(Color.White, Color(0xFF39261A), Color(0x887CCCDD))) {
+                    // 含精确词边界、部分填充、全部完成以及向后seek；不依赖运行设备字体的golden。
+                    for (time in listOf(-1L, 0L, 50L, 100L, 499L, 501L, 1_150L, 9_000L, 250L)) {
+                        val expected = renderWordFill(text, runs, time, color, reference = true)
+                        val actual = renderWordFill(text, runs, time, color, reference = false)
+                        val oldPixels = IntArray(expected.width * expected.height)
+                        val newPixels = IntArray(actual.width * actual.height)
+                        expected.asAndroidBitmap().getPixels(oldPixels, 0, expected.width, 0, 0, expected.width, expected.height)
+                        actual.asAndroidBitmap().getPixels(newPixels, 0, actual.width, 0, 0, actual.width, actual.height)
+                        var maxDelta = 0
+                        for (pixel in oldPixels.indices) for (channel in 0..3) {
+                            val shift = channel * 8
+                            maxDelta = maxOf(maxDelta, abs(((oldPixels[pixel] ushr shift) and 255) -
+                                ((newPixels[pixel] ushr shift) and 255)))
+                        }
+                        // 同一设备、同一布局逐像素相等，不依赖设备字体或放宽色差阈值。
+                        assertTrue("逐词像素变化: ${line.text}, time=$time, color=$color, delta=$maxDelta",
+                            maxDelta == 0)
+                        maximumDelta = maxOf(maximumDelta, maxDelta)
+                        compared++
+                    }
+                }
+            }
+            android.util.Log.i("LyricDrawBenchmark", "pixel comparisons=$compared maxChannelDelta=$maximumDelta (exact match)")
+        }
+    }
+
+    @Test fun completedWordFillDrawCostIsMeasuredAgainstPerWordReference() {
+        lateinit var text: TextLayoutResult
+        val line = LyricLine(0, "游天地寻龙鳞龙的血脉蔚然成林这龙鳞却曾经铿锵落地犹如碎冰",
+            words = "游天地寻龙鳞龙的血脉蔚然成林这龙鳞却曾经铿锵落地犹如碎冰".mapIndexed { i, c ->
+                LyricWord(c.toString(), i * 100L, (i + 1) * 100L)
+            })
+        composeRule.setContent {
+            val measurer = rememberTextMeasurer()
+            text = measurer.measure(line.text, TextStyle(fontSize = 27.sp), constraints = Constraints(maxWidth = 640))
+        }
+        composeRule.runOnIdle {
+            val runs = wordRuns(line, text)
+            val image = ImageBitmap(text.size.width, text.size.height)
+            val canvas = Canvas(image)
+            val scope = CanvasDrawScope()
+            fun sample(reference: Boolean, time: Long): Long {
+                val start = System.nanoTime()
+                repeat(30) { scope.draw(Density(1f), LayoutDirection.Ltr, canvas,
+                    Size(image.width.toFloat(), image.height.toFloat())) {
+                    drawRect(Color.Black)
+                    if (reference) drawWordFillReference(text, runs, time, Color.White)
+                    else drawTimedWords(text, runs, time, Color.White)
+                } }
+                return (System.nanoTime() - start) / 30
+            }
+            for (time in listOf(750L, 1_550L, 9_000L)) {
+                repeat(3) { sample(true, time); sample(false, time) }
+                val before = mutableListOf<Long>()
+                val after = mutableListOf<Long>()
+                repeat(9) { if (it % 2 == 0) { before += sample(true, time); after += sample(false, time) }
+                    else { after += sample(false, time); before += sample(true, time) } }
+                // 设备速度/调度不作通过阈值；像素等价是硬门禁，性能数据仅作同设备A/B证据。
+                android.util.Log.i("LyricDrawBenchmark", "words=${line.words.size} lines=${text.lineCount} time=$time " +
+                    "referenceMedianNs=${before.sorted()[4]} optimizedMedianNs=${after.sorted()[4]}")
+            }
+        }
+    }
+
+    private fun renderWordFill(text: TextLayoutResult, runs: List<Pair<LyricWord, List<GlyphRun>>>,
+        time: Long, color: Color, reference: Boolean): ImageBitmap {
+        val image = ImageBitmap(text.size.width, text.size.height)
+        CanvasDrawScope().draw(Density(1f), LayoutDirection.Ltr, Canvas(image),
+            Size(image.width.toFloat(), image.height.toFloat())) {
+            if (color.alpha == 1f) drawRect(Color(0xFF61646A))
+            drawText(text, color = color.copy(alpha = 0.35f))
+            if (reference) drawWordFillReference(text, runs, time, color)
+            else drawTimedWords(text, runs, time, color)
+        }
+        return image
+    }
+
+    /** 测试专用逐片绘制oracle：冻结合批前的像素语义，生产只保留一条渲染链路。 */
+    private fun DrawScope.drawWordFillReference(text: TextLayoutResult,
+        runs: List<Pair<LyricWord, List<GlyphRun>>>, time: Long, color: Color) {
+        for ((word, segments) in runs) {
+            var remaining = segments.sumOf { it.bounds.width.toDouble() }.toFloat() * lyricWordProgress(word, time)
+            for (segment in segments) {
+                val rect = segment.bounds
+                val filled = remaining.coerceIn(0f, rect.width)
+                remaining -= rect.width
+                if (filled <= 0f) continue
+                val edge = if (segment.rtl) rect.right - filled else rect.left + filled
+                val feather = minOf(8.dp.toPx(), rect.width * 0.2f)
+                val brush = if (segment.rtl) Brush.horizontalGradient(listOf(color.copy(alpha = 0f), color), edge - feather, edge)
+                    else Brush.horizontalGradient(listOf(color, color.copy(alpha = 0f)), edge, edge + feather)
+                clipRect(rect.left, rect.top, rect.right, rect.bottom) { drawText(text, brush = brush, alpha = 1f) }
+            }
+        }
+    }
 
     @Test
     fun delayedPlaybackSamplesAreProjectedBeforeFirstDrawAndEachRefresh() {

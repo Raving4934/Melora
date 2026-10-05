@@ -130,12 +130,25 @@ internal fun TimedLyricText(
 }
 
 /** 单色只在字形内填充；透明端保持同一 RGB，避免黑色透明端混出脏边。 */
-private fun DrawScope.drawTimedWords(
+internal fun DrawScope.drawTimedWords(
     text: TextLayoutResult,
     runs: List<Pair<LyricWord, List<GlyphRun>>>,
     time: Long,
     color: Color,
 ) {
+    fun drawSegment(segment: GlyphRun, filled: Float) {
+        val rect = segment.bounds
+        val edge = if (segment.rtl) rect.right - filled else rect.left + filled
+        val feather = minOf(8.dp.toPx(), rect.width * 0.2f)
+        val brush = if (segment.rtl) Brush.horizontalGradient(listOf(color.copy(alpha = 0f), color), edge - feather, edge)
+            else Brush.horizontalGradient(listOf(color, color.copy(alpha = 0f)), edge, edge + feather)
+        clipRect(rect.left, rect.top, rect.right, rect.bottom) { drawText(text, brush = brush, alpha = 1f) }
+    }
+    var completed: GlyphRun? = null
+    fun flushCompleted() {
+        completed?.let { drawSegment(it, it.bounds.width) }
+        completed = null
+    }
     for ((word, segments) in runs) {
         var remaining = segments.sumOf { it.bounds.width.toDouble() }.toFloat() * lyricWordProgress(word, time)
         for (segment in segments) {
@@ -143,19 +156,31 @@ private fun DrawScope.drawTimedWords(
             val filled = remaining.coerceIn(0f, rect.width)
             remaining -= rect.width
             if (filled <= 0f) continue
-            val edge = if (segment.rtl) rect.right - filled else rect.left + filled
-            val feather = minOf(8.dp.toPx(), rect.width * 0.2f)
-            val brush = if (segment.rtl) Brush.horizontalGradient(listOf(color.copy(alpha = 0f), color), edge - feather, edge)
-                else Brush.horizontalGradient(listOf(color, color.copy(alpha = 0f)), edge, edge + feather)
-            clipRect(rect.left, rect.top, rect.right, rect.bottom) { drawText(text, brush = brush, alpha = 1f) }
+            if (filled == rect.width) {
+                val previous = completed?.bounds
+                // 仅合并同行同方向且完全相接的已唱片段，不改变连字重叠的alpha叠加或部分填充的羽化。
+                if (previous != null && completed?.rtl == segment.rtl &&
+                    previous.top == rect.top && previous.bottom == rect.bottom &&
+                    (previous.right == rect.left || rect.right == previous.left)) {
+                    completed = GlyphRun(Rect(minOf(previous.left, rect.left), rect.top,
+                        maxOf(previous.right, rect.right), rect.bottom), segment.rtl)
+                } else {
+                    flushCompleted()
+                    completed = segment
+                }
+                continue
+            }
+            flushCompleted()
+            drawSegment(segment, filled)
         }
     }
+    flushCompleted()
 }
 
-private data class GlyphRun(val bounds: Rect, val rtl: Boolean)
+internal data class GlyphRun(val bounds: Rect, val rtl: Boolean)
 
 /** 按布局中的视觉行及方向合并字形框，保持换行、连字和 RTL 方向；仅布局变化时计算。 */
-private fun wordRuns(line: LyricLine, layout: TextLayoutResult): List<Pair<LyricWord, List<GlyphRun>>> {
+internal fun wordRuns(line: LyricLine, layout: TextLayoutResult): List<Pair<LyricWord, List<GlyphRun>>> {
     var offset = 0
     return line.words.map { word ->
         val start = offset
