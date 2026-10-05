@@ -6,11 +6,6 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import java.io.IOException
-import kotlinx.coroutines.suspendCancellableCoroutine
-import okhttp3.Call
-import okhttp3.Callback
-import okhttp3.Response
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
@@ -82,7 +77,7 @@ object UpdateChecker {
                     val call = client.newCall(request)
                     call.timeout().timeout(remainingMillis.coerceAtLeast(1L), TimeUnit.MILLISECONDS)
 
-                    call.readUpdateResponse { response ->
+                    call.readResponse { response ->
                         when {
                             response.code == 404 -> exhausted = true
                             !response.isSuccessful -> {
@@ -249,24 +244,4 @@ object UpdateChecker {
         message = message,
         checkFailed = failed,
     )
-}
-
-/** 回调内完成响应读取；协程取消会同时取消 HTTP 请求（包括响应体读取）。不向外转交裸 Response。 */
-internal suspend fun <T> Call.readUpdateResponse(read: (Response) -> T): T = suspendCancellableCoroutine { continuation ->
-    continuation.invokeOnCancellation { cancel() }
-    enqueue(object : Callback {
-        override fun onFailure(call: Call, error: IOException) {
-            continuation.resumeWith(Result.failure(error))
-        }
-
-        override fun onResponse(call: Call, response: Response) {
-            val result = runCatching {
-                response.use {
-                    if (!continuation.isActive) throw CancellationException("更新请求已取消")
-                    read(it)
-                }
-            }
-            continuation.resumeWith(result)
-        }
-    })
 }

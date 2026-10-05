@@ -243,7 +243,7 @@ private val apkHttpClient by lazy {
 internal suspend fun downloadUpdateApk(url: String, target: File, onProgress: (Long, Long?) -> Unit) {
     val coroutine = currentCoroutineContext()
     val request = Request.Builder().url(url).header("User-Agent", "Melora-App/${BuildConfig.VERSION_NAME}").build()
-    apkHttpClient.newCall(request).readUpdateResponse { response ->
+    apkHttpClient.newCall(request).readResponse { response ->
         var complete = false
         try {
             check(response.code == 200) { "下载失败 (HTTP ${response.code})" }

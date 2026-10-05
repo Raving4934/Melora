@@ -1,7 +1,7 @@
 package com.leyu.melora.playback.sdk
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import com.leyu.melora.playback.readResponse
+import kotlinx.coroutines.CancellationException
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
@@ -90,32 +90,20 @@ object KwBookApi {
 
     // ---------- 网络 ----------
 
-    private suspend fun getObject(url: String): JSONObject? = withContext(Dispatchers.IO) {
-        runCatching {
-            val request = Request.Builder()
-                .url(url)
-                .header("Accept", "application/json")
-                .header("Referer", "https://www.kuwo.cn/")
-                .build()
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@use null
-                JSONObject(response.body.string())
-            }
-        }.getOrNull()
-    }
-
-    private suspend fun getArray(url: String): JSONArray? = withContext(Dispatchers.IO) {
-        runCatching {
-            val request = Request.Builder()
-                .url(url)
-                .header("Accept", "application/json")
-                .header("Referer", "https://www.kuwo.cn/")
-                .build()
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@use null
-                JSONArray(response.body.string())
-            }
-        }.getOrNull()
+    /** JSON 对象与数组走同一请求链路；停止查找时连响应体读取一起取消。 */
+    internal suspend fun <T> get(url: String, decode: (String) -> T): T? = try {
+        val request = Request.Builder()
+            .url(url)
+            .header("Accept", "application/json")
+            .header("Referer", "https://www.kuwo.cn/")
+            .build()
+        client.newCall(request).readResponse { response ->
+            if (response.isSuccessful) decode(response.body.string()) else null
+        }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        null
     }
 
     private fun urlencode(value: String): String =
@@ -209,7 +197,7 @@ object KwBookApi {
     // ---------- 榜单 ----------
 
     suspend fun ranks(): List<BookRankTab> {
-        val response = getObject("https://wapi.kuwo.cn/openapi/v1/album/bang/tagList") ?: return emptyList()
+        val response = get("https://wapi.kuwo.cn/openapi/v1/album/bang/tagList", ::JSONObject) ?: return emptyList()
         if (response.optInt("code", -1) != 200) return emptyList()
         val data = response.optJSONObject("data") ?: return emptyList()
         val rows = data.optJSONArray("list") ?: return emptyList()
@@ -245,7 +233,7 @@ object KwBookApi {
     suspend fun rank(tabId: String, tagId: String, page: Int): BookPage {
         val url = "https://wapi.kuwo.cn/openapi/v1/album/bang/dataList" +
             "?tabId=${urlencode(tabId)}&tagId=${urlencode(tagId)}&pn=$page&rn=$PAGE_SIZE_RANK"
-        val response = getObject(url) ?: return BookPage(emptyList(), false)
+        val response = get(url, ::JSONObject) ?: return BookPage(emptyList(), false)
         if (response.optInt("code", -1) != 200) return BookPage(emptyList(), false)
         val rows = response.optJSONObject("data")?.optJSONArray("list") ?: return BookPage(emptyList(), false)
         val items = mutableListOf<OnlinePlaylist>()
@@ -283,7 +271,7 @@ object KwBookApi {
     suspend fun homeSections(): List<BookSection> {
         val url = "https://mobileinterfaces.kuwo.cn/er.s?type=get_pc_qz_data&f=web" +
             "&id=$CHANNEL_SECTIONS_ID&prod=pc&ver=1"
-        val rows = getArray(url) ?: return emptyList()
+        val rows = get(url, ::JSONArray) ?: return emptyList()
         val out = mutableListOf<BookSection>()
         val seen = mutableSetOf<String>()
         for (i in 0 until rows.length()) {
@@ -330,7 +318,7 @@ object KwBookApi {
         val url = "https://search.kuwo.cn/r.s?all=${urlencode(keyword)}&ft=album" +
             "&pn=${page - 1}&rn=$PAGE_SIZE_SEARCH&rformat=json&encoding=utf8&client=kt&mobi=1&newver=1" +
             "&show_series_listen=1"
-        return searchPageFromResponse(checkNotNull(getObject(url)) { "听书作品加载失败，请检查网络后重试" })
+        return searchPageFromResponse(checkNotNull(get(url, ::JSONObject)) { "听书作品加载失败，请检查网络后重试" })
     }
 
     /** 解析公开专辑搜索响应；空 albumlist 是合法零结果，缺失/错误结构则显式失败。 */
@@ -405,7 +393,7 @@ object KwBookApi {
         if (rid.isBlank()) return BookChapters(emptyList(), false, page = page)
         val url = "https://wapi.kuwo.cn/api/www/album/albumInfo" +
             "?albumId=${urlencode(rid)}&pn=$page&rn=$BOOK_CATALOG_PAGE_SIZE&httpsStatus=1"
-        val response = getObject(url) ?: return BookChapters(emptyList(), false, page = page)
+        val response = get(url, ::JSONObject) ?: return BookChapters(emptyList(), false, page = page)
         return albumPageFromResponse(rid, page, response)
     }
 
