@@ -8,7 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.leyu.melora.playback.PlayerUiState
@@ -93,7 +93,12 @@ class PlayerCollectionGestureTest {
         miniTitle.performClick()
         compose.awaitStable("player-heading")
         compose.awaitStable("player-pages")
-        compose.onNodeWithTag("player-pages").performTouchInput { swipeRight() }
+        // 宽屏初始是歌词页，信息在右侧；不能套用手机从封面向右划的页序。
+        if (compose.onAllNodesWithTag("player-page-tab-0").fetchSemanticsNodes().isNotEmpty()) {
+            compose.onNodeWithTag("player-page-tab-0").performClick()
+        } else {
+            compose.onNodeWithTag("player-pages").performTouchInput { swipeRight() }
+        }
         compose.awaitStable(compose.onNodeWithText("出自专辑"))
         compose.onNodeWithText("出自专辑").assertIsDisplayed()
     }
@@ -114,7 +119,8 @@ class PlayerCollectionGestureTest {
 
     private fun assertNormalPlayerCanStillCollapse() {
         compose.onRoot().performTouchInput {
-            swipe(Offset(center.x, height * .25f), Offset(center.x, height * .9f), 220)
+            // 宽屏阅读区禁止下拉收起，真实收起手势应从左侧封面区开始。
+            swipe(Offset(width * .22f, height * .25f), Offset(width * .22f, height * .9f), 220)
         }
         compose.onNodeWithTag("player-pages").assertIsNotDisplayed()
     }

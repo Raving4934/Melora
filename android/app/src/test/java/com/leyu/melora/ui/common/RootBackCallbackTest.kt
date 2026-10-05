@@ -7,6 +7,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class RootBackCallbackTest {
+    @Suppress("DEPRECATION") // 必须验证旧系统的 ACTION_MULTIPLE 不会误触发返回确认。
     @Test
     fun onlyNonBackKeyDownDiscardsArmedConfirmation() {
         val cases = listOf(

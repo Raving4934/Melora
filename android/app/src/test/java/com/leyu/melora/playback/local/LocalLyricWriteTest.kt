@@ -100,7 +100,7 @@ class LocalLyricWriteTest {
 
         assertNotNull(embedded)
         assertTrue(requireNotNull(embedded).ttml.isNotBlank())
-        assertEquals(sourceLines, embedded?.parse())
+        assertEquals(sourceLines, embedded.parse())
     }
 
     @Test fun killedWriterRestoresOriginalOnNextProcessAndRecoveryIsIdempotent() {

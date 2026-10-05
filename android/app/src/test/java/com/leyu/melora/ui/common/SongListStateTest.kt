@@ -7,6 +7,7 @@ import com.leyu.melora.playback.UiTrack
 import com.leyu.melora.playback.local.LocalSong
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -39,7 +40,7 @@ class SongListStateTest {
         observer.start()
         try {
             val onChanged: (String) -> Unit = { invalidated += it }
-            observer.observeReads("provider", onChanged) { state }
+            observer.observeReads("provider", onChanged) { assertSame(songs, state.localSongs) }
             observer.observeReads("cover", onChanged) { state.showCovers.value }
             observer.observeReads("current", onChanged) { state.currentTrack.value?.uid }
             Snapshot.sendApplyNotifications()
@@ -80,7 +81,7 @@ class SongListStateTest {
         observer.start()
         try {
             val onChanged: (String) -> Unit = { invalidated += it }
-            observer.observeReads("provider", onChanged) { state }
+            observer.observeReads("provider", onChanged) { assertSame(songs, state.localSongs) }
             observer.observeReads("rowA", onChanged) { state.localSongs.value }
             observer.observeReads("rowB", onChanged) { state.localSongs.value }
             Snapshot.sendApplyNotifications()

@@ -239,6 +239,7 @@ class DownloaderStreamingTest {
         copyNonEmpty(ByteArrayInputStream(ByteArray(0)), OutputStream.nullOutputStream())
     }
 
+    @OptIn(kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi::class)
     @Test
     fun queuedBatchDoesNotPollAnUnchangedLimit() = runBlocking {
         val limit = MutableStateFlow(1)
@@ -309,6 +310,7 @@ class DownloaderStreamingTest {
         }
     }
 
+    @OptIn(kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi::class)
     @Test
     fun lostCompareAndSetRetriesEvenWhenCapacityReturnsToTheSameValue() = runBlocking {
         val gate = DynamicDownloadGate(MutableStateFlow(1))

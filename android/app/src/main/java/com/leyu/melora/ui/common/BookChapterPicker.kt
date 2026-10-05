@@ -61,6 +61,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -286,7 +287,7 @@ internal fun BookChapterPicker(
     val input = remember(query) { parseBookChapterQuery(query) }
     var forceTitleSearch by remember(query) { mutableStateOf(false) }
     val searchByTitle = input.keyword.isNotEmpty() && (!input.isEpisode || forceTitleSearch)
-    var attempt by remember { mutableStateOf(0) }
+    var attempt by remember { mutableIntStateOf(0) }
     var stopped by remember(query, forceTitleSearch) { mutableStateOf(false) }
     var loading by remember(query, forceTitleSearch) { mutableStateOf(false) }
     var error by remember(query, forceTitleSearch) { mutableStateOf<String?>(null) }

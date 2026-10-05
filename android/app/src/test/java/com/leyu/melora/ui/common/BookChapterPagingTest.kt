@@ -22,10 +22,10 @@ class BookChapterPagingTest {
         val window = pending.accept(generation, requestedPage, chapters(10, 901..1_000))
 
         assertEquals(setOf(10), window.pages.keys)
-        assertEquals(100, window.items?.size)
-        assertEquals("chapter-901", window.items?.first()?.songmid)
-        assertEquals(901, window.items?.first()?.raw?.optInt("bookOrdinal"))
-        assertEquals("chapter-1000", window.items?.last()?.songmid)
+        assertEquals(100, window.items.size)
+        assertEquals("chapter-901", window.items.first().songmid)
+        assertEquals(901, window.items.first().raw.optInt("bookOrdinal"))
+        assertEquals("chapter-1000", window.items.last().songmid)
     }
 
     @Test
@@ -43,7 +43,7 @@ class BookChapterPagingTest {
         val afterOldResponse = pageFour.accept(oldGeneration, 10, chapters(10, 901..1_000))
 
         assertEquals(setOf(4), afterOldResponse.pages.keys)
-        assertEquals("chapter-301", afterOldResponse.items?.first()?.songmid)
+        assertEquals("chapter-301", afterOldResponse.items.first().songmid)
     }
 
     @Test
@@ -54,7 +54,7 @@ class BookChapterPagingTest {
 
         assertSame(pending, afterEmpty)
         assertEquals(setOf(3), afterEmpty.pages.keys)
-        assertEquals("chapter-201", afterEmpty.items?.first()?.songmid)
+        assertEquals("chapter-201", afterEmpty.items.first().songmid)
         assertNull(BookCatalogPaging.pageCount(null))
         assertNull(BookCatalogPaging.rangeEnd(3, null))
         assertNull(BookCatalogPaging.pageForDirection(1, total = null, descending = true))
