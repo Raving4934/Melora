@@ -26,6 +26,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.async
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
@@ -97,6 +98,52 @@ class DownloadTransferInstrumentedTest {
         // DownloadCenter.init 是进程级单次初始化，不能让下一组测试继续写已删除的夹具目录。
         DownloadCenter.javaClass.getDeclaredField("file").apply { isAccessible = true }.set(DownloadCenter, null)
         context.root.deleteRecursively()
+    }
+
+    @Test fun recordCommitFailureRollsBackOnlyNewFileAndCanRetry() = assertPublicationFailure(indexFailure = false)
+
+    @Test fun indexFailureAfterRecordCommitPreservesPublishedResource() = assertPublicationFailure(indexFailure = true)
+
+    private fun assertPublicationFailure(indexFailure: Boolean) = runBlocking<Unit> {
+        val headersSent = CountDownLatch(1)
+        val resumeBody = CountDownLatch(1)
+        val blocker = File(context.filesDir, if (indexFailure) "local_media.json.tmp" else "downloads.json.tmp")
+        LoopbackAudioServer(mapOf(
+            "/commit" to HttpResponse(200, asset("audio/fixture-320.mp3"),
+                headersSent = headersSent, waitBeforeBody = resumeBody),
+        )).use { server ->
+            installSources(server, Source("commit", "/commit"))
+            val song = song("transfer-commit-$indexFailure")
+            val task = async(Dispatchers.IO) { download(song) }
+            try {
+                assertTrue("download did not open response", headersSent.await(8, TimeUnit.SECONDS))
+                assertTrue(blocker.mkdir()) // 模拟原子写入不可用，不触及用户文件或填满设备磁盘。
+                File(blocker, "keep").writeText("fault fixture")
+                resumeBody.countDown()
+                val result = withTimeout(20_000) { task.await() }
+                assertTrue("持久化失败不能返回下载成功", result.isFailure)
+                assertEquals(DownloadCenter.Status.Failed, DownloadCenter.records.value.first { it.id == song.uid }.status)
+                if (indexFailure) {
+                    val saved = requireNotNull(DownloadCenter.saved(song.uid))
+                    assertEquals(1, listFiles().size)
+                    assertNotNull(inspectDownloadAudio(context, Uri.parse(requireNotNull(saved.savedUri))))
+                } else {
+                    assertEquals("未提交的新文件必须回滚", emptyList<String>(), listFiles())
+                    assertEquals(null, DownloadCenter.saved(song.uid))
+                    assertTrue(LocalMediaStore.songs.value.isEmpty())
+                }
+                assertTemporaryFilesClean()
+                assertTrue(blocker.deleteRecursively())
+                MeloraSettings.downloadSkipSameName.value = true
+                withTimeout(20_000) { download(song) }.getOrThrow()
+                assertEquals(DownloadCenter.Status.Done, DownloadCenter.records.value.first { it.id == song.uid }.status)
+                assertEquals("失败重试不得留下重复文件", 1, listFiles().size)
+            } finally {
+                blocker.deleteRecursively()
+                resumeBody.countDown()
+                withTimeout(8_000) { task.join() }
+            }
+        }
     }
 
     @Test fun interruptedReadExcludesFirstResourceAndUsesOnlyTheNewTransfer() = runBlocking<Unit> {
@@ -389,7 +436,7 @@ class DownloadTransferInstrumentedTest {
                 client.soTimeout = 5_000
                 val reader = BufferedReader(InputStreamReader(client.getInputStream(), StandardCharsets.US_ASCII))
                 val path = reader.readLine()?.split(' ')?.getOrNull(1)?.substringBefore('?') ?: return
-                while (!reader.readLine().isNullOrEmpty()) Unit
+                while (!reader.readLine().isNullOrEmpty()) { /* 消费请求头 */ }
                 counts.computeIfAbsent(path) { AtomicInteger() }.incrementAndGet()
                 val response = responses[path] ?: HttpResponse(404, byteArrayOf())
                 val reason = if (response.status == 200) "OK" else if (response.status == 403) "Forbidden" else "Not Found"

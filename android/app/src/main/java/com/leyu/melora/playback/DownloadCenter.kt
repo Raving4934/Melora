@@ -40,31 +40,25 @@ object DownloadCenter {
     private val _records = MutableStateFlow<List<Record>>(emptyList())
     val records: StateFlow<List<Record>> = _records
 
-    fun init(context: Context) {
-        if (::file.isInitialized) return
+    fun init(context: Context) = synchronized(lock) {
+        if (::file.isInitialized) return@synchronized
         file = File(context.applicationContext.filesDir, "downloads.json")
-        synchronized(lock) {
-            val loaded = read()
-            // 上次进程被杀时仍在下载的条目，恢复为“已中断”；暂停状态可直接继续。
-            // 进行中/暂停记录不计入历史上限，避免重启时被终态历史挤掉。
-            val restored = retainActiveAndRecentFinished(loaded.map(::restoreInterrupted))
-            _records.value = restored
-            if (restored != loaded) {
-                runCatching { writeTextAtomically(file, toJson().toString()) }
-            }
-        }
+        val loaded = read(file)
+        // 上次进程被杀时仍在下载的条目，恢复为“已中断”；下次正常状态提交时再落盘。
+        // 即使恢复时存储暂时不可写，也不会把内存状态谎报成已持久化。
+        _records.value = retainActiveAndRecentFinished(loaded.map(::restoreInterrupted))
     }
 
-    fun start(song: OnlineSong, detail: String) = begin(song.uid, song, detail, persist = true)
+    fun start(song: OnlineSong, detail: String) = begin(song.uid, song, detail)
 
     /** 任务 ID 与解析后的歌曲快照分离；本地歌曲匹配在线资源后仍保持同一条下载记录。 */
     fun start(id: String, song: OnlineSong, detail: String, upgradeFrom: LocalSong? = null) =
-        begin(id, song, detail, persist = true, upgradeFrom = upgradeFrom)
+        begin(id, song, detail, upgradeFrom = upgradeFrom)
 
     /** 由下载工作协程调用：先持久化排队状态，再等待并发许可。 */
-    fun queued(id: String, song: OnlineSong, detail: String = "等待下载…") = begin(id, song, detail, persist = true)
+    fun queued(id: String, song: OnlineSong, detail: String = "等待下载…") = begin(id, song, detail)
 
-    private fun begin(id: String, song: OnlineSong, detail: String, persist: Boolean, upgradeFrom: LocalSong? = null) = update(persist = persist) { list ->
+    private fun begin(id: String, song: OnlineSong, detail: String, upgradeFrom: LocalSong? = null) = update(persist = true) { list ->
         val previous = list.firstOrNull { it.id == id }
         val saved = previous?.takeIf { it.hasSavedResource && hasResourceAddress(it.fileName, it.savedUri) }
         listOf(
@@ -111,7 +105,7 @@ object DownloadCenter {
         fileName: String? = null,
         savedUri: String? = null,
         audioSpec: AudioSpecification? = null,
-    ) = update(persist = true) { list ->
+    ) = update(persist = true, requireSaved = true) { list ->
         list.map {
             if (it.id == id) {
                 val nextFileName = fileName ?: it.fileName
@@ -216,20 +210,26 @@ object DownloadCenter {
             record
         }
 
-    private fun update(persist: Boolean, change: (List<Record>) -> List<Record>) = synchronized(lock) {
+    private fun update(
+        persist: Boolean,
+        requireSaved: Boolean = false,
+        change: (List<Record>) -> List<Record>,
+    ): Boolean = synchronized(lock) {
         val current = _records.value
         val next = retainActiveAndRecentFinished(change(current))
-        if (next == current) return@synchronized
-        _records.value = next
-        if (persist && ::file.isInitialized) {
-            runCatching { writeTextAtomically(file, toJson().toString()) }
-        }
+        if (next == current) return@synchronized true
+        val saved = !persist || !::file.isInitialized || runCatching {
+            writeTextAtomically(file, toJson(next).toString())
+        }.isSuccess
+        // 完成态必须先落盘；失败/暂停等瞬时状态仍要反馈，不能因磁盘满永远显示下载中。
+        if (saved || !requireSaved) _records.value = next
+        saved
     }
 
-    private fun read(): List<Record> {
-        if (!::file.isInitialized || !file.isFile) return emptyList()
+    private fun read(source: File): List<Record> {
+        if (!source.isFile) return emptyList()
         return runCatching {
-            val array = JSONArray(file.readText())
+            val array = JSONArray(source.readText())
             (0 until array.length()).mapNotNull { index ->
                 array.optJSONObject(index)?.let(::recordFromJson)
             }
@@ -247,8 +247,8 @@ object DownloadCenter {
         }
     }
 
-    private fun toJson(): JSONArray = JSONArray().apply {
-        _records.value.forEach { put(recordToJson(it)) }
+    private fun toJson(records: List<Record>): JSONArray = JSONArray().apply {
+        records.forEach { put(recordToJson(it)) }
     }
 
     /** 读取旧记录时把顶层 img 一次性迁入 song.img；新格式不再保存重复字段。 */

@@ -274,7 +274,7 @@ object Downloader {
     ): Result<String> = runCatching {
         if (request.upgradeFrom == null) {
             val queued = updateCurrent(taskId, token) {
-                DownloadCenter.queued(taskId, original)
+                check(DownloadCenter.queued(taskId, original)) { "无法保存下载记录" }
             }
             if (!queued) throw CancellationException("下载已取消")
         }
@@ -290,29 +290,19 @@ object Downloader {
         }
         slots.acquire()
         try {
-            if (localSpec == null) updateCurrent(taskId, token) { DownloadCenter.start(taskId, original, "准备下载…") }
-            val song = try {
-                if (original.source == LocalSong.SOURCE) check(com.leyu.melora.playback.sdk.LxScriptPool.hasEnabledScripts(context)) {
-                    SourceResolver.NO_SOURCE_MESSAGE
-                }
-                val resolved = SourceResolver.localAsOnline(context, original) ?: error("没有找到可下载的同版本在线歌曲")
-                check(original.source != LocalSong.SOURCE || SourceResolver.alternativeScore(original, resolved) != null) {
-                    "本地歌曲的歌手或版本信息不足，请补全后再下载"
-                }
-                resolved
-            } catch (failure: Exception) {
-                if (failure is CancellationException) throw failure
-                failCurrent(context, taskId, token, failure)
-                throw failure
+            if (localSpec == null) updateCurrent(taskId, token) { check(DownloadCenter.start(taskId, original, "准备下载…")) { "无法保存下载记录" } }
+            if (original.source == LocalSong.SOURCE) check(com.leyu.melora.playback.sdk.LxScriptPool.hasEnabledScripts(context)) {
+                SourceResolver.NO_SOURCE_MESSAGE
+            }
+            val song = SourceResolver.localAsOnline(context, original) ?: error("没有找到可下载的同版本在线歌曲")
+            check(original.source != LocalSong.SOURCE || SourceResolver.alternativeScore(original, song) != null) {
+                "本地歌曲的歌手或版本信息不足，请补全后再下载"
             }
             ensureCurrent(taskId, token)
-            if (localSpec == null) updateCurrent(taskId, token) { DownloadCenter.start(taskId, song, "准备下载…") }
-            try {
-                downloadToTarget(context, song, taskId, request, token, localSpec)
-            } catch (failure: Exception) {
-                if (failure !is CancellationException) failCurrent(context, taskId, token, failure)
-                throw failure
+            if (localSpec == null) updateCurrent(taskId, token) {
+                check(DownloadCenter.start(taskId, song, "准备下载…")) { "无法保存下载记录" }
             }
+            downloadToTarget(context, song, taskId, request, token, localSpec)
         } finally {
             slots.release()
         }
@@ -320,6 +310,7 @@ object Downloader {
         if (request.upgradeFrom != null) updateCurrent(taskId, token) { PlaybackController.postMessage(context, it) }
     }.onFailure {
         if (it is CancellationException) throw it
+        failCurrent(context, taskId, token, it)
         if (request.upgradeFrom != null) updateCurrent(taskId, token) {
             PlaybackController.postMessage(context, it.message ?: "音质检查失败，请稍后重试")
         }
@@ -336,7 +327,7 @@ object Downloader {
         true
     }
 
-    private fun failCurrent(context: Context, uid: String, token: Long, failure: Exception) {
+    private fun failCurrent(context: Context, uid: String, token: Long, failure: Throwable) {
         val message = failure.message ?: "下载失败"
         updateCurrent(uid, token) {
             if (tasks[uid]?.recordStarted == true) {
@@ -373,10 +364,12 @@ object Downloader {
                 target.size, target.name, target.modifiedAt)
         }
         fun finish(verified: VerifiedTarget, detail: String): String {
-            // IO线程在同一令牌边界提交索引与完成记录，取消不能夹在两者之间留下悬空URI。
+            // 同一令牌边界先提交记录，再注册本地索引与通知；持久化失败不得报告成功。
             if (!updateCurrent(recordId, token) {
+                    check(DownloadCenter.done(recordId, detail, verified.target.name, verified.target.uri.toString(), audioSpec = verified.audio.spec)) {
+                        "无法保存下载完成记录，请检查可用存储后重试"
+                    }
                     register(verified)
-                    DownloadCenter.done(recordId, detail, verified.target.name, verified.target.uri.toString(), audioSpec = verified.audio.spec)
                     DownloadNotifications.done(context, notificationId, verified.target.name)
                 }
             ) {
@@ -487,14 +480,15 @@ object Downloader {
                     val saved = VerifiedTarget(Target(displayName, uri, temp.length(), 0L), audio)
                     val label = if (input.completeCacheHit) "已从缓存导出" else "已下载"
                     finish(saved, "$label$note")
-                } catch (failure: CancellationException) {
-                    runCatching {
+                } catch (failure: Exception) {
+                    // 仅回滚本次新建且尚未记账的文件；已记账后索引/通知失败不能留下坏地址。
+                    if (DownloadCenter.saved(recordId)?.savedUri != uri.toString()) runCatching {
                         withContext(NonCancellable) {
                             LocalMediaIoCoordinator.withWrite(context, uri, allowOpenReaders = true) {
-                                deleteUri(context, uri)
+                                check(deleteUri(context, uri)) { "无法清理未完成的下载文件" }
                             }
                         }
-                    }
+                    }.exceptionOrNull()?.let(failure::addSuppressed)
                     throw failure
                 }
             }
@@ -532,7 +526,7 @@ object Downloader {
                     ensureCurrent(recordId, token)
                     if (baseline != null) updateCurrent(recordId, token) {
                         tasks.getValue(recordId).recordStarted = true
-                        DownloadCenter.start(recordId, song, "已确认更高音质，开始下载…", request.upgradeFrom)
+                        check(DownloadCenter.start(recordId, song, "已确认更高音质，开始下载…", request.upgradeFrom)) { "无法保存下载记录" }
                     }
                     updateCurrent(recordId, token) {
                         DownloadNotifications.progress(context, notificationId, baseName, null)

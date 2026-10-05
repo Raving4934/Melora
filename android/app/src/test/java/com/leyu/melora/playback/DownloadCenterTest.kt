@@ -2,6 +2,10 @@ package com.leyu.melora.playback
 
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.local.LocalSong
+import java.io.File
+import java.nio.file.Files
+import kotlinx.coroutines.flow.MutableStateFlow
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -11,6 +15,60 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DownloadCenterTest {
+    @Test
+    fun failedDoneCommitKeepsPreviousRecordAcrossRestartAndCanBeRetried() {
+        val directory = Files.createTempDirectory("melora-download-record-commit").toFile()
+        val fileField = DownloadCenter.javaClass.getDeclaredField("file").apply { isAccessible = true }
+        val records = DownloadCenter.records as MutableStateFlow<List<DownloadCenter.Record>>
+        val recordsBefore = records.value
+        val fileBefore = fileField.get(DownloadCenter)
+        val id = "download-record-commit-test"
+        val song = OnlineSong(songJson(null).put("songmid", id))
+        val oldAudio = File(directory, "old.flac").apply { writeText("old audio") }
+        val newAudio = File(directory, "new.flac").apply { writeText("new audio") }
+        val oldUri = "file://${oldAudio.absolutePath}"
+        val newUri = "file://${newAudio.absolutePath}"
+        val storage = File(directory, "downloads.json")
+        try {
+            records.value = emptyList()
+            fileField.set(DownloadCenter, storage)
+            DownloadCenter.start(id, song, "旧文件")
+            DownloadCenter.done(id, "旧文件完成", oldAudio.name, oldUri)
+            DownloadCenter.start(id, song, "升级中")
+            val inFlight = DownloadCenter.records.value.single { it.id == id }
+            val durableInFlight = storage.readText()
+
+            val blockedParent = File(directory, "not-a-directory").apply { writeText("block") }
+            fileField.set(DownloadCenter, File(blockedParent, "downloads.json"))
+            assertFalse("persistence failure must reach the caller without crashing UI",
+                DownloadCenter.done(id, "新文件完成", newAudio.name, newUri))
+            assertEquals("failed commit must not publish Done", inFlight, DownloadCenter.records.value.single())
+            assertEquals("failed commit must preserve the previous durable record", durableInFlight, storage.readText())
+            assertTrue("the old audio remains intact", oldAudio.isFile)
+            assertTrue("the caller still owns the new file until its rollback completes", newAudio.isFile)
+
+            val persisted = JSONArray(storage.readText()).getJSONObject(0)
+            val afterRestart = DownloadCenter.restoreInterrupted(DownloadCenter.recordFromJson(persisted)!!)
+            assertEquals(DownloadCenter.Status.Paused, afterRestart.status)
+            assertEquals(oldUri, afterRestart.savedUri)
+
+            assertFalse(DownloadCenter.failed(id, "磁盘不可写"))
+            assertEquals(DownloadCenter.Status.Failed, DownloadCenter.records.value.single().status)
+            assertEquals("失败反馈不能丢失之前的资源", oldUri, DownloadCenter.saved(id)?.savedUri)
+            fileField.set(DownloadCenter, storage)
+            assertTrue(DownloadCenter.done(id, "新文件完成", newAudio.name, newUri))
+            assertTrue(DownloadCenter.done(id, "新文件完成", newAudio.name, newUri))
+            assertEquals(1, DownloadCenter.records.value.count { it.id == id })
+            assertEquals(newUri, DownloadCenter.saved(id)?.savedUri)
+            assertEquals(newUri, DownloadCenter.recordFromJson(JSONArray(storage.readText()).getJSONObject(0))?.savedUri)
+            assertTrue("replacing the record must not delete the old audio", oldAudio.isFile)
+        } finally {
+            records.value = recordsBefore
+            fileField.set(DownloadCenter, fileBefore)
+            directory.deleteRecursively()
+        }
+    }
+
     @Test fun upgradeIntentSurvivesPauseAndJsonRoundTrip() {
         val local = LocalSong("fixture", "file:///fixture/audio.flac", "Fixture", "Artist", "Album",
             1000, 1000, "audio/flac", 44100, -1, 0, 0, folder = "/fixture", bitDepth = 16)
