@@ -2,6 +2,46 @@
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-10-05
+
+### 安卓客户端
+
+> 本次仅更新 Android 客户端至 0.1.9（versionCode 18）；Web / NAS、FPK 与 Docker 维持 0.1.1。沿用正式签名，可保留数据覆盖升级。
+
+【听书与选集】
+- 最近播放中的听书节目支持直接继续收听；完善每本书的章节、断点与完成状态记录，兼容缺少专辑 ID 的旧章节数据。
+- 资料库与播放器共用听书目录，支持正序/倒序、分段选集、定位当前章节和连续加载；修正目录总数异常、章节编号与实际位置不一致时的定位偏差。
+- 选集使用统一输入框，既可按集/章/回编号定位，也可按章节标题搜索完整目录；搜索结果点击后定位而不自动开播，切换查询时取消旧请求。
+- 调整最近播放与收藏列表的信息层级、卡片和切栏体验；听书显示作者/主播及可用的整书收听进度，不同来源的同 ID 专辑不再串用最近记录与封面。
+
+【搜索与界面】
+- 多来源歌曲搜索渐进展示结果，并按分页信息继续加载；刷新时替换过期来源快照。
+- 统一单行标题栏与次级操作栏的模糊覆盖，改善平板常驻侧栏和展开侧栏旁的边缘接缝，不改变前景控件布局。
+
+【播放与歌词】
+- 完善播放队列与位置检查点，恢复时保持曲目与断点对应；移除任务后清理不再继续播放的空闲会话。
+- “其他应用发声时自动暂停”由播放服务持续监听设置，不再依赖界面控制器连接；覆盖设置修改、备份恢复及服务重建后的同步。
+- 细化逐字歌词对轻微延迟位置校正的处理，避免可见回退，保留跳转、暂停、缓冲和切歌时的真实时间变化。
+- 桌面歌词在词间隙暂停不必要的逐帧刷新，按下一词或歌词边界恢复；全屏与 mini 逐字歌词合并相邻已唱片段绘制，保留原有字形、羽化、换行及 RTL 呈现。
+
+【下载与本地文件】
+- 删除旧下载记录关联资源时核对文件身份，避免误删同曲目后来下载的高音质版本。
+- 下载完成、移除或清理记录，仅在状态持久化成功后报告成功；物理文件删除后若记录保存失败，如实提示并保留重试路径。
+- 本地扫描与下载登记统一使用 URI 文件身份，降低同名文件碰撞；协调标签写入与删除，避免并发修改同一文件。
+
+【质量验证】
+- 完整 Android 设备回归改为双分片执行，保留全部测试和既有限时；修复动画、系统 Insets、输入法、平板几何断言及测试存储隔离问题。
+- 补充无控制器连接时的音频焦点设置回归，以及逐字歌词在中英文、RTL、连字、透明度、换行、重叠时间轴和跳转下的像素等价验证。
+
+### 关键提交
+
+- 听书续播与目录：[`f1a5938`](https://github.com/Raving4934/Melora/commit/f1a593815ddcf773fa2d97af898a5c53e5380157)、[`ba089c9`](https://github.com/Raving4934/Melora/commit/ba089c9c10f8db0bc64520cdc8661ad913556377)、[`f1e7194`](https://github.com/Raving4934/Melora/commit/f1e71940521d12a54fa7f3cd9d1abb21dfb941e9)。
+- 统一选集输入与标题搜索：[`81fca8e`](https://github.com/Raving4934/Melora/commit/81fca8e123aca0365adaba160dd5d4a227bd7145)、[`8f6afe2`](https://github.com/Raving4934/Melora/commit/8f6afe2b000ad14c3b6ac9676c087460a83f4da0)。
+- 顶部模糊与侧栏接缝：[`1f39927`](https://github.com/Raving4934/Melora/commit/1f3992769a683344b33d809c521d07613ad7f5e0)。
+- 下载持久化与资源保护：[`583f42e`](https://github.com/Raving4934/Melora/commit/583f42eecc9d53274ed092ad451c4280aa55f49b)、[`d246327`](https://github.com/Raving4934/Melora/commit/d2463270b7ce28ebfcfef0a6770783ff357d3573)、[`8645bc0`](https://github.com/Raving4934/Melora/commit/8645bc05d52e02554e1e010025fbc7ada24898ec)。
+- 服务音频焦点与歌词绘制：[`4f0ad79`](https://github.com/Raving4934/Melora/commit/4f0ad79d60cc0e1ad88e5c3a174e85f06ee834e0)、[`6a28f59`](https://github.com/Raving4934/Melora/commit/6a28f59ce1f5c4f625c7bbd0e984c59e3abf2c18)、[`10f04b6`](https://github.com/Raving4934/Melora/commit/10f04b63a2d7da3dd2020c7f225bd28804132998)。
+- 完整设备回归分片：[`71cf81b`](https://github.com/Raving4934/Melora/commit/71cf81bcdc7bd03fccd2781d3057aaf49f5d8097)。
+
 ## [0.1.8] - 2026-10-02
 
 ### 安卓客户端
@@ -372,9 +412,11 @@
 
 **Docker 镜像：** `ghcr.io/raving4934/melora:0.1.0`（支持 `linux/amd64`、`linux/arm64`）。
 
-[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.8...HEAD
-[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.8...HEAD
+[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.9...HEAD
+[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.9...HEAD
 [Web Unreleased]: https://github.com/Raving4934/Melora/compare/v0.1.1...HEAD
+[0.1.9]: https://github.com/Raving4934/Melora/compare/android-v0.1.8...android-v0.1.9
+[Android 0.1.9]: https://github.com/Raving4934/Melora/compare/android-v0.1.8...android-v0.1.9
 [0.1.8]: https://github.com/Raving4934/Melora/compare/android-v0.1.7...android-v0.1.8
 [Android 0.1.8]: https://github.com/Raving4934/Melora/compare/android-v0.1.7...android-v0.1.8
 [0.1.7]: https://github.com/Raving4934/Melora/compare/android-v0.1.6...android-v0.1.7
