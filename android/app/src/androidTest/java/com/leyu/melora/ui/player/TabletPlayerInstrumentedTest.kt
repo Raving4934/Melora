@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.sp
 import com.leyu.melora.ui.common.SongListStateProvider
 import com.leyu.melora.ui.theme.MeloraTheme
 import com.leyu.melora.ui.awaitStable
+import com.leyu.melora.ui.boundsInSameFrame
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -169,7 +170,9 @@ class TabletPlayerGestureInstrumentedTest {
     @get:Rule val compose = createComposeRule()
 
     @Test fun draggingCoverCollapsesButDraggingLyricsAtTheirBoundaryDoesNot() {
+        lateinit var backState: PlayerSheetBackState
         compose.setContent {
+            backState = rememberPlayerSheetBackState()
             // 手势用例也显式提供横屏平板视口，不依赖运行设备本身的方向/密度。
             CompositionLocalProvider(LocalDensity provides Density(1f)) {
                 Box(Modifier.size(1000.dp, 640.dp)) {
@@ -177,7 +180,7 @@ class TabletPlayerGestureInstrumentedTest {
                         SongListStateProvider {
                             ContinuousPlayerSheet(
                                 PlayerUiState(current = UiTrack("tablet-gesture", "平板手势测试", "测试歌手", "测试专辑")),
-                                Modifier.fillMaxSize(),
+                                Modifier.fillMaxSize(), backState = backState,
                             )
                         }
                     }
@@ -195,12 +198,18 @@ class TabletPlayerGestureInstrumentedTest {
         compose.waitForIdle()
         val after = compose.onNodeWithTag("player-expanded-layout").fetchSemanticsNode().boundsInRoot
         assertEquals("歌词到达边缘也不能拖走整张播放页", before.top, after.top, 1f)
-        compose.onNodeWithTag("player-artwork-pane").performTouchInput {
-            swipe(Offset(center.x, height * .15f), Offset(center.x, height * .9f), 220)
+        // 真正从封面内下拉到播放器底部；pane比例受刘海/导航栏压缩，不能代表Sheet行程。
+        val (artwork, root) = compose.boundsInSameFrame(compose.onNodeWithTag("player-artwork"), compose.onRoot())
+        compose.onRoot().performTouchInput {
+            val x = artwork.center.x - root.left
+            swipe(Offset(x, artwork.top - root.top + artwork.height * .12f), Offset(x, height - 8f), 220)
         }
-        compose.waitForIdle()
-        val collapsed = compose.onNodeWithTag("player-expanded-layout", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-        assertTrue("封面下拉应把Sheet移到迷你条位置，实际top=${collapsed.top}", collapsed.top > before.top + before.height * .5f)
+        compose.waitUntil(5_000) { backState.sheet.settledValue == PlayerSheetAnchor.Collapsed }
+        compose.runOnIdle {
+            // 内容被刘海/导航栏裁切到视口外时boundsInRoot会返回Rect.Zero；应核对真实Sheet锚点。
+            assertEquals(backState.sheet.anchors.positionOf(PlayerSheetAnchor.Collapsed), backState.sheet.offset, 1f)
+            assertFalse("收起后必须交回系统返回权", backState.ownsBack)
+        }
         compose.onNodeWithTag("player-full-lyrics").assertIsNotDisplayed()
         compose.onAllNodesWithText("平板手势测试", substring = true).onLast().assertIsDisplayed()
     }
