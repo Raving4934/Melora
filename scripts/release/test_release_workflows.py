@@ -186,6 +186,9 @@ class DeviceWorkflowTest(unittest.TestCase):
         self.assertIsNotNone(choices)
         self.assertEqual(json.loads(choices.group(1)), [26, 35, 37])
         self.assertEqual(json.loads(choices.group(2)), [35])
+        self.assertIn("        shard: [0, 1]\n", self.job)
+        self.assertIn("      TEST_SHARD_INDEX: ${{ matrix.shard }}\n", self.job)
+        self.assertIn("      TEST_SHARD_COUNT: 2\n", self.job)
         self.assertIn("    needs: verify\n", self.job)
         self.assertIn("    timeout-minutes: 60\n", self.job)
         self.assertIn("      fail-fast: false\n", self.job)
@@ -197,15 +200,21 @@ class DeviceWorkflowTest(unittest.TestCase):
         initialize = step(self.workflow, "初始化设备诊断目录")
         script = dedent(initialize.split("        run: |\n", 1)[1])
         with tempfile.TemporaryDirectory(prefix="melora workflow ") as directory:
-            env_file = Path(directory) / "github-env"
-            subprocess.run(["bash", "-euc", script], check=True, env={
-                "RUNNER_TEMP": directory, "GITHUB_ENV": str(env_file),
-                "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2", "API_LEVEL": "35",
-            })
-            self.assertEqual(env_file.read_text().splitlines(), [
-                f"ANDROID_AVD_HOME={directory}/melora-avd-123-2-35",
-                f"DEVICE_LOG_DIR={directory}/melora-device-35",
-            ])
+            shard_paths = []
+            for shard_index in (0, 1):
+                env_file = Path(directory) / f"github-env-{shard_index}"
+                subprocess.run(["bash", "-euc", script], check=True, env={
+                    "RUNNER_TEMP": directory, "GITHUB_ENV": str(env_file),
+                    "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2", "API_LEVEL": "35",
+                    "TEST_SHARD_INDEX": str(shard_index),
+                })
+                values = env_file.read_text().splitlines()
+                self.assertEqual(values, [
+                    f"ANDROID_AVD_HOME={directory}/melora-avd-123-2-35-{shard_index}",
+                    f"DEVICE_LOG_DIR={directory}/melora-device-35-{shard_index}",
+                ])
+                shard_paths.append(tuple(values))
+            self.assertEqual(len(set(shard_paths)), 2)
         self.assertLess(self.job.index("- name: 初始化设备诊断目录"), self.job.index("- uses:"))
 
     def test_native_avd_uses_official_images_and_fresh_writable_storage(self) -> None:
@@ -304,20 +313,33 @@ class DeviceWorkflowTest(unittest.TestCase):
         overlay = "appops set --uid com.leyu.melora.debug SYSTEM_ALERT_WINDOW allow"
         self.assertLess(install.index(":app:installDebug"), install.index(overlay))
         self.assertIn("appops get com.leyu.melora.debug SYSTEM_ALERT_WINDOW", install)
-        for selector in ("testInstrumentationRunnerArguments", "--tests", "am instrument", "pm grant"):
+        for selector in ("--tests", "am instrument", "pm grant"):
             self.assertNotIn(selector, self.job)
+        self.assertEqual(
+            set(re.findall(r"testInstrumentationRunnerArguments\.([A-Za-z]+)", self.job)),
+            {"numShards", "shardIndex"},
+        )
         self.assertEqual(self.job.count(":app:connectedDebugAndroidTest"), 1)
         connected = step(self.workflow, "执行完整 Android 设备回归")
         self.assertIn("rm -rf app/build/outputs/androidTest-results/connected", connected)
         self.assertIn("        timeout-minutes: 30", connected)
+        self.assertIn('-Pandroid.testInstrumentationRunnerArguments.numShards="$TEST_SHARD_COUNT"', connected)
+        self.assertIn('-Pandroid.testInstrumentationRunnerArguments.shardIndex="$TEST_SHARD_INDEX"', connected)
 
     def test_emulator_boot_is_bounded_and_checks_runtime_api_and_abi(self) -> None:
         boot = step(self.workflow, "启动并校验独立模拟器")
         self.assertIn('adb -s "$ANDROID_SERIAL" shell settings put secure show_ime_with_hard_keyboard 1', boot)
         for required in ("timeout 360 bash -c", "-port 5554", "-no-snapshot", "-gpu swangle", "-accel on",
                          "getprop sys.boot_completed", "getprop ro.build.version.sdk", '= "$API_LEVEL"',
-                         "getprop ro.product.cpu.abi", "= x86_64", 'adb -s "$ANDROID_SERIAL"'):
+                         "getprop ro.product.cpu.abi", "= x86_64", 'adb -s "$ANDROID_SERIAL"',
+                         'settings put global "$scale" 1'):
             self.assertIn(required, boot)
+        for disabled_animation in (
+            "settings put global window_animation_scale 0",
+            "settings put global transition_animation_scale 0",
+            "settings put global animator_duration_scale 0",
+        ):
+            self.assertNotIn(disabled_animation, self.job)
         self.assertIn('echo $! > "$DEVICE_LOG_DIR/emulator.pid"', boot)
 
     def test_result_check_diagnostics_and_pid_cleanup_always_run(self) -> None:
@@ -331,9 +353,19 @@ class DeviceWorkflowTest(unittest.TestCase):
                          'kill "$pid"', 'kill -KILL "$pid"', 'rm -rf "$ANDROID_AVD_HOME"'):
             self.assertIn(required, cleanup)
         upload = step(self.workflow, "上传设备回归诊断")
+        artifact_name = re.search(r"(?m)^          name: (.+)$", upload)
+        self.assertIsNotNone(artifact_name)
+        template = artifact_name.group(1)
+        self.assertIn("api${{ matrix.api }}", template)
+        self.assertIn("-shard${{ matrix.shard }}", template)
+        artifact_names = {
+            template.replace("${{ matrix.api }}", "35").replace("${{ matrix.shard }}", str(shard))
+            for shard in (0, 1)
+        }
+        self.assertEqual(len(artifact_names), 2)
         for required in ("${{ env.DEVICE_LOG_DIR }}/", "android/app/build/outputs/androidTest-results/connected/",
                          "android/app/build/reports/androidTests/connected/", "retention-days: 3",
-                         "if-no-files-found: error", "api${{ matrix.api }}"):
+                         "if-no-files-found: error", "api${{ matrix.api }}", "-shard${{ matrix.shard }}"):
             self.assertIn(required, upload)
 
     def run_result_checker(self, documents: list[str]) -> tuple[BaseException | None, str]:

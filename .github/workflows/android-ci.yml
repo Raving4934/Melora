@@ -113,18 +113,21 @@ jobs:
       fail-fast: false
       matrix:
         api: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.api_matrix && '[26,35,37]' || '[35]') }}
+        shard: [0, 1]
     defaults:
       run:
         shell: bash
     env:
       API_LEVEL: ${{ matrix.api }}
+      TEST_SHARD_INDEX: ${{ matrix.shard }}
+      TEST_SHARD_COUNT: 2
       ANDROID_SERIAL: emulator-5554
       CI_GRADLE_JVM_ARGS: -Xmx4G -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256m -XX:+HeapDumpOnOutOfMemoryError -XX:ActiveProcessorCount=2 -Dfile.encoding=UTF-8
     steps:
       - name: 初始化设备诊断目录
         run: |
-          echo "ANDROID_AVD_HOME=$RUNNER_TEMP/melora-avd-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${API_LEVEL}" >> "$GITHUB_ENV"
-          echo "DEVICE_LOG_DIR=$RUNNER_TEMP/melora-device-${API_LEVEL}" >> "$GITHUB_ENV"
+          echo "ANDROID_AVD_HOME=$RUNNER_TEMP/melora-avd-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${API_LEVEL}-${TEST_SHARD_INDEX}" >> "$GITHUB_ENV"
+          echo "DEVICE_LOG_DIR=$RUNNER_TEMP/melora-device-${API_LEVEL}-${TEST_SHARD_INDEX}" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4.2.2
         with:
           persist-credentials: false
@@ -230,9 +233,12 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf app/build/outputs/androidTest-results/connected app/build/reports/androidTests/connected
-          # 由 runner 发现全部 androidTest；不维护类名清单，避免同文件多测试类漏跑。
+          # runner 自动发现全部测试，再按原生分片划分到两个独立设备。
+          # 不过滤测试类、不放宽30分钟上限，避免完整串行回归挤占报告收尾时间。
           ./gradlew --no-daemon --build-cache --max-workers=1 \
             -Dorg.gradle.jvmargs="$CI_GRADLE_JVM_ARGS" -Pmelora.debugAbi=x86_64 \
+            -Pandroid.testInstrumentationRunnerArguments.numShards="$TEST_SHARD_COUNT" \
+            -Pandroid.testInstrumentationRunnerArguments.shardIndex="$TEST_SHARD_INDEX" \
             :app:connectedDebugAndroidTest 2>&1 | tee "$DEVICE_LOG_DIR/connected-tests.log"
       - name: 校验 Android 设备 JUnit 结果
         if: always()
@@ -292,7 +298,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4.6.2
         with:
-          name: android-device-api${{ matrix.api }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: android-device-api${{ matrix.api }}-shard${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ env.DEVICE_LOG_DIR }}/
             android/app/build/outputs/androidTest-results/connected/
