@@ -96,6 +96,7 @@ class DesktopLyricPolicyTest {
         assertFalse(desktopLyricNeedsFrames(playing.copy(positionAdvancing = false), true, true, true))
         assertFalse(desktopLyricNeedsFrames(playing.copy(buffering = true), true, true, true))
         assertFalse(desktopLyricNeedsFrames(playing.copy(resolving = true), true, true, true))
+        assertFalse(desktopLyricNeedsFrames(playing.copy(speed = 0f), true, true, true))
     }
 
     @Test
@@ -120,6 +121,52 @@ class DesktopLyricPolicyTest {
         assertNull(desktopLyricNextLineDelay(lines, state.copy(resolving = true), 1000))
         assertNull(desktopLyricNextLineDelay(lines, state.copy(durationMs = 100), 1000))
         assertNull(desktopLyricNextLineDelay(emptyList(), state, 1000))
+    }
+
+    @Test
+    fun timedLyricsWakeAtTheNearestVisibleWordOrSentenceBoundary() {
+        val lines = listOf(LyricLine(0, "first"), LyricLine(120, "short"), LyricLine(240, "next"))
+        val state = PlayerUiState(positionMs = 0, positionAdvancing = true, positionSampleRealtimeMs = 1000)
+
+        assertEquals(40L, desktopLyricNextLineDelay(lines, state, 1000, nextWordBoundaryMs = 40))
+        assertEquals("句界仍早于后续词界", 120L,
+            desktopLyricNextLineDelay(lines, state, 1000, nextWordBoundaryMs = 180))
+        assertEquals("词间隙按下一个词的起点唤醒", 300L,
+            desktopLyricNextLineDelay(listOf(lines.first()), state, 1000, nextWordBoundaryMs = 300))
+        assertEquals("快放按倍速换算", 150L,
+            desktopLyricNextLineDelay(listOf(lines.first()), state.copy(speed = 2f), 1000, nextWordBoundaryMs = 300))
+    }
+
+    @Test
+    fun timedWakeUsesPositionFloorAndDiscardsBoundariesPassedBySeekOrBeyondDuration() {
+        val lines = listOf(LyricLine(0, "first"), LyricLine(8_000, "next"))
+        val floored = PlayerUiState(
+            positionMs = 500,
+            positionSampleRealtimeMs = 1000,
+            positionAdvancing = true,
+            durationMs = 10_000,
+            speed = 2f,
+            lyricPositionFloorMs = 750,
+        )
+        assertEquals(250L,
+            desktopLyricNextLineDelay(lines, floored, 1000, nextWordBoundaryMs = 1000))
+        assertEquals("floor领先期间显示位置不提前越界", 750L, lyricPositionAt(floored, 1125))
+        assertEquals("采样投影追上后才到达目标边界", 1000L, lyricPositionAt(floored, 1250))
+        assertEquals("seek 后忽略已经经过的旧词界", 2_000L,
+            desktopLyricNextLineDelay(lines, floored.copy(positionMs = 4_000, lyricPositionFloorMs = 4_000),
+                1000, nextWordBoundaryMs = 1000))
+        assertNull("尾奏没有超出歌曲时长的唤醒", desktopLyricNextLineDelay(
+            lines,
+            floored.copy(positionMs = 9_500, lyricPositionFloorMs = 9_500, durationMs = 10_000, speed = 1f),
+            1000,
+            nextWordBoundaryMs = 10_500,
+        ))
+        assertNull("暂停时取消所有定时唤醒", desktopLyricNextLineDelay(
+            lines, floored.copy(positionAdvancing = false), 1000, nextWordBoundaryMs = 1000,
+        ))
+        assertNull("缓冲时取消所有定时唤醒", desktopLyricNextLineDelay(
+            lines, floored.copy(buffering = true), 1000, nextWordBoundaryMs = 1000,
+        ))
     }
 
     @Test

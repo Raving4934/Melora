@@ -167,6 +167,32 @@ class DesktopLyricViewTest {
     }
 
     @Test
+    fun viewportReportsOneNextChangeForVisibleWordsIncludingInstantWords() = onMain {
+        val viewport = DesktopLyricViewport(testContext())
+        val lines = listOf(
+            LyricLine(0, "甲乙丙", words = listOf(
+                LyricWord("甲", 100, 200),
+                LyricWord("乙", 500, 700),
+                LyricWord("丙", 750, 750),
+            )),
+            LyricLine(1000, "丙", words = listOf(LyricWord("丙", 1100, 1200))),
+        )
+        viewport.configure(24f, 1, Gravity.CENTER, Color.WHITE)
+        viewport.submit(lines, 0, "", animate = false)
+
+        assertEquals("活动词用当前位置标识连续逐帧进度", 150L, viewport.nextWordChangeAt(150))
+        assertEquals("词间静默只返回最近未来起点", 500L, viewport.nextWordChangeAt(200))
+        assertEquals(500L, viewport.nextWordChangeAt(400))
+        assertEquals("零时长词仍保留一次起点唤醒", 750L, viewport.nextWordChangeAt(700))
+        assertEquals("零时长词起点完成高亮但不启动帧循环", 1f,
+            lyricWordProgress(lines[0].words[2], 750), 0f)
+        assertEquals("当前行消耗完后，不扫描未显示下一行的词", null, viewport.nextWordChangeAt(750))
+
+        viewport.submit(lines, 1, "", animate = false)
+        assertEquals(1100L, viewport.nextWordChangeAt(1000))
+    }
+
+    @Test
     fun movingWordFocusDoesNotReplaceTheUpcomingSentenceOrItsLayout() = onMain {
         val viewport = DesktopLyricViewport(testContext())
         val lines = listOf(

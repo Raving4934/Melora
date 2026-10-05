@@ -67,7 +67,6 @@ class DesktopLyricService : Service() {
     }
     private var latestState = PlayerUiState()
     private var lyricLines: List<LyricLine> = emptyList()
-    private var hasWordTimings = false
     private var renderedLines: List<LyricLine>? = null
     private var renderedIndex = Int.MIN_VALUE
     private var renderedTrack: UiTrack? = null
@@ -479,18 +478,20 @@ class DesktopLyricService : Service() {
         if (latestState.playing != state.playing) updatePlayPauseIcon(state.playing)
         latestState = state
         val lines = lyric?.takeIf { it.uid == state.current?.uid }?.lines.orEmpty()
-        if (lines !== lyricLines) {
-            lyricLines = lines
-            hasWordTimings = lines.any { it.words.isNotEmpty() }
-        }
+        lyricLines = lines
         renderLyrics()
         scheduleUpdates()
     }
 
     private fun scheduleUpdates() {
+        val view = lyricView
+        val visible = view?.isShown == true && view.windowVisibility == View.VISIBLE
         val active = desktopLyricNeedsFrames(latestState, true, screenInteractive,
-            lyricView?.isShown == true && lyricView?.windowVisibility == View.VISIBLE)
-        val needed = hasWordTimings && active
+            visible)
+        val now = SystemClock.elapsedRealtime()
+        val position = lyricPositionAt(latestState, now)
+        val nextWordChangeAt = view?.nextWordChangeAt(position)
+        val needed = active && nextWordChangeAt == position
         if (needed && !framePosted) {
             framePosted = true
             Choreographer.getInstance().postFrameCallback(frameCallback)
@@ -502,8 +503,13 @@ class DesktopLyricService : Service() {
             lyricView?.removeCallbacks(lineTick)
             lineTickPosted = false
         }
-        // 普通 LRC 不空跑逐帧循环；按下一句的真实时间唤醒，避免 500ms 采样跳过短句。
-        if (active && !needed) desktopLyricNextLineDelay(lyricLines, latestState, SystemClock.elapsedRealtime())?.let { delay ->
+        // 逐字词间隙与普通 LRC 共用边界定时；只在真实词进度变化时逐帧刷新。
+        if (active && !needed) desktopLyricNextLineDelay(
+            lyricLines,
+            latestState,
+            now,
+            nextWordChangeAt,
+        )?.let { delay ->
             lineTickPosted = lyricView?.postDelayed(lineTick, delay) == true
         }
     }
@@ -607,13 +613,25 @@ internal data class DesktopLyricGeometry(
 }
 
 internal fun desktopLyricNeedsFrames(state: PlayerUiState, timed: Boolean, interactive: Boolean, visible: Boolean): Boolean =
-    timed && interactive && visible && state.positionAdvancing && !state.buffering && !state.resolving
+    timed && interactive && visible && state.positionAdvancing && !state.buffering && !state.resolving && state.speed > 0f
 
-/** 仅为普通歌词安排下一次换句，不虚构逐字时间。 */
-internal fun desktopLyricNextLineDelay(lines: List<LyricLine>, state: PlayerUiState, nowMs: Long): Long? {
+/** 普通句界与可见逐字词界共用同一个定时唤醒，不在词间隙空跑帧。 */
+internal fun desktopLyricNextLineDelay(
+    lines: List<LyricLine>,
+    state: PlayerUiState,
+    nowMs: Long,
+    nextWordBoundaryMs: Long? = null,
+): Long? {
     if (!state.positionAdvancing || state.buffering || state.resolving || state.speed <= 0f) return null
     val position = lyricPositionAt(state, nowMs)
-    val next = lines.getOrNull(lyricIndexAt(lines, position, includeBackground = true) + 1) ?: return null
-    if (state.durationMs > 0 && next.startMs > state.durationMs) return null
-    return kotlin.math.ceil((next.startMs - position) / state.speed.toDouble()).toLong().coerceAtLeast(1L)
+    val nextLine = lines.getOrNull(lyricIndexAt(lines, position, includeBackground = true) + 1)?.startMs
+    val next = sequenceOf(nextLine, nextWordBoundaryMs)
+        .filterNotNull()
+        .filter { it > position && (state.durationMs <= 0 || it <= state.durationMs) }
+        .minOrNull() ?: return null
+    // floor 只防显示时间倒退；若它领先实际采样，必须等采样位置追到边界，不能从floor直接减。
+    val sampledPosition = state.positionMs +
+        ((nowMs - state.positionSampleRealtimeMs).coerceAtLeast(0) * state.speed).toLong()
+    return kotlin.math.ceil((next - sampledPosition).coerceAtLeast(0) / state.speed.toDouble())
+        .toLong().coerceAtLeast(1L)
 }

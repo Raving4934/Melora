@@ -110,6 +110,21 @@ internal class DesktopLyricViewport(context: Context) : ViewGroup(context) {
         requestLayout()
     }
 
+    /** 活动词返回当前位置供逐帧播放；否则返回可见行中最近未来的起点供定时唤醒。 */
+    fun nextWordChangeAt(positionMs: Long): Long? {
+        var next: Long? = null
+        for (index in rows.keys) {
+            val words = lines.getOrNull(index)?.words ?: continue
+            for (word in words) {
+                if (word.endMs > word.startMs && positionMs >= word.startMs && positionMs < word.endMs) {
+                    return positionMs
+                }
+                if (word.startMs > positionMs && (next == null || word.startMs < next)) next = word.startMs
+            }
+        }
+        return next
+    }
+
     fun renderPosition(positionMs: Long) {
         this.positionMs = positionMs
         // 保留相邻句的逐字底色，焦点转移时不替换整行样式；无进度变化的行不会重绘。
