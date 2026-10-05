@@ -94,6 +94,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.LayerOutsets
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -137,7 +138,7 @@ import com.leyu.melora.ui.settings.SettingsMasterScreen
 import com.leyu.melora.ui.settings.SettingsSubPage
 import com.leyu.melora.ui.common.ChromeActionSurface
 import com.leyu.melora.ui.common.ChromeScaffold
-import com.leyu.melora.ui.common.LocalChromeBesideDrawer
+import com.leyu.melora.ui.common.LocalChromeStartBleed
 import com.leyu.melora.ui.common.DetailPageHost
 import com.leyu.melora.ui.common.chromeHeaderColor
 import com.leyu.melora.ui.player.ContinuousPlayerSheet
@@ -350,6 +351,8 @@ fun MeloraApp(initialTab: Int = 5) {
     val density = LocalDensity.current
     // 侧栏宽度调至紧凑精致的 208dp
     val drawerWidth = 208.dp
+    val chromeStartBleed = 8.dp // 小于侧栏12dp留白，不覆盖卡片。
+    val chromeOutsets = remember { LayerOutsets(horizontal = chromeStartBleed, vertical = 0.dp) }
     val drawerWidthPx = with(density) { drawerWidth.toPx() }
     val windowSize = LocalWindowInfo.current.containerSize
     val windowWidth = with(density) { windowSize.width.toDp() }
@@ -560,49 +563,50 @@ fun MeloraApp(initialTab: Int = 5) {
         }
 
         // --- 2. 主页面；窄窗口沿用抽屉推页，宽窗口在同一内容树旁显示常驻导航 ---
-        ChromeScaffold(
-            containerColor = Color.Transparent,
-            expectedTopBarHeight = 0.dp,
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(start = if (isPersistentDrawer) drawerWidth else 0.dp)
-                .graphicsLayer {
-                    translationX = if (isPersistentDrawer) 0f else drawerOffset.value
-                    // 播放器移动时复用静止底页的纹理，避免每帧重放整屏列表绘制。
-                    // 在layer阶段判断，不逐帧重组；停稳即恢复正常绘制并释放缓存层。
-                    val sheet = playerSheetBackState?.sheet
-                    val moving = sheet != null && sheet.offset > 0f &&
-                        sheet.offset < sheet.anchors.positionOf(PlayerSheetAnchor.Collapsed)
-                    compositingStrategy = if (moving) CompositingStrategy.Offscreen else CompositingStrategy.Auto
-                }
-                .then(
-                    if (isPersistentDrawer) Modifier else Modifier.drawerSwipeable(
-                        drawerOffset = drawerOffset,
-                        drawerWidthPx = drawerWidthPx,
-                        drawerSpring = drawerSpring,
-                        scope = scope,
-                    ),
-                ),
-            bottomBar = {
-                if (hasActivePlayback) {
-                    Spacer(
-                        Modifier
-                            .navigationBarsPadding()
-                            .height(MiniPlayerHeight),
-                    )
-                }
-            },
+        CompositionLocalProvider(
+            LocalPageActive provides (!drawerOpen && !playerOwnsBack),
+            LocalChromeStartBleed provides chromeStartBleed,
         ) {
-            Box(
+            ChromeScaffold(
+                containerColor = Color.Transparent,
+                expectedTopBarHeight = 0.dp,
                 modifier = Modifier
                     .fillMaxSize()
-                    .testTag("main-navigation-content"),
+                    .padding(start = if (isPersistentDrawer) drawerWidth else 0.dp)
+                    .graphicsLayer {
+                        translationX = if (isPersistentDrawer) 0f else drawerOffset.value
+                        outsets = chromeOutsets
+                        // 播放器移动时复用静止底页的纹理，避免每帧重放整屏列表绘制。
+                        // 在layer阶段判断，不逐帧重组；停稳即恢复正常绘制并释放缓存层。
+                        val sheet = playerSheetBackState?.sheet
+                        val moving = sheet != null && sheet.offset > 0f &&
+                            sheet.offset < sheet.anchors.positionOf(PlayerSheetAnchor.Collapsed)
+                        compositingStrategy = if (moving) CompositingStrategy.Offscreen else CompositingStrategy.Auto
+                    }
+                    .then(
+                        if (isPersistentDrawer) Modifier else Modifier.drawerSwipeable(
+                            drawerOffset = drawerOffset,
+                            drawerWidthPx = drawerWidthPx,
+                            drawerSpring = drawerSpring,
+                            scope = scope,
+                        ),
+                    ),
+                bottomBar = {
+                    if (hasActivePlayback) {
+                        Spacer(
+                            Modifier
+                                .navigationBarsPadding()
+                                .height(MiniPlayerHeight),
+                        )
+                    }
+                },
             ) {
-                // 底页可能晚于 mini 播放器注册返回，不能依赖 dispatcher 的注册顺序。
-                CompositionLocalProvider(
-                    LocalPageActive provides (!drawerOpen && !playerOwnsBack),
-                    LocalChromeBesideDrawer provides isPersistentDrawer,
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .testTag("main-navigation-content"),
                 ) {
+                    // 底页可能晚于 mini 播放器注册返回，不能依赖 dispatcher 的注册顺序。
                     // 同级切换由抽屉收回提供唯一运动，不再叠加横移/交叉淡化。
                     key(currentTab) {
                         val visibleTab = currentTab

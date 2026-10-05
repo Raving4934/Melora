@@ -399,6 +399,7 @@ internal fun LocalSongsListContent(
 
     ChromeScaffold(
         expectedTopBarHeight = 110.dp,
+        hasSecondaryRow = true,
         topBar = {
             Column(
                 modifier = Modifier

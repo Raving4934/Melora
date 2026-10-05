@@ -38,10 +38,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.LinearGradientShader
+import androidx.compose.ui.graphics.Shader
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalConfiguration
@@ -49,6 +51,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.offset
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -64,11 +67,12 @@ import dev.chrisbanes.haze.blur.HazeColorEffect
 import dev.chrisbanes.haze.blur.hazeBlur
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
+import kotlin.math.roundToInt
 
 /** 当前页面固定栏累计占用高度。仅加入全页列表 contentPadding，不裁切滚动视口。 */
 internal val LocalChromeTopInset = compositionLocalOf { 0.dp }
-/** 仅常驻侧栏旁的正文材质收敛到画布色，不影响手机或全屏播放页。 */
-internal val LocalChromeBesideDrawer = compositionLocalOf { false }
+/** 主导航材质向侧栏留白外绘的宽度；手机关闭侧栏时，外绘部分自然落在屏幕外。 */
+internal val LocalChromeStartBleed = compositionLocalOf { 0.dp }
 // 系统安全区与导航栏高度分离：替换导航的详情页不能继承上一帧仍可见的主栏高度。
 private val LocalChromeSystemTopInset = compositionLocalOf { 0.dp }
 
@@ -80,8 +84,9 @@ private val LocalChromeDepth = compositionLocalOf { 0 }
 
 /** 所有固定栏共用正文源和渐变坐标，禁止把下层栏的阴影/模糊结果再采样。 */
 internal class ChromeHeaderGeometry {
-    private data class Region(val top: Dp, val bottom: Dp, val depth: Int, val source: HazeState?)
+    private data class Region(val top: Dp, val bottom: Dp, val depth: Int, val source: HazeState?, val hasSecondaryRow: Boolean)
     private val regions = mutableStateMapOf<Any, Region>()
+    val hasSecondaryRow: Boolean get() = regions.values.any { it.hasSecondaryRow }
     val minimumTop: Dp get() = regions.values.minOfOrNull { it.top } ?: 0.dp
     val maximumBottom: Dp get() = regions.values.maxOfOrNull { it.bottom } ?: 0.dp
     // 已知栏高作为首帧范围；登记尚未完成时不能先创建1px遮罩，下一帧再重建模糊层。
@@ -92,8 +97,8 @@ internal class ChromeHeaderGeometry {
         .filter { it.depth > depth && it.source != null }
         .maxByOrNull { it.depth }?.source ?: ownSource
 
-    fun update(owner: Any, top: Dp, bottom: Dp, depth: Int, source: HazeState?) {
-        regions[owner] = Region(top, bottom, depth, source)
+    fun update(owner: Any, top: Dp, bottom: Dp, depth: Int, source: HazeState?, hasSecondaryRow: Boolean = false) {
+        regions[owner] = Region(top, bottom, depth, source, hasSecondaryRow)
     }
     fun remove(owner: Any) { regions.remove(owner) }
 }
@@ -198,6 +203,7 @@ internal fun ChromeScaffold(
     contentSource: HazeState? = null,
     stackOnParent: Boolean = false,
     expectedTopBarHeight: Dp? = null,
+    hasSecondaryRow: Boolean = false,
     topBar: @Composable () -> Unit = {},
     bottomBar: @Composable () -> Unit = {},
     content: @Composable BoxScope.() -> Unit,
@@ -206,6 +212,8 @@ internal fun ChromeScaffold(
     val inheritedTop = LocalChromeTopInset.current
     val direction = LocalLayoutDirection.current
     val density = LocalDensity.current
+    val startBleed = LocalChromeStartBleed.current
+    val startBleedPx = with(density) { startBleed.roundToPx() }
     val view = LocalView.current
     val orientation = LocalConfiguration.current.orientation
     val inheritedGeometry = LocalChromeGeometry.current
@@ -240,31 +248,36 @@ internal fun ChromeScaffold(
         resolved.toDp()
     } else LocalChromeSystemTopInset.current
     val headerTop = if (root) 0.dp else chromeHeaderTopInset(inheritedTop, systemTop, stackOnParent)
-    val material = if (delegatesHeader) Modifier else
-        Modifier.chromeMaterial(
-            activeSource, enabled, headerTop, geometry, headerColor,
-            knownBottom = headerTop + (if (root) systemTop else 0.dp) + (expectedTopBarHeight ?: 0.dp),
-        )
-
     CompositionLocalProvider(
         LocalChromeGeometry provides geometry,
         LocalChromeDepth provides depth,
         LocalChromeSystemTopInset provides systemTop,
     ) {
         Scaffold(
-            modifier = modifier,
+            // Surface会裁切子材质；只扩大绘制视口，再对三个槽位作等量内缩。
+            // 对外报告原尺寸，嵌套页也共享同一条外边界，不逐层累计留白。
+            modifier = modifier.layout { measurable, constraints ->
+                val layer = measurable.measure(constraints.copy(
+                    minWidth = constraints.minWidth + startBleedPx,
+                    maxWidth = constraints.maxWidth + startBleedPx,
+                ))
+                layout(layer.width - startBleedPx, layer.height) { layer.placeRelative(-startBleedPx, 0) }
+            },
             containerColor = containerColor,
             contentWindowInsets = WindowInsets.safeDrawing,
             topBar = {
-                Column {
+                Column(Modifier.padding(start = startBleed)) {
                     Spacer(Modifier.height(headerTop))
                     Box(
                         Modifier.fillMaxWidth()
-                            .consumeWindowInsets(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
-                            .clipToBounds().then(material),
+                            .consumeWindowInsets(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
                     ) {
-                        // 材质覆盖整个窗口宽度；切口/导航栏的横向避让只限制文字与按钮。
-                        Column(Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
+                        if (!delegatesHeader) ChromeMaterial(
+                            activeSource, enabled, headerTop, geometry, headerColor, hasSecondaryRow,
+                            knownBottom = headerTop + (if (root) systemTop else 0.dp) + (expectedTopBarHeight ?: 0.dp),
+                        )
+                        // 材质与交互内容分层：仅背景向下渐隐，文字/按钮仍按原区域裁切。
+                        Column(Modifier.clipToBounds().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
                             // 只占一次系统 inset，底色/模糊由外层统一绘制，系统图标不属于采样内容。
                             if (root) Spacer(Modifier.fillMaxWidth().height(systemTop))
                             CompositionLocalProvider(LocalChromeBlurEnabled provides enabled) { topBar() }
@@ -272,7 +285,14 @@ internal fun ChromeScaffold(
                     }
                 }
             },
-            bottomBar = bottomBar,
+            bottomBar = {
+                Box(Modifier.layout { measurable, constraints ->
+                    val bar = measurable.measure(constraints.offset(horizontal = -startBleedPx))
+                    // 空槽必须仍为0×0，否则Scaffold会误判存在底栏并撤销系统导航栏留白。
+                    val width = if (bar.width == 0 && bar.height == 0) 0 else bar.width + startBleedPx
+                    layout(width, bar.height) { bar.placeRelative(startBleedPx, 0) }
+                }) { bottomBar() }
+            },
         ) { padding ->
             val headerBottom = chromeContentTopInset(
                 measured = padding.calculateTopPadding(),
@@ -282,12 +302,13 @@ internal fun ChromeScaffold(
                 topBarHeight = expectedTopBarHeight,
             )
             SideEffect {
-                if (!delegatesHeader) geometry.update(owner, headerTop, headerBottom, depth, bodySource)
+                if (!delegatesHeader) geometry.update(owner, headerTop, headerBottom, depth, bodySource, hasSecondaryRow)
                 else geometry.remove(owner)
             }
             val sidesAndBottom = chromeBodyPadding(padding, direction, delegatesHeader)
             Box(
                 modifier = Modifier.fillMaxSize()
+                    .padding(start = startBleed)
                     .padding(sidesAndBottom)
                     .consumeWindowInsets(if (delegatesHeader) PaddingValues(
                         top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding(),
@@ -308,68 +329,106 @@ internal fun ChromeScaffold(
 
 @OptIn(ExperimentalHazeApi::class)
 @Composable
-private fun Modifier.chromeMaterial(
+private fun BoxScope.ChromeMaterial(
     state: HazeState,
     enabled: Boolean,
     topOffset: Dp,
     geometry: ChromeHeaderGeometry,
     canvas: Color = MeloraAppearance.canvas,
+    hasSecondaryRow: Boolean = false,
     knownBottom: Dp,
-): Modifier {
+) {
     val density = LocalDensity.current
-    if (!enabled) return background(canvas)
+    if (!enabled) {
+        Box(Modifier.matchParentSize().background(canvas))
+        return
+    }
     val bounds by remember(geometry, topOffset, knownBottom) {
         derivedStateOf { (geometry.minimumTop - topOffset) to (geometry.materialBottom(knownBottom) - topOffset) }
     }
     val start = with(density) { bounds.first.toPx() }
     val end = with(density) { bounds.second.toPx() }.coerceAtLeast(start + 1f)
-    // 遮色直接在画布混合，不在 RenderEffect 内生成半透明中间纹理。
-    val veil = remember(canvas, start, end) {
-        Brush.verticalGradient(listOf(canvas, canvas.copy(alpha = 0f)), startY = start, endY = end)
+    val protectActions by remember(geometry, hasSecondaryRow) {
+        derivedStateOf { hasSecondaryRow || geometry.hasSecondaryRow }
     }
-    val fade = remember(start, end) {
-        Brush.verticalGradient(
-            0f to Color.Black,
-            0.60f to Color.Black,
-            1f to Color.Transparent,
-            startY = start,
-            endY = end,
-        )
+    val fadeHeight = with(density) { if (protectActions) 28.dp.roundToPx() else 0 }
+    // 两端斜率归零，避免操作栏下沿与正文交界出现线性渐变的横带。
+    // 仅双行材质使用平滑曲线；单行保留原来的线性遮色与60%渐隐。
+    val smoothRamp = remember {
+        List(17) { index ->
+            val t = index / 16f
+            t * t * (3f - 2f * t)
+        }
     }
-    val besideDrawer = LocalChromeBesideDrawer.current
+    val ramp = remember(protectActions) { if (protectActions) smoothRamp else listOf(0f, 1f) }
+    // 整个操作区保持完整模糊；只有最后一栏下面的绘制尾部渐隐。
+    // 用实际画布高度兜住首次测量（未知栏高尚未登记），不依赖下一帧回写尺寸。
+    val fade = remember(start, end, fadeHeight, protectActions, ramp) {
+        val colors = ramp.map { Color.Black.copy(alpha = 1f - it) }
+        object : ShaderBrush() {
+            override fun createShader(size: Size): Shader {
+                val bottom = maxOf(end, size.height - fadeHeight)
+                val fadeStart = if (protectActions) bottom else start + (bottom - start) * 0.60f
+                return LinearGradientShader(
+                    Offset(0f, fadeStart), Offset(0f, bottom + fadeHeight),
+                    colors,
+                )
+            }
+        }
+    }
+    val veil = remember(canvas, start, end, fadeHeight, fade, protectActions, ramp) {
+        val colors = ramp.map { canvas.copy(alpha = canvas.alpha * (1f - it * if (protectActions) 0.35f else 1f)) }
+        val tint = object : ShaderBrush() {
+            override fun createShader(size: Size) = LinearGradientShader(
+                Offset(0f, start), Offset(0f, maxOf(end, size.height - fadeHeight)),
+                colors,
+            )
+        }
+        if (protectActions) Brush.composite(tint, fade, BlendMode.DstIn) else tint
+    }
     val direction = LocalLayoutDirection.current
-    val edgeWidth = with(density) { 32.dp.toPx() }
-    val (materialMask, materialVeil) = remember(fade, veil, besideDrawer, direction, edgeWidth, canvas) {
-        if (!besideDrawer) fade to veil else {
+    val startBleedPx = with(density) { LocalChromeStartBleed.current.roundToPx() }
+    val (materialMask, materialVeil) = remember(fade, veil, startBleedPx, direction) {
+        if (startBleedPx == 0) fade to veil else {
+            val colors = smoothRamp.map { Color.Black.copy(alpha = it) }
             val edge = object : ShaderBrush() {
                 override fun createShader(size: Size) = LinearGradientShader(
                     from = Offset(if (direction == LayoutDirection.Ltr) 0f else size.width, 0f),
-                    to = Offset(if (direction == LayoutDirection.Ltr) edgeWidth else size.width - edgeWidth, 0f),
-                    colors = listOf(canvas, canvas.copy(alpha = 0f)),
+                    to = Offset(if (direction == LayoutDirection.Ltr) startBleedPx.toFloat() else size.width - startBleedPx, 0f),
+                    colors = colors,
                 )
             }
-            // 同时收敛模糊与遮色，并复用纵向渐隐，避免把竖缝换成底部色块。
-            Brush.composite(fade, edge, BlendMode.DstOut) to Brush.composite(
-                veil, Brush.composite(edge, fade, BlendMode.DstIn), BlendMode.SrcOver,
-            )
+            // 只在边界外渐隐，不再向正文内部刷一条画布色带。
+            Brush.composite(fade, edge, BlendMode.DstIn) to Brush.composite(veil, edge, BlendMode.DstIn)
         }
     }
-    return hazeBlur(
-        input = HazeInput.Sources(state, retention = HazeSourceRetention.ClearWhenUnavailable),
-        style = HazeBlurStyle {
-            backgroundColor(canvas)
-            colorEffects(emptyList())
-            blurRadius(20.dp)
-            noiseFactor(0f)
-            fallbackColorEffect(HazeColorEffect.tint(canvas))
-            // 使用系统高斯与渐隐遮罩，不引入可变半径内核。
-            progressive(null)
-            mask(materialMask)
-        },
-        // 对应原全分辨率采样，避免降采样改变渐变末端的边缘与细节。
-        performanceMode = HazePerformanceMode.Quality,
-    ).drawBehind { drawRect(materialVeil) }
-
+    Box(
+        Modifier.matchParentSize()
+            .layout { measurable, constraints ->
+                // 不扩张父栏尺寸或触摸范围；上面的栏不伸进下一行，避免重复叠加材质。
+                val extension = if (constraints.maxHeight >= end.roundToInt()) fadeHeight else 0
+                val height = constraints.maxHeight + extension
+                val width = constraints.maxWidth + startBleedPx
+                val layer = measurable.measure(constraints.copy(minWidth = width, maxWidth = width, minHeight = height, maxHeight = height))
+                layout(constraints.maxWidth, constraints.maxHeight) { layer.placeRelative(-startBleedPx, 0) }
+            }
+            .clipToBounds()
+            .hazeBlur(
+                input = HazeInput.Sources(state, retention = HazeSourceRetention.ClearWhenUnavailable),
+                style = HazeBlurStyle {
+                    backgroundColor(canvas)
+                    colorEffects(emptyList())
+                    blurRadius(20.dp)
+                    noiseFactor(0f)
+                    fallbackColorEffect(HazeColorEffect.tint(canvas))
+                    // 使用系统高斯与渐隐遮罩，不引入可变半径内核。
+                    progressive(null)
+                    mask(materialMask)
+                },
+                // 对应原全分辨率采样，避免降采样改变渐变末端的边缘与细节。
+                performanceMode = HazePerformanceMode.Quality,
+            ).drawBehind { drawRect(materialVeil) },
+    )
 }
 
 /** 保留 Hero 下方原控制条的位置，吸顶后才加入同一渐变材质范围。 */
@@ -394,14 +453,14 @@ internal fun ChromeFloatingBar(
     val layoutHeight = with(density) { height.roundToPx().toDp() }
     DisposableEffect(geometry, owner) { onDispose { geometry.remove(owner) } }
     SideEffect {
-        if (pinned) geometry.update(owner, topOffset, topOffset + layoutHeight, depth, source = null) else geometry.remove(owner)
+        if (pinned) geometry.update(owner, topOffset, topOffset + layoutHeight, depth, source = null, hasSecondaryRow = true) else geometry.remove(owner)
     }
     Box(
-        modifier = modifier
-            .height(height)
-            .clipToBounds()
-            .then(Modifier.chromeMaterial(activeSource, enabled && pinned, topOffset, geometry, knownBottom = topOffset + layoutHeight)),
+        modifier = modifier.height(height),
     ) {
-        CompositionLocalProvider(LocalChromeBlurEnabled provides (enabled && pinned)) { content() }
+        ChromeMaterial(activeSource, enabled && pinned, topOffset, geometry, hasSecondaryRow = pinned, knownBottom = topOffset + layoutHeight)
+        Box(Modifier.matchParentSize().clipToBounds()) {
+            CompositionLocalProvider(LocalChromeBlurEnabled provides (enabled && pinned)) { content() }
+        }
     }
 }

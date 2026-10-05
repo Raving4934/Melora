@@ -108,8 +108,10 @@ internal fun LocalSearchPage(
     val scope = rememberCoroutineScope()
     val filtered = remember(songs, query) { if (query.isBlank()) songs else songs.filter { it.matches(query) } }
 
+    val hasActions = query.isNotBlank() && filtered.isNotEmpty()
     ChromeScaffold(
-        expectedTopBarHeight = if (query.isNotBlank() && filtered.isNotEmpty()) 110.dp else 64.dp,
+        expectedTopBarHeight = if (hasActions) 110.dp else 64.dp,
+        hasSecondaryRow = hasActions,
         topBar = {
             Column(
                 modifier = Modifier
@@ -191,7 +193,7 @@ internal fun LocalSearchPage(
                             .padding(horizontal = 6.dp, vertical = 6.dp),
                     )
                 }
-                if (query.isNotBlank() && filtered.isNotEmpty()) {
+                if (hasActions) {
                     LocalListHeader(
                         count = filtered.size,
                         songs = filtered,

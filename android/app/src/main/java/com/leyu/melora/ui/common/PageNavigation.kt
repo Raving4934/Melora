@@ -18,7 +18,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.LayerOutsets
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -73,6 +81,21 @@ internal fun <T : Any> DetailPageHost(
     content: @Composable () -> Unit,
 ) {
     val parentActive = LocalPageActive.current
+    val startBleed = LocalChromeStartBleed.current
+    val viewportShape = remember(startBleed) {
+        object : Shape {
+            override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline {
+                val outset = with(density) { startBleed.toPx() }
+                return Outline.Rectangle(Rect(
+                    left = if (layoutDirection == LayoutDirection.Ltr) -outset else 0f,
+                    top = 0f,
+                    right = size.width + if (layoutDirection == LayoutDirection.Rtl) outset else 0f,
+                    bottom = size.height,
+                ))
+            }
+        }
+    }
+    val viewportOutsets = remember(startBleed) { LayerOutsets(horizontal = startBleed, vertical = 0.dp) }
     val progress = remember { Animatable(if (target == null) 0f else 1f) }
     var retained by remember { mutableStateOf(target) }
     // 同一key的详情数据更新不重启转场，退出时仍使用最后展示的那份数据。
@@ -84,14 +107,21 @@ internal fun <T : Any> DetailPageHost(
         if (target == null) retained = null
     }
     val visible = target ?: retained
-    Box(modifier.fillMaxSize().clipToBounds()) {
+    Box(modifier.fillMaxSize().graphicsLayer {
+        shape = viewportShape
+        clip = true
+        outsets = viewportOutsets
+    }) {
         val baseActive = parentActive && target == null
         CompositionLocalProvider(LocalPageActive provides baseActive) {
             Box(Modifier.fillMaxSize().graphicsLayer {
                 translationX = pageTranslationX(progress.value, size.width, detail = false)
                 // 完全移出视口才停绘；可见阶段不做透明度动画，也不重绘隐藏页的模糊材质。
                 alpha = if (translationX <= -size.width) 0f else 1f
+                // 转场沿用原矩形裁切，停稳才允许材质伸入侧栏留白；页面仍严格相接。
+                shape = if (progress.value == 0f || progress.value == 1f) viewportShape else RectangleShape
                 clip = true
+                outsets = viewportOutsets
             }.pageInput(baseActive)) { content() }
         }
         if (visible != null) key(contentKey(visible)) {
@@ -100,7 +130,10 @@ internal fun <T : Any> DetailPageHost(
                 Box(Modifier.fillMaxSize().graphicsLayer {
                     translationX = pageTranslationX(progress.value, size.width, detail = true)
                     alpha = if (translationX >= size.width) 0f else 1f
+                    // 转场沿用原矩形裁切，停稳才允许材质伸入侧栏留白；页面仍严格相接。
+                    shape = if (progress.value == 0f || progress.value == 1f) viewportShape else RectangleShape
                     clip = true
+                    outsets = viewportOutsets
                 }.background(MeloraAppearance.canvas).pageInput(active)) { detail(visible) }
             }
         }

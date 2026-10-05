@@ -18,6 +18,25 @@ import org.junit.Assert.assertSame
 import org.junit.Test
 
 class ChromePaddingTest {
+    @Test fun onlyVisibleSecondaryRowsProtectTheMaterialAndUnpinningRestoresSingleHeader() {
+        val geometry = ChromeHeaderGeometry()
+        val title = Any()
+        val actions = Any()
+        geometry.update(title, 0.dp, 96.dp, 1, source = null)
+        assertFalse(geometry.hasSecondaryRow)
+        geometry.update(actions, 96.dp, 142.dp, 1, source = null, hasSecondaryRow = true)
+        assertTrue(geometry.hasSecondaryRow)
+        assertEquals(142.dp, geometry.maximumBottom)
+        geometry.remove(actions)
+        assertFalse(geometry.hasSecondaryRow)
+        assertEquals(96.dp, geometry.maximumBottom)
+        geometry.update(title, 0.dp, 142.dp, 1, source = null, hasSecondaryRow = true)
+        assertTrue(geometry.hasSecondaryRow)
+        geometry.update(title, 0.dp, 96.dp, 1, source = null)
+        assertFalse(geometry.hasSecondaryRow)
+        assertFalse(ChromeHeaderGeometry().hasSecondaryRow)
+    }
+
     @Test fun selfRegistrationDoesNotInvalidateUnchangedMaterialButNestedHeadersDo() {
         val geometry = ChromeHeaderGeometry()
         val own = HazeState()
