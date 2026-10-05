@@ -111,7 +111,6 @@ object BackupManager {
     }
 
     private fun applyRuntimeSettings(context: Context) {
-        PlaybackController.applyAudioFocus(MeloraSettings.pauseOnOtherAudio.value)
         PlaybackController.applyMusicPlayMode()
         AudioCacheStore.cancelPrefetch()
         AudioCacheStore.trimNow()

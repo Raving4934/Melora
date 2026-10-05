@@ -865,19 +865,6 @@ object PlaybackController {
         }
     }
 
-    /** 实时应用「其他应用发声时自动暂停」：切换音频焦点接管，无需重启服务。 */
-    fun applyAudioFocus(enabled: Boolean) {
-        runCatching {
-            controller?.setAudioAttributes(
-                androidx.media3.common.AudioAttributes.Builder()
-                    .setUsage(C.USAGE_MEDIA)
-                    .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
-                    .build(),
-                enabled,
-            )
-        }
-    }
-
     /** 无源只拦截新网络解析；离线资源先检查，失败时不改队列、不打断当前音乐。 */
     private fun requestPlayback(context: Context, track: UiTrack, container: UserLibrary.PlayContainer?, play: () -> Unit) {
         // 新点歌立即撤销旧目录请求；不能等离线缓存检查结束后才取消，导致旧结果抢播。

@@ -99,15 +99,9 @@ class PlaybackService : MediaSessionService() {
             .experimentalSetDynamicSchedulingEnabled(false)
             .setLoadControl(playbackLoadControl())
             .setMediaSourceFactory(DefaultMediaSourceFactory(cacheDataSourceFactory))
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(C.USAGE_MEDIA)
-                    .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
-                    .build(),
-                MeloraSettings.pauseOnOtherAudio.value,
-            )
             .setHandleAudioBecomingNoisy(true)
             .build()
+        player.followAudioFocusSettings(serviceScope)
         player.applyPlayMode(MeloraSettings.musicPlayMode.value)
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .setAudioOffloadPreferences(
@@ -309,6 +303,13 @@ class PlaybackService : MediaSessionService() {
         var isRunning = false
             private set
     }
+}
+
+/** 实际播放器随服务生命周期接收设置；不依赖UI控制器，首值重放也覆盖服务重建。 */
+@androidx.annotation.OptIn(UnstableApi::class)
+internal fun ExoPlayer.followAudioFocusSettings(scope: CoroutineScope) = scope.launch(Dispatchers.Main.immediate) {
+    val attributes = AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build()
+    MeloraSettings.pauseOnOtherAudio.collect { setAudioAttributes(attributes, it) }
 }
 
 /** 通知展示层优先采用展示标题，不修改供曲目识别/蓝牙读取的原始 title。 */

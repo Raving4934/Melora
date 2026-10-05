@@ -351,7 +351,6 @@ internal fun PlaybackSettingsSubPage(onBack: () -> Unit) {
 
                 SwitchItem("其他应用发声时自动暂停", "音频焦点冲突时主动避让暂停", pauseOnOtherAudio) {
                     MeloraSettings.updatePauseOnOtherAudio(it)
-                    PlaybackController.applyAudioFocus(it)
                 }
             }
         }
