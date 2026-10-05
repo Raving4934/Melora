@@ -16,6 +16,70 @@ import org.junit.Test
 
 class BookChapterSearchTest {
     @Test
+    fun blankQueryParsesToEmptyNameQuery() {
+        assertEquals(BookChapterQuery("", isEpisode = false, episode = null), parseBookChapterQuery(" \n\t "))
+    }
+
+    @Test
+    fun trimsAsciiDigitsAndParsesEpisode() {
+        assertEquals(BookChapterQuery("1000", isEpisode = true, episode = 1000), parseBookChapterQuery("  1000  "))
+    }
+
+    @Test
+    fun parsesFullWidthDigitsAsEpisode() {
+        assertEquals(BookChapterQuery("１０００", isEpisode = true, episode = 1000), parseBookChapterQuery("１０００"))
+    }
+
+    @Test
+    fun parsesArabicChapterMarkerAsEpisode() {
+        assertEquals(BookChapterQuery("第1000章", isEpisode = true, episode = 1000), parseBookChapterQuery("第1000章"))
+    }
+
+    @Test
+    fun parsesEpisodeSuffixAsEpisode() {
+        assertEquals(BookChapterQuery("1000集", isEpisode = true, episode = 1000), parseBookChapterQuery("1000集"))
+    }
+
+    @Test
+    fun parsesChineseNumeralChapterMarkerAsEpisode() {
+        assertEquals(BookChapterQuery("第一千章", isEpisode = true, episode = 1000), parseBookChapterQuery("第一千章"))
+    }
+
+    @Test
+    fun parsesSpacedFullWidthEpisodeMarker() {
+        assertEquals(BookChapterQuery("第 １０００ 集", isEpisode = true, episode = 1000), parseBookChapterQuery("第 １０００ 集"))
+    }
+
+    @Test
+    fun zeroIsEpisodeQueryWithoutValidOrdinal() {
+        assertEquals(BookChapterQuery("0", isEpisode = true, episode = null), parseBookChapterQuery("0"))
+    }
+
+    @Test
+    fun overflowingEpisodeIsClassifiedButHasNoOrdinal() {
+        assertEquals(
+            BookChapterQuery("2147483648", isEpisode = true, episode = null),
+            parseBookChapterQuery("2147483648"),
+        )
+    }
+
+    @Test
+    fun mixedTitleContainingEpisodeMarkerRemainsNameQuery() {
+        val raw = " 仙逆 第1000集 炼制仙卫 "
+        assertEquals(BookChapterQuery(raw.trim(), isEpisode = false, episode = null), parseBookChapterQuery(raw))
+    }
+
+    @Test
+    fun yearContainingDigitsRemainsNameQuery() {
+        assertEquals(BookChapterQuery("1984年", isEpisode = false, episode = null), parseBookChapterQuery("1984年"))
+    }
+
+    @Test
+    fun chineseNumberWithoutChapterMarkerRemainsNameQuery() {
+        assertEquals(BookChapterQuery("一千", isEpisode = false, episode = null), parseBookChapterQuery("一千"))
+    }
+
+    @Test
     fun blankQueryDoesNotLoadAnyPage() = runBlocking {
         var loadCount = 0
 

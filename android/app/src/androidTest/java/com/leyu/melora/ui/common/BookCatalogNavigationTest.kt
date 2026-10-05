@@ -49,15 +49,24 @@ class BookCatalogNavigationTest {
         compose.awaitStable(compose.onNodeWithTag("book-chapter-picker-trigger"))
     }
 
-    private fun jump(ordinal: Int) {
+    private fun queryField(): SemanticsNodeInteraction {
         val picker = compose.onNodeWithTag("book-chapter-picker-trigger")
         compose.awaitStable(picker)
         picker.performClick()
-        val field = compose.onNode(hasSetTextAction())
+        val drawer = compose.onNodeWithTag("book-chapter-picker")
+        compose.awaitStable(drawer)
+        val field = compose.onNodeWithTag("book-chapter-query")
         compose.awaitStable(field)
-        field.performTextReplacement(ordinal.toString())
+        return field
+    }
+
+    private fun jump(query: String) {
+        val field = queryField()
+        field.performTextReplacement(query)
         field.performImeAction()
     }
+
+    private fun jump(ordinal: Int) = jump(ordinal.toString())
 
     private fun awaitChapter(ordinal: Int) {
         val chapter = compose.onNodeWithText("目录第${ordinal}集")
@@ -82,6 +91,16 @@ class BookCatalogNavigationTest {
         compose.onNodeWithText("目录 901–1000").assertExists()
     }
 
+    @Test fun explicitChapterMarkerLocatesEpisodeWithoutPlaying() {
+        val playing = PlaybackController.state.value.current?.uid
+        show()
+        jump("第1000章")
+        awaitChapter(1000)
+
+        assertEquals(listOf(1, 10), requests.toList())
+        assertEquals(playing, PlaybackController.state.value.current?.uid)
+    }
+
     @Test fun supersededSlowJumpCannotReplaceNewerChapterWindow() {
         val delayed = CompletableDeferred<KwBookApi.BookChapters>()
         show { number -> if (number == 10) withContext(NonCancellable) { delayed.await() } else page(number) }
@@ -92,8 +111,12 @@ class BookCatalogNavigationTest {
             val pendingPicker = compose.onNodeWithTag("book-chapter-picker-trigger")
             compose.awaitStable(pendingPicker)
             pendingPicker.performClick()
-            compose.onNode(hasSetTextAction()).performTextReplacement("400")
-            compose.onNode(hasSetTextAction()).performImeAction()
+            val drawer = compose.onNodeWithTag("book-chapter-picker")
+            compose.awaitStable(drawer)
+            val field = compose.onNodeWithTag("book-chapter-query")
+            compose.awaitStable(field)
+            field.performTextReplacement("400")
+            field.performImeAction()
             awaitChapter(400)
             delayed.complete(page(10))
             compose.awaitStable(compose.onNodeWithText("目录第400集"))
@@ -393,11 +416,11 @@ class BookCatalogNavigationTest {
     @Test fun titleSearchFindsBeyondLoadedWindowAndLocatesWithoutPlaying() {
         val playing = PlaybackController.state.value.current?.uid
         show()
-        compose.onNodeWithTag("book-chapter-picker-trigger").performClick()
-        compose.onNodeWithText("章节名", useUnmergedTree = true).performClick()
-        compose.onNodeWithTag("book-chapter-title-query").performTextReplacement("第1000集")
+        queryField().performTextReplacement("目录第1000集")
         compose.awaitStable(compose.onNodeWithText("找到 1 条"))
-        compose.onNodeWithText("目录第1000集").performClick()
+        compose.onNode(
+            hasText("目录第1000集") and hasAnyAncestor(hasTestTag("book-chapter-search-results")),
+        ).performClick()
         compose.waitUntil(5_000) {
             compose.onAllNodesWithTag("book-chapter-picker").fetchSemanticsNodes().isEmpty()
         }
@@ -411,11 +434,11 @@ class BookCatalogNavigationTest {
         assertEquals(playing, PlaybackController.state.value.current?.uid)
         assertEquals((1..15).toList(), requests.toList())
         // 重新打开并换关键词，完整目录直接复用，不重复请求。
-        compose.onNodeWithTag("book-chapter-picker-trigger").performClick()
-        compose.onNodeWithText("章节名", useUnmergedTree = true).performClick()
-        compose.onNodeWithTag("book-chapter-title-query").performTextReplacement("第1400集")
+        queryField().performTextReplacement("目录第1400集")
         compose.awaitStable(compose.onNodeWithText("找到 1 条"))
-        compose.onNodeWithText("目录第1400集").performClick()
+        compose.onNode(
+            hasText("目录第1400集") and hasAnyAncestor(hasTestTag("book-chapter-search-results")),
+        ).performClick()
         compose.waitUntil(5_000) {
             compose.onAllNodesWithTag("book-chapter-picker").fetchSemanticsNodes().isEmpty()
         }
@@ -447,11 +470,7 @@ class BookCatalogNavigationTest {
         val detailCacheKey = "playlistDetail.book.book_album_$id"
 
         // 首次目录快照宣告 page 1 为末页，搜索据此正常结束但找不到未来追加的章节。
-        compose.onNodeWithTag("book-chapter-picker-trigger").performClick()
-        compose.awaitStable(compose.onNodeWithText("章节名", useUnmergedTree = true))
-        compose.onNodeWithText("章节名", useUnmergedTree = true).performClick()
-        compose.awaitStable(compose.onNodeWithTag("book-chapter-title-query"))
-        compose.onNodeWithTag("book-chapter-title-query").performTextReplacement("目录新增章节")
+        queryField().performTextReplacement("目录新增章节")
         compose.awaitStable(compose.onNodeWithText("未找到匹配章节"))
         assertEquals(listOf(1), requests.toList())
         Espresso.closeSoftKeyboard()
@@ -462,11 +481,7 @@ class BookCatalogNavigationTest {
 
         // 同一详情缓存失效后，服务端把旧末页延长为 page 1 -> page 2。
         OnlineCache.clear(detailCacheKey)
-        compose.onNodeWithTag("book-chapter-picker-trigger").performClick()
-        compose.awaitStable(compose.onNodeWithText("章节名", useUnmergedTree = true))
-        compose.onNodeWithText("章节名", useUnmergedTree = true).performClick()
-        compose.awaitStable(compose.onNodeWithTag("book-chapter-title-query"))
-        compose.onNodeWithTag("book-chapter-title-query").performTextReplacement("目录新增章节")
+        queryField().performTextReplacement("目录新增章节")
         compose.waitUntil(5_000) { requests.contains(2) }
         compose.awaitStable(compose.onNodeWithText("找到 1 条"))
         compose.onNode(hasText("目录新增章节") and hasAnyAncestor(hasTestTag("book-chapter-search-results"))).performClick()
@@ -483,9 +498,7 @@ class BookCatalogNavigationTest {
         val delayed = CompletableDeferred<KwBookApi.BookChapters>()
         show { number -> if (number == 3 && requests.count { it == 3 } == 1) delayed.await() else page(number) }
         try {
-            compose.onNodeWithTag("book-chapter-picker-trigger").performClick()
-            compose.onNodeWithText("章节名", useUnmergedTree = true).performClick()
-            compose.onNodeWithTag("book-chapter-title-query").performTextReplacement("第1000集")
+            queryField().performTextReplacement("目录第1000集")
             compose.waitUntil(5_000) { requests.contains(3) }
             compose.onNodeWithText("未找到匹配章节").assertDoesNotExist()
             compose.onNodeWithText("停止").performClick()
@@ -495,12 +508,82 @@ class BookCatalogNavigationTest {
             compose.awaitStable(compose.onNodeWithText("找到 1 条"))
             assertEquals(1, requests.count { it == 1 })
             assertEquals(1, requests.count { it == 2 })
-            compose.onNodeWithText("目录第1000集").performClick()
+            compose.onNode(
+                hasText("目录第1000集") and hasAnyAncestor(hasTestTag("book-chapter-search-results")),
+            ).performClick()
         compose.waitUntil(5_000) {
             compose.onAllNodesWithTag("book-chapter-picker").fetchSemanticsNodes().isEmpty()
         }
             awaitChapter(1000)
         } finally { delayed.complete(page(3)) }
+    }
+
+    @Test fun mixedTextContainingEpisodeMarkerSearchesTitleInsteadOfGuessingOrdinal() {
+        val playing = PlaybackController.state.value.current?.uid
+        val title = "仙逆 第1000集 炼制仙卫"
+        val targetOrdinal = 1200
+        show { number ->
+            page(number).let { loaded ->
+                if (number != 12) loaded else loaded.copy(items = loaded.items.map { song ->
+                    if (song.raw.optInt("bookOrdinal") == targetOrdinal) {
+                        OnlineSong(JSONObject(song.raw.toString()).put("name", title))
+                    } else song
+                })
+            }
+        }
+
+        queryField().performTextReplacement(title)
+        compose.waitUntil(10_000) { requests.contains(15) }
+        val result = compose.onNode(
+            hasText(title) and hasAnyAncestor(hasTestTag("book-chapter-search-results")),
+        )
+        compose.awaitStable(result)
+        result.assertIsDisplayed()
+        assertEquals((1..15).toList(), requests.toList())
+
+        result.performClick()
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithTag("book-chapter-picker").fetchSemanticsNodes().isEmpty()
+        }
+        val locatedTitle = compose.onNodeWithText(title)
+        compose.awaitStable(locatedTitle)
+        locatedTitle.assertIsDisplayed()
+        assertEquals(playing, PlaybackController.state.value.current?.uid)
+    }
+
+    @Test fun pureNumericChapterTitleCanBeFoundByExplicitTitleSearch() {
+        val playing = PlaybackController.state.value.current?.uid
+        val title = "2048"
+        val targetOrdinal = 1200
+        show { number ->
+            page(number).let { loaded ->
+                if (number != 12) loaded else loaded.copy(items = loaded.items.map { song ->
+                    if (song.raw.optInt("bookOrdinal") == targetOrdinal) {
+                        OnlineSong(JSONObject(song.raw.toString()).put("name", title))
+                    } else song
+                })
+            }
+        }
+
+        queryField().performTextReplacement(title)
+        val searchByTitle = compose.onNodeWithText("按章节名查找")
+        compose.awaitStable(searchByTitle)
+        searchByTitle.performClick()
+        compose.waitUntil(10_000) { requests.contains(15) }
+
+        val result = compose.onNode(
+            hasText(title) and hasAnyAncestor(hasTestTag("book-chapter-search-results")),
+        )
+        compose.awaitStable(result)
+        result.performClick()
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithTag("book-chapter-picker").fetchSemanticsNodes().isEmpty()
+        }
+        val locatedTitle = compose.onNodeWithText(title)
+        compose.awaitStable(locatedTitle)
+        locatedTitle.assertIsDisplayed()
+        assertEquals((1..15).toList(), requests.toList())
+        assertEquals(playing, PlaybackController.state.value.current?.uid)
     }
 
     private fun page(number: Int) = KwBookApi.BookChapters(

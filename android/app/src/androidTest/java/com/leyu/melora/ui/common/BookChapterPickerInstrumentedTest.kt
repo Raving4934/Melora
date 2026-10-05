@@ -2,6 +2,8 @@ package com.leyu.melora.ui.common
 
 import android.graphics.Bitmap
 import android.os.Build
+import androidx.compose.ui.graphics.toPixelMap
+import com.leyu.melora.ui.theme.MeloraAppearance
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.geometry.Rect
@@ -68,45 +70,42 @@ class BookChapterPickerInstrumentedTest {
         assertEquals(listOf(16), selected)
     }
 
-    @Test fun switchingModesRestoresCompactDrawerAndKeepsOrdinalLocationAvailable() {
+    @Test fun oneInputAutomaticallyChangesActionWithoutSwitchingKeyboardOrButtonWidth() {
         val open = mutableStateOf(true)
         val selected = mutableListOf<Int>()
-        compose.setContent {
-            MeloraTheme {
-                if (open.value) BookChapterPicker(
-                    1568, 1, false, { open.value = false }, selected::add, {},
-                    { mutableMapOf() }, { error("unexpected search") }, {},
-                )
-            }
+        compose.setContent { MeloraTheme {
+            if (open.value) BookChapterPicker(1568, 1, false, { open.value = false }, selected::add, {},
+                { mutableMapOf() }, { error("preview search interrupted") }, {})
+        } }
+        val field = compose.onNodeWithTag("book-chapter-query")
+        val action = compose.onNodeWithTag("book-chapter-query-action")
+        compose.awaitStable(field)
+        compose.onNodeWithText("集数定位").assertDoesNotExist()
+        compose.onNodeWithTag("book-picker-mode").assertDoesNotExist()
+        compose.onNodeWithContentDescription("定位集数").assertIsNotEnabled()
+        compose.onNodeWithText("定位").assertDoesNotExist()
+        val initialWidth = action.fetchSemanticsNode().boundsInRoot.width
+        field.performSemanticsAction(SemanticsActions.SetText) { it(AnnotatedString("仙卫")) }
+        compose.awaitStable(action)
+        compose.onNodeWithContentDescription("搜索章节名").assertIsEnabled()
+        compose.onNodeWithText("搜索").assertDoesNotExist()
+        if (Build.VERSION.SDK_INT >= 26) {
+            val pixels = action.captureToImage().toPixelMap()
+            val corner = pixels[pixels.width / 8, pixels.height / 8]
+            val fill = MeloraAppearance.softFill
+            assertEquals("操作图标不能有独立底块", fill.red, corner.red, .02f)
+            assertEquals("操作图标应共用输入框背景", fill.green, corner.green, .02f)
+            assertEquals(fill.blue, corner.blue, .02f)
         }
-
-        val drawer = compose.onNodeWithTag("book-chapter-picker")
-        val mode = compose.onNodeWithTag("book-picker-mode")
-        compose.awaitStable(drawer)
-        compose.awaitStable(mode)
-        val initial = compose.boundsInSameFrame(drawer, mode)
-
-        compose.onNodeWithText("章节名").performClick()
-        compose.awaitStable(drawer)
-        compose.awaitStable(mode)
-        compose.onNodeWithText("章节名").assertIsSelected()
-        compose.onNodeWithTag("book-picker-thumb").assertDoesNotExist()
-        val titleMode = compose.boundsInSameFrame(drawer, mode)
-        assertEquals("模式切换不改变抽屉宽度", initial[0].width, titleMode[0].width, 0f)
-        assertTrue("搜索模式保留足够的结果浏览区", titleMode[0].height >= initial[0].height)
-        assertSameSize(initial[1], titleMode[1], "章节名模式切换区")
-
-        compose.onNodeWithText("集数定位").performClick()
-        compose.awaitStable(drawer)
-        compose.awaitStable(mode)
-        compose.onNodeWithText("集数定位").assertIsSelected()
-        val ordinalMode = compose.boundsInSameFrame(drawer, mode)
-        assertSameSize(initial[0], ordinalMode[0], "恢复集数定位后的抽屉")
-        assertSameSize(initial[1], ordinalMode[1], "恢复集数定位后的切换区")
-
-        val field = compose.onNode(hasSetTextAction())
-        field.performTextReplacement("42")
-        compose.onNodeWithText("定位").performClick()
+        assertEquals(initialWidth, action.fetchSemanticsNode().boundsInRoot.width, 0f)
+        assertEquals(androidx.compose.ui.text.input.ImeAction.Search,
+            field.fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.ImeAction])
+        field.performSemanticsAction(SemanticsActions.SetText) { it(AnnotatedString("第42章")) }
+        compose.awaitStable(action)
+        compose.onNodeWithContentDescription("定位集数").assertIsEnabled()
+        assertEquals(initialWidth, action.fetchSemanticsNode().boundsInRoot.width, 0f)
+        assertEquals(1, compose.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().size)
+        field.performImeAction()
         compose.waitUntil(5_000) { selected.isNotEmpty() }
         assertEquals(listOf(42), selected)
         assertFalse(open.value)
@@ -141,24 +140,15 @@ class BookChapterPickerInstrumentedTest {
             }
         }
 
-        compose.onNodeWithText("章节名").performClick()
+        val query = compose.onNodeWithTag("book-chapter-query")
+        compose.awaitStable(query)
+        query.performSemanticsAction(SemanticsActions.SetText) { it(AnnotatedString("原始")) }
+        compose.waitUntil(5_000) { loadEntered.isCompleted }
         val body = compose.onNodeWithTag("book-picker-body")
         val results = compose.onNodeWithTag("book-chapter-search-results")
         compose.awaitStable(body)
         compose.awaitStable(results)
         val emptyBounds = compose.boundsInSameFrame(body, results)
-
-        val query = compose.onNodeWithTag("book-chapter-title-query")
-        compose.awaitStable(query)
-        // 单独验证搜索状态布局；IME改变可用窗口高度是另一种场景。
-        query.performSemanticsAction(SemanticsActions.SetText) { it(AnnotatedString("原始")) }
-        compose.waitUntil(5_000) { loadEntered.isCompleted }
-        compose.awaitStable(compose.onNodeWithText("停止"))
-        compose.awaitStable(body)
-        compose.awaitStable(results)
-        val loadingBounds = compose.boundsInSameFrame(body, results)
-        assertSameSize(emptyBounds[0], loadingBounds[0], "加载中内容区")
-        assertSameSize(emptyBounds[1], loadingBounds[1], "加载中结果区")
 
         compose.onNodeWithText("停止").performClick()
         val resume = compose.onNodeWithText("继续查找")
@@ -210,13 +200,13 @@ class BookChapterPickerInstrumentedTest {
     }
 
     // 使用真实系统字号运行此用例；ModalBottomSheet是独立窗口，外部LocalDensity覆盖不能代表其字号。
-    @Test fun labelsStayUnclippedAndBothInputsNamed() {
+    @Test fun labelsStayUnclippedAndUnifiedInputNamed() {
         compose.setContent { MeloraTheme {
             BookChapterPicker(297, 1, false, {}, {}, {}, { mutableMapOf() },
                 { error("unexpected search") }, {})
         } }
         compose.awaitStable(compose.onNodeWithTag("book-chapter-picker"))
-        for (label in listOf("集数定位", "章节名", "定位", "目录分段", "每 100 条", "1–100")) {
+        for (label in listOf("目录分段", "每 100 条", "1–100")) {
             val node = compose.onNodeWithText(label, useUnmergedTree = true)
             val layouts = mutableListOf<TextLayoutResult>()
             node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
@@ -229,16 +219,55 @@ class BookChapterPickerInstrumentedTest {
                 assertTrue("$label 字形不能被父容器裁掉", glyph.top >= -1 && glyph.bottom <= bounds.height + 1)
             }
         }
-        compose.onNode(hasContentDescription("集数或章号") and hasSetTextAction()).assertExists()
+        compose.onNode(hasContentDescription("集数或章节名") and hasSetTextAction()).assertExists()
         if (Build.VERSION.SDK_INT >= 28) {
             val bitmap = compose.onNodeWithTag("book-chapter-picker").captureToImage().asAndroidBitmap()
             File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir, "book-picker-font-validated.png")
                 .outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
             bitmap.recycle()
         }
-        compose.onNodeWithText("章节名").performClick()
-        compose.awaitStable(compose.onNodeWithTag("book-chapter-title-query"))
-        compose.onNode(hasContentDescription("章节名") and hasSetTextAction()).assertExists()
+    }
+
+    @Test fun numericTitleCanBeSearchedExplicitlyWithoutLocatingAnEpisode() {
+        val open = mutableStateOf(true)
+        val episodes = mutableListOf<Int>()
+        val selected = mutableListOf<BookChapterMatch>()
+        var loads = 0
+        val song = OnlineSong(JSONObject().put("source", "kw").put("songmid", "numeric-title").put("name", "1984"))
+        compose.setContent { MeloraTheme {
+            if (open.value) BookChapterPicker(297, 1, false, { open.value = false }, episodes::add, {},
+                { mutableMapOf() }, { loads++; KwBookApi.BookChapters(listOf(song), false) }, selected::add)
+        } }
+        val field = compose.onNodeWithTag("book-chapter-query")
+        compose.awaitStable(field)
+        field.performSemanticsAction(SemanticsActions.SetText) { it(AnnotatedString("1984")) }
+        compose.awaitStable(compose.onNodeWithText("按章节名查找"))
+        assertEquals("纯数字不会自动扫描整本目录", 0, loads)
+        compose.onNodeWithText("按章节名查找").performClick()
+        compose.awaitStable(compose.onNodeWithText("找到 1 条"))
+        compose.onNode(hasText("1984") and hasAnyAncestor(hasTestTag("book-chapter-search-results"))).performClick()
+        compose.waitUntil(5_000) { selected.isNotEmpty() }
+        assertTrue(episodes.isEmpty())
+        assertSame(song, selected.single().song)
+    }
+
+    @Test fun clearingInputCancelsSearchAndRestoresDirectorySegments() {
+        val started = CompletableDeferred<Unit>()
+        val pending = CompletableDeferred<KwBookApi.BookChapters>()
+        compose.setContent { MeloraTheme {
+            BookChapterPicker(297, 1, false, {}, {}, {}, { mutableMapOf() },
+                { started.complete(Unit); pending.await() }, {})
+        } }
+        val field = compose.onNodeWithTag("book-chapter-query")
+        compose.awaitStable(field)
+        field.performSemanticsAction(SemanticsActions.SetText) { it(AnnotatedString("远处")) }
+        compose.waitUntil(5_000) { started.isCompleted }
+        compose.onNodeWithContentDescription("清空选集输入").performClick()
+        compose.awaitStable(compose.onNodeWithContentDescription("目录 201–297"))
+        pending.complete(KwBookApi.BookChapters(emptyList(), false))
+        compose.onNodeWithTag("book-chapter-search-results").assertDoesNotExist()
+        compose.onNodeWithContentDescription("定位集数").assertIsNotEnabled()
+        field.assertTextEquals("")
     }
 
     private fun assertSameSize(expected: Rect, actual: Rect, state: String) {
@@ -249,11 +278,11 @@ class BookChapterPickerInstrumentedTest {
     @Test fun invalidOrdinalCannotBeSubmittedAndUnknownTotalDoesNotInventRanges() {
         compose.setContent { MeloraTheme { BookChapterPicker(null, 1, false, {}, {}, {}, { mutableMapOf() }, { error("unexpected search") }, {}) } }
         compose.onNodeWithContentDescription("目录 1–100").assertDoesNotExist()
-        compose.onNodeWithText("定位").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("定位集数").assertIsNotEnabled()
         val field = compose.onNode(hasSetTextAction())
         field.performTextReplacement("0")
-        compose.onNodeWithText("定位").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("定位集数").assertIsNotEnabled()
         field.performTextReplacement("1000")
-        compose.onNodeWithText("定位").assertIsEnabled()
+        compose.onNodeWithContentDescription("定位集数").assertIsEnabled()
     }
 }
