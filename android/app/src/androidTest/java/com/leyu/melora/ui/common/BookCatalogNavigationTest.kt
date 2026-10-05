@@ -9,6 +9,7 @@ import android.os.Build
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.leyu.melora.playback.PlayerUiState
 import com.leyu.melora.playback.UiTrack
@@ -59,10 +60,9 @@ class BookCatalogNavigationTest {
     }
 
     private fun awaitChapter(ordinal: Int) {
-        compose.waitUntil(5_000) {
-            compose.onAllNodesWithText("目录第${ordinal}集").fetchSemanticsNodes().isNotEmpty()
-        }
-        compose.onNodeWithText("目录第${ordinal}集").assertIsDisplayed()
+        val chapter = compose.onNodeWithText("目录第${ordinal}集")
+        compose.awaitStable(chapter)
+        chapter.assertIsDisplayed()
     }
 
     @Test fun jumpingToThousandFetchesOnlyTargetPageAndDoesNotAutoAdvanceAtPageEnd() {
@@ -251,7 +251,7 @@ class BookCatalogNavigationTest {
         compose.onNodeWithContentDescription("切换为倒序").assertIsEnabled()
         val picker = compose.onNodeWithTag("book-chapter-picker-trigger")
         picker.performClick()
-        compose.onNodeWithText("共 1500 条").assertExists()
+        compose.onNodeWithText("1500 条").assertExists()
     }
 
     @Test fun descendingScrollAppendsThePreviousSourcePageInDisplayOrder() {
@@ -388,6 +388,119 @@ class BookCatalogNavigationTest {
             compose.onNodeWithText("目录第3集").assertIsDisplayed()
             compose.onNodeWithText("目录第1000集").assertDoesNotExist()
         } finally { delayed.complete(page(10)) }
+    }
+
+    @Test fun titleSearchFindsBeyondLoadedWindowAndLocatesWithoutPlaying() {
+        val playing = PlaybackController.state.value.current?.uid
+        show()
+        compose.onNodeWithTag("book-chapter-picker-trigger").performClick()
+        compose.onNodeWithText("章节名", useUnmergedTree = true).performClick()
+        compose.onNodeWithTag("book-chapter-title-query").performTextReplacement("第1000集")
+        compose.awaitStable(compose.onNodeWithText("找到 1 条"))
+        compose.onNodeWithText("目录第1000集").performClick()
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithTag("book-chapter-picker").fetchSemanticsNodes().isEmpty()
+        }
+        compose.awaitStable(compose.onNodeWithTag("collection-song-list"))
+        compose.awaitStable(compose.onNodeWithText("目录第1000集"))
+        awaitChapter(1000)
+        compose.awaitStable(compose.onNodeWithText("目录第1000集"))
+        val chapter = compose.onNodeWithText("目录第1000集").fetchSemanticsNode().boundsInRoot
+        val controls = compose.onNodeWithTag("book-chapter-toolbar").fetchSemanticsNode().boundsInRoot
+        assertTrue("结果必须露在吸顶操作栏下方", chapter.top >= controls.bottom)
+        assertEquals(playing, PlaybackController.state.value.current?.uid)
+        assertEquals((1..15).toList(), requests.toList())
+        // 重新打开并换关键词，完整目录直接复用，不重复请求。
+        compose.onNodeWithTag("book-chapter-picker-trigger").performClick()
+        compose.onNodeWithText("章节名", useUnmergedTree = true).performClick()
+        compose.onNodeWithTag("book-chapter-title-query").performTextReplacement("第1400集")
+        compose.awaitStable(compose.onNodeWithText("找到 1 条"))
+        compose.onNodeWithText("目录第1400集").performClick()
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithTag("book-chapter-picker").fetchSemanticsNodes().isEmpty()
+        }
+        compose.awaitStable(compose.onNodeWithText("目录第1400集"))
+        awaitChapter(1400)
+        assertEquals((1..15).toList(), requests.toList())
+        assertEquals(playing, PlaybackController.state.value.current?.uid)
+    }
+
+    @Test fun titleSearchFindsAppendedPageAfterCachedEndPageIsInvalidatedWithoutPlaying() {
+        val playing = PlaybackController.state.value.current?.uid
+        fun catalogPage(pageNumber: Int, hasMore: Boolean, title: String? = null) =
+            page(pageNumber).let { source ->
+                source.copy(
+                    items = title?.let {
+                        listOf(OnlineSong(JSONObject(source.items.first().raw.toString()).put("name", it)))
+                    } ?: source.items,
+                    hasMore = hasMore,
+                )
+            }
+        show(total = 200) { requestedPage ->
+            when {
+                requestedPage == 1 && requests.count { it == 1 } == 1 -> catalogPage(1, hasMore = false)
+                requestedPage == 1 -> catalogPage(1, hasMore = true)
+                requestedPage == 2 -> catalogPage(2, hasMore = false, title = "目录新增章节")
+                else -> error("unexpected page $requestedPage")
+            }
+        }
+        val detailCacheKey = "playlistDetail.book.book_album_$id"
+
+        // 首次目录快照宣告 page 1 为末页，搜索据此正常结束但找不到未来追加的章节。
+        compose.onNodeWithTag("book-chapter-picker-trigger").performClick()
+        compose.awaitStable(compose.onNodeWithText("章节名", useUnmergedTree = true))
+        compose.onNodeWithText("章节名", useUnmergedTree = true).performClick()
+        compose.awaitStable(compose.onNodeWithTag("book-chapter-title-query"))
+        compose.onNodeWithTag("book-chapter-title-query").performTextReplacement("目录新增章节")
+        compose.awaitStable(compose.onNodeWithText("未找到匹配章节"))
+        assertEquals(listOf(1), requests.toList())
+        Espresso.closeSoftKeyboard()
+        Espresso.pressBack()
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithTag("book-chapter-picker").fetchSemanticsNodes().isEmpty()
+        }
+
+        // 同一详情缓存失效后，服务端把旧末页延长为 page 1 -> page 2。
+        OnlineCache.clear(detailCacheKey)
+        compose.onNodeWithTag("book-chapter-picker-trigger").performClick()
+        compose.awaitStable(compose.onNodeWithText("章节名", useUnmergedTree = true))
+        compose.onNodeWithText("章节名", useUnmergedTree = true).performClick()
+        compose.awaitStable(compose.onNodeWithTag("book-chapter-title-query"))
+        compose.onNodeWithTag("book-chapter-title-query").performTextReplacement("目录新增章节")
+        compose.waitUntil(5_000) { requests.contains(2) }
+        compose.awaitStable(compose.onNodeWithText("找到 1 条"))
+        compose.onNode(hasText("目录新增章节") and hasAnyAncestor(hasTestTag("book-chapter-search-results"))).performClick()
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithTag("book-chapter-picker").fetchSemanticsNodes().isEmpty()
+        }
+        compose.awaitStable(compose.onNodeWithText("目录新增章节"))
+
+        assertEquals(listOf(1, 1, 2), requests.toList())
+        assertEquals(playing, PlaybackController.state.value.current?.uid)
+    }
+
+    @Test fun stoppedTitleSearchKeepsPartialResultsAndRetryContinuesFromCachedPages() {
+        val delayed = CompletableDeferred<KwBookApi.BookChapters>()
+        show { number -> if (number == 3 && requests.count { it == 3 } == 1) delayed.await() else page(number) }
+        try {
+            compose.onNodeWithTag("book-chapter-picker-trigger").performClick()
+            compose.onNodeWithText("章节名", useUnmergedTree = true).performClick()
+            compose.onNodeWithTag("book-chapter-title-query").performTextReplacement("第1000集")
+            compose.waitUntil(5_000) { requests.contains(3) }
+            compose.onNodeWithText("未找到匹配章节").assertDoesNotExist()
+            compose.onNodeWithText("停止").performClick()
+            compose.awaitStable(compose.onNodeWithText("继续查找"))
+            compose.onNodeWithText("未找到匹配章节").assertDoesNotExist()
+            compose.onNodeWithText("继续查找").performClick()
+            compose.awaitStable(compose.onNodeWithText("找到 1 条"))
+            assertEquals(1, requests.count { it == 1 })
+            assertEquals(1, requests.count { it == 2 })
+            compose.onNodeWithText("目录第1000集").performClick()
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithTag("book-chapter-picker").fetchSemanticsNodes().isEmpty()
+        }
+            awaitChapter(1000)
+        } finally { delayed.complete(page(3)) }
     }
 
     private fun page(number: Int) = KwBookApi.BookChapters(

@@ -111,6 +111,7 @@ fun PlaylistDetailContent(
         var activeBookPage by rememberSaveable(detailCacheKey) { mutableIntStateOf(1) }
         var bookDescending by rememberSaveable(detailCacheKey) { mutableStateOf(false) }
         var bookPickerOpen by remember { mutableStateOf(false) }
+        val bookSearchPageNumbers = remember(detailCacheKey) { mutableSetOf<Int>() }
         var pendingBookUid by remember { mutableStateOf<String?>(null) }
         var bookPageLoading by remember { mutableStateOf(false) }
         var bookRequestJob by remember(detailCacheKey) { mutableStateOf<Job?>(null) }
@@ -719,6 +720,35 @@ fun PlaylistDetailContent(
                     requestBookPage(BookCatalogPaging.pageForOrdinal(episode) ?: 1, targetEpisode = episode)
                 },
                 onSelectPage = { page -> requestBookPage(page) },
+                searchPages = {
+                    (bookSearchPageNumbers + bookCatalog.pages.keys).mapNotNull { page ->
+                        OnlineCache.get<KwBookApi.BookChapters>(
+                            bookCatalogPageCacheKey(detailCacheKey, page), OnlineCache.CATALOG_TTL_MS,
+                        )?.let { page to it }
+                    }.toMap(linkedMapOf())
+                },
+                loadSearchPage = { page ->
+                    val cacheKey = bookCatalogPageCacheKey(detailCacheKey, page)
+                    OnlineCache.refresh(cacheKey, OnlineCache.CATALOG_TTL_MS, cancelWhenUnobserved = true) {
+                        loadBookPage(playlist.id, page).also {
+                            check(it.items.isNotEmpty()) { "目录读取不完整，请重试" }
+                        }
+                    }.also { chapters ->
+                        check(chapters.items.isNotEmpty()) { "目录读取不完整，请重试" }
+                        bookSearchPageNumbers += page
+                    }
+                },
+                onSelectChapter = { match ->
+                    val (requestState, generation) = bookCatalog.beginRequest()
+                    bookCatalog = requestState
+                    bookRequestJob?.cancel()
+                    bookRequestJob = null
+                    bookPageLoading = false
+                    loading = false
+                    // 搜索命中的原始页直接接回同一目录链路，不按集数猜页、不重复请求、不播放。
+                    applyBookResponse(generation, match.page.page, match.page, match.song.uid,
+                        preserveScroll = false, directionOnAccept = null, append = false)
+                },
             )
         }
         moreSong?.let { song ->
