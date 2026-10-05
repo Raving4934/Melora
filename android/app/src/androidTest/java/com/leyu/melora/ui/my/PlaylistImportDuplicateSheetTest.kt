@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import java.io.File
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.test.platform.app.InstrumentationRegistry
+import com.leyu.melora.ui.awaitIme
 import com.leyu.melora.ui.awaitStable
 import com.leyu.melora.ui.boundsInSameFrame
 import androidx.compose.runtime.*
@@ -76,6 +77,7 @@ class PlaylistImportDuplicateSheetTest {
         }
         compose.awaitStable("playlist-import-link")
         compose.onNodeWithTag("playlist-import-link").performTextInput(alias.value)
+        compose.awaitIme(compose.onNodeWithTag("playlist-import-link"))
         compose.awaitStable("playlist-import-submit")
         compose.onNodeWithTag("playlist-import-submit").performClick()
         compose.waitUntil(5_000) { compose.onAllNodesWithTag("playlist-import-name").fetchSemanticsNodes().isNotEmpty() }
@@ -121,8 +123,13 @@ class PlaylistImportDuplicateSheetTest {
 
     @Test fun explicitCopyKeepsEditedNameAndDoesNotUpdateExisting() {
         show()
-        compose.onNodeWithTag("playlist-import-name").performScrollTo().performTextReplacement("我的副本")
-        compose.onNodeWithTag("playlist-import-copy").performClick()
+        val name = compose.onNodeWithTag("playlist-import-name")
+        name.performScrollTo().performTextReplacement("我的副本")
+        // v2点击注入真实触摸；文本写入结束并不代表Android IME推移窗口的动画已结束。
+        compose.awaitIme(name)
+        compose.awaitStable("playlist-import-copy")
+        compose.onNodeWithTag("playlist-import-copy").assertIsEnabled().performClick()
+        compose.waitUntil(5_000) { creates.get() == 1 }
         compose.waitUntil(5_000) { imports.get() == 1 }
         assertTrue(savedAsCopy); assertEquals("我的副本", savedName)
         assertEquals(1, creates.get()); assertEquals(0, updates.get()); assertEquals(0, commits.get())
@@ -170,7 +177,10 @@ class PlaylistImportDuplicateSheetTest {
 
     @Test fun duplicateDiscoveredAtSaveKeepsPreviewAndOffersUpdateInsteadOfSuccess() {
         show(race = true)
-        compose.onNodeWithTag("playlist-import-name").performScrollTo().performTextReplacement("race draft")
+        val name = compose.onNodeWithTag("playlist-import-name")
+        name.performScrollTo().performTextReplacement("race draft")
+        compose.awaitIme(name)
+        compose.awaitStable("playlist-import-submit")
         compose.onNodeWithTag("playlist-import-submit").performClick()
         compose.waitUntil(5_000) { compose.onAllNodesWithText("已导入此来源").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("playlist-import-name").assertTextEquals("race draft")
