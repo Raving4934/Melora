@@ -54,6 +54,7 @@ class DownloadTransferInstrumentedTest {
     private val songs = mutableSetOf<String>()
 
     @Before fun setup() = runBlocking<Unit> {
+        resetDownloadCenterStorage()
         context.root.deleteRecursively()
         context.root.mkdirs()
         val flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
@@ -96,7 +97,7 @@ class DownloadTransferInstrumentedTest {
         context.contentResolver.call(tree, "reset", null, null)
         context.getSharedPreferences(MeloraSettings.PREFS, 0).edit().clear().commit()
         // DownloadCenter.init 是进程级单次初始化，不能让下一组测试继续写已删除的夹具目录。
-        DownloadCenter.javaClass.getDeclaredField("file").apply { isAccessible = true }.set(DownloadCenter, null)
+        resetDownloadCenterStorage()
         context.root.deleteRecursively()
     }
 
@@ -479,5 +480,9 @@ class DownloadTransferInstrumentedTest {
         ) = android.database.sqlite.SQLiteDatabase.openOrCreateDatabase(getDatabasePath(name).path, factory, errorHandler)
         override fun getSharedPreferences(name: String, mode: Int) =
             baseContext.getSharedPreferences("isolated-download-transfer-tests.$name", mode)
+    }
+
+    private fun resetDownloadCenterStorage() {
+        DownloadCenter.javaClass.getDeclaredField("file").apply { isAccessible = true }.set(DownloadCenter, null)
     }
 }

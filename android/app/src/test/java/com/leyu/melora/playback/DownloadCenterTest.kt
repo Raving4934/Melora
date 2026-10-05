@@ -69,6 +69,50 @@ class DownloadCenterTest {
         }
     }
 
+    @Test
+    fun recordRemovalAndClearOnlyPublishAfterPersistence() {
+        val directory = Files.createTempDirectory("melora-download-record-delete").toFile()
+        val fileField = DownloadCenter.javaClass.getDeclaredField("file").apply { isAccessible = true }
+        val records = DownloadCenter.records as MutableStateFlow<List<DownloadCenter.Record>>
+        val recordsBefore = records.value
+        val fileBefore = fileField.get(DownloadCenter)
+        val storage = File(directory, "downloads.json")
+        val finished = OnlineSong(songJson(null).put("songmid", "delete-finished"))
+        val paused = OnlineSong(songJson(null).put("songmid", "delete-paused"))
+        try {
+            records.value = emptyList()
+            fileField.set(DownloadCenter, storage)
+            DownloadCenter.start(finished, "test")
+            DownloadCenter.done(finished.uid, "saved", "old.mp3", "file:///fixture/old.mp3")
+            DownloadCenter.start(paused, "test")
+            DownloadCenter.paused(paused.uid)
+            val before = records.value
+            val durable = storage.readText()
+            val saved = requireNotNull(DownloadCenter.saved(finished.uid))
+            val blockedParent = File(directory, "blocked").apply { writeText("not a directory") }
+            fileField.set(DownloadCenter, File(blockedParent, "downloads.json"))
+
+            for (remove in listOf<() -> Boolean>(
+                { DownloadCenter.remove(finished.uid) },
+                { DownloadCenter.removeDeletedResource(saved) },
+                { DownloadCenter.clearFinished() },
+            )) {
+                assertFalse(remove())
+                assertEquals("未落盘不能让记录暂时消失", before, records.value)
+                assertEquals(durable, storage.readText())
+            }
+            fileField.set(DownloadCenter, storage)
+            assertTrue(DownloadCenter.clearFinished())
+            assertEquals(listOf(paused.uid), records.value.map { it.id })
+            assertEquals(paused.uid, JSONArray(storage.readText()).getJSONObject(0).getString("id"))
+            assertTrue("重复移除保持幂等", DownloadCenter.remove(finished.uid))
+        } finally {
+            records.value = recordsBefore
+            fileField.set(DownloadCenter, fileBefore)
+            directory.deleteRecursively()
+        }
+    }
+
     @Test fun upgradeIntentSurvivesPauseAndJsonRoundTrip() {
         val local = LocalSong("fixture", "file:///fixture/audio.flac", "Fixture", "Artist", "Album",
             1000, 1000, "audio/flac", 44100, -1, 0, 0, folder = "/fixture", bitDepth = 16)

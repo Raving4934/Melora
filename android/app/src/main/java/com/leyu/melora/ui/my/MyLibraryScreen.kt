@@ -1551,8 +1551,8 @@ private fun DownloadsPage(onBack: () -> Unit) {
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
                         .clickable {
-                            DownloadCenter.clearFinished()
-                            PlaybackController.postMessage(context, "已清除结束记录，本地文件仍保留")
+                            PlaybackController.postMessage(context, if (DownloadCenter.clearFinished())
+                                "已清除结束记录，本地文件仍保留" else "清除记录失败，请检查存储后重试")
                         }
                         .padding(horizontal = 10.dp, vertical = 6.dp),
                 )
@@ -1627,11 +1627,9 @@ private fun DownloadsPage(onBack: () -> Unit) {
                 actionRecordId = null
             },
             onRemoveRecord = {
-                val removed = Downloader.removeRecordOnly(context, record.id)
-                PlaybackController.postMessage(
-                    context,
-                    if (removed) "已移除下载记录，本地文件仍保留" else "任务尚未结束，请先暂停或删除任务",
-                )
+                Downloader.removeRecordOnly(context, record.id)
+                    .onSuccess { PlaybackController.postMessage(context, it) }
+                    .onFailure { PlaybackController.postMessage(context, it.message ?: "移除记录失败") }
                 actionRecordId = null
             },
             onAddToPlaylist = {

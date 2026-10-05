@@ -43,6 +43,7 @@ class DownloadQualityInstrumentedTest {
         .put("name", "Fixture").put("singer", "Test Artist").put("albumName", "Fixture Album").put("interval", "00:01"))
 
     @Before fun setup() {
+        resetDownloadCenterStorage()
         val flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
         instrumentation.context.startActivity(android.content.Intent().setClassName(instrumentation.context.packageName,
             "com.leyu.melora.playback.DownloadFixtureProvider\$GrantActivity").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -74,7 +75,49 @@ class DownloadQualityInstrumentedTest {
         context.getSystemService(android.app.NotificationManager::class.java)?.cancel(song.uid.hashCode())
         context.contentResolver.call(tree, "reset", null, null)
         context.getSharedPreferences(MeloraSettings.PREFS, 0).edit().clear().commit()
+        resetDownloadCenterStorage()
         context.root.deleteRecursively()
+    }
+
+    @Test fun removingRecordReportsWriteFailureAndNeverDeletesAudio() = runBlocking<Unit> {
+        seed("128k", "fixture-128.mp3")
+        download("128k")
+        val record = requireNotNull(DownloadCenter.saved(song.uid))
+        val original = bytes(record.savedUri!!)
+        val blocker = File(context.filesDir, "downloads.json.tmp")
+        try {
+            assertTrue(blocker.mkdir())
+            File(blocker, "keep").writeText("block persistence")
+            val result = Downloader.removeRecordOnly(context, song.uid)
+            assertTrue("写入失败不能报告移除成功", result.isFailure)
+            assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("存储"))
+            assertEquals(record, DownloadCenter.saved(song.uid))
+            assertArrayEquals(original, bytes(record.savedUri))
+        } finally { blocker.deleteRecursively() }
+        Downloader.removeRecordOnly(context, song.uid).getOrThrow()
+        assertNull(DownloadCenter.saved(song.uid))
+        assertArrayEquals(original, bytes(record.savedUri))
+    }
+
+    @Test fun permanentDeletionReportsRecordWriteFailureAndCanFinishOnRetry() = runBlocking<Unit> {
+        seed("128k", "fixture-128.mp3")
+        download("128k")
+        val record = requireNotNull(DownloadCenter.saved(song.uid))
+        val blocker = File(context.filesDir, "downloads.json.tmp")
+        try {
+            assertTrue(blocker.mkdir())
+            File(blocker, "keep").writeText("block persistence")
+            val result = Downloader.deletePermanently(context, record)
+            assertTrue(result.isFailure)
+            assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("记录"))
+            assertTrue("文件删除的事实不能被伪造回滚", files().isEmpty())
+            assertNull(DownloadCenter.saved(song.uid))
+            assertFalse(LocalMediaStore.songs.value.any { it.uri == record.savedUri })
+        } finally { blocker.deleteRecursively() }
+        val pending = DownloadCenter.records.value.first { it.id == song.uid }
+        Downloader.deletePermanently(context, pending).getOrThrow()
+        assertFalse(DownloadCenter.records.value.any { it.id == song.uid })
+        assertTrue(files().isEmpty())
     }
 
     @Test fun safScanKeepsOpaqueLegacyIdsAcrossDocumentHashCollision() = runBlocking<Unit> {
@@ -698,5 +741,9 @@ class DownloadQualityInstrumentedTest {
         override fun openOrCreateDatabase(name: String, mode: Int, factory: android.database.sqlite.SQLiteDatabase.CursorFactory?, handler: android.database.DatabaseErrorHandler?) =
             android.database.sqlite.SQLiteDatabase.openOrCreateDatabase(getDatabasePath(name).path, factory, handler)
         override fun getSharedPreferences(name: String, mode: Int) = baseContext.getSharedPreferences("isolated-download-quality-tests.$name", mode)
+    }
+
+    private fun resetDownloadCenterStorage() {
+        DownloadCenter.javaClass.getDeclaredField("file").apply { isAccessible = true }.set(DownloadCenter, null)
     }
 }

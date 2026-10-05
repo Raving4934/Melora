@@ -173,27 +173,30 @@ object Downloader {
             } else {
                 Result.success(if (cancelled || record.status == DownloadCenter.Status.Paused) "下载任务已删除" else "下载记录已删除")
             }
-            result.onSuccess { DownloadCenter.removeDeletedResource(target) }
-                .onFailure {
-                    if (cancelled || record.status == DownloadCenter.Status.Paused) {
-                        DownloadCenter.paused(record.id, "删除失败，任务已暂停")
-                    }
+            return result.mapCatching { message ->
+                check(DownloadCenter.removeDeletedResource(target)) { "下载记录保存失败，请检查存储后重试" }
+                message
+            }.onFailure {
+                if (cancelled || record.status == DownloadCenter.Status.Paused) {
+                    DownloadCenter.paused(record.id, "删除失败，任务已暂停")
                 }
-            return result
+            }
         } finally {
             synchronized(taskLock) { deletingTasks.remove(record.id) }
         }
     }
 
     /** 仅移除已结束记录，绝不停止任务、绝不删除本地文件。 */
-    fun removeRecordOnly(context: Context, id: String): Boolean {
-        return synchronized(taskLock) {
-            if (id in deletingTasks) return@synchronized false
-            val record = DownloadCenter.records.value.firstOrNull { it.id == id } ?: return@synchronized false
-            if (record.status == DownloadCenter.Status.Downloading || record.status == DownloadCenter.Status.Paused) return@synchronized false
+    fun removeRecordOnly(context: Context, id: String): Result<String> = synchronized(taskLock) {
+        runCatching {
+            check(id !in deletingTasks) { DELETE_IN_PROGRESS_MESSAGE }
+            val record = checkNotNull(DownloadCenter.records.value.firstOrNull { it.id == id }) { "下载记录已不存在" }
+            check(record.status != DownloadCenter.Status.Downloading && record.status != DownloadCenter.Status.Paused) {
+                "任务尚未结束，请先暂停或删除任务"
+            }
+            check(DownloadCenter.remove(id)) { "移除记录失败，请检查存储后重试" }
             DownloadNotifications.cancel(context, id.hashCode())
-            DownloadCenter.remove(id)
-            true
+            "已移除下载记录，本地文件仍保留"
         }
     }
 
@@ -713,10 +716,11 @@ object Downloader {
                 }
                 check(deleted) { "删除失败，请检查文件或目录权限" }
                 // 旧格式没有URI时，仅在当前记录仍是同一快照时清理；新记录严格按URI绑定。
-                if (record.savedUri != null || DownloadCenter.saved(record.id) == record) {
+                val recordSaved = if (record.savedUri != null || DownloadCenter.saved(record.id) == record) {
                     DownloadCenter.clearSaved(record.id, "本地文件已删除", expectedUri = record.savedUri)
-                }
+                } else true
                 PlaybackController.onLocalFilesDeleted(context, emptySet(), setOf(uri.toString())).join()
+                check(recordSaved) { "本地文件已删除，但记录未能保存，请检查存储后重试" }
                 "已从本地删除：${record.fileName ?: record.name}"
             }
         }
