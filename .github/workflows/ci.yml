@@ -3,13 +3,45 @@ name: CI
 on:
   push:
     branches: ['**']
-    paths-ignore:
-      - 'android/**'
-      - '.github/workflows/android-ci.yml'
+    paths:
+      - 'apps/web/**'
+      - 'apps/server/**'
+      - 'packaging/**'
+      - 'deploy/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'docker-compose.yml'
+      - '.env.example'
+      - '.gitignore'
+      - '.prettierrc.json'
+      - '.prettierignore'
+      - 'LICENSE'
+      - 'THIRD_PARTY_NOTICES.md'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/release.yml'
   pull_request:
-    paths-ignore:
-      - 'android/**'
-      - '.github/workflows/android-ci.yml'
+    paths:
+      - 'apps/web/**'
+      - 'apps/server/**'
+      - 'packaging/**'
+      - 'deploy/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'docker-compose.yml'
+      - '.env.example'
+      - '.gitignore'
+      - '.prettierrc.json'
+      - '.prettierignore'
+      - 'LICENSE'
+      - 'THIRD_PARTY_NOTICES.md'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/release.yml'
 
 permissions:
   contents: read

@@ -361,29 +361,56 @@ class ReleaseWorkflowTest(unittest.TestCase):
             with self.subTest(workflow=filename):
                 self.assertIn("scripts/release/test_release_workflows.py", (WORKFLOWS / filename).read_text())
 
-    def test_general_ci_skips_only_android_specific_changes(self) -> None:
+    def test_general_ci_runs_only_for_web_server_and_shared_build_inputs(self) -> None:
         workflow = (WORKFLOWS / "ci.yml").read_text()
         triggers = workflow.split("\non:\n", 1)[1].split("\npermissions:", 1)[0]
+        event_paths = []
         for event in ("push", "pull_request"):
             block = re.search(rf"^  {event}:\n((?:    .*\n)+)", triggers, re.MULTILINE)
             self.assertIsNotNone(block)
-            self.assertIn("    paths-ignore:\n", block.group(1))
-            self.assertNotIn("    paths:\n", block.group(1))
-            ignored = re.findall(r"^      - '([^']+)'$", block.group(1), re.MULTILINE)
-            self.assertEqual(ignored, ["android/**", ".github/workflows/android-ci.yml"])
+            self.assertIn("    paths:\n", block.group(1))
+            self.assertNotIn("    paths-ignore:\n", block.group(1))
+            paths = re.findall(r"^      - '([^']+)'$", block.group(1), re.MULTILINE)
+            self.assertTrue(paths)
+            event_paths.append(paths)
             for changed, expected in (
+                (["CHANGELOG.md"], False),
+                (["README.md", "README.zh-CN.md", "docs/guide.md"], False),
+                (["assets/screenshots/preview-player.jpg"], False),
                 (["android/app/src/main/AndroidManifest.xml"], False),
                 (["android/tools/sdk/package-lock.json"], False),
                 ([".github/workflows/android-ci.yml"], False),
+                (["CHANGELOG.md", "android/app/build.gradle.kts"], False),
                 (["android/app/build.gradle.kts", "apps/web/src/App.tsx"], True),
                 (["android/app/build.gradle.kts", "apps/server/go.mod"], True),
-                (["android/app/build.gradle.kts", "scripts/release/test_release_workflows.py"], True),
+                (["CHANGELOG.md", "scripts/release/test_release_workflows.py"], True),
+                (["apps/web/tests/player.spec.ts"], True),
+                (["apps/server/go.sum"], True),
+                (["packaging/fpk/manifest.in"], True),
+                (["packaging/tools/stage.py"], True),
+                (["deploy/nginx.conf"], True),
+                (["deploy/.env.example"], True),
+                (["scripts/build-server.sh"], True),
+                (["scripts/compress-web.mjs"], True),
+                (["scripts/e2e-server.mjs"], True),
+                (["scripts/release/verify_public_repository.py"], True),
+                (["package.json"], True),
                 (["package-lock.json"], True),
+                (["Dockerfile"], True),
+                ([".dockerignore"], True),
+                (["docker-compose.yml"], True),
+                ([".env.example"], True),
+                ([".gitignore"], True),
+                ([".prettierrc.json"], True),
+                ([".prettierignore"], True),
+                (["LICENSE"], True),
+                (["THIRD_PARTY_NOTICES.md"], True),
                 ([".github/workflows/ci.yml"], True),
-                (["README.md"], True),
+                ([".github/workflows/release.yml"], True),
             ):
                 with self.subTest(event=event, changed=changed):
-                    self.assertEqual(any(not any(fnmatchcase(path, rule) for rule in ignored) for path in changed), expected)
+                    self.assertEqual(any(fnmatchcase(path, rule) for path in changed for rule in paths), expected)
+        self.assertEqual(event_paths[0], event_paths[1], "push/PR must share the same scope")
 
     def test_deleted_android_workflow_has_no_remaining_entry_point(self) -> None:
         self.assertFalse((WORKFLOWS / "android-release.yml").exists())
