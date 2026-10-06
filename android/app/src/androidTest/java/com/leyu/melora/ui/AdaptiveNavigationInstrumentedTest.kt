@@ -3,8 +3,8 @@ package com.leyu.melora.ui
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.Density
@@ -26,7 +26,7 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class AdaptiveNavigationInstrumentedTest {
     @get:Rule val compose = createComposeRule()
-    private val densityFactor = mutableFloatStateOf(1f)
+    private val compactWindow = mutableStateOf(false)
     private val previousAutoPlay = MeloraSettings.autoPlayOnStart.value
     private val previousExit = MeloraSettings.showExitButton.value
 
@@ -39,7 +39,11 @@ class AdaptiveNavigationInstrumentedTest {
         MeloraSettings.autoPlayOnStart.value = false
         compose.setContent {
             val original = LocalDensity.current
-            CompositionLocalProvider(LocalDensity provides Density(densityFactor.floatValue, original.fontScale)) {
+            val size = LocalWindowInfo.current.containerSize
+            // 根据真实像素构造宽/窄dp窗口，固定3倍密度在2560px平板上仍有853dp，根本没有进入窄屏。
+            val density = if (compactWindow.value) size.width / 390f
+                else minOf(size.width / 1000f, size.height / 700f)
+            CompositionLocalProvider(LocalDensity provides Density(density.coerceAtLeast(0.1f), original.fontScale)) {
                 MeloraTheme { SongListStateProvider { MeloraApp(initialTab = 5) } }
             }
         }
@@ -113,7 +117,7 @@ class AdaptiveNavigationInstrumentedTest {
             compose.setContent {
                 if (visible.value) {
                     val original = LocalDensity.current
-                    CompositionLocalProvider(LocalDensity provides Density(densityFactor.floatValue, original.fontScale)) {
+                    CompositionLocalProvider(LocalDensity provides Density(1f, original.fontScale)) {
                         MeloraTheme { SongListStateProvider { MeloraApp(initialTab = 5) } }
                     }
                 }
@@ -163,11 +167,11 @@ class AdaptiveNavigationInstrumentedTest {
         compose.onNodeWithTag("main-navigation-item-7").performScrollTo().performClick()
         compose.onNodeWithTag("main-navigation-item-7").assertIsSelected()
         // 相同物理窗口中的dp空间缩小，验证按当前可用空间重排，而非固定tablet布尔值。
-        compose.runOnIdle { densityFactor.floatValue = 3f }
+        compose.runOnIdle { compactWindow.value = true }
         compose.waitForIdle()
         compose.onNodeWithTag("main-navigation-drawer").assertDoesNotExist()
         compose.onNodeWithContentDescription("打开侧栏").assertIsDisplayed()
-        compose.runOnIdle { densityFactor.floatValue = 1f }
+        compose.runOnIdle { compactWindow.value = false }
         compose.waitForIdle()
         compose.onNodeWithTag("main-navigation-item-7").assertIsSelected()
     }
