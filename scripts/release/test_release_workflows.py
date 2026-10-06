@@ -6,6 +6,7 @@ from __future__ import annotations
 import ast
 from contextlib import redirect_stdout
 import io
+from itertools import product
 import json
 import os
 from fnmatch import fnmatchcase
@@ -28,21 +29,54 @@ RELEASE_STEPS = (
 )
 
 
+def job(workflow: str, name: str) -> str:
+    jobs = workflow.split("\njobs:\n", 1)[1]
+    match = re.search(
+        rf"(?ms)^  {re.escape(name)}:\n(.*?)(?=^  [\w-]+:\n|\Z)", jobs,
+    )
+    if match is None:
+        raise AssertionError(f"Workflow job not found: {name}")
+    return match.group(1)
+
+
 def step(workflow: str, name: str) -> str:
-    marker = f"      - name: {name}\n"
-    return workflow.split(marker, 1)[1].split("\n      - ", 1)[0]
+    match = re.search(
+        rf"(?ms)^      - name: {re.escape(name)}\n(.*?)(?=^      - |^  [\w-]+:\n|\Z)",
+        workflow,
+    )
+    if match is None:
+        raise AssertionError(f"Workflow step not found: {name}")
+    return match.group(1)
+
+
+def shell_script(step_body: str) -> str:
+    marker = "        run: |\n"
+    if marker not in step_body:
+        raise AssertionError("Workflow step has no literal run script")
+    return dedent(step_body.split(marker, 1)[1])
 
 
 def tag_patterns(workflow: str) -> list[str]:
-    match = re.search(r"^    tags:\n((?:      - .*\n)+)", workflow, re.MULTILINE)
-    return re.findall(r"- '([^']+)'", match.group(1)) if match else []
+    match = re.search(r"(?m)^    tags:([^\n]*)(?:\n((?:      - .*\n)+))?", workflow)
+    if match is None:
+        return []
+    return re.findall(r"['\"]([^'\"]+)['\"]", "\n".join(part or "" for part in match.groups()))
 
 
 class ReleaseWorkflowTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.android = (WORKFLOWS / "android-release.yml").read_text()
-        self.android_ci = (WORKFLOWS / "android-ci.yml").read_text()
+        self.android = (WORKFLOWS / "android-ci.yml").read_text()
         self.web = (WORKFLOWS / "release.yml").read_text()
+
+    def test_workflow_helpers_stop_at_the_next_step_and_job(self) -> None:
+        verify = job(self.android, "verify")
+        device = job(self.android, "device-regression")
+        self.assertNotIn("device-regression:", verify)
+        self.assertNotIn("release-build:", device)
+        publish = step(self.android, RELEASE_STEPS[-1])
+        self.assertIn("publish_android_release.py", publish)
+        self.assertNotIn("android-ci-result:", publish)
+        self.assertNotIn("needs.prepare.outputs.artifact-id", publish)
 
     def test_baseline_tags_trigger_only_their_own_channel(self) -> None:
         for tag, android_expected, web_expected in (
@@ -52,22 +86,185 @@ class ReleaseWorkflowTest(unittest.TestCase):
                 self.assertEqual(any(fnmatchcase(tag, rule) for rule in tag_patterns(self.android)), android_expected)
                 self.assertEqual(any(fnmatchcase(tag, rule) for rule in tag_patterns(self.web)), web_expected)
         self.assertIn("  workflow_dispatch:\n", self.android)
-        self.assertIn("ref: ${{ inputs.tag || github.ref }}", self.android)
-        self.assertIn("android-v0.1.0", self.android)
+        dispatch = self.android.split("  workflow_dispatch:\n", 1)[1].split("\npermissions:", 1)[0]
+        self.assertIn("      tag:\n", dispatch)
+        self.assertIn("        required: false\n", dispatch)
+        self.assertIn("        default: ''\n", dispatch)
+        self.assertIn("android-v*", self.android)
 
-    def test_android_release_binds_the_build_checkout_to_the_same_repository(self) -> None:
-        publish = step(self.android, RELEASE_STEPS[-1])
-        self.assertIn('GITHUB_TOKEN: ${{ github.token }}', publish)
-        self.assertIn('--repository "$GITHUB_REPOSITORY"', publish)
-        self.assertIn('--expected-commit "$(git rev-parse HEAD)"', publish)
-        self.assertIn('    permissions:\n      contents: write', self.android)
+    def run_prepare(self, *, event: str, ref_type: str, ref_name: str, sha: str,
+                    input_tag: str = "") -> tuple[subprocess.CompletedProcess[str], dict[str, str]]:
+        script = shell_script(step(self.android, "解析检查与发布目标"))
+        with tempfile.TemporaryDirectory(prefix="melora-prepare-") as directory:
+            output = Path(directory) / "github-output"
+            result = subprocess.run(
+                ["bash", "-euc", script], capture_output=True, text=True,
+                env={
+                    **os.environ,
+                    "EVENT_NAME": event,
+                    "REF_TYPE": ref_type,
+                    "REF_NAME": ref_name,
+                    "INPUT_TAG": input_tag,
+                    "GITHUB_SHA": sha,
+                    "GITHUB_OUTPUT": str(output),
+                },
+            )
+            values = {}
+            if output.exists():
+                values = dict(line.split("=", 1) for line in output.read_text().splitlines())
+        return result, values
+
+    def test_prepare_shell_selects_ci_or_release_target_for_each_event(self) -> None:
+        sha = "0123456789abcdef0123456789abcdef01234567"
+        cases = (
+            ("push", "branch", "feature/test", "", {"tag": "", "release": "false", "ref": sha}),
+            ("pull_request", "", "42/merge", "", {"tag": "", "release": "false", "ref": sha}),
+            ("workflow_dispatch", "branch", "main", "", {"tag": "", "release": "false", "ref": sha}),
+            ("workflow_dispatch", "branch", "main", "android-v1.2.3",
+             {"tag": "android-v1.2.3", "release": "true", "ref": "refs/tags/android-v1.2.3"}),
+            ("push", "tag", "android-v1.2.3", "",
+             {"tag": "android-v1.2.3", "release": "true", "ref": sha}),
+        )
+        for event, ref_type, ref_name, input_tag, expected in cases:
+            with self.subTest(event=event, ref_name=ref_name, input_tag=input_tag):
+                result, outputs = self.run_prepare(
+                    event=event, ref_type=ref_type, ref_name=ref_name, sha=sha, input_tag=input_tag,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(outputs, expected)
+        self.assertIn("if: needs.prepare.outputs.release == 'true'", job(self.android, "release-build"))
+        for name in ("构建 Debug APK（仅 CI 验证，不用于发布）", "上传短期 Debug 诊断产物"):
+            self.assertIn("if: needs.prepare.outputs.release != 'true'", step(self.android, name))
+
+    def test_prepare_shell_rejects_invalid_and_injected_tags(self) -> None:
+        for event, ref_type, ref_name, input_tag in (
+            ("push", "tag", "v1.2.3", ""),
+            ("workflow_dispatch", "branch", "main", "android-v1.2"),
+            ("workflow_dispatch", "branch", "main", "../../android-v1.2.3"),
+            ("workflow_dispatch", "branch", "main", "android-v1.2.3$(touch /tmp/melora-tag-injected)"),
+            ("workflow_dispatch", "branch", "main", "android-v1.2.3\nrelease=false"),
+        ):
+            with self.subTest(event=event, ref_name=ref_name, input_tag=input_tag):
+                result, _ = self.run_prepare(
+                    event=event, ref_type=ref_type, ref_name=ref_name,
+                    sha="0123456789abcdef0123456789abcdef01234567", input_tag=input_tag,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Expected an existing android-v<semver> tag", result.stdout + result.stderr)
+
+    def test_tag_and_non_tag_runs_have_isolated_concurrency_groups(self) -> None:
+        concurrency = self.android.split("\nconcurrency:\n", 1)[1].split("\njobs:\n", 1)[0]
+        self.assertIn(
+            "group: android-${{ (github.event_name == 'push' && github.ref_type == 'tag' || "
+            "github.event_name == 'workflow_dispatch' && inputs.tag != '') && "
+            "format('release-{0}', inputs.tag || github.ref_name) || format('ci-{0}', github.ref) }}",
+            concurrency,
+        )
+        self.assertIn(
+            "cancel-in-progress: ${{ !(github.event_name == 'push' && github.ref_type == 'tag' || "
+            "github.event_name == 'workflow_dispatch' && inputs.tag != '') }}",
+            concurrency,
+        )
+        # A manual run with no selected tag must take ci-<ref>, not join/cancel release-<tag>.
+        self.assertIn("inputs.tag != ''", concurrency)
+        self.assertIn("format('release-{0}', inputs.tag || github.ref_name)", concurrency)
+        self.assertIn("format('ci-{0}', github.ref)", concurrency)
+
+    def test_all_downstream_checkouts_use_the_prepare_sha(self) -> None:
+        prepare = job(self.android, "prepare")
+        self.assertIn("ref: ${{ steps.target.outputs.ref }}", prepare)
+        self.assertIn("sha: ${{ steps.commit.outputs.sha }}", prepare)
+        self.assertIn('echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"', prepare)
+        for name in ("verify", "device-regression", "release-build", "release"):
+            with self.subTest(job=name):
+                body = job(self.android, name)
+                self.assertEqual(body.count("uses: actions/checkout@"), 1)
+                self.assertIn("ref: ${{ needs.prepare.outputs.sha }}", body)
+                self.assertNotIn("ref: ${{ github.sha }}", body)
+
+    def test_android_release_is_gated_and_uses_only_the_build_artifact(self) -> None:
+        build = job(self.android, "release-build")
+        release = job(self.android, "release")
+        self.assertIn("    needs: [prepare, release-build, android-ci-result]\n", release)
+        self.assertIn("needs.prepare.outputs.release == 'true'", release)
+        self.assertIn("needs.android-ci-result.result == 'success'", release)
+        self.assertIn("needs.release-build.result == 'success'", release)
+        self.assertIn("artifact-id: ${{ steps.upload.outputs.artifact-id }}", build)
+        self.assertIn("artifact-ids: ${{ needs.release-build.outputs.artifact-id }}", release)
+        self.assertIn("actions/download-artifact@v4.3.0", release)
+        self.assertNotIn("actions/download-artifact", build)
+
+        publisher = step(self.android, RELEASE_STEPS[-1])
+        self.assertIn('GITHUB_TOKEN: ${{ github.token }}', publisher)
+        self.assertIn('--repository "$GITHUB_REPOSITORY"', publisher)
+        self.assertIn('--expected-commit "$(git rev-parse HEAD)"', publisher)
         self.assertEqual(self.android.count('scripts/release/publish_android_release.py'), 1)
         for legacy in ("MELORA_DISTRIBUTION_TOKEN", "Melora-projects", "--require-private-repository",
                        "--mapping", "--signing-summary", "--ensure-public-tag"):
             self.assertNotIn(legacy, self.android)
-        self.assertEqual(set(re.findall(r"secrets\.([A-Z0-9_]+)", self.android)), {
+
+        jobs = ("prepare", "verify", "device-regression", "release-build", "android-ci-result", "release")
+        self.assertEqual(
+            set(re.findall(r"(?m)^  ([\w-]+):$", self.android.split("\njobs:\n", 1)[1])),
+            set(jobs),
+        )
+        writable = [name for name in jobs if "    permissions:\n" in job(self.android, name)
+                    and "      contents: write\n" in job(self.android, name)]
+        self.assertEqual(writable, ["release"])
+        self.assertIn("  contents: read\n", self.android.split("\npermissions:\n", 1)[1].split("\nconcurrency:", 1)[0])
+
+        expected_secrets = {
             "MELORA_KEYSTORE_BASE64", "MELORA_KEYSTORE_PASSWORD", "MELORA_KEY_ALIAS", "MELORA_KEY_PASSWORD",
-        })
+        }
+        self.assertEqual(set(re.findall(r"secrets\.([A-Z0-9_]+)", self.android)), expected_secrets)
+        for name in jobs:
+            if name != "release-build":
+                self.assertIsNone(re.search(r"secrets\.(?:" + "|".join(expected_secrets) + r")", job(self.android, name)))
+        self.assertNotRegex(release, r"MELORA_(?:KEYSTORE|KEY_ALIAS|KEY_PASSWORD)")
+
+    def test_release_build_preserves_validation_and_does_not_repeat_ci_tests(self) -> None:
+        verify = job(self.android, "verify")
+        build = job(self.android, "release-build")
+        quality = step(self.android, "执行 Android 单元测试与 lint")
+        self.assertIn(":app:testDebugUnitTest", quality)
+        self.assertIn(":app:lintDebug", quality)
+        self.assertEqual(verify.count(":app:testDebugUnitTest"), 1)
+        self.assertNotIn(":app:testDebugUnitTest", build)
+        self.assertIn(":app:lintRelease", build)
+
+        version = step(self.android, "校验 Android 标签格式")
+        self.assertIn(r"^android-v([0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?)$", version)
+        self.assertIn("version_code", version)
+        self.assertIn("^[1-9][0-9]*$", version)
+        self.assertIn("scripts/release/verify-android-apk.sh", step(self.android, RELEASE_STEPS[2]))
+
+    def run_release_version_check(
+        self, tag: str, version_code: str = "42",
+    ) -> tuple[subprocess.CompletedProcess[str], str]:
+        script = shell_script(step(self.android, "校验 Android 标签格式"))
+        with tempfile.TemporaryDirectory(prefix="melora-version-") as directory:
+            root = Path(directory)
+            (root / "android/app").mkdir(parents=True)
+            (root / "android/app/build.gradle.kts").write_text(f"versionCode = {version_code}\n")
+            output = root / "github-output"
+            result = subprocess.run(
+                ["bash", "-euc", script], cwd=root, capture_output=True, text=True,
+                env={**os.environ, "RELEASE_TAG": tag, "GITHUB_OUTPUT": str(output)},
+            )
+            return result, output.read_text() if output.exists() else ""
+
+    def test_release_version_shell_requires_valid_tag_and_unique_positive_version_code(self) -> None:
+        valid, outputs = self.run_release_version_check("android-v1.2.3-rc.1")
+        self.assertEqual(valid.returncode, 0, valid.stdout + valid.stderr)
+        self.assertEqual(outputs, "version=1.2.3-rc.1\nversion_code=42\n")
+        for tag in ("v1.2.3", "android-v1.2", "android-v1.2.3/extra", "android-v1.2.3;false"):
+            with self.subTest(tag=tag):
+                result, _ = self.run_release_version_check(tag)
+                self.assertNotEqual(result.returncode, 0)
+        for version_code in ("0", "missing"):
+            with self.subTest(version_code=version_code):
+                result, _ = self.run_release_version_check("android-v1.2.3", version_code)
+                self.assertNotEqual(result.returncode, 0)
 
     def test_full_source_signed_r8_evidence_is_in_order_and_not_skippable(self) -> None:
         positions = [self.android.index(f"      - name: {name}\n") for name in RELEASE_STEPS]
@@ -80,40 +277,72 @@ class ReleaseWorkflowTest(unittest.TestCase):
         for source in ("android/app/build.gradle.kts", "apps/server/go.mod", "apps/web/package.json"):
             self.assertIn(f"test -s {source}", baseline)
         self.assertIn("scripts/release/verify_public_repository.py", baseline)
-        quality = step(self.android, "执行 Android 单元测试与 Release lint")
-        self.assertIn("./gradlew --no-daemon --build-cache --max-workers=1", quality)
-        self.assertIn(":app:testDebugUnitTest", quality)
-        self.assertIn(":app:lintRelease", quality)
-        self.assertNotIn(":app:testDebugUnitTest :app:lintRelease", quality)
         r8 = step(self.android, RELEASE_STEPS[1])
         self.assertIn(":app:assembleRelease", r8)
         self.assertIn("--build-cache --max-workers=2", r8)
         self.assertIn('-Dorg.gradle.jvmargs="$CI_GRADLE_JVM_ARGS"', r8)
         self.assertIn("test -s app/build/outputs/mapping/release/mapping.txt", r8)
-        verify = step(self.android, RELEASE_STEPS[2])
-        self.assertIn("MELORA_EXPECTED_VERSION_CODE: ${{ steps.version.outputs.version_code }}", verify)
-        self.assertIn("scripts/release/verify-android-apk.sh", verify)
+        verify_apk = step(self.android, RELEASE_STEPS[2])
+        self.assertIn("MELORA_EXPECTED_VERSION_CODE: ${{ steps.version.outputs.version_code }}", verify_apk)
+        self.assertIn("scripts/release/verify-android-apk.sh", verify_apk)
 
     def test_android_jobs_use_bounded_cached_gradle_on_pinned_runner(self) -> None:
-        for name, workflow in (("release", self.android), ("ci", self.android_ci)):
-            with self.subTest(workflow=name):
-                self.assertIn("runs-on: ubuntu-24.04", workflow)
-                self.assertIn("cache: npm", workflow)
-                self.assertIn("cache: gradle", workflow)
-                self.assertIn("cache-dependency-path:", workflow)
-                self.assertIn("CI_GRADLE_JVM_ARGS: -Xmx4G", workflow)
-                self.assertIn("--build-cache", workflow)
-                self.assertIn("cmake;3.22.1", workflow)
+        for name in ("verify", "device-regression", "release-build"):
+            with self.subTest(job=name):
+                body = job(self.android, name)
+                self.assertIn("runs-on: ubuntu-24.04", body)
+                self.assertIn("cache: gradle", body)
+                self.assertIn("cache-dependency-path:", body)
+                self.assertIn("CI_GRADLE_JVM_ARGS: -Xmx4G", body)
+                self.assertIn("--build-cache", body)
+                self.assertIn("cmake;3.22.1", body)
+        self.assertIn("cache: npm", job(self.android, "verify"))
 
     def test_public_asset_naming_and_diagnostic_mapping_are_separate(self) -> None:
         assets = step(self.android, "准备公库 Release 资产")
         self.assertIn('apk_name="melora-android-v${RELEASE_VERSION}-arm64-v8a.apk"', assets)
         self.assertIn('checksum_name="${apk_name}.sha256"', assets)
         self.assertNotIn("mapping.txt", assets)
+
+        published = step(self.android, "上传已验证的发布资产")
+        self.assertIn("id: upload", published)
+        self.assertIn("android-release-assets-${{ github.run_id }}-${{ github.run_attempt }}", published)
+        self.assertIn("${{ steps.artifacts.outputs.dir }}/", published)
+        self.assertIn("retention-days: 30", published)
+        self.assertNotIn("mapping.txt", published)
+        self.assertEqual(len(re.findall(r"(?m)^\s+retention-days: 30$", self.android)), 1)
+
         diagnostic = step(self.android, "上传短期 Android 构建诊断资产")
         self.assertIn("android/app/build/outputs/mapping/release/mapping.txt", diagnostic)
         self.assertIn("retention-days: 3", diagnostic)
+        self.assertIn("github.run_id }}-${{ github.run_attempt", diagnostic)
+        for name in ("上传短期 Debug 诊断产物", "保留失败的单元测试与 Debug lint 诊断",
+                     "保留失败的 Release lint 诊断", "上传设备回归诊断"):
+            with self.subTest(diagnostic=name):
+                self.assertIn("retention-days: 3", step(self.android, name))
         self.assertNotIn("mapping.txt", step(self.android, RELEASE_STEPS[-1]))
+
+    def test_verify_and_release_build_failure_diagnostics_are_separate_and_retry_safe(self) -> None:
+        verify = step(self.android, "保留失败的单元测试与 Debug lint 诊断")
+        self.assertIn("if: failure()", verify)
+        self.assertIn("actions/upload-artifact@v4.6.2", verify)
+        self.assertIn("android-verify-failure-${{ github.run_id }}-${{ github.run_attempt }}", verify)
+        for path in (
+            "android/app/build/test-results/testDebugUnitTest/",
+            "android/app/build/reports/tests/testDebugUnitTest/",
+            "android/app/build/reports/lint-results-debug.*",
+        ):
+            self.assertIn(path, verify)
+        self.assertIn("retention-days: 3", verify)
+
+        release_lint = step(self.android, "保留失败的 Release lint 诊断")
+        self.assertIn("if: failure()", release_lint)
+        self.assertIn("actions/upload-artifact@v4.6.2", release_lint)
+        self.assertIn("android-release-lint-failure-${{ github.run_id }}-${{ github.run_attempt }}", release_lint)
+        self.assertIn("android/app/build/reports/lint-results-release.*", release_lint)
+        self.assertNotIn("testDebugUnitTest", release_lint)
+        self.assertNotIn("lint-results-debug", release_lint)
+        self.assertIn("retention-days: 3", release_lint)
 
     def test_single_public_repository_has_no_legacy_storage_janitor(self) -> None:
         legacy_paths = (
@@ -124,12 +353,11 @@ class ReleaseWorkflowTest(unittest.TestCase):
         for path in legacy_paths:
             with self.subTest(path=path.name):
                 self.assertFalse(path.exists())
-        for workflow in (self.android, self.android_ci):
-            self.assertNotIn("android-storage-cleanup", workflow)
-            self.assertNotIn("cleanup_github_storage", workflow)
+        self.assertNotIn("android-storage-cleanup", self.android)
+        self.assertNotIn("cleanup_github_storage", self.android)
 
-    def test_guard_contracts_are_wired_into_ci_and_release(self) -> None:
-        for filename in ("android-ci.yml", "android-release.yml", "ci.yml", "release.yml"):
+    def test_guard_contracts_are_wired_into_each_active_ci_and_release_workflow(self) -> None:
+        for filename in ("android-ci.yml", "ci.yml", "release.yml"):
             with self.subTest(workflow=filename):
                 self.assertIn("scripts/release/test_release_workflows.py", (WORKFLOWS / filename).read_text())
 
@@ -142,13 +370,11 @@ class ReleaseWorkflowTest(unittest.TestCase):
             self.assertIn("    paths-ignore:\n", block.group(1))
             self.assertNotIn("    paths:\n", block.group(1))
             ignored = re.findall(r"^      - '([^']+)'$", block.group(1), re.MULTILINE)
-            self.assertEqual(ignored, [
-                "android/**", ".github/workflows/android-ci.yml", ".github/workflows/android-release.yml",
-            ])
+            self.assertEqual(ignored, ["android/**", ".github/workflows/android-ci.yml"])
             for changed, expected in (
                 (["android/app/src/main/AndroidManifest.xml"], False),
                 (["android/tools/sdk/package-lock.json"], False),
-                ([".github/workflows/android-ci.yml", ".github/workflows/android-release.yml"], False),
+                ([".github/workflows/android-ci.yml"], False),
                 (["android/app/build.gradle.kts", "apps/web/src/App.tsx"], True),
                 (["android/app/build.gradle.kts", "apps/server/go.mod"], True),
                 (["android/app/build.gradle.kts", "scripts/release/test_release_workflows.py"], True),
@@ -159,20 +385,59 @@ class ReleaseWorkflowTest(unittest.TestCase):
                 with self.subTest(event=event, changed=changed):
                     self.assertEqual(any(not any(fnmatchcase(path, rule) for rule in ignored) for path in changed), expected)
 
+    def test_deleted_android_workflow_has_no_remaining_entry_point(self) -> None:
+        self.assertFalse((WORKFLOWS / "android-release.yml").exists())
+        active_workflows = "\n".join(path.read_text() for path in WORKFLOWS.glob("*.yml"))
+        self.assertNotIn(".github/workflows/android-release.yml", active_workflows)
+        self.assertNotIn("android-release.yml", active_workflows)
+
     def test_deleting_historical_tags_never_starts_a_new_release(self) -> None:
-        for name in ("android-release.yml", "release.yml"):
-            self.assertIn("if: github.event.deleted != true", (WORKFLOWS / name).read_text())
+        self.assertIn("if: github.event.deleted != true", job(self.android, "prepare"))
+        self.assertIn("if: github.event.deleted != true", job(self.web, "verify"))
 
     def test_python_helpers_parse_without_import_side_effects(self) -> None:
         for path in (ROOT / "scripts/release").glob("*.py"):
             with self.subTest(path=path.name):
                 ast.parse(path.read_text(), filename=str(path))
 
+    def run_unit_test_summary(self, reports: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        body = step(self.android, "汇总 Android 单元测试结果")
+        script = shell_script(body)
+        with tempfile.TemporaryDirectory(prefix="melora-unit-results-") as directory:
+            result_dir = Path(directory) / "android/app/build/test-results/testDebugUnitTest"
+            result_dir.mkdir(parents=True)
+            for name, xml in reports.items():
+                (result_dir / name).write_text(xml)
+            return subprocess.run(
+                ["bash", "-euc", script], cwd=directory, capture_output=True, text=True,
+                env=os.environ.copy(),
+            )
+
+    def test_shared_verify_unit_test_summary_requires_real_nonzero_results(self) -> None:
+        summary = step(self.android, "汇总 Android 单元测试结果")
+        self.assertIn("        if: always()", summary)
+        passed = self.run_unit_test_summary({
+            "TEST-one.xml": '<testsuite tests="2" failures="0" errors="0" skipped="1"/>',
+            "TEST-two.xml": '<testsuite tests="1" failures="0" errors="0" skipped="0"/>',
+        })
+        self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
+        self.assertIn("suites=2", passed.stdout)
+        for reports in (
+            {},
+            {"TEST-empty.xml": '<testsuite tests="0" failures="0" errors="0" skipped="0"/>'},
+            {"TEST-failure.xml": '<testsuite tests="1" failures="1" errors="0" skipped="0"/>'},
+            {"TEST-error.xml": '<testsuite tests="1" failures="0" errors="1" skipped="0"/>'},
+            {"TEST-malformed.xml": "<testsuite"},
+        ):
+            with self.subTest(reports=reports):
+                failed = self.run_unit_test_summary(reports)
+                self.assertNotEqual(failed.returncode, 0)
+
 
 class DeviceWorkflowTest(unittest.TestCase):
     def setUp(self) -> None:
         self.workflow = (WORKFLOWS / "android-ci.yml").read_text()
-        self.job = self.workflow.split("\n  device-regression:\n", 1)[1]
+        self.job = job(self.workflow, "device-regression")
 
     def test_api_matrix_requires_explicit_manual_opt_in(self) -> None:
         dispatch = self.workflow.split("  workflow_dispatch:\n", 1)[1].split("\npermissions:", 1)[0]
@@ -189,10 +454,52 @@ class DeviceWorkflowTest(unittest.TestCase):
         self.assertIn("        shard: [0, 1]\n", self.job)
         self.assertIn("      TEST_SHARD_INDEX: ${{ matrix.shard }}\n", self.job)
         self.assertIn("      TEST_SHARD_COUNT: 2\n", self.job)
-        self.assertIn("    needs: verify\n", self.job)
+        self.assertIn("    needs: prepare\n", self.job)
         self.assertIn("    timeout-minutes: 60\n", self.job)
         self.assertIn("      fail-fast: false\n", self.job)
         self.assertNotIn("continue-on-error:", self.job)
+
+    def test_parallel_jobs_depend_only_on_prepare_and_feed_required_summary(self) -> None:
+        jobs = ("verify", "device-regression", "release-build")
+        self.assertEqual(
+            set(re.findall(r"(?m)^  ([\w-]+):$", self.workflow.split("\njobs:\n", 1)[1])),
+            {"prepare", "verify", "device-regression", "release-build", "android-ci-result", "release"},
+        )
+        for name in jobs:
+            with self.subTest(job=name):
+                body = job(self.workflow, name)
+                self.assertEqual(re.findall(r"(?m)^    needs:.*$", body), ["    needs: prepare"])
+        self.assertIn("    if: needs.prepare.outputs.release == 'true'\n", job(self.workflow, "release-build"))
+        self.assertNotRegex(job(self.workflow, "verify"), r"(?m)^    if:")
+        self.assertNotRegex(job(self.workflow, "device-regression"), r"(?m)^    if:")
+
+        summary = job(self.workflow, "android-ci-result")
+        self.assertIn("    needs: [prepare, verify, device-regression, release-build]\n", summary)
+        self.assertIn("    if: ${{ always() && github.event.deleted != true }}\n", summary)
+        self.assertIn("    timeout-minutes: 5\n", summary)
+        for variable, need in (
+            ("PREPARE_RESULT", "prepare"), ("VERIFY_RESULT", "verify"),
+            ("DEVICE_RESULT", "device-regression"), ("BUILD_RESULT", "release-build"),
+        ):
+            self.assertIn(f"{variable}: ${{{{ needs.{need}.result }}}}", summary)
+        self.assertNotIn("continue-on-error:", self.workflow)
+
+    def test_summary_shell_rejects_every_unsuccessful_required_result(self) -> None:
+        script = shell_script(step(self.workflow, "汇总 Android CI 结果"))
+        statuses = ("success", "failure", "cancelled", "skipped", "")
+        variables = ("PREPARE_RESULT", "VERIFY_RESULT", "DEVICE_RESULT", "BUILD_RESULT")
+        for release, results in product(("false", "true", ""), product(statuses, repeat=4)):
+            with self.subTest(release=release, results=results):
+                expected_build = "success" if release == "true" else "skipped"
+                expected_success = (release in ("true", "false") and
+                                    results[:3] == ("success",) * 3 and results[3] == expected_build)
+                result = subprocess.run(
+                    ["bash", "-euc", script], capture_output=True, text=True,
+                    env={**os.environ, **dict(zip(variables, results)), "RELEASE": release},
+                )
+                self.assertEqual(result.returncode == 0, expected_success, result.stdout + result.stderr)
+                self.assertIn("prepare=", result.stdout)
+                self.assertIn("release-build=", result.stdout)
 
     def test_device_paths_are_initialized_at_runtime_not_in_job_context(self) -> None:
         job_config = self.job.split("    steps:\n", 1)[0]

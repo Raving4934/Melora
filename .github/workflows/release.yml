@@ -3,7 +3,7 @@ name: Web / FPK / Docker Release
 on:
   push:
     tags:
-      - 'v*' # Android uses the separate android-v* channel in android-release.yml.
+      - 'v*' # Android uses the separate android-v* channel in android-ci.yml.
 
 permissions:
   contents: read

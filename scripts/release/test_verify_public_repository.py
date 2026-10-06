@@ -15,7 +15,7 @@ class PublicBoundaryTest(unittest.TestCase):
             "android/app/src/main/java/com/example/Fixture.java",
             "android/app/build.gradle.kts",
             "android/gradlew",
-            ".github/workflows/android-release.yml",
+            ".github/workflows/android-ci.yml",
             "README.md",
         ]:
             self.assertEqual(violations(name, b"public source"), [], name)

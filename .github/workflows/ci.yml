@@ -6,12 +6,10 @@ on:
     paths-ignore:
       - 'android/**'
       - '.github/workflows/android-ci.yml'
-      - '.github/workflows/android-release.yml'
   pull_request:
     paths-ignore:
       - 'android/**'
       - '.github/workflows/android-ci.yml'
-      - '.github/workflows/android-release.yml'
 
 permissions:
   contents: read
