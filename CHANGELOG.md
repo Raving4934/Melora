@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-## [0.1.9] - 2026-10-05
+## [0.1.9] - 2026-10-06
 
 ### 安卓客户端
 
@@ -20,9 +20,15 @@
 
 【播放与歌词】
 - 完善播放队列与位置检查点，恢复时保持曲目与断点对应；移除任务后清理不再继续播放的空闲会话。
+- 恢复包含无效条目的历史队列时，按原位置保留当前曲目及断点，避免重复歌曲或条目过滤导致选中位置错乱。
 - “其他应用发声时自动暂停”由播放服务持续监听设置，不再依赖界面控制器连接；覆盖设置修改、备份恢复及服务重建后的同步。
 - 细化逐字歌词对轻微延迟位置校正的处理，避免可见回退，保留跳转、暂停、缓冲和切歌时的真实时间变化。
 - 桌面歌词在词间隙暂停不必要的逐帧刷新，按下一词或歌词边界恢复；全屏与 mini 逐字歌词合并相邻已唱片段绘制，保留原有字形、羽化、换行及 RTL 呈现。
+
+【交互与性能】
+- 优化全屏播放器展开、收起时的圆角裁剪，保持原有轮廓与动效参数，降低转场绘制开销。
+- 歌曲、节目及歌单操作抽屉直接展开到内容高度；新建、重命名歌单在抽屉入场稳定后再聚焦输入，减少键盘与入场动画互相干扰。
+- 完善强制刷新、缓存失效及等待者取消时的请求生命周期，确保已被替换但仍在执行的请求也能正确取消。
 
 【下载与本地文件】
 - 删除旧下载记录关联资源时核对文件身份，避免误删同曲目后来下载的高音质版本。
@@ -32,6 +38,8 @@
 【质量验证】
 - 完整 Android 设备回归改为双分片执行，保留全部测试和既有限时；修复动画、系统 Insets、输入法、平板几何断言及测试存储隔离问题。
 - 补充无控制器连接时的音频焦点设置回归，以及逐字歌词在中英文、RTL、连字、透明度、换行、重叠时间轴和跳转下的像素等价验证。
+- 统一 Android 检查与发布流程：质量检查、设备分片和正式构建并行，全部必需检查通过后才发布同一提交的已验证安装包；普通提交不发布。
+- 修复歌单导入测试在输入法尚未稳定时点击操作导致的偶发超时，补充抽屉焦点及实际窗口尺寸回归验证。
 
 ### 关键提交
 
@@ -41,6 +49,9 @@
 - 下载持久化与资源保护：[`583f42e`](https://github.com/Raving4934/Melora/commit/583f42eecc9d53274ed092ad451c4280aa55f49b)、[`d246327`](https://github.com/Raving4934/Melora/commit/d2463270b7ce28ebfcfef0a6770783ff357d3573)、[`8645bc0`](https://github.com/Raving4934/Melora/commit/8645bc05d52e02554e1e010025fbc7ada24898ec)。
 - 服务音频焦点与歌词绘制：[`4f0ad79`](https://github.com/Raving4934/Melora/commit/4f0ad79d60cc0e1ad88e5c3a174e85f06ee834e0)、[`6a28f59`](https://github.com/Raving4934/Melora/commit/6a28f59ce1f5c4f625c7bbd0e984c59e3abf2c18)、[`10f04b6`](https://github.com/Raving4934/Melora/commit/10f04b63a2d7da3dd2020c7f225bd28804132998)。
 - 完整设备回归分片：[`71cf81b`](https://github.com/Raving4934/Melora/commit/71cf81bcdc7bd03fccd2781d3057aaf49f5d8097)。
+- 历史队列与请求取消：[`6abe4a7`](https://github.com/Raving4934/Melora/commit/6abe4a71c9d639b354e06ca0de971a2c5e2a997b)、[`ab27604`](https://github.com/Raving4934/Melora/commit/ab27604b849af19d8d9e31b1c0e4dd55e34a76d3)。
+- 播放器裁剪与操作抽屉：[`53affdc`](https://github.com/Raving4934/Melora/commit/53affdc5688175f07e732da55e49615b1448af59)、[`7771dd0`](https://github.com/Raving4934/Melora/commit/7771dd0250a3e2302ddcf1946b250412a0d8ea04)。
+- 输入法同步与统一发布门禁：[`19b5749`](https://github.com/Raving4934/Melora/commit/19b57495da50aec2a04173a5c0b9bdf234b9b2aa)、[`388b639`](https://github.com/Raving4934/Melora/commit/388b639ba6aabf445d1562d435d525d7d883bae4)。
 
 ## [0.1.8] - 2026-10-02
 
