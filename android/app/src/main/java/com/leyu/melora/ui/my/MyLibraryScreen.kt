@@ -93,6 +93,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
+import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -106,6 +107,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -128,7 +130,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import com.leyu.melora.playback.DownloadCenter
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.Downloader
@@ -1931,7 +1933,7 @@ private fun DownloadRecordSheet(
     onAddToPlaylist: () -> Unit,
 ) {
     val context = LocalContext.current
-    val sheetState = rememberModalBottomSheetState()
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val closeSheet = rememberSheetDismiss(sheetState)
     val favoriteUids by UserLibrary.favoriteUids.collectAsStateWithLifecycle()
     val song = record.song
@@ -2187,17 +2189,19 @@ internal fun PlaylistEditSheet(
         }
     }
 
-    LaunchedEffect(Unit) {
-        delay(220)
-        runCatching { focusRequester.requestFocus() }
-    }
-
     MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         containerColor = MeloraAppearance.canvas,
         dragHandle = { PlaylistSheetHandle() },
     ) {
+        LaunchedEffect(sheetState) {
+            snapshotFlow {
+                sheetState.currentValue == SheetValue.Expanded && !sheetState.isAnimationRunning
+            }.first { it }
+            focusRequester.requestFocus()
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -2328,7 +2332,7 @@ internal fun PlaylistMoreSheet(
     onDelete: () -> Unit,
     onUpdate: (() -> Unit)? = null,
 ) {
-    val sheetState = rememberModalBottomSheetState()
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val closeSheet = rememberSheetDismiss(sheetState)
     MeloraBottomSheet(
         onDismissRequest = onDismiss,
@@ -2464,7 +2468,7 @@ private fun PlaylistDeleteConfirmSheet(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
-    val sheetState = rememberModalBottomSheetState()
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val closeSheet = rememberSheetDismiss(sheetState)
     MeloraBottomSheet(
         onDismissRequest = onDismiss,

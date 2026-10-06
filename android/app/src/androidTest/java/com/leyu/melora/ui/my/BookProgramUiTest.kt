@@ -1,5 +1,9 @@
 package com.leyu.melora.ui.my
 
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.unit.Density
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.asAndroidBitmap
 import android.graphics.Bitmap
@@ -26,6 +30,40 @@ class BookProgramUiTest {
     private val chapter = OnlineSong(JSONObject().put("source", "kw").put("songmid", "book-ui-128")
         .put("albumId", "book-ui-fixture").put("albumName", "续听测试专辑").put("name", "第128集")
         .put("singer", "测试主播").put("isBookChapter", true).put("img", "file:///book-ui-fixture.jpg"))
+
+    private fun showMusicMenu(heightDp: Float, fontScale: Float = 1f, onDelete: () -> Unit = {}) {
+        compose.setContent {
+            val heightPx = LocalWindowInfo.current.containerSize.height
+            CompositionLocalProvider(LocalDensity provides Density((heightPx / heightDp).coerceAtLeast(0.1f), fontScale)) {
+                MeloraTheme {
+                    SongListStateProvider {
+                        SongMoreSheet(
+                            OnlineSong(JSONObject().put("source", "kw").put("songmid", "music-menu-fixture")
+                                .put("name", "普通音乐").put("img", "file:///music-menu-fixture.jpg")),
+                            onRemoveFromPlaylist = {}, onDeleteLocal = onDelete, onDismiss = {},
+                        )
+                    }
+                }
+            }
+        }
+        compose.awaitStable(compose.onNodeWithText("普通音乐"))
+    }
+
+    @Test fun musicMenuRevealsLastActionWithoutFirstExpandingTheSheet() {
+        showMusicMenu(heightDp = 780f)
+        // 内容超过半屏但能完整放下；不能先滑动来掩盖半展开时底部操作不可见。
+        compose.onNodeWithText("永久删除").assertIsDisplayed().assertHasClickAction()
+        compose.onNodeWithText("下一首播放").assertIsDisplayed()
+    }
+
+    @Test fun musicMenuKeepsLastActionReachableInAShortWindowWithLargeText() {
+        var deleted = 0
+        showMusicMenu(heightDp = 420f, fontScale = 1.4f, onDelete = { deleted++ })
+        val lastAction = compose.onNodeWithText("永久删除").performScrollTo()
+        compose.awaitStable(lastAction)
+        lastAction.assertIsDisplayed().performClick()
+        compose.runOnIdle { assertEquals(1, deleted) }
+    }
 
     @Test fun recentProgramClickResumesInsteadOfOpeningAnAlbum() {
         var resumed: String? = null

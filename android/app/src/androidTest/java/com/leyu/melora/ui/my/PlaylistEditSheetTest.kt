@@ -14,6 +14,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -21,6 +22,8 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.leyu.melora.ui.awaitStable
@@ -72,6 +75,82 @@ class PlaylistEditSheetTest {
             assertEquals(1, imports)
             assertEquals(0, confirmations)
             assertEquals(0, dismissals)
+        }
+    }
+
+    @Test fun createRequestsFocusOnlyAfterTheSheetFinishesExpanding() {
+        val wasAutoAdvance = compose.mainClock.autoAdvance
+        try {
+            compose.mainClock.autoAdvance = false
+            compose.setContent {
+                MeloraTheme {
+                    PlaylistEditSheet(onDismiss = {}, onConfirm = {})
+                }
+            }
+
+            val title = compose.onNodeWithText("新建歌单")
+            val entry = compose.onNode(hasSetTextAction())
+            compose.waitForIdle()
+            val initialTop = title.fetchSemanticsNode().boundsInRoot.top
+            var observedEntranceMotion = false
+            var advancedFrames = 0
+            while (advancedFrames < 12 && !observedEntranceMotion) {
+                compose.mainClock.advanceTimeByFrame()
+                observedEntranceMotion = title.fetchSemanticsNode().boundsInRoot.top != initialTop
+                advancedFrames++
+            }
+            assertTrue("应采到抽屉入场中的中间帧", observedEntranceMotion)
+            entry.assertIsNotFocused()
+
+            compose.mainClock.advanceTimeBy(1_000)
+            compose.mainClock.autoAdvance = true
+            compose.awaitIme(entry)
+            entry.assertIsFocused()
+        } finally {
+            compose.mainClock.autoAdvance = wasAutoAdvance
+        }
+    }
+
+    @Test fun closingDuringSheetEntryCancelsPendingFocus() {
+        val open = mutableStateOf(false)
+        val wasAutoAdvance = compose.mainClock.autoAdvance
+        try {
+            compose.setContent {
+                MeloraTheme {
+                    if (open.value) {
+                        PlaylistEditSheet(onDismiss = { open.value = false }, onConfirm = {})
+                    }
+                }
+            }
+            compose.mainClock.autoAdvance = false
+            compose.runOnIdle { open.value = true }
+            compose.mainClock.advanceTimeByFrame()
+
+            val title = compose.onNodeWithText("新建歌单")
+            val entry = compose.onNode(hasSetTextAction())
+            val sheetView = (entry.fetchSemanticsNode().root as ViewRootForTest).view
+            val initialTop = title.fetchSemanticsNode().boundsInRoot.top
+            var observedEntranceMotion = false
+            var advancedFrames = 0
+            while (advancedFrames < 12 && !observedEntranceMotion) {
+                compose.mainClock.advanceTimeByFrame()
+                observedEntranceMotion = title.fetchSemanticsNode().boundsInRoot.top != initialTop
+                advancedFrames++
+            }
+            assertTrue("关闭前抽屉应已开始进入动画", observedEntranceMotion)
+            entry.assertIsNotFocused()
+
+            compose.runOnIdle { open.value = false }
+            compose.mainClock.advanceTimeBy(1_000)
+            compose.waitForIdle()
+
+            entry.assertDoesNotExist()
+            assertFalse(
+                "关闭后取消的自动聚焦不能再弹出键盘",
+                ViewCompat.getRootWindowInsets(sheetView)?.isVisible(WindowInsetsCompat.Type.ime()) == true,
+            )
+        } finally {
+            compose.mainClock.autoAdvance = wasAutoAdvance
         }
     }
 
