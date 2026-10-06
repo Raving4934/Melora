@@ -326,6 +326,30 @@ class OnlineCacheTest {
         assertEquals(2, searchCalls)
     }
 
+    @Test fun replacedRefreshStillStopsOnLastWaiterCancellationOrCacheClear() = runBlocking {
+        for (clear in listOf(false, true)) {
+            val key = "resolver:matches:replaced-$clear"
+            val started = CompletableDeferred<Unit>()
+            val stopped = CompletableDeferred<Unit>()
+            val response = CompletableDeferred<List<String>>()
+            val old = async {
+                OnlineCache.refresh(key, 1_000, cancelWhenUnobserved = true) {
+                    try { started.complete(Unit); response.await() }
+                    finally { stopped.complete(Unit) }
+                }
+            }
+            try {
+                withTimeout(5_000) { started.await() }
+                assertEquals(listOf("new"), OnlineCache.refresh(key, 1_000, force = true) { listOf("new") })
+                assertTrue("force preserves existing readers", old.isActive)
+                if (clear) OnlineCache.clear(key) else old.cancelAndJoin()
+                withTimeout(5_000) { stopped.await(); old.join() }
+                assertTrue(old.isCancelled)
+                assertEquals(if (clear) null else listOf("new"), OnlineCache.peek<List<String>>(key))
+            } finally { response.complete(listOf("late")); old.cancelAndJoin() }
+        }
+    }
+
     @Test fun forcedRefreshIsKeyScopedAndRetiredSameKeyResultCannotOverwriteReplacement() = runBlocking {
         OnlineCache.put("a", listOf("a-old"))
         OnlineCache.put("b", listOf("b-old"))

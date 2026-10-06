@@ -745,6 +745,8 @@ internal class SingleFlight<K : Any, V : Any>(
         var waiters: Int = 0,
     )
     private val requests = mutableMapOf<K, Pending<V>>()
+    // 当前可共享请求与仍有等待者的被替换请求同属一个生命周期。
+    private val active = mutableMapOf<Deferred<V>, K>()
 
     fun currentGeneration(): Long = synchronized(lock) { generation }
 
@@ -754,7 +756,7 @@ internal class SingleFlight<K : Any, V : Any>(
     fun fence(): Long {
         val (nextGeneration, retired) = synchronized(lock) {
             generation += 1
-            generation to requests.values.map { it.task }.also { requests.clear() }
+            generation to active.keys.toList().also { requests.clear(); active.clear() }
         }
         retired.forEach { it.cancel(FlightFencedException()) }
         return nextGeneration
@@ -763,7 +765,8 @@ internal class SingleFlight<K : Any, V : Any>(
     /** 按key撤销请求而不推进全局代次，供命名空间缓存清理使用。 */
     fun cancelWhere(predicate: (K) -> Boolean) {
         val retired = synchronized(lock) {
-            requests.keys.filter(predicate).mapNotNull { requests.remove(it)?.task }
+            requests.keys.removeAll(predicate)
+            active.filterValues(predicate).keys.toList().also { tasks -> tasks.forEach(active::remove) }
         }
         retired.forEach { it.cancel() }
     }
@@ -794,8 +797,12 @@ internal class SingleFlight<K : Any, V : Any>(
                 val task = scope.async(start = CoroutineStart.LAZY) { block() }
                 next = Pending(task, cancelWhenUnobserved)
                 requests[key] = next
+                active[task] = key
                 task.invokeOnCompletion {
-                    synchronized(lock) { if (requests[key] === next) requests.remove(key) }
+                    synchronized(lock) {
+                        active.remove(task)
+                        if (requests[key] === next) requests.remove(key)
+                    }
                 }
                 next
             }).also { it.waiters++; it.task.start() }
@@ -805,8 +812,8 @@ internal class SingleFlight<K : Any, V : Any>(
         } finally {
             synchronized(lock) {
                 pending.waiters--
-                if (pending.waiters == 0 && pending.cancelWhenUnobserved && requests[key] === pending) {
-                    requests.remove(key)
+                if (pending.waiters == 0 && pending.cancelWhenUnobserved) {
+                    if (requests[key] === pending) requests.remove(key)
                     pending.task.cancel()
                 }
             }

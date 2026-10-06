@@ -10,6 +10,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.*
@@ -80,6 +82,55 @@ class SingleFlightTest {
             releaseFirst.complete(Unit)
             releaseRetry.complete(Unit)
             scope.cancel()
+        }
+    }
+
+    @Test fun retiredRequestCancelsWhenItsLastWaiterLeaves() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val flight = SingleFlight<String, String>(scope)
+        val started = CompletableDeferred<Unit>()
+        val stopped = CompletableDeferred<Unit>()
+        val caller = async {
+            flight.run("song") {
+                try { started.complete(Unit); awaitCancellation() }
+                finally { stopped.complete(Unit) }
+            }
+        }
+        try {
+            withTimeout(5_000) { started.await() }
+            assertEquals("new", flight.run("song", restart = true, cancelReplaced = false) { "new" })
+            assertTrue("replacement must preserve an existing waiter", caller.isActive)
+            caller.cancelAndJoin()
+            withTimeout(5_000) { stopped.await() }
+        } finally { scope.cancel(); caller.cancelAndJoin() }
+    }
+
+    @Test fun retiredRequestsStayOwnedByGlobalAndKeyScopedInvalidation() = runBlocking {
+        for (global in listOf(false, true)) {
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            val flight = SingleFlight<String, String>(scope)
+            val started = CompletableDeferred<Unit>()
+            val stopped = CompletableDeferred<Unit>()
+            val caller = async {
+                flight.run("lyrics:song") {
+                    try { started.complete(Unit); awaitCancellation() }
+                    finally { stopped.complete(Unit) }
+                }
+            }
+            val other = async(start = CoroutineStart.UNDISPATCHED) {
+                flight.run("other:song") { awaitCancellation() }
+            }
+            try {
+                withTimeout(5_000) { started.await() }
+                flight.run("lyrics:song", restart = true, cancelReplaced = false) { "new" }
+                if (global) flight.fence() else flight.cancelWhere { it.startsWith("lyrics:") }
+                withTimeout(5_000) { stopped.await(); caller.join() }
+                assertTrue(caller.isCancelled)
+                if (global) {
+                    withTimeout(5_000) { other.join() }
+                    assertTrue(other.isCancelled)
+                } else assertTrue("prefix clear must preserve unrelated work", other.isActive)
+            } finally { scope.cancel(); caller.cancelAndJoin(); other.cancelAndJoin() }
         }
     }
 
