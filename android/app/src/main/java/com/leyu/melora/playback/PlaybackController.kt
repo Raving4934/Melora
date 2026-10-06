@@ -1389,19 +1389,24 @@ object PlaybackController {
         val prefs = queuePrefs() ?: return
         val json = prefs.getString(KEY_QUEUE, null) ?: return
         val array = runCatching { JSONArray(json) }.getOrNull() ?: return
-        val tracks = (0 until array.length()).mapNotNull { i -> array.optJSONObject(i)?.let(::trackFromJson) }
-        if (tracks.isEmpty()) return
+        val entries = (0 until array.length()).mapNotNull { i ->
+            array.optJSONObject(i)?.let(::trackFromJson)?.let { i to it }
+        }
+        if (entries.isEmpty()) return
+        val savedIndex = prefs.getInt(KEY_QUEUE_INDEX, 0)
+        val index = entries.indexOfFirst { it.first >= savedIndex }.takeIf { it >= 0 } ?: entries.lastIndex
+        val sameSelection = entries[index].first == savedIndex
+        val tracks = entries.map { it.second }
         TrackRegistry.registerAll(tracks)
-        val items = tracks.map(::buildItem)
-        val index = prefs.getInt(KEY_QUEUE_INDEX, 0).coerceIn(0, items.lastIndex)
         currentQueueId = prefs.getString("queueId", null)
         val bookId = prefs.getString("bookId", null)?.takeIf { id ->
             tracks.all { OnlineSong.from(it.raw)?.bookId() == id }
         }
-        val position = if (MeloraSettings.rememberProgress.value) {
+        // 无效条目过滤后按原位置映射（不能按uid去重）；替代曲目不继承失效条目的断点。
+        val position = if (sameSelection && MeloraSettings.rememberProgress.value) {
             prefs.getLong(KEY_QUEUE_POSITION, C.TIME_UNSET).let { if (it >= 0) it else C.TIME_UNSET }
         } else C.TIME_UNSET
-        player.setMediaItems(items, index, position)
+        player.setMediaItems(tracks.map(::buildItem), index, position)
         if (bookId != null) bookQueue?.start(bookId)
         if (autoPlay) {
             player.prepareAndPlay()
@@ -1409,6 +1414,8 @@ object PlaybackController {
         lastSavedQueue = SavedQueueSelection(
             "${bookQueue?.albumId}:${currentQueueId}:" + playbackQueueFingerprint(tracks, index), tracks[index].uid, index,
         )
+        // 同步修复磁盘坐标，后续检查点和再次冷启动必须继续指向同一项。
+        if (entries.size != array.length() || !sameSelection) saveQueue(force = true, player = player)
         Log.d(TAG, "已恢复上次播放队列：${tracks.size} 首，当前第 ${index + 1} 首")
     }
 

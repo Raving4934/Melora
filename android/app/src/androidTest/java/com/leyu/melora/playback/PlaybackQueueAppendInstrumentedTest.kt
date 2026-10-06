@@ -463,6 +463,65 @@ class PlaybackQueueAppendInstrumentedTest {
         }
     }
 
+    @Test fun restoreQueueKeepsTheSelectedOccurrenceAfterDroppingInvalidEntries() = withPlayer(empty = true) { _, controller ->
+        val rememberProgress = main { MeloraSettings.rememberProgress.value.also { MeloraSettings.rememberProgress.value = true } }
+        try {
+            // 同UID出现两次，必须按原始下标恢复，不能在过滤后再按UID选第一项。
+            writeQueueSnapshot(listOf(track("repeat"), track(""), track("middle"), track("repeat")), 3, 17_000L)
+            restoreQueue(controller, autoPlay = false)
+            await { controller.mediaItemCount == 3 }
+            main {
+                assertEquals(2, controller.currentMediaItemIndex)
+                assertEquals("repeat", controller.currentMediaItem?.mediaId)
+                assertEquals(17_000L, controller.currentPosition)
+                assertFalse(controller.playWhenReady)
+            }
+            assertEquals("有效快照须重新落盘，后续检查点不能再指向旧下标", 2, prefs.getInt("index", -1))
+            assertEquals(3, JSONArray(prefs.getString("queue", "[]")).length())
+            main { controller.clearMediaItems() }
+            restoreQueue(controller, autoPlay = false)
+            await { controller.mediaItemCount == 3 }
+            main {
+                assertEquals("修复后的快照再次恢复仍选中同一重复项", 2, controller.currentMediaItemIndex)
+                assertEquals(17_000L, controller.currentPosition)
+                assertFalse(controller.playWhenReady)
+            }
+        } finally { main { MeloraSettings.rememberProgress.value = rememberProgress } }
+    }
+
+    @Test fun restoreQueueDoesNotGiveAMissingTracksPositionToItsSuccessor() = withPlayer(empty = true) { _, controller ->
+        val rememberProgress = main { MeloraSettings.rememberProgress.value.also { MeloraSettings.rememberProgress.value = true } }
+        try {
+            writeQueueSnapshot(listOf(track("first"), track(""), track("next")), 1, 24_000L)
+            restoreQueue(controller, autoPlay = false)
+            await { controller.mediaItemCount == 2 }
+            main {
+                assertEquals("next", controller.currentMediaItem?.mediaId)
+                assertEquals("原当前项已失效，不能把它的进度套到下一首", 0L, controller.currentPosition)
+                assertFalse(controller.playWhenReady)
+            }
+            assertEquals(0L, prefs.getLong("positionMs", -1L))
+            assertEquals(2, JSONArray(prefs.getString("queue", "[]")).length())
+        } finally { main { MeloraSettings.rememberProgress.value = rememberProgress } }
+    }
+
+    @Test fun restoreQueueRemapsAnIndexAcrossANonObjectSlotWithoutLosingPosition() = withPlayer(empty = true) { _, controller ->
+        val rememberProgress = main { MeloraSettings.rememberProgress.value.also { MeloraSettings.rememberProgress.value = true } }
+        try {
+            writeQueueSnapshot(listOf(track("bad"), track("first"), track("selected"), track("last")), 2, 9_000L)
+            val stored = JSONArray(prefs.getString("queue", "[]")).put(0, JSONObject.NULL)
+            prefs.edit().putString("queue", stored.toString()).commit()
+            restoreQueue(controller, autoPlay = false)
+            await { controller.mediaItemCount == 3 }
+            main {
+                assertEquals("selected", controller.currentMediaItem?.mediaId)
+                assertEquals(1, controller.currentMediaItemIndex)
+                assertEquals(9_000L, controller.currentPosition)
+            }
+            assertEquals(1, prefs.getInt("index", -1))
+        } finally { main { MeloraSettings.rememberProgress.value = rememberProgress } }
+    }
+
     @Test fun restoreQueueAutoPlayTruePreparesSavedLocalTrack() = withPlayer(empty = true) { player, controller ->
         val audio = silentWav()
         val previousRememberProgress = main {
