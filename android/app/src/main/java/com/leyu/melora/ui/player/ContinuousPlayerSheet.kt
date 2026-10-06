@@ -288,8 +288,7 @@ internal fun ContinuousPlayerSheet(
                     .graphicsLayer {
                         val p = progress()
                         translationY = offset()
-                        val rounding = playerMotionPhase(p, 0f, 0.04f) * (1f - playerMotionPhase(p, 0.85f, 1f))
-                        shape = RoundedCornerShape(topStart = 22.dp * rounding, topEnd = 22.dp * rounding)
+                        shape = playerSheetShape(p, translationY.toDp())
                         clip = true
                     }
                     // 端点坐标位于位移层内部，不能把容器 translationY 再算入封面轨迹。

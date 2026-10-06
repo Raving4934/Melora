@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.runtime.BroadcastFrameClock
 import kotlinx.coroutines.CompletableDeferred
@@ -28,6 +29,30 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PlayerSheetMotionTest {
+    @Test
+    fun movingSheetKeepsTheVisibleTopContourAndBottomCornersOutsideTheViewport() {
+        for (density in listOf(1f, 3.15f)) {
+            for (travel in listOf(1f, 24f, 100f, 165f, 272f, 792f, 1200f)) {
+                for (step in 0..1000) {
+                    val progress = step / 1000f
+                    val offset = travel * (1f - progress)
+                    val shape = playerSheetShape(progress, offset.dp)
+                    val size = Size(400f * density, (travel + 88f) * density)
+                    val scale = Density(density)
+                    val top = shape.topStart.toPx(size, scale)
+                    val bottom = shape.bottomStart.toPx(size, scale)
+                    val originalRadius = 22f * playerMotionPhase(progress, 0f, 0.04f) *
+                        (1f - playerMotionPhase(progress, 0.85f, 1f)) * density
+                    assertEquals(originalRadius, top, 0.0001f)
+                    assertEquals(top, shape.topEnd.toPx(size, scale), 0f)
+                    assertEquals(bottom, shape.bottomEnd.toPx(size, scale), 0f)
+                    assertTrue("bottom corner must remain below the viewport", bottom <= offset * density + 0.0001f)
+                    if (travel >= 165f) assertEquals("ordinary windows use uniform corners", top, bottom, 0f)
+                }
+            }
+        }
+    }
+
     @Test
     fun sheetBackIsOwnedUntilTheExactCollapsedEndpointIncludingPartialDrags() {
         for (settled in PlayerSheetAnchor.entries) {

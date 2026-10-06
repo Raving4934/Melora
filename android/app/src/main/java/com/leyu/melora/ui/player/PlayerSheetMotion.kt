@@ -2,6 +2,8 @@ package com.leyu.melora.ui.player
 
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -74,6 +76,13 @@ internal fun playerSheetTarget(
 internal fun playerMotionPhase(progress: Float, start: Float, end: Float): Float {
     val value = ((progress - start) / (end - start)).coerceIn(0f, 1f)
     return value * value * (3f - 2f * value)
+}
+
+/** 底部圆角始终位于屏幕外：保持可见轮廓，同时让通常尺寸走规则圆角裁切。 */
+internal fun playerSheetShape(progress: Float, offset: Dp): RoundedCornerShape {
+    val radius = 22.dp * playerMotionPhase(progress, 0f, 0.04f) * (1f - playerMotionPhase(progress, 0.85f, 1f))
+    val bottom = minOf(radius, offset.coerceAtLeast(0.dp))
+    return RoundedCornerShape(topStart = radius, topEnd = radius, bottomStart = bottom, bottomEnd = bottom)
 }
 
 /** 两个端点都在Sheet局部坐标中；整层位移与封面插值合成一条连续轨迹。 */
