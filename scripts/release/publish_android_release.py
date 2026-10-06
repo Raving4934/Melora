@@ -97,7 +97,7 @@ class ReleasePublisher:
         try:
             repository = self.api.get(self.repo_path)
         except GitHubApiError as error:
-            raise ReleaseError("unable to inspect the target GitHub repository") from error
+            raise ReleaseError(f"unable to inspect the target GitHub repository: {error}") from error
         if repository.get("private") is not False:
             raise ReleaseError("the build repository is not public; refusing to publish Android assets")
 
@@ -115,33 +115,41 @@ class ReleasePublisher:
         except GitHubNotFound:
             return None
         except GitHubApiError as error:
-            raise ReleaseError("unable to inspect the Android tag") from error
+            raise ReleaseError(f"unable to inspect the Android tag: {error}") from error
         try:
             return _ref_commit_sha(self.api, self.repo_path, ref)
         except ReleaseError:
             raise
         except GitHubApiError as error:
-            raise ReleaseError("unable to resolve the Android tag target") from error
+            raise ReleaseError(f"unable to resolve the Android tag target: {error}") from error
 
     def _get_or_create_draft(self, target_sha: str) -> dict[str, Any]:
+        # 按标签查询只返回已发布版本；列表接口才能恢复尚未发布的草稿。
         try:
-            return self.api.get(f"{self.repo_path}/releases/tags/{self.plan.tag}")
-        except GitHubNotFound:
-            payload: dict[str, Any] = {
-                "tag_name": self.plan.tag,
-                "name": f"Melora Android v{self.plan.version}",
-                "body": self.plan.notes,
-                "draft": True,
-                "prerelease": self.plan.prerelease,
-                "make_latest": "false",
-                "target_commitish": target_sha,
-            }
-            try:
-                return self.api.post(f"{self.repo_path}/releases", payload)
-            except GitHubApiError as error:
-                raise ReleaseError("unable to create the draft Android release") from error
+            releases = self.api.get_paginated(f"{self.repo_path}/releases?per_page=100")
         except GitHubApiError as error:
-            raise ReleaseError("unable to inspect the existing Android release") from error
+            raise ReleaseError(f"unable to inspect existing Android releases: {error}") from error
+        matching = [release for release in releases if release.get("tag_name") == self.plan.tag]
+        published = next((release for release in matching if release.get("draft") is False), None)
+        if published is not None:
+            return published
+        if len(matching) > 1:
+            raise ReleaseError("multiple Android release drafts match this tag; refusing to choose one")
+        if matching:
+            return matching[0]
+        payload: dict[str, Any] = {
+            "tag_name": self.plan.tag,
+            "name": f"Melora Android v{self.plan.version}",
+            "body": self.plan.notes,
+            "draft": True,
+            "prerelease": self.plan.prerelease,
+            "make_latest": "false",
+            "target_commitish": target_sha,
+        }
+        try:
+            return self.api.post(f"{self.repo_path}/releases", payload)
+        except GitHubApiError as error:
+            raise ReleaseError(f"unable to create the draft Android release: {error}") from error
 
     def _validate_release_metadata(self, release: dict[str, Any]) -> None:
         if release.get("tag_name") != self.plan.tag:
@@ -185,7 +193,7 @@ class ReleasePublisher:
                     content_type=asset.content_type,
                 )
             except GitHubApiError as error:
-                raise ReleaseError(f"unable to upload the draft release asset {asset.name}") from error
+                raise ReleaseError(f"unable to upload the draft release asset {asset.name}: {error}") from error
 
     def _validate_remote_assets(self, release: dict[str, Any], *, allow_missing: bool = False) -> None:
         remote = {asset["name"]: asset for asset in release.get("assets", [])}
@@ -205,7 +213,7 @@ class ReleasePublisher:
         try:
             remote_content = self.api.get_bytes(f"{self.repo_path}/releases/assets/{actual['id']}")
         except GitHubApiError as error:
-            raise ReleaseError(f"unable to verify remote asset {expected.name}") from error
+            raise ReleaseError(f"unable to verify remote asset {expected.name}: {error}") from error
         if expected.name == self.plan.checksum.name:
             _validate_checksum_file(remote_content, self.plan.apk.name, self.plan.apk.sha256)
         elif hashlib.sha256(remote_content).hexdigest() != expected.sha256:
@@ -223,7 +231,7 @@ def _ref_commit_sha(api: Any, repo_path: str, ref: dict[str, Any]) -> str:
     try:
         tag = api.get(f"{repo_path}/git/tags/{obj['sha']}")
     except GitHubApiError as error:
-        raise ReleaseError("unable to resolve annotated Android tag") from error
+        raise ReleaseError(f"unable to resolve annotated Android tag: {error}") from error
     target = tag.get("object")
     if not isinstance(target, dict) or target.get("type") != "commit" or not target.get("sha"):
         raise ReleaseError("annotated Android tag does not point directly to a commit")

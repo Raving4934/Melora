@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import hashlib
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 import io
 from dataclasses import replace
 from types import SimpleNamespace
@@ -14,6 +14,7 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+from github_api import GitHubApiError
 from publish_android_release import ReleaseError, ReleasePlan, ReleasePublisher, build_plan, main
 
 
@@ -24,10 +25,12 @@ class FakeApi:
         public: bool = True,
         tag_sha: str | None = "a" * 40,
         release: dict[str, Any] | None = None,
+        post_error: GitHubApiError | None = None,
     ) -> None:
         self.repository = {"private": not public}
         self.tag_sha = tag_sha
         self.release = release
+        self.post_error = post_error
         self.uploaded: list[str] = []
         self.deleted: list[str] = []
         self.remote_bytes: dict[int, bytes] = {}
@@ -44,21 +47,22 @@ class FakeApi:
             return {"object": {"type": "commit", "sha": self.tag_sha}}
         if path == "/repos/owner/Melora":
             return self.repository
-        if "/releases/tags/android-v" in path:
-            if self.release is None:
-                from github_api import GitHubNotFound
-
-                raise GitHubNotFound("missing")
-            return self.release
         if "/releases/" in path and path.rsplit("/", 1)[-1].isdigit():
             return self.release
         raise AssertionError(f"unexpected GET {path}")
+
+    def get_paginated(self, path: str) -> list[dict[str, Any]]:
+        if path == "/repos/owner/Melora/releases?per_page=100":
+            return [self.release] if self.release is not None else []
+        raise AssertionError(f"unexpected LIST {path}")
 
     def post(self, path: str, payload: dict[str, Any]) -> Any:
         if path.endswith("/releases"):
             if payload.get("make_latest") != "false":
                 raise AssertionError("GitHub make_latest must use the string enum false")
             self.posts.append(payload)
+            if self.post_error is not None:
+                raise self.post_error
             self.release = {
                 "id": 1,
                 "tag_name": payload["tag_name"],
@@ -188,6 +192,43 @@ class PublishAndroidReleaseTest(unittest.TestCase):
         self.assertEqual(api.posts[0]["make_latest"], "false")
         self.assertEqual(api.patches, [{"draft": False, "prerelease": False, "make_latest": "true"}])
 
+    def test_interrupted_draft_resumes_without_duplicate_release_or_upload(self) -> None:
+        api = FakeApi()
+        plan = self.plan()
+        draft = ReleasePublisher(api, plan)._get_or_create_draft(plan.expected_commit)
+        self.assertTrue(draft["draft"])
+        api.upload(draft["upload_url"], name=plan.apk.name, content=plan.apk.content,
+                   content_type=plan.apk.content_type)
+        published = ReleasePublisher(api, plan).run()
+        self.assertFalse(published["draft"])
+        ReleasePublisher(api, plan).run()
+        self.assertEqual(len(api.posts), 1)
+        self.assertEqual(api.uploaded, [plan.apk.name, plan.checksum.name])
+        self.assertEqual(len(api.patches), 1)
+
+    def test_release_list_failure_is_not_treated_as_missing_release(self) -> None:
+        api = FakeApi()
+        with patch.object(api, "get_paginated", side_effect=GitHubApiError("HTTP 403", status=403)):
+            with self.assertRaisesRegex(ReleaseError, "existing Android releases: HTTP 403"):
+                ReleasePublisher(api, self.plan()).run()
+        self.assertEqual(api.posts, [])
+
+    def test_duplicate_drafts_fail_but_published_release_takes_precedence(self) -> None:
+        api = FakeApi()
+        plan = self.plan()
+        draft = ReleasePublisher(api, plan)._get_or_create_draft(plan.expected_commit)
+        duplicate = {**draft, "id": 2}
+        with patch.object(api, "get_paginated", return_value=[draft, duplicate]):
+            with self.assertRaisesRegex(ReleaseError, "multiple Android release drafts"):
+                ReleasePublisher(api, plan).run()
+        self.assertEqual(len(api.posts), 1)
+        self.assertEqual(api.uploaded, [])
+        ReleasePublisher(api, plan).run()
+        with patch.object(api, "get_paginated", return_value=[duplicate, api.release]):
+            self.assertFalse(ReleasePublisher(api, plan).run()["draft"])
+        self.assertEqual(len(api.posts), 1)
+        self.assertEqual(len(api.patches), 1)
+
     def test_tag_mismatch_fails_before_any_release_mutation(self) -> None:
         api = FakeApi(tag_sha="b" * 40)
         with self.assertRaisesRegex(ReleaseError, "locally built commit"):
@@ -246,6 +287,74 @@ class PublishAndroidReleaseTest(unittest.TestCase):
             self.checksum_path.write_text(f"{self.apk_digest}  {name}\n", encoding="utf-8")
             with self.subTest(name=name), self.assertRaisesRegex(ReleaseError, "different APK"):
                 self.plan()
+
+    def test_main_reports_safe_github_context_when_draft_creation_fails(self) -> None:
+        token = "sensitive-test-token"
+        response_body = "sensitive-test-response-body"
+        cases = (
+            (
+                "HTTP 403",
+                GitHubApiError(
+                    "GitHub API request failed with HTTP 403: POST "
+                    "https://api.github.com/repos/owner/Melora/releases",
+                    status=403,
+                ),
+            ),
+            (
+                "HTTP 422",
+                GitHubApiError(
+                    "GitHub API request failed with HTTP 422: POST "
+                    "https://api.github.com/repos/owner/Melora/releases",
+                    status=422,
+                ),
+            ),
+            (
+                "HTTP 503",
+                GitHubApiError(
+                    "GitHub API request failed with HTTP 503: POST "
+                    "https://api.github.com/repos/owner/Melora/releases",
+                    status=503,
+                ),
+            ),
+            (
+                "network error",
+                GitHubApiError(
+                    "GitHub API request could not be completed: POST "
+                    "https://api.github.com/repos/owner/Melora/releases"
+                ),
+            ),
+        )
+        args = self.args()
+        argv = [item for key, value in vars(args).items()
+                for item in ("--" + key.replace("_", "-"), str(value))]
+
+        for label, error in cases:
+            with self.subTest(failure=label):
+                error.__cause__ = RuntimeError(
+                    f"{response_body}; Authorization: Bearer {token}"
+                )
+                api = FakeApi(post_error=error)
+                stdout = io.StringIO()
+                stderr = io.StringIO()
+                with patch.dict(
+                    "os.environ",
+                    {"GITHUB_REPOSITORY": "owner/Melora", "GITHUB_TOKEN": token},
+                    clear=True,
+                ), patch("publish_android_release.GitHubApi", return_value=api) as github_api, \
+                        redirect_stdout(stdout), redirect_stderr(stderr):
+                    self.assertEqual(main(argv), 1)
+
+                github_api.assert_called_once_with(token)
+                output = stdout.getvalue() + stderr.getvalue()
+                self.assertEqual(
+                    stderr.getvalue(),
+                    f"::error::unable to create the draft Android release: {error}\n",
+                )
+                self.assertEqual(stdout.getvalue(), "")
+                self.assertNotIn(token, output)
+                self.assertNotIn(response_body, output)
+                self.assertNotIn("Traceback", output)
+                self.assertEqual(api.posts[0]["draft"], True)
 
     def test_cli_cannot_publish_to_another_repository(self) -> None:
         args = self.args()
