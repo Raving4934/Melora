@@ -1,5 +1,6 @@
 package com.leyu.melora.ui.my
 
+import com.leyu.melora.ui.awaitIme
 import com.leyu.melora.ui.awaitStable
 import com.leyu.melora.ui.boundsInSameFrame
 
@@ -70,13 +71,18 @@ class PlaylistImportSheetTest {
             }
         }
         if (initialLink != null) {
-            compose.onNodeWithTag("playlist-import-link").performTextInput(initialLink)
+            val input = compose.onNodeWithTag("playlist-import-link")
+            // 先让抽屉入场/初始收键盘完成，再输入并等待真实IME，避免把弹键盘前的短暂静止当成就绪。
+            compose.awaitStable(input)
+            input.performTextInput(initialLink)
+            compose.awaitIme(input)
         }
         if (autoRead) {
-            compose.waitForIdle()
-            compose.onNodeWithTag("playlist-import-submit").assertIsEnabled()
-            compose.awaitStable("playlist-import-submit")
-            compose.onNodeWithTag("playlist-import-submit").performClick()
+            val submit = compose.onNodeWithTag("playlist-import-submit").assertIsEnabled()
+            compose.awaitStable(submit)
+            submit.performClick()
+            // 将“点击没有启动读取”与“读取结果未渲染”分开诊断，不能用重试点击掩盖前者。
+            compose.waitUntil(5_000) { reads.get() == 1 }
         }
     }
 
