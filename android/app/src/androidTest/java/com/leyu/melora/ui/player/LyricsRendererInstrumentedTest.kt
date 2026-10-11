@@ -38,8 +38,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.click
+import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
@@ -431,6 +436,193 @@ class LyricsRendererInstrumentedTest {
     }
 
     @Test
+    fun stationaryRealTouchStillCallsTheLineCallback() {
+        verifyStationaryRealTouch(mini = false)
+    }
+
+    @Test
+    fun miniStationaryRealTouchStillCallsTheEntryCallback() {
+        verifyStationaryRealTouch(mini = true)
+    }
+
+    private fun verifyStationaryRealTouch(mini: Boolean) {
+        val target = LyricLine(startMs = 12_345L, text = "真实静止点击")
+        var clicked: LyricLine? = null
+        setViewport(
+            lines = listOf(target),
+            position = mutableLongStateOf(0L),
+            height = 180.dp,
+            mini = mini,
+            onLineClick = { clicked = it },
+        )
+        composeRule.waitForIdle()
+
+        touchLine(target.text)
+        assertSame("静止真实触摸必须保留原回调（mini=$mini）", target, clicked)
+    }
+
+    @Test
+    fun shortVerticalDragsAndSlopCrossingReturnDoNotCallLineCallback() {
+        verifyShortVerticalDragsDoNotSeek(immersive = false)
+    }
+
+    @Test
+    fun immersiveShortVerticalDragsAndSlopCrossingReturnDoNotCallLineCallback() {
+        verifyShortVerticalDragsDoNotSeek(immersive = true)
+    }
+
+    private fun verifyShortVerticalDragsDoNotSeek(immersive: Boolean) {
+        val target = LyricLine(
+            startMs = 12_345L,
+            text = "短拖目标\n保持触点在同一行",
+            translation = "加高点击区域",
+        )
+        val clicks = mutableListOf<LyricLine>()
+        var touchMetrics: TouchMetrics? = null
+        setViewport(
+            lines = listOf(target),
+            position = mutableLongStateOf(0L),
+            height = 320.dp,
+            immersive = immersive,
+            onTouchMetrics = { touchMetrics = it },
+            onLineClick = { clicks += it },
+        )
+        composeRule.waitForIdle()
+
+        val metrics = requireNotNull(touchMetrics)
+        val slopPx = metrics.systemTouchSlopDp.value * metrics.density
+        val travelPx = slopPx * 1.5f
+        assertTrue("测试位移必须超过系统 touchSlop", travelPx > slopPx)
+        assertTrue("测试位移必须小于列表 3 倍 touchSlop", travelPx < slopPx * 3f)
+
+        val origin = pointInViewport(target.text)
+        for (direction in listOf(-1f, 1f)) {
+            composeRule.onNodeWithTag(VIEWPORT_TAG).performTouchInput {
+                assertEquals(metrics.density, density, 0.01f)
+                val distance = metrics.systemTouchSlopDp.value * density * 1.5f
+                down(origin)
+                moveTo(origin + Offset(0f, direction * distance))
+                up()
+            }
+        }
+
+        // 已越过系统 slop，但尚未达到列表的 3 倍 slop；回到原点再抬手也必须锁存为拖动。
+        composeRule.onNodeWithTag(VIEWPORT_TAG).performTouchInput {
+            val distance = metrics.systemTouchSlopDp.value * density * 1.5f
+            down(origin)
+            moveTo(origin + Offset(0f, distance))
+            moveTo(origin)
+            up()
+        }
+
+        assertTrue("短上下拖动或 slop 后折返不能触发跳播（immersive=$immersive, clicks=$clicks）", clicks.isEmpty())
+    }
+
+    @Test
+    fun holdingAnActiveBrowsePastThreeSecondsDoesNotRecenter() {
+        val lines = (0 until 30).map { LyricLine(it * 1_000L, "held-$it") }
+        val position = mutableLongStateOf(0L)
+        var touchMetrics: TouchMetrics? = null
+        composeRule.mainClock.autoAdvance = false
+        var pointerHeld = false
+        try {
+            setViewport(
+                lines = lines,
+                position = position,
+                height = 320.dp,
+                motionEnabled = false,
+                onTouchMetrics = { touchMetrics = it },
+            )
+            composeRule.waitForIdle()
+
+            val metrics = requireNotNull(touchMetrics)
+            val initialScroll = verticalScrollValue()
+            composeRule.onNodeWithTag(VIEWPORT_TAG).performTouchInput {
+                val browseDistance = metrics.systemTouchSlopDp.value * density * 4f
+                val start = Offset(centerX, centerY)
+                val browsed = Offset(centerX, centerY - browseDistance)
+                down(start)
+                // 以低速越过列表 slop，并在抬手前发送静止样本，避免惯性干扰“浏览停留”测试。
+                moveTo(browsed, delayMillis = eventPeriodMillis * 100)
+                repeat(4) { moveTo(browsed, delayMillis = eventPeriodMillis * 10) }
+                up()
+            }
+
+            composeRule.mainClock.advanceTimeByFrame()
+            val browseScroll = verticalScrollValue()
+            assertTrue("必须先真实拖动列表进入浏览态", abs(browseScroll - initialScroll) > 0.5f)
+            composeRule.mainClock.advanceTimeByFrame()
+            assertEquals("低速抬手后应已停稳", browseScroll, verticalScrollValue(), 1f)
+            val browsedLine = nearestVisibleLine(lines)
+            // 比较未缩放的点击行，不把当前句/非当前句的字形缩放误判为列表位移。
+            val row = composeRule.onNode(hasText(browsedLine.text) and hasClickAction())
+            val beforePlaybackUpdate = row.fetchSemanticsNode().boundsInRoot
+
+            composeRule.onNodeWithTag(VIEWPORT_TAG).performTouchInput { down(Offset(centerX, centerY)) }
+            pointerHeld = true
+            composeRule.runOnIdle { position.longValue = 20_000L }
+            composeRule.mainClock.advanceTimeBy(3_200L)
+
+            assertEquals("按住浏览超过 3 秒时不能被播放焦点抢回", browseScroll, verticalScrollValue(), 1f)
+            val afterPlaybackUpdate = row.fetchSemanticsNode().boundsInRoot
+            assertEquals(beforePlaybackUpdate.top, afterPlaybackUpdate.top, 1f)
+            assertEquals(beforePlaybackUpdate.bottom, afterPlaybackUpdate.bottom, 1f)
+
+            composeRule.onNodeWithTag(VIEWPORT_TAG).performTouchInput { cancel() }
+            pointerHeld = false
+        } finally {
+            if (pointerHeld) runCatching { composeRule.onNodeWithTag(VIEWPORT_TAG).performTouchInput { cancel() } }
+            composeRule.mainClock.autoAdvance = true
+        }
+    }
+
+    @Test
+    fun tapDuringConfirmedFlingOnlyStopsAndTheNextTapSeeks() {
+        val lines = (0 until 60).map { LyricLine(it * 1_000L, "fling-$it") }
+        var clicked: LyricLine? = null
+        composeRule.mainClock.autoAdvance = false
+        try {
+            setViewport(
+                lines = lines,
+                position = mutableLongStateOf(0L),
+                height = 320.dp,
+                motionEnabled = false,
+                onLineClick = { clicked = it },
+            )
+            composeRule.waitForIdle()
+
+            composeRule.onNodeWithTag(VIEWPORT_TAG).performTouchInput {
+                swipe(Offset(centerX, height * 0.85f), Offset(centerX, height * 0.15f))
+            }
+            // fling 协程可能在抬手后的下一帧才启动；等待真实连续位移，而非假定前两帧已经移动。
+            val samples = mutableListOf(verticalScrollValue())
+            var movingFrames = 0
+            while (movingFrames < 2 && samples.size <= 10) {
+                composeRule.mainClock.advanceTimeByFrame()
+                val current = verticalScrollValue()
+                movingFrames = if (abs(current - samples.last()) > 0.5f) movingFrames + 1 else 0
+                samples += current
+            }
+            assertTrue("必须确认抬手后连续两帧的真实惯性位移：$samples", movingFrames == 2)
+
+            val lineDuringFling = nearestVisibleLine(lines)
+            touchLine(lineDuringFling.text)
+            assertEquals("惯性滚动中的第一次触摸只应停住，不能跳播", null, clicked)
+
+            composeRule.mainClock.advanceTimeByFrame()
+            val stoppedScroll = verticalScrollValue()
+            repeat(5) { composeRule.mainClock.advanceTimeByFrame() }
+            assertEquals("第一次触摸后列表应停住", stoppedScroll, verticalScrollValue(), 1f)
+
+            val lineAfterStop = nearestVisibleLine(lines)
+            touchLine(lineAfterStop.text)
+            assertSame("停住后的下一次明确点击应正常跳播", lineAfterStop, clicked)
+        } finally {
+            composeRule.mainClock.autoAdvance = true
+        }
+    }
+
+    @Test
     fun browsingSuppressesClockFollowUntilThreeSecondsThenRecentersCurrentLine() {
         val lines = (0 until 12).map { index ->
             LyricLine(startMs = index * 1_000L, text = "line-$index")
@@ -735,12 +927,17 @@ class LyricsRendererInstrumentedTest {
         height: Dp,
         mini: Boolean = false,
         centered: Boolean = false,
+        immersive: Boolean = false,
         config: LyricsUiConfig = LyricsUiConfig(),
         motionEnabled: Boolean = true,
         playerDark: Boolean = true,
+        onTouchMetrics: ((TouchMetrics) -> Unit)? = null,
         onLineClick: (LyricLine) -> Unit = {},
     ) {
         composeRule.setContent {
+            val density = LocalDensity.current
+            val systemTouchSlop = with(density) { LocalViewConfiguration.current.touchSlop.toDp() }
+            SideEffect { onTouchMetrics?.invoke(TouchMetrics(systemTouchSlop, density.density)) }
             MaterialTheme(colorScheme = if (playerDark) darkColorScheme() else lightColorScheme()) {
                 PlayerAppearanceProvider(dark = playerDark, artworkColor = Color(0xFF3A78FF)) {
                 Box(
@@ -757,6 +954,7 @@ class LyricsRendererInstrumentedTest {
                         modifier = Modifier.fillMaxSize(),
                         mini = mini,
                         centered = centered,
+                        immersive = immersive,
                         motionEnabled = motionEnabled,
                         onLineClick = onLineClick,
                     )
@@ -766,7 +964,28 @@ class LyricsRendererInstrumentedTest {
         }
     }
 
+    private data class TouchMetrics(val systemTouchSlopDp: Dp, val density: Float)
+
     private fun viewportBounds(): Rect = composeRule.onNodeWithTag(VIEWPORT_TAG).fetchSemanticsNode().boundsInRoot
+
+    private fun pointInViewport(text: String): Offset {
+        val text = textBounds(text)
+        val viewport = viewportBounds()
+        return Offset(text.center.x - viewport.left, text.center.y - viewport.top)
+    }
+
+    private fun nearestVisibleLine(lines: List<LyricLine>): LyricLine = requireNotNull(
+        lines.filter { isDisplayed(it.text) }
+            .minByOrNull { abs(textBounds(it.text).center.y - viewportBounds().center.y) },
+    )
+
+    private fun verticalScrollValue(): Float = composeRule.onNode(hasScrollAction())
+        .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
+
+    private fun touchLine(text: String) {
+        val point = pointInViewport(text)
+        composeRule.onNodeWithTag(VIEWPORT_TAG).performTouchInput { click(point) }
+    }
 
     private fun textBounds(text: String): Rect = composeRule
         .onNodeWithText(text, useUnmergedTree = true)

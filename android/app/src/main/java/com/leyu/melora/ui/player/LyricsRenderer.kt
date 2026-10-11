@@ -9,7 +9,9 @@ import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.animateScrollBy
-import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -34,6 +36,8 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.TextLayoutResult
@@ -55,7 +59,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
 
 /** 同一时钟供三个展示入口读取；时间只在 draw 或时间线边界派生中消费。 */
 @Composable
@@ -310,34 +313,24 @@ internal fun LyricsViewport(
         val initial = frame.focusIndex.coerceAtLeast(0)
         val list = rememberLazyListState(initial, if (lines.isEmpty()) 0 else rowHeight(initial) / 2)
         var browsing by remember { mutableStateOf(false) }
-        var dragging by remember { mutableStateOf(false) }
-        var interaction by remember { mutableIntStateOf(0) }
-        val scope = rememberCoroutineScope()
-        LaunchedEffect(list, mini) {
-            if (!mini) list.interactionSource.interactions.collect { event ->
-                when (event) {
-                    is DragInteraction.Start -> { browsing = true; dragging = true; interaction++ }
-                    is DragInteraction.Stop, is DragInteraction.Cancel -> { dragging = false; interaction++ }
-                }
-            }
-        }
-        LaunchedEffect(browsing, dragging, interaction) {
-            if (browsing && !dragging) snapshotFlow { list.isScrollInProgress }.distinctUntilChanged().collectLatest { moving ->
+        var touching by remember { mutableStateOf(false) }
+        var tapEligible by remember { mutableStateOf(true) }
+        LaunchedEffect(browsing, touching) {
+            if (browsing && !touching) snapshotFlow { list.isScrollInProgress }.distinctUntilChanged().collectLatest { moving ->
                 if (!moving) { delay(3_000); browsing = false }
             }
         }
-        suspend fun follow(index: Int) {
-            if (index !in lines.indices) return
+        LaunchedEffect(frame.focusIndex, browsing, touching, rowHeight, motionEnabled) {
+            val index = frame.focusIndex.coerceAtLeast(0)
+            if (browsing || touching || index !in lines.indices) return@LaunchedEffect
             val offset = rowHeight(index) / 2
-            if (!motionEnabled) { list.scrollToItem(index, offset); return }
+            if (!motionEnabled) { list.scrollToItem(index, offset); return@LaunchedEffect }
             val target = list.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }
             if (target != null) list.animateScrollBy((target.offset + offset).toFloat(), spring(dampingRatio = 0.86f, stiffness = 160f))
             else list.animateScrollToItem(index, offset)
         }
-        LaunchedEffect(frame.focusIndex, browsing, rowHeight, motionEnabled) {
-            if (!browsing) follow(frame.focusIndex.coerceAtLeast(0))
-        }
         val viewConfiguration = LocalViewConfiguration.current
+        val tapSlop = viewConfiguration.touchSlop
         val verticalViewConfiguration = rememberPlayerVerticalViewConfiguration()
         CompositionLocalProvider(LocalViewConfiguration provides verticalViewConfiguration) {
             LazyColumn(
@@ -348,7 +341,30 @@ internal fun LyricsViewport(
                     if (mini) 3.dp
                     else (fontSize * if (immersiveMode) IMMERSIVE_LYRICS_SPACING_MULTIPLIER else 0.66f).dp,
                 ),
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().pointerInput(list, mini, tapSlop) {
+                    if (mini) return@pointerInput
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        tapEligible = !list.isScrollInProgress
+                        touching = true
+                        browsing = true
+                        try {
+                            do {
+                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                                // 一旦越过点击容差，本次触摸即使折返也不能跳播；不消费事件，以保留惯性与父层切页。
+                                if (event.changes.any { it.id != down.id ||
+                                        (it.position - down.position).getDistance() > tapSlop }) {
+                                    tapEligible = false
+                                }
+                                // 行点击在 Main 阶段执行，必须等 Final 后才能释放本次触摸资格。
+                                awaitPointerEvent(PointerEventPass.Final)
+                            } while (event.changes.any { it.pressed })
+                        } finally {
+                            touching = false
+                            tapEligible = true
+                        }
+                    }
+                },
             ) {
                 itemsIndexed(lines, key = { index, _ -> index }) { index, line ->
                     CompositionLocalProvider(LocalViewConfiguration provides viewConfiguration) {
@@ -371,9 +387,14 @@ internal fun LyricsViewport(
                             if (motionEnabled) tween(180) else snap(), label = "lyricDepthBlur",
                         )
                         val muted = ink.copy(alpha = if (emphasized) 0.38f else 0.50f)
-                        Column(Modifier.fillMaxWidth().clickable {
-                            onLineClick(line)
-                            if (!mini) { browsing = false; scope.launch { follow(index) } }
+                        Column(Modifier.fillMaxWidth().clickable(
+                            interactionSource = null,
+                            indication = if (mini) LocalIndication.current else null,
+                        ) {
+                            if (mini || tapEligible) {
+                                onLineClick(line)
+                                if (!mini) browsing = false
+                            }
                         }, horizontalAlignment = alignment) {
                             Column(Modifier.fillMaxWidth()
                                 .graphicsLayer {
