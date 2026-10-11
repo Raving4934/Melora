@@ -9,7 +9,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.items
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
@@ -26,6 +28,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import com.leyu.melora.ui.common.PlaylistControlsHeight
 import com.leyu.melora.ui.common.ChromeFloatingBar
 import com.leyu.melora.ui.common.ChromeScaffold
+import com.leyu.melora.ui.common.chromeContentPadding
 import com.leyu.melora.ui.common.DetailPageHost
 import com.leyu.melora.ui.common.LocalChromeStartBleed
 import com.leyu.melora.ui.common.LocalChromeTopInset
@@ -65,6 +68,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.test.assertTextContains
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -91,12 +95,12 @@ class LocalEmptyAndInputLayoutTest {
     private data class StripeSample(val mean: Float, val contrast: Float)
     private data class ChromeFadeSamples(
         val rowTop: StripeSample,
-        val rowBottom: StripeSample,
-        val tailStart: StripeSample,
-        val tailMiddle: StripeSample,
-        val tailEnd: StripeSample,
+        val fadeStart: StripeSample,
+        val fadeMiddle: StripeSample,
+        val fadeEnd: StripeSample,
+        val bodyStart: StripeSample,
+        val bodyMiddle: StripeSample,
         val restored: StripeSample,
-        val sharp: StripeSample,
     )
 
     private fun stripeSample(image: PixelMap, fixture: DpRect, rootY: Float): StripeSample {
@@ -109,6 +113,39 @@ class LocalEmptyAndInputLayoutTest {
         val mean = values.average().toFloat()
         val contrast = sqrt(values.sumOf { ((it - mean) * (it - mean)).toDouble() } / values.size).toFloat()
         return StripeSample(mean, contrast)
+    }
+
+    private fun regionContrast(image: PixelMap, fixture: DpRect, region: DpRect, rootY: Float): Float {
+        val scaleX = image.width / (fixture.right.value - fixture.left.value)
+        val scaleY = image.height / (fixture.bottom.value - fixture.top.value)
+        val left = ((region.left.value - fixture.left.value) * scaleX).roundToInt().coerceIn(0, image.width - 1)
+        val right = ((region.right.value - fixture.left.value) * scaleX).roundToInt().coerceIn(left + 1, image.width)
+        val y = ((rootY - fixture.top.value) * scaleY).roundToInt().coerceIn(0, image.height - 1)
+        val values = (left until right).map { x ->
+            val color = image[x, y]
+            color.red * 0.2126f + color.green * 0.7152f + color.blue * 0.0722f
+        }
+        val mean = values.average().toFloat()
+        return sqrt(values.sumOf { ((it - mean) * (it - mean)).toDouble() } / values.size).toFloat()
+    }
+
+    private fun meanPixelDifference(first: PixelMap, second: PixelMap, fixture: DpRect, region: DpRect): Float {
+        require(first.width == second.width && first.height == second.height)
+        val scaleX = first.width / (fixture.right.value - fixture.left.value)
+        val scaleY = first.height / (fixture.bottom.value - fixture.top.value)
+        val left = ((region.left.value - fixture.left.value) * scaleX).roundToInt().coerceIn(0, first.width - 1)
+        val right = ((region.right.value - fixture.left.value) * scaleX).roundToInt().coerceIn(left + 1, first.width)
+        val top = ((region.top.value - fixture.top.value) * scaleY).roundToInt().coerceIn(0, first.height - 1)
+        val bottom = ((region.bottom.value - fixture.top.value) * scaleY).roundToInt().coerceIn(top + 1, first.height)
+        var difference = 0f
+        var channelCount = 0
+        for (y in top until bottom) for (x in left until right) {
+            val before = first[x, y]
+            val after = second[x, y]
+            difference += abs(before.red - after.red) + abs(before.green - after.green) + abs(before.blue - after.blue)
+            channelCount += 3
+        }
+        return difference / channelCount
     }
 
     @OptIn(dev.chrisbanes.haze.ExperimentalHazeApi::class)
@@ -129,33 +166,41 @@ class LocalEmptyAndInputLayoutTest {
         })
     }
 
-    private fun awaitChromeFade(boundaryY: Float, label: String): ChromeFadeSamples {
+    private fun awaitChromeFade(
+        boundaryY: Float,
+        label: String,
+        fixtureTag: String = "stripe-fixture",
+    ): ChromeFadeSamples {
         var latest: ChromeFadeSamples? = null
         compose.waitUntil(5_000) {
-            val fixtureNode = compose.onNodeWithTag("stripe-fixture")
+            val fixtureNode = compose.onNodeWithTag(fixtureTag)
             val image = fixtureNode.captureToImage().toPixelMap()
             val bounds = fixtureNode.getUnclippedBoundsInRoot()
             fun at(offset: Float) = stripeSample(image, bounds, boundaryY + offset)
             ChromeFadeSamples(
-                rowTop = at(-42f), rowBottom = at(-2f),
-                tailStart = at(2f), tailMiddle = at(14f), tailEnd = at(26f),
-                restored = at(32f), sharp = at(38f),
+                rowTop = at(-42f), fadeStart = at(-26f), fadeMiddle = at(-14f), fadeEnd = at(-2f),
+                bodyStart = at(2f), bodyMiddle = at(14f), restored = at(38f),
             ).also { latest = it }.let {
-                it.sharp.contrast > 0.2f && it.rowBottom.contrast < it.sharp.contrast * 0.3f &&
-                    it.rowBottom.mean in 0.05f..0.95f
+                it.restored.contrast > 0.2f && it.rowTop.contrast < it.restored.contrast * 0.3f &&
+                    it.fadeStart.contrast < it.fadeMiddle.contrast &&
+                    it.fadeMiddle.contrast < it.fadeEnd.contrast &&
+                    it.bodyStart.contrast > it.restored.contrast * 0.8f
             }
         }
         val samples = checkNotNull(latest) { "$label: 未捕获到条纹像素" }
-        val baseline = samples.sharp.contrast
-        assertTrue("$label: 第二行上部应保持完整模糊，samples=$samples", samples.rowTop.contrast < baseline * 0.3f)
-        assertTrue("$label: 第二行底部不能提前恢复清晰，samples=$samples", samples.rowBottom.contrast < baseline * 0.3f)
-        assertTrue("$label: 尾部起点应仍在渐隐中，samples=$samples", samples.tailStart.contrast < samples.tailMiddle.contrast)
-        assertTrue("$label: 渐隐起点不能突然露出清晰条纹形成横线，samples=$samples", samples.tailStart.contrast < baseline * 0.025f)
-        assertTrue("$label: 渐隐末端应平缓接回正文，samples=$samples", baseline - samples.tailEnd.contrast < baseline * 0.05f)
-        assertTrue("$label: 尾部应逐步恢复图案对比度，samples=$samples", samples.tailMiddle.contrast < samples.tailEnd.contrast)
-        assertTrue("$label: 渐隐结束后应恢复原始清晰条纹，samples=$samples", samples.restored.contrast > baseline * 0.8f)
-        assertTrue("$label: 尾部末端仍应比尾部外更模糊，samples=$samples", samples.tailEnd.contrast < samples.restored.contrast)
-        assertTrue("$label: 恢复后的条纹应接近未处理源，samples=$samples", abs(samples.restored.contrast - baseline) < baseline * 0.2f)
+        val baseline = samples.restored.contrast
+        assertTrue("$label: 双行材质上部应保持模糊，samples=$samples", samples.rowTop.contrast < baseline * 0.3f)
+        assertTrue("$label: 栏内渐隐起点应仍充分模糊，samples=$samples", samples.fadeStart.contrast < baseline * 0.3f)
+        assertTrue("$label: 栏内末28dp应逐步恢复条纹对比度，samples=$samples",
+            samples.fadeStart.contrast < samples.fadeMiddle.contrast && samples.fadeMiddle.contrast < samples.fadeEnd.contrast)
+        assertTrue("$label: 栏内渐隐末端应接近清晰正文，samples=$samples", samples.fadeEnd.contrast > baseline * 0.75f)
+        assertTrue("$label: 渐隐末端到边界下不能出现硬线，samples=$samples",
+            abs(samples.fadeEnd.contrast - samples.bodyStart.contrast) < baseline * 0.18f)
+        assertTrue("$label: 材质边界下正文应立即恢复清晰，samples=$samples", samples.bodyStart.contrast > baseline * 0.8f)
+        assertTrue("$label: 边界下正文不应继续渐隐，samples=$samples", samples.bodyMiddle.contrast > baseline * 0.8f)
+        assertTrue("$label: 边界下正文应保持原始清晰度，samples=$samples",
+            abs(samples.bodyStart.contrast - baseline) < baseline * 0.2f &&
+                abs(samples.bodyMiddle.contrast - baseline) < baseline * 0.2f)
         return samples
     }
 
@@ -266,7 +311,7 @@ class LocalEmptyAndInputLayoutTest {
 
     @OptIn(dev.chrisbanes.haze.ExperimentalHazeApi::class)
     @SdkSuppress(minSdkVersion = 31)
-    @Test fun mergedSecondaryRowStaysBlurredAndItsTailJoinsTheBodySmoothly() {
+    @Test fun mergedSecondaryRowFadesInsideHeaderWithoutCoveringBody() {
         val clicks = mutableStateOf(0)
         compose.runOnIdle { MeloraSettings.blurTopBar.value = false }
         compose.setContent {
@@ -316,7 +361,137 @@ class LocalEmptyAndInputLayoutTest {
 
     @OptIn(dev.chrisbanes.haze.ExperimentalHazeApi::class)
     @SdkSuppress(minSdkVersion = 31)
-    @Test fun pinnedFloatingRowSharesTheTailWithoutChangingLayoutOrBlockingClicks() {
+    @Test fun firstChromePaddedSongRowStaysSharpInPlaceAndHeaderStaysBlurredAfterScroll() {
+        lateinit var list: LazyListState
+        compose.runOnIdle {
+            MeloraSettings.blurTopBar.value = false
+            MeloraAppearance.isDark = false
+        }
+        compose.setContent {
+            list = rememberLazyListState()
+            val source = rememberHazeState()
+            val canvas = MeloraAppearance.canvas
+            MaterialTheme {
+                Box(Modifier.fillMaxSize().testTag("local-row-fixture")) {
+                    ChromeScaffold(
+                        modifier = Modifier.fillMaxSize(), containerColor = canvas, headerColor = canvas,
+                        contentSource = source, expectedTopBarHeight = 110.dp, hasSecondaryRow = true,
+                        topBar = {
+                            Column(Modifier.fillMaxWidth().height(110.dp).testTag("local-row-header")) {
+                                Box(Modifier.fillMaxWidth().height(64.dp)) {
+                                    Text("本地歌曲", Modifier.offset(x = 16.dp, y = 20.dp))
+                                    Button(
+                                        onClick = {},
+                                        modifier = Modifier.align(androidx.compose.ui.Alignment.CenterEnd)
+                                            .offset(x = (-12).dp).requiredSize(40.dp).testTag("local-row-control"),
+                                        contentPadding = PaddingValues(0.dp),
+                                    ) { Text("⋯") }
+                                }
+                                Box(Modifier.fillMaxWidth().height(46.dp))
+                            }
+                        },
+                    ) {
+                        Box(Modifier.fillMaxSize()) {
+                            StripeSource(source)
+                            LazyColumn(
+                                state = list,
+                                modifier = Modifier.fillMaxSize().testTag("local-song-list"),
+                                contentPadding = chromeContentPadding(),
+                            ) {
+                                items(20, key = { it }) { index ->
+                                    if (index == 0) {
+                                        Box(Modifier.fillMaxWidth().height(88.dp).testTag("first-song-row")) {
+                                            Box(
+                                                Modifier.offset(x = 16.dp, y = 4.dp).requiredSize(56.dp)
+                                                    .drawBehind {
+                                                        val stripeWidth = 2.dp.toPx()
+                                                        var x = 0f
+                                                        var stripe = 0
+                                                        while (x < size.width) {
+                                                            val width = minOf(stripeWidth, size.width - x)
+                                                            drawRect(
+                                                                if (stripe++ % 2 == 0) Color.Black else Color.White,
+                                                                topLeft = Offset(x, 0f), size = Size(width, size.height),
+                                                            )
+                                                            x += width
+                                                        }
+                                                    }
+                                                    .testTag("first-song-cover"),
+                                            )
+                                            Text(
+                                                "首行测试歌曲",
+                                                Modifier.offset(x = 88.dp, y = 12.dp).testTag("first-song-title"),
+                                            )
+                                        }
+                                    } else {
+                                        Box(Modifier.fillMaxWidth().height(88.dp)) {
+                                            Text("测试歌曲 $index", Modifier.offset(x = 88.dp, y = 12.dp))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        val fixture = compose.onNodeWithTag("local-row-fixture")
+        val header = compose.onNodeWithTag("local-row-header")
+        val control = compose.onNodeWithTag("local-row-control")
+        val listNode = compose.onNodeWithTag("local-song-list")
+        val firstRow = compose.onNodeWithTag("first-song-row")
+        val cover = compose.onNodeWithTag("first-song-cover")
+        val title = compose.onNodeWithTag("first-song-title")
+        compose.waitForIdle()
+
+        val fixtureBounds = fixture.getUnclippedBoundsInRoot()
+        val headerBounds = header.getUnclippedBoundsInRoot()
+        val rowBounds = firstRow.getUnclippedBoundsInRoot()
+        assertTrue("chromeContentPadding 首行应紧接双行标题栏: header=$headerBounds row=$rowBounds",
+            abs(rowBounds.top.value - headerBounds.bottom.value) < 2f)
+        val positionsBefore = listOf(
+            headerBounds, control.getUnclippedBoundsInRoot(), listNode.getUnclippedBoundsInRoot(), rowBounds,
+            cover.getUnclippedBoundsInRoot(), title.getUnclippedBoundsInRoot(),
+        )
+        val coverBounds = cover.getUnclippedBoundsInRoot()
+        val titleBounds = title.getUnclippedBoundsInRoot()
+        val titleSampleY = titleBounds.top.value + (titleBounds.bottom.value - titleBounds.top.value) / 2f
+        val before = fixture.captureToImage().toPixelMap()
+        assertTrue("模糊开关前首行封面应清晰",
+            regionContrast(before, fixtureBounds, coverBounds, coverBounds.top.value + 12f) > 0.3f)
+        assertTrue("模糊开关前首行标题应清晰",
+            regionContrast(before, fixtureBounds, titleBounds, titleSampleY) > 0.2f)
+
+        fun awaitHeaderBlur() = compose.waitUntil(5_000) {
+            val sample = stripeSample(fixture.captureToImage().toPixelMap(), fixtureBounds, headerBounds.bottom.value - 42f)
+            sample.contrast < 0.12f && sample.mean in 0.05f..0.95f
+        }
+        compose.runOnIdle { MeloraSettings.blurTopBar.value = true }
+        awaitHeaderBlur()
+        val after = fixture.captureToImage().toPixelMap()
+        val positionsAfter = listOf(
+            header.getUnclippedBoundsInRoot(), control.getUnclippedBoundsInRoot(), listNode.getUnclippedBoundsInRoot(),
+            firstRow.getUnclippedBoundsInRoot(), cover.getUnclippedBoundsInRoot(), title.getUnclippedBoundsInRoot(),
+        )
+        assertEquals("开关模糊不能移动标题栏、控件或首行", positionsBefore, positionsAfter)
+        assertTrue("模糊开关不能改变根截图中的首行封面像素",
+            meanPixelDifference(before, after, fixtureBounds, coverBounds) < 0.005f)
+        assertTrue("模糊开关不能改变根截图中的首行标题像素",
+            meanPixelDifference(before, after, fixtureBounds, titleBounds) < 0.005f)
+        assertTrue("模糊开关后首行封面仍应清晰",
+            regionContrast(after, fixtureBounds, coverBounds, coverBounds.top.value + 12f) > 0.3f)
+        assertTrue("模糊开关后首行标题仍应清晰",
+            regionContrast(after, fixtureBounds, titleBounds, titleSampleY) > 0.2f)
+
+        listNode.performTouchInput { swipeUp() }
+        compose.waitUntil(5_000) { list.firstVisibleItemIndex > 0 }
+        awaitHeaderBlur()
+    }
+
+    @OptIn(dev.chrisbanes.haze.ExperimentalHazeApi::class)
+    @SdkSuppress(minSdkVersion = 31)
+    @Test fun pinnedFloatingRowFadesInsideWithoutChangingLayoutOrBlockingClicks() {
         val pinned = mutableStateOf(false)
         val clicks = mutableStateOf(0)
         compose.runOnIdle { MeloraSettings.blurTopBar.value = true }

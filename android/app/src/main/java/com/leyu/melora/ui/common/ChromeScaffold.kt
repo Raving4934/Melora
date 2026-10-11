@@ -361,26 +361,26 @@ private fun BoxScope.ChromeMaterial(
         }
     }
     val ramp = remember(protectActions) { if (protectActions) smoothRamp else listOf(0f, 1f) }
-    // 整个操作区保持完整模糊；只有最后一栏下面的绘制尾部渐隐。
+    // 双行材质在最后一栏内部平滑收边，不能越过正文起点遮住静止首行。
     // 用实际画布高度兜住首次测量（未知栏高尚未登记），不依赖下一帧回写尺寸。
     val fade = remember(start, end, fadeHeight, protectActions, ramp) {
         val colors = ramp.map { Color.Black.copy(alpha = 1f - it) }
         object : ShaderBrush() {
             override fun createShader(size: Size): Shader {
-                val bottom = maxOf(end, size.height - fadeHeight)
-                val fadeStart = if (protectActions) bottom else start + (bottom - start) * 0.60f
+                val bottom = maxOf(end, size.height)
+                val fadeStart = if (protectActions) maxOf(start, bottom - fadeHeight) else start + (bottom - start) * 0.60f
                 return LinearGradientShader(
-                    Offset(0f, fadeStart), Offset(0f, bottom + fadeHeight),
+                    Offset(0f, fadeStart), Offset(0f, bottom),
                     colors,
                 )
             }
         }
     }
-    val veil = remember(canvas, start, end, fadeHeight, fade, protectActions, ramp) {
+    val veil = remember(canvas, start, end, fade, protectActions, ramp) {
         val colors = ramp.map { canvas.copy(alpha = canvas.alpha * (1f - it * if (protectActions) 0.35f else 1f)) }
         val tint = object : ShaderBrush() {
             override fun createShader(size: Size) = LinearGradientShader(
-                Offset(0f, start), Offset(0f, maxOf(end, size.height - fadeHeight)),
+                Offset(0f, start), Offset(0f, maxOf(end, size.height)),
                 colors,
             )
         }
@@ -405,11 +405,9 @@ private fun BoxScope.ChromeMaterial(
     Box(
         Modifier.matchParentSize()
             .layout { measurable, constraints ->
-                // 不扩张父栏尺寸或触摸范围；上面的栏不伸进下一行，避免重复叠加材质。
-                val extension = if (constraints.maxHeight >= end.roundToInt()) fadeHeight else 0
-                val height = constraints.maxHeight + extension
+                // 仅向侧栏留白外绘；垂直范围严格跟随栏高，不覆盖正文或改变触摸范围。
                 val width = constraints.maxWidth + startBleedPx
-                val layer = measurable.measure(constraints.copy(minWidth = width, maxWidth = width, minHeight = height, maxHeight = height))
+                val layer = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
                 layout(constraints.maxWidth, constraints.maxHeight) { layer.placeRelative(-startBleedPx, 0) }
             }
             .clipToBounds()
