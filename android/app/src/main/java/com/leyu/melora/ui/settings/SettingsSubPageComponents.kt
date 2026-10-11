@@ -177,7 +177,7 @@ internal fun BasicSettingsSubPage(onBack: () -> Unit) {
         }
         item {
             SettingsCard(contentPadding = PaddingValues(vertical = 4.dp)) {
-                SwitchItem("保持屏幕唤醒", "播放时保持屏幕常亮", keepScreenAwake) {
+                SwitchItem("保持屏幕唤醒", "全屏播放页保持亮屏", keepScreenAwake) {
                     MeloraSettings.updateKeepScreenAwake(it)
                 }
                 SettingsDivider(Modifier.padding(horizontal = 14.dp))
