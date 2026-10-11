@@ -422,6 +422,57 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertIn("if: github.event.deleted != true", job(self.android, "prepare"))
         self.assertIn("if: github.event.deleted != true", job(self.web, "verify"))
 
+    def test_device_network_preflight_is_real_and_precedes_tests(self) -> None:
+        setup = step(self.android, "准备并验证非计费测试网络")
+        script = shell_script(setup)
+        self.assertIn('adb -s "$ANDROID_SERIAL" shell svc data disable', script)
+        self.assertLess(script.index("svc wifi disable"), script.index("Previous default network disconnected"))
+        self.assertLess(script.index("Previous default network disconnected"), script.index('["shell", "svc", "wifi", "enable"]'))
+        self.assertLess(script.index('["shell", "svc", "wifi", "enable"]'), script.index("await_network(ready_network"))
+        self.assertLess(self.android.index("name: 准备并验证非计费测试网络"),
+                        self.android.index("name: 安装测试目标并预置 overlay 权限"))
+        self.assertIn("time.monotonic() + 120", script)
+        self.assertIn("raise SystemExit", script)
+        self.assertIn("connectivity-before-tests.log", script)
+        self.assertNotIn("captive_portal_mode", script)
+        self.assertNotIn("|| true", script)
+        self.assertNotIn("assumeTrue", script)
+        self.assertIn('os.environ["ANDROID_SERIAL"]', script)
+
+    def test_network_preflight_requires_capabilities_of_the_active_network(self) -> None:
+        script = shell_script(step(self.android, "准备并验证非计费测试网络"))
+        source = script.split('import os\n', 1)[1].split('log_dir = ', 1)[0]
+        namespace: dict = {}
+        exec(compile(source, "network-preflight", "exec"), namespace)
+        ready = namespace["ready_network"]
+        def network(identifier: int, capabilities: str) -> str:
+            return (f"  NetworkAgentInfo{{network{{{identifier}}} ni{{WIFI CONNECTED}} "
+                    f"nc{{[ Transports: WIFI Capabilities: {capabilities} ]}}}}")
+        valid = "INTERNET&NOT_METERED&VALIDATED&TRUSTED"
+        for capabilities in (valid, valid.replace("&", "|")):
+            with self.subTest(capabilities=capabilities):
+                current = network(100, capabilities)
+                self.assertEqual(current.strip(), ready(
+                    f"Active default network: 100\n\nCurrent Networks:\n{current}\n"))
+        legacy = ("  NetworkAgentInfo{ ni{[type: WIFI[], state: CONNECTED/CONNECTED]} "
+                  "network{100} nethandle{123} lp{} "
+                  "nc{[ Transports: WIFI Capabilities: INTERNET&NOT_METERED&VALIDATED ]} Score{60} }")
+        self.assertEqual(legacy.strip(), ready("Active default network: 100\nCurrent Networks:\n" + legacy))
+        for capabilities in ("INTERNET&VALIDATED", "NOT_METERED&VALIDATED",
+                             "INTERNET&NOT_METERED", "INTERNET&NOT_METERED&NOT_VALIDATED"):
+            with self.subTest(capabilities=capabilities):
+                self.assertIsNone(ready(
+                    f"Active default network: 100\nCurrent Networks:\n{network(100, capabilities)}\n"))
+        # 另一个Wi-Fi验证成功，并不代表当前计费默认网络符合前置条件。
+        self.assertIsNone(ready("Active default network: 101\nCurrent Networks:\n" +
+                                network(100, valid) + "\n\n" + network(101, "INTERNET&VALIDATED")))
+        self.assertIsNotNone(ready("Active default network: 101\nCurrent Networks:\n" +
+                                   network(100, "INTERNET") + "\n\n" + network(101, valid)))
+        self.assertIsNone(ready("Active default network: none\nCurrent Networks:\n" + network(100, valid)))
+        self.assertIsNone(ready("Active default network: 100\nNetwork history:\n" + network(100, valid)))
+        self.assertIsNone(ready("Active default network: 100\nCurrent Networks:\n\nNetwork history:\n" +
+                                network(100, valid)))
+
     def test_python_helpers_parse_without_import_side_effects(self) -> None:
         for path in (ROOT / "scripts/release").glob("*.py"):
             with self.subTest(path=path.name):
