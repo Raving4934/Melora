@@ -9,7 +9,7 @@ COPY apps/web apps/web
 COPY scripts/project-version.mjs scripts/compress-web.mjs scripts/
 RUN npm run build:web
 
-FROM golang:1.25.14-bookworm AS server
+FROM golang:1.26.9-bookworm AS server
 WORKDIR /build
 COPY apps/server/go.mod apps/server/go.sum ./
 RUN go mod download

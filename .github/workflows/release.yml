@@ -32,7 +32,7 @@ jobs:
           cache: npm
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.25.14'
+          go-version: '1.26.9'
           cache-dependency-path: apps/server/go.sum
       - uses: actions/setup-python@v7
         with:
@@ -43,6 +43,8 @@ jobs:
         run: python3 -B scripts/release/test_verify_public_repository.py
       - name: Test release workflow contracts
         run: python3 -B scripts/release/test_release_workflows.py
+      - name: Test Go toolchain contract
+        run: python3 -B scripts/release/test_go_toolchain_contract.py
       - run: npm ci
       - name: 校验标签与 package.json 版本一致
         id: version
@@ -89,7 +91,7 @@ jobs:
           cache: npm
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.25.14'
+          go-version: '1.26.9'
           cache-dependency-path: apps/server/go.sum
       - uses: actions/setup-python@v7
         with:
