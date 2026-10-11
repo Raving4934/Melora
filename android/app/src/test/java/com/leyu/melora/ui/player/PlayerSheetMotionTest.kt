@@ -286,6 +286,15 @@ class PlayerSheetMotionTest {
     }
 
     @Test
+    fun mediumSplitWindowsDoNotUseCompactLandscapePanes() {
+        assertFalse(playerUsesTwoPanes(635f, 732f))
+        assertFalse(playerUsesTwoPanes(835f, 732f))
+        assertFalse(playerUsesTwoPanes(839f, 480f))
+        assertTrue(playerUsesTwoPanes(839f, 479f))
+        assertTrue(playerUsesTwoPanes(840f, 480f))
+    }
+
+    @Test
     fun expandedPlayerDependsOnAvailableWindowNotDeviceOrientation() {
         assertTrue(playerUsesExpandedLayout(1280f, 800f))
         assertTrue(playerUsesExpandedLayout(900f, 1280f))

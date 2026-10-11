@@ -56,6 +56,7 @@ class PlayerLyricsPagingTest {
     private fun showPlayer(
         immersive: Boolean = false,
         wide: Boolean = false,
+        tall: Boolean = false,
         miniLyrics: Boolean = true,
         coverStyle: PlayerCoverStyle = PlayerCoverStyle.Default,
     ) {
@@ -65,7 +66,7 @@ class PlayerLyricsPagingTest {
         val lines = listOf(LyricLine(0, "点击迷你歌词翻页"), LyricLine(5_000, "下一句歌词"))
         compose.setContent {
             // 在竖屏测试设备内承载720dp宽视口，不让requiredSize溢出物理屏幕影响手势坐标。
-            CompositionLocalProvider(LocalDensity provides if (wide) Density(1f) else LocalDensity.current) {
+            CompositionLocalProvider(LocalDensity provides if (wide || tall) Density(1f) else LocalDensity.current) {
             PlayerAppearanceProvider(dark = true) {
                 FullPlayerPageContent(
                     state = PlayerUiState(current = UiTrack("paging-test", "测试歌曲", "测试歌手", "测试专辑"), durationMs = 180_000),
@@ -76,7 +77,11 @@ class PlayerLyricsPagingTest {
                     onArtworkPositioned = {}, artworkAlpha = { 1f },
                     coverStyle = coverStyleState.value, artworkRotation = { 0f },
                     onPageVisualChanged = { _, _, _ -> },
-                    modifier = if (wide) Modifier.requiredSize(720.dp, 360.dp) else Modifier.fillMaxSize(),
+                    modifier = when {
+                        wide -> Modifier.requiredSize(720.dp, 360.dp)
+                        tall -> Modifier.requiredSize(400.dp, 900.dp)
+                        else -> Modifier.fillMaxSize()
+                    },
                 )
             }
             }
@@ -91,6 +96,40 @@ class PlayerLyricsPagingTest {
             compose.onNodeWithTag("player-heading").assertDoesNotExist()
             compose.onNodeWithTag("player-transport").assertDoesNotExist()
         }
+    }
+
+    @Test fun squareCoverWithoutMiniLyricsSharesVerticalFreeSpace() {
+        showPlayer(tall = true, miniLyrics = false)
+        compose.onNodeWithTag("player-mini-lyrics").assertDoesNotExist()
+        assertCoverCenteredWithoutLyrics()
+    }
+
+    @Test fun togglingMiniLyricsRestoresTheCoverLayoutWithoutMovingTransport() {
+        showPlayer(tall = true)
+        val original = compose.onNodeWithTag("player-artwork").getUnclippedBoundsInRoot()
+        val transport = compose.onNodeWithTag("player-transport").getUnclippedBoundsInRoot()
+        repeat(2) {
+            compose.runOnIdle { MeloraSettings.miniLyricsEnabled.value = false }
+            compose.waitForIdle()
+            assertCoverCenteredWithoutLyrics()
+            assertEquals(transport, compose.onNodeWithTag("player-transport").getUnclippedBoundsInRoot())
+            compose.runOnIdle { MeloraSettings.miniLyricsEnabled.value = true }
+            compose.waitForIdle()
+            compose.onNodeWithTag("player-mini-lyrics").assertIsDisplayed()
+            assertEquals(original, compose.onNodeWithTag("player-artwork").getUnclippedBoundsInRoot())
+            assertEquals(transport, compose.onNodeWithTag("player-transport").getUnclippedBoundsInRoot())
+        }
+    }
+
+    private fun assertCoverCenteredWithoutLyrics() {
+        val page = compose.onNodeWithTag("player-page-1").getUnclippedBoundsInRoot()
+        val cover = compose.onNodeWithTag("player-artwork").getUnclippedBoundsInRoot()
+        val freeSpace = ((page.bottom - page.top) - (cover.bottom - cover.top) - 12.dp).coerceAtLeast(0.dp)
+        assertTrue("夹具必须留有足够空白，才能检出封面贴底", freeSpace > 40.dp)
+        assertEquals("保留12dp底部间距后，封面应均分上下空白",
+            (page.top + freeSpace / 2).value, cover.top.value, 1f)
+        assertEquals("封面应水平居中", (page.left.value + page.right.value) / 2f,
+            (cover.left.value + cover.right.value) / 2f, 1f)
     }
 
     @Test fun coverStyleChangesAnimateArtworkGeometryAndRetargetWithoutMovingChrome() {

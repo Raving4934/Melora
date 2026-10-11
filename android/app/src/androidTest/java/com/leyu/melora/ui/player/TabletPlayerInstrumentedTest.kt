@@ -153,6 +153,49 @@ class TabletPlayerInstrumentedTest {
         assertEquals("手机仍使用原16sp迷你歌词", 16.sp, layouts.single().layoutInput.style.fontSize)
     }
 
+    @Test fun mediumSplitWindowsKeepCoverAndLyricsCenteredAboveTransport() {
+        viewport.value = DpSize(635.dp, 732.dp)
+        showPlayer()
+        // 实际半屏、约2/3屏及展开断点前，不能混入手机横屏的一行歌词布局。
+        for (width in listOf(635, 835, 839, 600, 635)) {
+            compose.runOnIdle { viewport.value = DpSize(width.dp, 732.dp) }
+            compose.waitForIdle()
+            compose.onNodeWithTag("player-expanded-layout").assertDoesNotExist()
+            val (cover, page) = compose.boundsInSameFrame(
+                compose.onNodeWithTag("player-artwork"), compose.onNodeWithTag("player-page-1"),
+            )
+            assertEquals("${width}dp分屏的封面应与窗口居中", page.center.x, cover.center.x, 1f)
+            val (preview, transport) = compose.boundsInSameFrame(
+                compose.onNodeWithTag("player-mini-lyrics"), compose.onNodeWithTag("player-transport"),
+            )
+            assertEquals("封面和歌词应共用中轴", cover.center.x, preview.center.x, 1f)
+            assertTrue("分屏应保留多行歌词，而非28dp单行", preview.height > 100f)
+            assertTrue("歌词不能与封面重叠", preview.top >= cover.bottom)
+            assertTrue("歌词与控制区之间不能留下大片空白", transport.top - preview.bottom in 0f..32f)
+        }
+    }
+
+    @Test fun splitResizeAcrossExpandedBreakpointPreservesReaderAndPlayback() {
+        viewport.value = DpSize(835.dp, 732.dp)
+        showPlayer()
+        compose.onNodeWithTag("player-pages").performTouchInput { swipeLeft() }
+        compose.waitForIdle()
+        compose.onNodeWithTag("player-page-2").assertIsDisplayed()
+        for (width in listOf(840, 1000, 839, 635, 840, 835)) {
+            compose.runOnIdle { viewport.value = DpSize(width.dp, 732.dp) }
+            compose.waitForIdle()
+            if (width >= 840) {
+                compose.onNodeWithTag("player-page-tab-2").assertIsSelected()
+                compose.onAllNodesWithTag("player-artwork").assertCountEquals(1)
+            } else {
+                compose.onNodeWithTag("player-expanded-layout").assertDoesNotExist()
+                compose.onNodeWithTag("player-page-2").assertIsDisplayed()
+            }
+            compose.onNodeWithTag("player-transport").assertIsDisplayed()
+            assertEquals("重排不应改变播放时间", 45_000L, position.longValue)
+        }
+    }
+
     @Test fun enlargedFontsDoNotPushTheTransportOutsideTheWindow() {
         fontScale.value = 1.3f
         showPlayer()

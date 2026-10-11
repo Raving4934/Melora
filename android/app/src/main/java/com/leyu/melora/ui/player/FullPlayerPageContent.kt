@@ -1335,7 +1335,8 @@ private fun PlayerCoverPage(
     val interact = { controlsVisible = true; controlInteraction++ }
     val miniFontSize = if (largePortrait) 24f else if (compact) 12f else 16f
     val previewHeight = if (compact) 28.dp else with(LocalDensity.current) { maxOf(24f, miniFontSize * 1.5f).sp.toDp() * 5 } + 12.dp
-    val normalLyricsHeight = if (miniLyricsEnabled && lyricsInCover) previewHeight + 16.dp else 0.dp
+    val normalLyricsVisible = miniLyricsEnabled && lyricsInCover
+    val normalLyricsHeight = if (normalLyricsVisible) previewHeight + 16.dp else 0.dp
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val squareSide = minOf(maxWidth, (maxHeight - normalLyricsHeight).coerceAtLeast(0.dp), if (maxWidth >= 600.dp) 480.dp else maxWidth)
         val circleSide = playerCoverSideDp(maxWidth.value, maxHeight.value, normalLyricsHeight.value).dp
@@ -1343,11 +1344,12 @@ private fun PlayerCoverPage(
         val floatingSide = if (lyricsInCover) minOf(maxWidth * 0.75f, maxHeight * 0.40f)
             else minOf(maxWidth * 0.85f, maxHeight * 0.70f, 420.dp)
         val side = normalSide * (1f - t) + floatingSide * t
-        val normalBelowCover = if (miniLyricsEnabled && lyricsInCover) previewHeight + 24.dp else 12.dp
+        val normalBelowCover = if (normalLyricsVisible) previewHeight + 24.dp else 12.dp
         // 普通态留白只能由普通态封面计算；用插值中的 side 会把缩小释放的空间再次加到顶部，导致先下沉再上移。
         val remaining = (maxHeight - normalSide - normalBelowCover).coerceAtLeast(0.dp)
-        val centering = if (!lyricsInCover || maxWidth >= 600.dp) 1f else c
-        val roomyLyrics = largePortrait && miniLyricsEnabled && lyricsInCover
+        // 与歌词共用外层窗口判定，不能用扣除页内边距后的宽度再次判断断点。无歌词时也居中。
+        val centering = if (!normalLyricsVisible || largePortrait) 1f else c
+        val roomyLyrics = largePortrait && normalLyricsVisible
         val normalTop = if (roomyLyrics) minOf(12.dp, remaining) else remaining * (1f - centering * 0.5f)
         val normalLyricHeight = if (roomyLyrics) (maxHeight - normalSide - normalTop - 20.dp).coerceAtLeast(0.dp) else previewHeight
         val topSpace = if (lyricsInCover) normalTop * (1f - t) + maxHeight * (0.04f * t)

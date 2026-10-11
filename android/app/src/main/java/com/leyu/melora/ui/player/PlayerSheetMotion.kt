@@ -93,8 +93,9 @@ internal fun playerArtworkBounds(mini: Rect, full: Rect, progress: Float): Rect 
 internal fun playerUsesExpandedLayout(widthDp: Float, heightDp: Float): Boolean =
     widthDp >= 840f && heightDp >= 480f
 
+/** 只有高度受限的横屏才用手机紧凑双栏；中等宽度分屏不能仅因宽大于高就降为单行歌词。 */
 internal fun playerUsesTwoPanes(widthDp: Float, heightDp: Float): Boolean =
-    widthDp > heightDp || playerUsesExpandedLayout(widthDp, heightDp)
+    playerUsesExpandedLayout(widthDp, heightDp) || (heightDp < 480f && widthDp > heightDp)
 
 /** 翻页视口和单页始终等宽，内距只用于页内内容；横屏内侧由两栏间距负责。 */
 internal fun playerPaneContentPadding(twoPanes: Boolean, controls: Boolean): PaddingValues = PaddingValues(
