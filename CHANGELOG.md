@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-10-11
+
+### 安卓客户端
+
+> 本次仅更新 Android 客户端至 0.1.10（versionCode 19）；Web / NAS、FPK 与 Docker 维持 0.1.1。沿用正式签名，可保留数据覆盖升级。
+
+【播放与歌词】
+- 修复上下滑动歌词、停止惯性滚动及多指操作时误触跳转播放进度的问题；浏览歌词期间暂停自动跟随，保留正常点击定位与 mini 歌词交互。([ad867df](https://github.com/Raving4934/Melora/commit/ad867df39b8982faa2242708870deff938ae1358))
+- 修复关闭迷你歌词后方形封面偏下的问题，重新平衡封面上下留白；切换迷你歌词开关时保持播放控制区位置稳定。([e1db42d](https://github.com/Raving4934/Melora/commit/e1db42d91b6364f8f4071fd36cd98362b140af18))
+- 修复平板分屏时封面偏左，以及较宽分屏误用手机横屏布局导致封面下沉、歌词缩成一行的问题；调整窗口大小时保留歌词页面与播放状态。([e1db42d](https://github.com/Raving4934/Melora/commit/e1db42d91b6364f8f4071fd36cd98362b140af18))
+- 明确“保持屏幕唤醒”设置的作用范围：全屏播放页保持亮屏，不改变原有开关行为。([84205a2](https://github.com/Raving4934/Melora/commit/84205a27542e4997831f55e4800eba5d52d6fb1e))
+
+【界面与验证】
+- 修正模糊标题栏渐变的覆盖范围，避免未滚动时遮盖首条歌曲，补充单行、双行标题栏及不同窗口尺寸的布局回归。([b2f49ba](https://github.com/Raving4934/Melora/commit/b2f49baf1f5619bb06a59193f9abc1ecd71bd0f8))
+- 修复下载相关测试在记录尚未发布时就断言的时序问题，提高 Android CI 稳定性。([1acbea5](https://github.com/Raving4934/Melora/commit/1acbea5456b66d6fcabde64d595083a80f4882ff))
+
+【构建与发布】
+- 普通 CI 仅针对 Web 与共享构建输入触发，避免纯 Android 改动重复运行无关检查。([665390e](https://github.com/Raving4934/Melora/commit/665390ebdc38107e8837ff7216e3e60da47bf33f))
+- 完善 Android 发布中断后的草稿恢复与 API 错误诊断，支持继续完成未发布的版本。([376a582](https://github.com/Raving4934/Melora/commit/376a582ede4ea557f3c8ceb98f2af093eb86e395))
+
 ## [0.1.9] - 2026-10-06
 
 ### 安卓客户端
@@ -423,7 +443,9 @@
 
 **Docker 镜像：** `ghcr.io/raving4934/melora:0.1.0`（支持 `linux/amd64`、`linux/arm64`）。
 
-[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.9...HEAD
+[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.10...HEAD
+[0.1.10]: https://github.com/Raving4934/Melora/compare/android-v0.1.9...android-v0.1.10
+[Android 0.1.10]: https://github.com/Raving4934/Melora/compare/android-v0.1.9...android-v0.1.10
 [Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.9...HEAD
 [Web Unreleased]: https://github.com/Raving4934/Melora/compare/v0.1.1...HEAD
 [0.1.9]: https://github.com/Raving4934/Melora/compare/android-v0.1.8...android-v0.1.9
