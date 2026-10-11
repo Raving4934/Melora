@@ -74,6 +74,10 @@ func executeWithBroker(ctx context.Context, input invocation, broker metadataBro
 	if err = cmd.Start(); err != nil {
 		in.Close()
 		out.Close()
+		// 取得槽位后的取消仍可能发生在 Start 前；与运行中取消保持相同分类。
+		if ctx.Err() != nil {
+			return nil, ErrTimeout
+		}
 		return nil, ErrResource
 	}
 	defer func() { killProcess(cmd); in.Close(); out.Close(); _ = cmd.Wait() }()

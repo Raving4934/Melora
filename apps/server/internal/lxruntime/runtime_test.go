@@ -230,8 +230,7 @@ func TestRealWorkerProductionBrokerRejectsPrivateAndHTTP(t *testing.T) {
 }
 func TestRealWorkerConcurrencyLimit(t *testing.T) {
 	var wg sync.WaitGroup
-	var failures atomic.Int32
-	for range 8 {
+	for i := range 8 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -239,15 +238,50 @@ func TestRealWorkerConcurrencyLimit(t *testing.T) {
 			defer cancel()
 			_, err := Inspect(ctx, `while(true){}`, Options{})
 			if !errors.Is(err, ErrTimeout) {
-				failures.Add(1)
+				t.Errorf("worker %d: expected timeout, got %v", i, err)
 			}
 		}()
 	}
 	wg.Wait()
-	if failures.Load() != 0 || len(workerSlots) != 0 {
-		t.Fatalf("worker slots leaked: failures=%d active=%d", failures.Load(), len(workerSlots))
+	if active := len(workerSlots); active != 0 {
+		t.Fatalf("worker slots leaked: active=%d", active)
 	}
 }
+
+func TestRealWorkerStartErrorClassification(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		cancel bool
+		want   error
+	}{
+		{"canceled-before-start", true, ErrTimeout},
+		{"missing-executable", false, ErrResource},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			original := executablePath
+			t.Cleanup(func() { executablePath = original })
+			missing := filepath.Join(t.TempDir(), "missing-worker")
+			executablePath = func() (string, error) {
+				if tc.cancel {
+					// 已取得槽位且通过 ctx.Err 检查；确定性取消在 cmd.Start 前发生。
+					cancel()
+					return original()
+				}
+				return missing, nil
+			}
+			_, err := Inspect(ctx, initScript, Options{})
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("expected %v, got %v", tc.want, err)
+			}
+			if active := len(workerSlots); active != 0 {
+				t.Fatalf("worker slots leaked after start failure: active=%d", active)
+			}
+		})
+	}
+}
+
 func TestRepositorySourcesRegisterWithNetworkDenied(t *testing.T) {
 	directory := filepath.Join("..", "..", "..", "..", ".lx 音源")
 	files, err := filepath.Glob(filepath.Join(directory, "*.js"))
