@@ -19,10 +19,10 @@ import java.io.File
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
@@ -210,24 +210,17 @@ class DownloadQualityInstrumentedTest {
     private fun downloadGate(): DynamicDownloadGate =
         Downloader.javaClass.getDeclaredField("slots").apply { isAccessible = true }.get(Downloader) as DynamicDownloadGate
 
-    private suspend fun awaitPersistedQueuedRecord() {
-        val file = File(context.filesDir, "downloads.json")
-        withTimeout(2_000) {
-            while (true) {
-                val persisted = if (file.isFile) {
-                    runCatching {
-                        val records = JSONArray(file.readText())
-                        (0 until records.length()).any { index ->
-                            records.optJSONObject(index)?.optString("id") == song.uid
-                        }
-                    }.getOrDefault(false)
-                } else {
-                    false
-                }
-                if (persisted) return@withTimeout
-                delay(10)
-            }
+    private suspend fun awaitQueuedRecord(): DownloadCenter.Record {
+        // 落盘先于状态发布；必须等待可观察状态，不能把磁盘可见当作内存已更新。
+        val snapshot = withTimeout(2_000) {
+            DownloadCenter.records.first { records -> records.any { it.id == song.uid } }
         }
+        val record = snapshot.first { it.id == song.uid }
+        val persisted = JSONArray(File(context.filesDir, "downloads.json").readText())
+        assertTrue("队列状态发布前必须已落盘", (0 until persisted.length()).any { index ->
+            persisted.optJSONObject(index)?.optString("id") == record.id
+        })
+        return record
     }
 
     @Test fun ordinaryQueuedRecordIsPersistedBeforeWaitingForConcurrencySlot() = runBlocking<Unit> {
@@ -238,7 +231,7 @@ class DownloadQualityInstrumentedTest {
         gate.acquire()
         val task = async { Downloader.download(context, song) }
         try {
-            awaitPersistedQueuedRecord()
+            awaitQueuedRecord()
         } finally {
             gate.release()
             task.await().getOrThrow()
@@ -306,8 +299,7 @@ class DownloadQualityInstrumentedTest {
         var slotReleased = false
         val task = async { Downloader.download(context, song) }
         try {
-            awaitPersistedQueuedRecord()
-            val oldRecord = DownloadCenter.records.value.first { it.id == song.uid }
+            val oldRecord = awaitQueuedRecord()
             assertEquals(DownloadCenter.Status.Downloading, oldRecord.status)
             assertFalse(oldRecord.hasSavedResource)
 
@@ -413,7 +405,7 @@ class DownloadQualityInstrumentedTest {
         gate.acquire()
         val ordinary = async { Downloader.download(context, song) }
         try {
-            awaitPersistedQueuedRecord()
+            awaitQueuedRecord()
             MeloraSettings.downloadQuality.value = "flac24bit"
             val conflict = Downloader.upgrade(context, song, local).await()
 
