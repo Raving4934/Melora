@@ -728,7 +728,6 @@ class DeviceWorkflowTest(unittest.TestCase):
             self.assertNotRegex(step(self.workflow, name), r"(?m)^        if:")
         for name, task in (
             ("构建设备测试 APK", ":app:assembleDebugAndroidTest"),
-            ("安装测试目标并预置 overlay 权限", ":app:installDebug"),
             ("执行完整 Android 设备回归", ":app:connectedDebugAndroidTest"),
         ):
             body = step(self.workflow, name)
@@ -737,7 +736,10 @@ class DeviceWorkflowTest(unittest.TestCase):
             self.assertNotIn("|| true", body)
         install = step(self.workflow, "安装测试目标并预置 overlay 权限")
         overlay = "appops set --uid com.leyu.melora.debug SYSTEM_ALERT_WINDOW allow"
-        self.assertLess(install.index(":app:installDebug"), install.index(overlay))
+        self.assertIn('timeout 120 adb -s "$ANDROID_SERIAL" install -r app/build/outputs/apk/debug/app-debug.apk', install)
+        self.assertNotIn("./gradlew", install)
+        self.assertNotIn("|| true", install)
+        self.assertLess(install.index("install -r"), install.index(overlay))
         self.assertIn("appops get com.leyu.melora.debug SYSTEM_ALERT_WINDOW", install)
         for selector in ("--tests", "am instrument", "pm grant"):
             self.assertNotIn(selector, self.job)
@@ -751,6 +753,30 @@ class DeviceWorkflowTest(unittest.TestCase):
         self.assertIn("        timeout-minutes: 30", connected)
         self.assertIn('-Pandroid.testInstrumentationRunnerArguments.numShards="$TEST_SHARD_COUNT"', connected)
         self.assertIn('-Pandroid.testInstrumentationRunnerArguments.shardIndex="$TEST_SHARD_INDEX"', connected)
+
+    def test_prebuilt_install_failure_cannot_continue_to_overlay_setup(self) -> None:
+        script = shell_script(step(self.workflow, "安装测试目标并预置 overlay 权限"))
+        with tempfile.TemporaryDirectory(prefix="melora install ") as directory:
+            for install_exit in (0, 1):
+                with self.subTest(install_exit=install_exit):
+                    adb = Path(directory) / "adb"
+                    adb.write_text(
+                        "#!/bin/bash\n"
+                        'if [[ "$3" == install ]]; then exit "$INSTALL_EXIT"; fi\n'
+                        'echo "$*" >> "$DEVICE_LOG_DIR/adb-calls.log"\n'
+                        'echo "SYSTEM_ALERT_WINDOW: allow"\n'
+                    )
+                    adb.chmod(0o755)
+                    calls = Path(directory) / "adb-calls.log"
+                    calls.unlink(missing_ok=True)
+                    result = subprocess.run(
+                        ["bash", "-euc", script], capture_output=True, text=True,
+                        env={**os.environ, "PATH": directory + os.pathsep + os.environ["PATH"],
+                             "DEVICE_LOG_DIR": directory, "ANDROID_SERIAL": "emulator-5554",
+                             "INSTALL_EXIT": str(install_exit)},
+                    )
+                    self.assertEqual(result.returncode == 0, install_exit == 0, result.stderr)
+                    self.assertEqual(calls.exists(), install_exit == 0)
 
     def test_emulator_boot_is_bounded_and_checks_runtime_api_and_abi(self) -> None:
         boot = step(self.workflow, "启动并校验独立模拟器")
@@ -767,6 +793,10 @@ class DeviceWorkflowTest(unittest.TestCase):
         ):
             self.assertNotIn(disabled_animation, self.job)
         self.assertIn('echo $! > "$DEVICE_LOG_DIR/emulator.pid"', boot)
+        self.assertIn('command -v adb', boot)
+        self.assertIn('$ANDROID_HOME/platform-tools/adb', boot)
+        self.assertIn('ADB_TRACE=transport,auth adb start-server', boot)
+        self.assertLess(boot.index('adb start-server'), boot.index('nohup "$ANDROID_HOME/emulator/emulator"'))
 
     def test_result_check_diagnostics_and_pid_cleanup_always_run(self) -> None:
         for name in ("校验 Android 设备 JUnit 结果", "收集设备诊断并清理模拟器", "上传设备回归诊断"):
@@ -777,6 +807,9 @@ class DeviceWorkflowTest(unittest.TestCase):
         cleanup = step(self.workflow, "收集设备诊断并清理模拟器")
         for required in ('timeout 10 adb -s "$ANDROID_SERIAL" emu kill', 'logcat -d -v threadtime',
                          'kill "$pid"', 'kill -KILL "$pid"', 'rm -rf "$ANDROID_AVD_HOME"'):
+            self.assertIn(required, cleanup)
+        for required in ('adb-server.log', 'adb-server-final.log', 'devices-final.log',
+                         'host-state.log', 'host-kernel.log', 'logcat -d -v threadtime -t 2000'):
             self.assertIn(required, cleanup)
         upload = step(self.workflow, "上传设备回归诊断")
         artifact_name = re.search(r"(?m)^          name: (.+)$", upload)

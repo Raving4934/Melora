@@ -321,6 +321,11 @@ jobs:
       - name: 启动并校验独立模拟器
         run: |
           set -euo pipefail
+          # Shell、模拟器与 Gradle 必须使用同一套 SDK adb；提前启动服务并保留传输日志。
+          test "$(readlink -f "$(command -v adb)")" = "$(readlink -f "$ANDROID_HOME/platform-tools/adb")"
+          adb version | tee "$DEVICE_LOG_DIR/adb-version.log"
+          ADB_TRACE=transport,auth adb start-server
+          adb server-status > "$DEVICE_LOG_DIR/adb-server-status.log"
           # 保留真实 GLES 渲染与动画，改走 ANGLE，避开已复现的直接 SwiftShader GLES
           # ColorBuffer/纹理绑定异常；不能通过关闭 GPU 或跳过沉浸测试掩盖设备失联。
           nohup "$ANDROID_HOME/emulator/emulator" -avd melora-ci -port 5554 \
@@ -404,9 +409,9 @@ jobs:
         working-directory: android
         run: |
           set -euo pipefail
-          ./gradlew --no-daemon --build-cache --max-workers=1 \
-            -Dorg.gradle.jvmargs="$CI_GRADLE_JVM_ARGS" -Pmelora.debugAbi=x86_64 \
-            :app:installDebug 2>&1 | tee "$DEVICE_LOG_DIR/install.log"
+          # APK 已在前一步构建；不再为安装单独启动一个 Gradle/ddmlib 生命周期。
+          timeout 120 adb -s "$ANDROID_SERIAL" install -r app/build/outputs/apk/debug/app-debug.apk \
+            2>&1 | tee "$DEVICE_LOG_DIR/install.log"
           # BackupRoundTripTest 的 overlay 前置条件只授予目标 debug 包，不授予测试 APK。
           adb -s "$ANDROID_SERIAL" shell appops set --uid com.leyu.melora.debug SYSTEM_ALERT_WINDOW allow
           adb -s "$ANDROID_SERIAL" shell appops get com.leyu.melora.debug SYSTEM_ALERT_WINDOW \
@@ -461,9 +466,17 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$DEVICE_LOG_DIR"
+          # 先记录宿主机和 adb 服务；仅有设备 logcat 无法区分传输断连与模拟器崩溃。
+          { date -u; free -m; df -h "$RUNNER_TEMP"; ps -eo pid,ppid,stat,rss,args --sort=-rss | head -40; } \
+            > "$DEVICE_LOG_DIR/host-state.log" 2>&1 || true
+          sudo dmesg --ctime | tail -200 > "$DEVICE_LOG_DIR/host-kernel.log" 2>&1 || true
+          adb_log="${TMPDIR:-/tmp}/adb.$(id -u).log"
+          if [[ -f "$adb_log" ]]; then cp "$adb_log" "$DEVICE_LOG_DIR/adb-server.log"; fi
+          timeout 10 adb server-status > "$DEVICE_LOG_DIR/adb-server-final.log" 2>&1 || true
+          timeout 10 adb devices -l > "$DEVICE_LOG_DIR/devices-final.log" 2>&1 || true
           if [[ -s "$DEVICE_LOG_DIR/emulator.pid" ]]; then
             timeout 15 adb -s "$ANDROID_SERIAL" shell getprop > "$DEVICE_LOG_DIR/device-properties.log" 2>&1 || true
-            timeout 15 adb -s "$ANDROID_SERIAL" logcat -d -v threadtime > "$DEVICE_LOG_DIR/logcat-final.log" 2>&1 || true
+            timeout 15 adb -s "$ANDROID_SERIAL" logcat -d -v threadtime -t 2000 > "$DEVICE_LOG_DIR/logcat-final.log" 2>&1 || true
             timeout 10 adb -s "$ANDROID_SERIAL" emu kill > "$DEVICE_LOG_DIR/emulator-stop.log" 2>&1 || true
           fi
           for process in logcat emulator; do
