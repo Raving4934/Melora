@@ -93,7 +93,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertIn("android-v*", self.android)
 
     def run_prepare(self, *, event: str, ref_type: str, ref_name: str, sha: str,
-                    input_tag: str = "") -> tuple[subprocess.CompletedProcess[str], dict[str, str]]:
+                    input_tag: str = "", input_run: str = "") -> tuple[subprocess.CompletedProcess[str], dict[str, str]]:
         script = shell_script(step(self.android, "解析检查与发布目标"))
         with tempfile.TemporaryDirectory(prefix="melora-prepare-") as directory:
             output = Path(directory) / "github-output"
@@ -105,6 +105,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
                     "REF_TYPE": ref_type,
                     "REF_NAME": ref_name,
                     "INPUT_TAG": input_tag,
+                    "INPUT_PUBLISH_RUN": input_run,
                     "GITHUB_SHA": sha,
                     "GITHUB_OUTPUT": str(output),
                 },
@@ -131,7 +132,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
                     event=event, ref_type=ref_type, ref_name=ref_name, sha=sha, input_tag=input_tag,
                 )
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertEqual(outputs, expected)
+                self.assertEqual(outputs, {**expected, "reuse_run": ""})
         self.assertIn("if: needs.prepare.outputs.release == 'true'", job(self.android, "release-build"))
         for name in ("构建 Debug APK（仅 CI 验证，不用于发布）", "上传短期 Debug 诊断产物"):
             self.assertIn("if: needs.prepare.outputs.release != 'true'", step(self.android, name))
@@ -170,17 +171,44 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertIn("format('release-{0}', inputs.tag || github.ref_name)", concurrency)
         self.assertIn("format('ci-{0}', github.ref)", concurrency)
 
-    def test_all_downstream_checkouts_use_the_prepare_sha(self) -> None:
+    def test_builds_use_target_sha_and_publisher_uses_pinned_workflow_tools(self) -> None:
         prepare = job(self.android, "prepare")
         self.assertIn("ref: ${{ steps.target.outputs.ref }}", prepare)
         self.assertIn("sha: ${{ steps.commit.outputs.sha }}", prepare)
         self.assertIn('echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"', prepare)
-        for name in ("verify", "device-regression", "release-build", "release"):
+        for name in ("verify", "device-regression", "release-build"):
             with self.subTest(job=name):
                 body = job(self.android, name)
                 self.assertEqual(body.count("uses: actions/checkout@"), 1)
                 self.assertIn("ref: ${{ needs.prepare.outputs.sha }}", body)
                 self.assertNotIn("ref: ${{ github.sha }}", body)
+
+        publish = job(self.android, "release")
+        self.assertIn("ref: ${{ github.workflow_sha }}", publish)
+        self.assertIn("EXPECTED_COMMIT: ${{ needs.prepare.outputs.sha }}", publish)
+        self.assertNotIn("ref: main", publish)
+        self.assertIn("ref: ${{ github.workflow_sha }}", prepare)
+
+    def test_recovery_requires_manual_dispatch_tag_and_positive_source_run(self) -> None:
+        result, output = self.run_prepare(event="workflow_dispatch", ref_type="branch", ref_name="main",
+                                          sha="a" * 40, input_tag="android-v1.2.3", input_run="123")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(output, {"reuse_run": "123", "release": "true", "tag": "android-v1.2.3",
+                                  "ref": "refs/tags/android-v1.2.3"})
+        for event, tag, run in (("push", "android-v1.2.3", "123"), ("workflow_dispatch", "", "123"),
+                                ("workflow_dispatch", "android-v1.2.3", "0"),
+                                ("workflow_dispatch", "android-v1.2.3", "-1"),
+                                ("workflow_dispatch", "android-v1.2.3", "123\nrelease=true")):
+            with self.subTest(event=event, tag=tag, run=run):
+                result, _ = self.run_prepare(event=event, ref_type="branch", ref_name="main", sha="a" * 40,
+                                             input_tag=tag, input_run=run)
+                self.assertNotEqual(result.returncode, 0)
+        source = step(self.android, "核验恢复发布的来源运行")
+        self.assertIn("steps.target.outputs.reuse_run != ''", source)
+        self.assertIn("verify_android_release_run.py", source)
+        self.assertIn('--expected-commit "$EXPECTED_COMMIT"', source)
+        self.assertIn("EXPECTED_COMMIT: ${{ steps.commit.outputs.sha }}", source)
+        self.assertIn("artifact-id: ${{ steps.source.outputs.artifact_id }}", job(self.android, "prepare"))
 
     def test_android_release_is_gated_and_uses_only_the_build_artifact(self) -> None:
         build = job(self.android, "release-build")
@@ -190,14 +218,16 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertIn("needs.android-ci-result.result == 'success'", release)
         self.assertIn("needs.release-build.result == 'success'", release)
         self.assertIn("artifact-id: ${{ steps.upload.outputs.artifact-id }}", build)
-        self.assertIn("artifact-ids: ${{ needs.release-build.outputs.artifact-id }}", release)
+        self.assertIn("artifact-ids: ${{ needs.prepare.outputs.artifact-id || needs.release-build.outputs.artifact-id }}", release)
+        self.assertIn("run-id: ${{ needs.prepare.outputs.reuse_run || github.run_id }}", release)
+        self.assertIn("github-token: ${{ github.token }}", release)
         self.assertIn("actions/download-artifact@v4.3.0", release)
         self.assertNotIn("actions/download-artifact", build)
 
         publisher = step(self.android, RELEASE_STEPS[-1])
         self.assertIn('GITHUB_TOKEN: ${{ github.token }}', publisher)
         self.assertIn('--repository "$GITHUB_REPOSITORY"', publisher)
-        self.assertIn('--expected-commit "$(git rev-parse HEAD)"', publisher)
+        self.assertIn('--expected-commit "$EXPECTED_COMMIT"', publisher)
         self.assertEqual(self.android.count('scripts/release/publish_android_release.py'), 1)
         for legacy in ("MELORA_DISTRIBUTION_TOKEN", "Melora-projects", "--require-private-repository",
                        "--mapping", "--signing-summary", "--ensure-public-tag"):
@@ -547,9 +577,9 @@ class DeviceWorkflowTest(unittest.TestCase):
             with self.subTest(job=name):
                 body = job(self.workflow, name)
                 self.assertEqual(re.findall(r"(?m)^    needs:.*$", body), ["    needs: prepare"])
-        self.assertIn("    if: needs.prepare.outputs.release == 'true'\n", job(self.workflow, "release-build"))
-        self.assertNotRegex(job(self.workflow, "verify"), r"(?m)^    if:")
-        self.assertNotRegex(job(self.workflow, "device-regression"), r"(?m)^    if:")
+        self.assertIn("    if: needs.prepare.outputs.release == 'true' && needs.prepare.outputs.reuse_run == ''\n", job(self.workflow, "release-build"))
+        self.assertIn("    if: needs.prepare.outputs.reuse_run == ''", job(self.workflow, "verify"))
+        self.assertIn("    if: needs.prepare.outputs.reuse_run == ''", job(self.workflow, "device-regression"))
 
         summary = job(self.workflow, "android-ci-result")
         self.assertIn("    needs: [prepare, verify, device-regression, release-build]\n", summary)
@@ -573,11 +603,22 @@ class DeviceWorkflowTest(unittest.TestCase):
                                     results[:3] == ("success",) * 3 and results[3] == expected_build)
                 result = subprocess.run(
                     ["bash", "-euc", script], capture_output=True, text=True,
-                    env={**os.environ, **dict(zip(variables, results)), "RELEASE": release},
+                    env={**os.environ, **dict(zip(variables, results)), "RELEASE": release, "REUSE_RUN": "", "SOURCE_ARTIFACT": ""},
                 )
                 self.assertEqual(result.returncode == 0, expected_success, result.stdout + result.stderr)
                 self.assertIn("prepare=", result.stdout)
                 self.assertIn("release-build=", result.stdout)
+
+    def test_recovery_summary_only_accepts_verified_source_and_skipped_build_jobs(self) -> None:
+        script = shell_script(step(self.workflow, "汇总 Android CI 结果"))
+        statuses = ("success", "failure", "cancelled", "skipped", "")
+        variables = ("PREPARE_RESULT", "VERIFY_RESULT", "DEVICE_RESULT", "BUILD_RESULT")
+        for artifact, results in product(("123", "", "bad"), product(statuses, repeat=4)):
+            expected = artifact == "123" and results == ("success", "skipped", "skipped", "skipped")
+            result = subprocess.run(["bash", "-euc", script], capture_output=True, text=True,
+                env={**os.environ, **dict(zip(variables, results)), "RELEASE": "true", "REUSE_RUN": "456",
+                     "SOURCE_ARTIFACT": artifact})
+            self.assertEqual(result.returncode == 0, expected, result.stdout + result.stderr)
 
     def test_device_paths_are_initialized_at_runtime_not_in_job_context(self) -> None:
         job_config = self.job.split("    steps:\n", 1)[0]

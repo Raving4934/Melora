@@ -20,6 +20,11 @@ on:
         type: string
         required: false
         default: ''
+      publish_run_id:
+        description: '仅恢复发布：复用已通过全部门禁的运行ID（需同时填写标签）'
+        type: string
+        required: false
+        default: ''
       api_matrix:
         description: '运行 API 26/35/37 完整设备矩阵（默认仅 API 35）'
         type: boolean
@@ -36,12 +41,18 @@ concurrency:
 jobs:
   prepare:
     if: github.event.deleted != true
+    permissions:
+      contents: read
+      actions: read
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       sha: ${{ steps.commit.outputs.sha }}
       tag: ${{ steps.target.outputs.tag }}
       release: ${{ steps.target.outputs.release }}
+      reuse_run: ${{ steps.target.outputs.reuse_run }}
+      artifact-id: ${{ steps.source.outputs.artifact_id }}
+      version: ${{ steps.source.outputs.version }}
     steps:
       - name: 解析检查与发布目标
         id: target
@@ -51,10 +62,19 @@ jobs:
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
           INPUT_TAG: ${{ inputs.tag }}
+          INPUT_PUBLISH_RUN: ${{ inputs.publish_run_id }}
         run: |
           set -euo pipefail
           tag=''
           ref="$GITHUB_SHA"
+          reuse_run="${INPUT_PUBLISH_RUN:-}"
+          if [[ -n "$reuse_run" ]]; then
+            [[ "$EVENT_NAME" == workflow_dispatch && -n "$INPUT_TAG" && "$reuse_run" =~ ^[1-9][0-9]*$ ]] || {
+              echo '::error::publish_run_id requires workflow_dispatch, an existing tag and a positive run ID.'
+              exit 1
+            }
+          fi
+          echo "reuse_run=$reuse_run" >> "$GITHUB_OUTPUT"
           if [[ "$EVENT_NAME" == push && "$REF_TYPE" == tag ]]; then
             tag="$REF_NAME"
           elif [[ "$EVENT_NAME" == workflow_dispatch ]]; then
@@ -78,9 +98,30 @@ jobs:
         id: commit
         shell: bash
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: 检出本次工作流的发布工具
+        if: steps.target.outputs.reuse_run != ''
+        uses: actions/checkout@v4.2.2
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-tools
+          persist-credentials: false
+      - name: 核验恢复发布的来源运行
+        if: steps.target.outputs.reuse_run != ''
+        id: source
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ steps.target.outputs.reuse_run }}
+          RELEASE_TAG: ${{ steps.target.outputs.tag }}
+          EXPECTED_COMMIT: ${{ steps.commit.outputs.sha }}
+        run: |
+          set -euo pipefail
+          python3 -B release-tools/scripts/release/verify_android_release_run.py \
+            --repository "$GITHUB_REPOSITORY" --run-id "$SOURCE_RUN" \
+            --tag "$RELEASE_TAG" --expected-commit "$EXPECTED_COMMIT" --output "$GITHUB_OUTPUT"
 
   verify:
     needs: prepare
+    if: needs.prepare.outputs.reuse_run == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -195,6 +236,7 @@ jobs:
 
   device-regression:
     needs: prepare
+    if: needs.prepare.outputs.reuse_run == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
@@ -450,7 +492,7 @@ jobs:
 
   release-build:
     needs: prepare
-    if: needs.prepare.outputs.release == 'true'
+    if: needs.prepare.outputs.release == 'true' && needs.prepare.outputs.reuse_run == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     outputs:
@@ -667,10 +709,17 @@ jobs:
           DEVICE_RESULT: ${{ needs.device-regression.result }}
           BUILD_RESULT: ${{ needs.release-build.result }}
           RELEASE: ${{ needs.prepare.outputs.release }}
+          REUSE_RUN: ${{ needs.prepare.outputs.reuse_run }}
+          SOURCE_ARTIFACT: ${{ needs.prepare.outputs.artifact-id }}
         run: |
           set -euo pipefail
           printf 'prepare=%s\nverify=%s\ndevice-regression=%s\nrelease-build=%s\n' \
             "$PREPARE_RESULT" "$VERIFY_RESULT" "$DEVICE_RESULT" "$BUILD_RESULT"
+          if [[ -n "$REUSE_RUN" ]]; then
+            [[ "$RELEASE" == true && "$PREPARE_RESULT" == success && "$SOURCE_ARTIFACT" =~ ^[1-9][0-9]*$ ]]
+            [[ "$VERIFY_RESULT" == skipped && "$DEVICE_RESULT" == skipped && "$BUILD_RESULT" == skipped ]]
+            exit 0
+          fi
           [[ "$PREPARE_RESULT" == success && "$VERIFY_RESULT" == success && "$DEVICE_RESULT" == success ]]
           if [[ "$RELEASE" == true ]]; then
             [[ "$BUILD_RESULT" == success ]]
@@ -680,23 +729,27 @@ jobs:
 
   release:
     needs: [prepare, release-build, android-ci-result]
-    if: ${{ !cancelled() && needs.prepare.outputs.release == 'true' && needs.android-ci-result.result == 'success' && needs.release-build.result == 'success' }}
+    if: ${{ !cancelled() && needs.prepare.outputs.release == 'true' && needs.android-ci-result.result == 'success' && (needs.release-build.result == 'success' || needs.prepare.outputs.artifact-id != '') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: write
+      actions: read
     env:
       RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
-      RELEASE_VERSION: ${{ needs.release-build.outputs.version }}
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version || needs.release-build.outputs.version }}
+      EXPECTED_COMMIT: ${{ needs.prepare.outputs.sha }}
     steps:
       - uses: actions/checkout@v4.2.2
         with:
-          ref: ${{ needs.prepare.outputs.sha }}
+          ref: ${{ github.workflow_sha }}
           persist-credentials: false
       - name: 下载本次构建已验证的发布资产
         uses: actions/download-artifact@v4.3.0
         with:
-          artifact-ids: ${{ needs.release-build.outputs.artifact-id }}
+          artifact-ids: ${{ needs.prepare.outputs.artifact-id || needs.release-build.outputs.artifact-id }}
+          run-id: ${{ needs.prepare.outputs.reuse_run || github.run_id }}
+          github-token: ${{ github.token }}
           merge-multiple: true
           path: ${{ runner.temp }}/melora-android-artifacts
       - name: 创建、校验并发布同仓 Android Release
@@ -714,5 +767,5 @@ jobs:
             --apk "$artifact_dir/$apk_name" \
             --checksum "$artifact_dir/$apk_name.sha256" \
             --notes "$artifact_dir/RELEASE_NOTES.md" \
-            --expected-commit "$(git rev-parse HEAD)" \
+            --expected-commit "$EXPECTED_COMMIT" \
             --token-env GITHUB_TOKEN

@@ -71,8 +71,8 @@ class ReleasePublisher:
 
     def run(self) -> dict[str, Any]:
         self._validate_repository()
-        target_sha = self._prepare_tag()
-        release = self._get_or_create_draft(target_sha)
+        self._prepare_tag()
+        release = self._get_or_create_draft()
         self._validate_release_metadata(release)
         self._reconcile_assets(release)
         release = self.api.get(f"{self.repo_path}/releases/{release['id']}")
@@ -123,7 +123,7 @@ class ReleasePublisher:
         except GitHubApiError as error:
             raise ReleaseError(f"unable to resolve the Android tag target: {error}") from error
 
-    def _get_or_create_draft(self, target_sha: str) -> dict[str, Any]:
+    def _get_or_create_draft(self) -> dict[str, Any]:
         # 按标签查询只返回已发布版本；列表接口才能恢复尚未发布的草稿。
         try:
             releases = self.api.get_paginated(f"{self.repo_path}/releases?per_page=100")
@@ -144,7 +144,6 @@ class ReleasePublisher:
             "draft": True,
             "prerelease": self.plan.prerelease,
             "make_latest": "false",
-            "target_commitish": target_sha,
         }
         try:
             return self.api.post(f"{self.repo_path}/releases", payload)

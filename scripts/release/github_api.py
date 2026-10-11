@@ -10,11 +10,27 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from typing import Any, Mapping
+
+
+_MAX_ERROR_BODY_BYTES = 8192
+_MAX_API_MESSAGE_CHARS = 240
+_MAX_ERROR_TEXT_CHARS = 1000
+_GITHUB_TOKEN_RE = re.compile(r"(?i)(?:github_pat_[A-Za-z0-9_]+|gh[pousr]_[A-Za-z0-9_]+)")
+_BEARER_TOKEN_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
+_NAMED_TOKEN_RE = re.compile(
+    r"(?i)\b(?:access[_-]?token|refresh[_-]?token|token)\s*[:=]\s*['\"]?[A-Za-z0-9._~+/=-]{8,}"
+)
+_REQUEST_ID_RE = re.compile(r"[A-Za-z0-9-]{1,64}(?::[A-Za-z0-9-]{1,64}){0,3}\Z")
+_NUMERIC_HEADER_RE = re.compile(r"[0-9]{1,16}\Z")
+_PERMISSION_ENTRY = r"[A-Za-z][A-Za-z0-9_-]{0,39}=(?:read|write|admin|none|read/write|\*)"
+_PERMISSION_GROUP = rf"{_PERMISSION_ENTRY}(?:,\s*{_PERMISSION_ENTRY})*"
+_PERMISSION_HEADER_RE = re.compile(rf"{_PERMISSION_GROUP}(?:;\s*{_PERMISSION_GROUP})*\Z")
 
 
 class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -54,6 +70,64 @@ class GitHubApiError(RuntimeError):
 
 class GitHubNotFound(GitHubApiError):
     """The requested GitHub resource does not exist."""
+
+
+def _safe_error_text(value: str, token: str, *, limit: int) -> str:
+    # Remove controls first so inserting one into a secret cannot bypass redaction.
+    value = re.sub(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]", "", value)
+    value = _GITHUB_TOKEN_RE.sub("[REDACTED]", value)
+    value = _BEARER_TOKEN_RE.sub("Bearer [REDACTED]", value)
+    value = _NAMED_TOKEN_RE.sub("token=[REDACTED]", value)
+    if token:
+        value = value.replace(token, "[REDACTED]")
+    # GitHub Actions recognizes ::command:: lines in workflow logs.
+    value = value.replace("::", "%3A%3A")
+    return value[:limit].rstrip()
+
+
+def _http_error_diagnostics(error: urllib.error.HTTPError, token: str) -> list[str]:
+    details: list[str] = []
+    headers = getattr(error, "headers", None)
+    if headers is not None:
+        request_id = headers.get("X-GitHub-Request-Id")
+        if isinstance(request_id, str) and _REQUEST_ID_RE.fullmatch(request_id):
+            details.append(f"request_id={request_id}")
+
+        for header, label in (
+            ("X-RateLimit-Limit", "rate_limit_limit"),
+            ("X-RateLimit-Remaining", "rate_limit_remaining"),
+            ("X-RateLimit-Used", "rate_limit_used"),
+            ("X-RateLimit-Reset", "rate_limit_reset"),
+            ("Retry-After", "retry_after"),
+        ):
+            value = headers.get(header)
+            if isinstance(value, str) and _NUMERIC_HEADER_RE.fullmatch(value):
+                details.append(f"{label}={value}")
+
+        resource = headers.get("X-RateLimit-Resource")
+        if isinstance(resource, str) and re.fullmatch(r"[a-z_]{1,40}", resource):
+            details.append(f"rate_limit_resource={resource}")
+
+        permissions = headers.get("X-Accepted-GitHub-Permissions")
+        if isinstance(permissions, str) and _PERMISSION_HEADER_RE.fullmatch(permissions):
+            details.append(f"accepted_permissions={permissions}")
+
+    try:
+        body = error.read(_MAX_ERROR_BODY_BYTES + 1)
+    except (OSError, ValueError):
+        body = b""
+    if isinstance(body, bytes) and len(body) <= _MAX_ERROR_BODY_BYTES:
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
+            payload = None
+        if isinstance(payload, dict) and isinstance(payload.get("message"), str):
+            message = _safe_error_text(
+                payload["message"], token, limit=_MAX_API_MESSAGE_CHARS,
+            )
+            if message:
+                details.append(f"message: {message}")
+    return details
 
 
 @dataclass(frozen=True)
@@ -118,12 +192,25 @@ class GitHubApi:
                     body=response.read(),
                 )
         except urllib.error.HTTPError as error:
-            if error.code == 404:
-                raise GitHubNotFound(f"GitHub API resource was not found: {method} {url.split('?', 1)[0]}", status=404) from None
-            raise GitHubApiError(
-                f"GitHub API request failed with HTTP {error.code}: {method} {url.split('?', 1)[0]}",
-                status=error.code,
-            ) from None
+            try:
+                request_target = url.split("?", 1)[0].split("#", 1)[0][:300]
+                if error.code == 404:
+                    message = _safe_error_text(
+                        f"GitHub API resource was not found: {method} {request_target}",
+                        self._token,
+                        limit=_MAX_ERROR_TEXT_CHARS,
+                    )
+                    raise GitHubNotFound(message, status=404) from None
+                summary = f"GitHub API request failed with HTTP {error.code}: {method} {request_target}"
+                details = _http_error_diagnostics(error, self._token)
+                if details:
+                    summary += "; " + "; ".join(details)
+                raise GitHubApiError(
+                    _safe_error_text(summary, self._token, limit=_MAX_ERROR_TEXT_CHARS),
+                    status=error.code,
+                ) from None
+            finally:
+                error.close()
         except (urllib.error.URLError, TimeoutError, OSError) as error:
             raise GitHubApiError(f"GitHub API request could not be completed: {method} {url.split('?', 1)[0]}") from error
 
@@ -149,11 +236,11 @@ class GitHubApi:
     def delete(self, path: str) -> None:
         self._request("DELETE", self._path_url(self._base, path))
 
-    def get_bytes(self, path: str) -> bytes:
+    def get_bytes(self, path: str, *, accept: str = "application/octet-stream") -> bytes:
         response = self._request(
             "GET",
             self._path_url(self._base, path),
-            accept="application/octet-stream",
+            accept=accept,
         )
         return response.body
 

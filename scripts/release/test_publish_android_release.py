@@ -58,6 +58,8 @@ class FakeApi:
 
     def post(self, path: str, payload: dict[str, Any]) -> Any:
         if path.endswith("/releases"):
+            if "target_commitish" in payload:
+                raise GitHubApiError("Resource not accessible by integration", status=403)
             if payload.get("make_latest") != "false":
                 raise AssertionError("GitHub make_latest must use the string enum false")
             self.posts.append(payload)
@@ -188,14 +190,15 @@ class PublishAndroidReleaseTest(unittest.TestCase):
         ReleasePublisher(api, plan).run()
         self.assertEqual(len(api.uploaded), 2)
         self.assertEqual(len(api.posts), 1)
-        self.assertEqual(api.posts[0]["target_commitish"], plan.expected_commit)
+        self.assertNotIn("target_commitish", api.posts[0])
+        self.assertEqual(api.posts[0]["tag_name"], plan.tag)
         self.assertEqual(api.posts[0]["make_latest"], "false")
         self.assertEqual(api.patches, [{"draft": False, "prerelease": False, "make_latest": "true"}])
 
     def test_interrupted_draft_resumes_without_duplicate_release_or_upload(self) -> None:
         api = FakeApi()
         plan = self.plan()
-        draft = ReleasePublisher(api, plan)._get_or_create_draft(plan.expected_commit)
+        draft = ReleasePublisher(api, plan)._get_or_create_draft()
         self.assertTrue(draft["draft"])
         api.upload(draft["upload_url"], name=plan.apk.name, content=plan.apk.content,
                    content_type=plan.apk.content_type)
@@ -216,7 +219,7 @@ class PublishAndroidReleaseTest(unittest.TestCase):
     def test_duplicate_drafts_fail_but_published_release_takes_precedence(self) -> None:
         api = FakeApi()
         plan = self.plan()
-        draft = ReleasePublisher(api, plan)._get_or_create_draft(plan.expected_commit)
+        draft = ReleasePublisher(api, plan)._get_or_create_draft()
         duplicate = {**draft, "id": 2}
         with patch.object(api, "get_paginated", return_value=[draft, duplicate]):
             with self.assertRaisesRegex(ReleaseError, "multiple Android release drafts"):
