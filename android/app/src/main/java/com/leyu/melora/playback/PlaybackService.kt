@@ -7,19 +7,12 @@ import android.os.Bundle
 import androidx.core.net.toUri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
-import androidx.media3.common.Format
-import androidx.media3.common.MimeTypes
 import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.DefaultRenderersFactory
-import androidx.media3.exoplayer.audio.AudioSink
-import androidx.media3.exoplayer.audio.AudioOffloadSupport
-import androidx.media3.exoplayer.audio.DefaultAudioSink
-import androidx.media3.exoplayer.audio.ForwardingAudioSink
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.CommandButton
 import androidx.media3.session.DefaultMediaNotificationProvider
@@ -72,31 +65,9 @@ class PlaybackService : MediaSessionService() {
             initialPreset = AudioEffects.preset(MeloraSettings.audioEffectPreset.value),
             report = AudioEffects::report,
         )
-        val renderers = object : DefaultRenderersFactory(this) {
-            override fun buildAudioSink(
-                context: Context,
-                enableFloatOutput: Boolean,
-                enableAudioOutputPlaybackParams: Boolean,
-            ): AudioSink = object : ForwardingAudioSink(
-                DefaultAudioSink.Builder(context)
-                    // Media3的float直出/offload会跳过自定义链；保持原integer PCM和Sonic倍速路径。
-                    .setEnableFloatOutput(false)
-                    .setEnableAudioOutputPlaybackParameters(false)
-                    .setAudioProcessors(arrayOf(effects))
-                    .build(),
-            ) {
-                override fun supportsFormat(format: Format): Boolean = getFormatSupport(format) != AudioSink.SINK_FORMAT_UNSUPPORTED
-                override fun getFormatSupport(format: Format): Int =
-                    if (format.sampleMimeType == MimeTypes.AUDIO_RAW) super.getFormatSupport(format)
-                    else AudioSink.SINK_FORMAT_UNSUPPORTED
-                override fun getFormatOffloadSupport(format: Format): AudioOffloadSupport = AudioOffloadSupport.DEFAULT_UNSUPPORTED
-                override fun setOffloadMode(offloadMode: Int) = super.setOffloadMode(AudioSink.OFFLOAD_MODE_DISABLED)
-            }
-        }
-        val player = ExoPlayer.Builder(this, renderers)
-            // Media3 1.11 动态调度会让非 offload 的位置按约250ms跳变，周期同步时逐字高亮会倒退。
-            // 使用实时播放循环提供准确采样，不在歌词层钳制进度或伪造延迟。
-            .experimentalSetDynamicSchedulingEnabled(false)
+        val player = ExoPlayer.Builder(this, PlaybackRenderersFactory(this, effects))
+            // 接收解码就绪的即时唤醒；renderer同时保留10ms进度采样，避免逐字歌词抢跑/回退。
+            .experimentalSetDynamicSchedulingEnabled(true)
             .setLoadControl(playbackLoadControl())
             .setMediaSourceFactory(DefaultMediaSourceFactory(cacheDataSourceFactory))
             .setHandleAudioBecomingNoisy(true)
