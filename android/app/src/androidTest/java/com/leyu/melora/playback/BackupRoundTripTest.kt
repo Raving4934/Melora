@@ -12,6 +12,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.leyu.melora.playback.local.LocalSortField
 import com.leyu.melora.playback.lx.LxScriptStore
 import java.io.File
+import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -539,6 +540,106 @@ class BackupRoundTripTest {
         val preferences = JSONObject(file.readText())
         preferences.getJSONObject(LxScriptStore.PREFS).put("broken", JSONArray().put("unknown-type").put(1))
         file.writeText(preferences.toString())
+    }
+
+    @Test
+    fun emptyCommitMarkerLeftByAFailedWriteDoesNotSuppressRollback() {
+        seedExistingData()
+        val before = diskSnapshot()
+        val failure = runCatching {
+            BackupRestoreTransaction.run(context, {}) {
+                writeRestoreCandidate()
+                // 模拟最终标记已创建，但第一个字节写入失败；覆盖旧版本遗留日志。
+                File(context.filesDir, "backup-restore/committed").writeText("")
+                throw IOException("commit marker write failed")
+            }
+        }.exceptionOrNull()
+
+        assertTrue(failure is IOException)
+        assertEquals(before, diskSnapshot())
+        assertTrue(MeloraSettings.showExitButton.value)
+        assertEquals("existing", UserLibrary.favorites.value.single().name)
+        assertNull(BackupRestoreTransaction.failure.value)
+    }
+
+    @Test
+    fun stagedCommitPublicationFailureRollsBackEveryStore() {
+        seedExistingData()
+        val before = diskSnapshot()
+        val failure = runCatching {
+            BackupRestoreTransaction.run(context, {}) {
+                writeRestoreCandidate()
+                // 真实文件故障：提交暂存路径不可作为文件打开。
+                assertTrue(File(context.filesDir, "backup-restore/committed.tmp").mkdir())
+            }
+        }.exceptionOrNull()
+
+        assertNotNull(failure)
+        assertEquals(before, diskSnapshot())
+        assertTrue(MeloraSettings.showExitButton.value)
+        assertEquals("existing", UserLibrary.favorites.value.single().name)
+        assertNull(BackupRestoreTransaction.failure.value)
+    }
+
+    @Test
+    fun markerFailureWithMemoryFirstRollbackFailureCannotEraseALaterAcceptedSave() {
+        seedExistingData()
+        context.emulateMemoryFirstCommitFailures()
+        val failure = runCatching {
+            BackupRestoreTransaction.run(context, {}) {
+                writeRestoreCandidate()
+                assertTrue(File(context.filesDir, "backup-restore/committed.tmp").mkdir())
+                context.commitAction = { name -> name != MeloraSettings.PREFS }
+            }
+        }.exceptionOrNull()
+
+        assertNotNull(failure)
+        assertNotNull(BackupRestoreTransaction.failure.value)
+        assertTrue(File(context.filesDir, "backup-restore/ready").isFile)
+        // commit=false 已把旧值写入可读内存，但模拟持久化仍是候选 false。
+        assertEquals(true, context.getSharedPreferences(MeloraSettings.PREFS, 0)
+            .getBoolean(MeloraSettings.KEY_SHOW_EXIT, false))
+        assertEquals(false, context.persistedPreferenceValues(MeloraSettings.PREFS)[MeloraSettings.KEY_SHOW_EXIT])
+        assertTrue(runCatching { UserLibrary.createPlaylist("blocked-marker-save") }.isFailure)
+        MeloraSettings.updateShowExit(false)
+
+        context.commitAction = null
+        val accepted = UserLibrary.createPlaylist("accepted-after-marker-recovery")
+        assertNull(BackupRestoreTransaction.failure.value)
+        assertEquals(true, context.persistedPreferenceValues(MeloraSettings.PREFS)[MeloraSettings.KEY_SHOW_EXIT])
+        BackupManager.recoverInterruptedRestore(context)
+        UserLibrary.reloadAfterRestore()
+        assertEquals(listOf(accepted.id), UserLibrary.playlists.value.map { it.id })
+        assertEquals("existing", UserLibrary.favorites.value.single().name)
+    }
+
+    private fun writeRestoreCandidate() {
+        MeloraSettings.updateShowExit(false)
+        UserLibrary.replaceFromBackup(library("candidate").toString())
+        LxScriptStore(context).import("candidate.js", "// candidate source")
+    }
+
+    @Test
+    fun committedCleanupFailureCannotRollbackABusinessSaveAcceptedLater() {
+        seedExistingData()
+        BackupRestoreTransaction.prepare(context)
+        writeRestoreCandidate()
+        val journal = File(context.filesDir, "backup-restore")
+        File(journal, "committed").writeText("1")
+        assertTrue(journal.setWritable(false, false))
+        try {
+            BackupManager.recoverInterruptedRestore(context)
+            assertFalse(journal.exists())
+            val accepted = UserLibrary.createPlaylist("accepted-after-commit")
+            BackupManager.recoverInterruptedRestore(context)
+            UserLibrary.reloadAfterRestore()
+            assertEquals(listOf(accepted.id), UserLibrary.playlists.value.map { it.id })
+            assertEquals("candidate", UserLibrary.favorites.value.single().name)
+        } finally {
+            journal.setWritable(true, false)
+            context.filesDir.listFiles { file -> file.name.startsWith("backup-restore-cleanup-") }
+                ?.forEach { it.setWritable(true, false); it.deleteRecursively() }
+        }
     }
 
     @Test

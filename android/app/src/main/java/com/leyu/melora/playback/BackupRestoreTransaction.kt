@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.leyu.melora.playback.lx.LxScriptStore
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.UUID
 import org.json.JSONArray
 import org.json.JSONObject
@@ -43,13 +45,17 @@ internal object BackupRestoreTransaction {
         try {
             val journal = directory(context)
             if (journal.exists()) {
-                if (File(journal, "ready").isFile && !File(journal, "committed").isFile) {
+                val committed = File(journal, "committed")
+                if (File(journal, "ready").isFile && !(committed.isFile && committed.readText() == "1")) {
                     rollback(context, journal)
                     MeloraSettings.reloadAfterRestore()
                     UserLibrary.reloadAfterRestore()
                 }
-                check(journal.deleteRecursively()) { "无法清理恢复日志" }
+                // 先退出活动路径再删除：清理中断不能遗留可回滚已接受新业务的旧 ready 日志。
+                check(retireJournal(context, journal)) { "无法清理恢复日志" }
             }
+            directory(context).parentFile?.listFiles { file -> file.name.startsWith("backup-restore-cleanup-") }
+                ?.forEach { runCatching { it.deleteRecursively() } }
             pendingRecovery = null
             _failure.value = null
         } catch (error: Exception) {
@@ -88,7 +94,7 @@ internal object BackupRestoreTransaction {
             checkCancelled()
             writeDurable(File(directory(context), "committed"), "1")
             // 提交已完成。清理失败只留下可幂等清理的committed日志，不把成功谎报为失败。
-            directory(context).deleteRecursively()
+            runCatching { retireJournal(context, directory(context)) }
             result
         } catch (failure: Throwable) {
             try {
@@ -198,7 +204,20 @@ internal object BackupRestoreTransaction {
             output.fd.sync()
         } }
     }
+    private fun retireJournal(context: Context, journal: File): Boolean {
+        val retired = File(context.filesDir, "backup-restore-cleanup-${UUID.randomUUID()}")
+        if (!journal.renameTo(retired)) return false
+        runCatching { retired.deleteRecursively() }
+        return true
+    }
+
     private fun writeDurable(file: File, text: String) {
-        file.outputStream().use { it.write(text.toByteArray(Charsets.UTF_8)); it.fd.sync() }
+        val staged = File(file.parentFile, "${file.name}.tmp")
+        try {
+            staged.outputStream().use { it.write(text.toByteArray(Charsets.UTF_8)); it.fd.sync() }
+            Files.move(staged.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        } finally {
+            staged.delete()
+        }
     }
 }
