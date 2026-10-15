@@ -12960,7 +12960,7 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
       return result;
     },
     async getUserListDetailByPcChain(chain) {
-      let key = `${chain}_pc_list`;
+      const key = `${chain}_pc_list`;
       if (this.cache.has(key)) return this.cache.get(key);
       const { body } = await httpFetch(`http://www.kugou.com/share/${chain}.html`, {
         headers: {
@@ -12969,8 +12969,8 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
       });
       let result = body.match(/var\sdataFromSmarty\s=\s(\[.+?\])/);
       if (result) result = JSON.parse(result[1]);
-      this.cache.set(chain, result);
       result = await this.getMusicInfos(result);
+      this.cache.set(key, result);
       return result;
     },
     async getUserListDetail4(songInfo, chain, page) {
@@ -15526,7 +15526,6 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
 
   // src/musicSdk/tx/lyric.js
   var songIdMap = /* @__PURE__ */ new Map();
-  var promises = /* @__PURE__ */ new Map();
   var decodeLyric3 = async (lrc, tlrc, rlrc) => ({
     lyric: await decodeQrc(lrc),
     tlyric: await decodeQrc(tlrc),
@@ -15691,12 +15690,8 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
     async getSongId({ songId, songmid }) {
       if (songId) return songId;
       if (songIdMap.has(songmid)) return songIdMap.get(songmid);
-      if (promises.has(songmid)) return (await promises.get(songmid)).songId;
-      const promise = musicInfo_default(songmid);
-      promises.set(promise);
-      const info = await promise;
+      const info = await musicInfo_default(songmid);
       songIdMap.set(songmid, info.songId);
-      promises.delete(songmid);
       return info.songId;
     },
     async parseLyric(lrc, tlrc, rlrc) {

@@ -3,7 +3,6 @@ import getMusicInfo from './musicInfo'
 import { decodeQrc } from './qrcDecode'
 
 const songIdMap = new Map()
-const promises = new Map()
 export const decodeLyric = async(lrc, tlrc, rlrc) => ({
   lyric: await decodeQrc(lrc),
   tlyric: await decodeQrc(tlrc),
@@ -205,12 +204,8 @@ export default {
   async getSongId({ songId, songmid }) {
     if (songId) return songId
     if (songIdMap.has(songmid)) return songIdMap.get(songmid)
-    if (promises.has(songmid)) return (await promises.get(songmid)).songId
-    const promise = getMusicInfo(songmid)
-    promises.set(promise)
-    const info = await promise
+    const info = await getMusicInfo(songmid)
     songIdMap.set(songmid, info.songId)
-    promises.delete(songmid)
     return info.songId
   },
   async parseLyric(lrc, tlrc, rlrc) {

@@ -530,7 +530,7 @@ export default {
   },
 
   async getUserListDetailByPcChain(chain) {
-    let key = `${chain}_pc_list`
+    const key = `${chain}_pc_list`
     if (this.cache.has(key)) return this.cache.get(key)
     const { body } = await httpFetch(`http://www.kugou.com/share/${chain}.html`, {
       headers: {
@@ -539,9 +539,8 @@ export default {
     })
     let result = body.match(/var\sdataFromSmarty\s=\s(\[.+?\])/)
     if (result) result = JSON.parse(result[1])
-    this.cache.set(chain, result)
     result = await this.getMusicInfos(result)
-    // console.log(info, songInfo)
+    this.cache.set(key, result)
     return result
   },
 

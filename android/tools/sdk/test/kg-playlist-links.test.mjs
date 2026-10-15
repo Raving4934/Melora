@@ -113,3 +113,35 @@ test('Redirected legacy zlist fetches its JSON endpoint rather than replaying th
   })
   assert.equal(requests.length, 2)
 })
+
+test('PC fallback keeps chain metadata and caches the normalized song list', async () => {
+  const { api, requests } = await apiWithPage(() => ({ body: 'var dataFromSmarty = [{"hash":"raw-song"}]' }))
+  const metadata = { specialname: 'fixture playlist', count: 1 }
+  api.cache.set('fixture-pc', metadata)
+  let normalizations = 0
+  api.getMusicInfos = async rows => {
+    normalizations++
+    assert.equal(rows[0].hash, 'raw-song')
+    return [{ songmid: 'normalized-song', source: 'kg' }]
+  }
+  const first = await api.getUserListDetailByPcChain('fixture-pc')
+  assert.strictEqual(api.cache.get('fixture-pc'), metadata)
+  assert.strictEqual(await api.getListInfoByChain('fixture-pc'), metadata)
+  assert.strictEqual(await api.getUserListDetailByPcChain('fixture-pc'), first)
+  assert.equal(first[0].songmid, 'normalized-song')
+  assert.equal(normalizations, 1)
+  assert.equal(requests.length, 1)
+})
+
+test('Failed PC normalization leaves metadata intact and allows a clean retry', async () => {
+  const { api, requests } = await apiWithPage(() => ({ body: 'var dataFromSmarty = [{"hash":"raw-song"}]' }))
+  const metadata = { specialname: 'unchanged', count: 1 }
+  api.cache.set('fixture-retry', metadata)
+  api.getMusicInfos = async () => { throw new Error('fixture normalization failure') }
+  await assert.rejects(api.getUserListDetailByPcChain('fixture-retry'), /normalization failure/)
+  assert.strictEqual(api.cache.get('fixture-retry'), metadata)
+  assert.equal(api.cache.has('fixture-retry_pc_list'), false)
+  api.getMusicInfos = async () => [{ songmid: 'retried', source: 'kg' }]
+  assert.equal((await api.getUserListDetailByPcChain('fixture-retry'))[0].songmid, 'retried')
+  assert.equal(requests.length, 2)
+})
