@@ -2,7 +2,6 @@ package com.leyu.melora.ui.player
 
 import com.leyu.melora.ui.awaitStable
 
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.mutableLongStateOf
@@ -80,13 +79,15 @@ class PlayerLyricsPagingTest {
                     modifier = when {
                         wide -> Modifier.requiredSize(720.dp, 360.dp)
                         tall -> Modifier.requiredSize(400.dp, 900.dp)
-                        else -> Modifier.fillMaxSize()
+                        // 本组默认验证手机的封面page1→歌词page2；不能随平板宿主变成双栏两页。
+                        else -> Modifier.requiredSize(360.dp, 640.dp)
                     },
                 )
             }
             }
         }
         compose.waitForIdle()
+        compose.awaitStable("player-artwork")
         if (immersive) {
             compose.onNodeWithTag("player-artwork").performTouchInput { longClick() }
             compose.awaitStable("player-cover-immersive")
@@ -152,10 +153,10 @@ class PlayerLyricsPagingTest {
                     abs(actual.center.x - end.center.x),
                     abs(actual.center.y - end.center.y),
                 )
-                assertTrue("$label 封面位置应处于动画中间帧", positionFromStart > 1f && positionFromEnd > 1f)
+                assertTrue("$label 封面位置应处于动画中间帧: start=$start actual=$actual end=$end", positionFromStart > 1f && positionFromEnd > 1f)
                 val sizeFromStart = maxOf(abs(actual.width - start.width), abs(actual.height - start.height))
                 val sizeFromEnd = maxOf(abs(actual.width - end.width), abs(actual.height - end.height))
-                assertTrue("$label 封面 size 应处于动画中间帧", sizeFromStart > 1f && sizeFromEnd > 1f)
+                assertTrue("$label 封面 size 应处于动画中间帧: start=$start actual=$actual end=$end", sizeFromStart > 1f && sizeFromEnd > 1f)
             }
             fun assertChromeUnchanged(heading: Rect, transport: Rect, label: String) {
                 assertBoundsNear(heading, compose.onNodeWithTag("player-heading").fetchSemanticsNode().boundsInRoot, "$label 标题区域不应移动")
@@ -167,10 +168,13 @@ class PlayerLyricsPagingTest {
             val transport = compose.onNodeWithTag("player-transport").fetchSemanticsNode().boundsInRoot
 
             compose.runOnIdle { coverStyleState.value = PlayerCoverStyle.Circle }
+            // MainTestClock先重组、下一帧才给动画t=0；从实际起点取64/128ms，
+            // 否则首个“64ms”只有32ms，在低密度设备上可能只缩小1px。
+            repeat(2) { compose.mainClock.advanceTimeByFrame() }
             compose.mainClock.advanceTimeBy(64)
             val circleAt64ms = artworkBounds()
             assertChromeUnchanged(heading, transport, "Default→Circle @64ms")
-            // 再加64ms得到从目标切换起约128ms的中间帧。
+            // 再加64ms得到动画开始后128ms的中间帧。
             compose.mainClock.advanceTimeBy(64)
             val circleAt128ms = artworkBounds()
             assertChromeUnchanged(heading, transport, "Default→Circle @128ms")
@@ -188,6 +192,7 @@ class PlayerLyricsPagingTest {
 
             // Circle→Default进行中再次反向，目标更新应从当前几何连续接管，而非跳回旧端点。
             compose.runOnIdle { coverStyleState.value = PlayerCoverStyle.Default }
+            repeat(2) { compose.mainClock.advanceTimeByFrame() }
             compose.mainClock.advanceTimeBy(96)
             val returningToDefault = artworkBounds()
             assertIntermediate(returningToDefault, circleArtwork, defaultArtwork, "Circle→Default @96ms")

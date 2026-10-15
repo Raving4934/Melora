@@ -12,6 +12,7 @@ import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.test.captureToImage
 
 import com.leyu.melora.ui.awaitStable
+import com.leyu.melora.ui.boundsInSameFrame
 
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableIntStateOf
@@ -307,9 +308,11 @@ class PlayerCoverPickerTest {
         }
 
         val tags = listOf("player-cover-default", "player-cover-circle", "player-cover-vinyl")
-        val bounds = tags.map { compose.onNodeWithTag(it).fetchSemanticsNode().boundsInRoot }
+        // motionEnabled 只控制卡片自身动效，原生抽屉仍会入场；等可见稳定后同帧比较。
+        compose.awaitStable("player-cover-cards")
+        val bounds = compose.boundsInSameFrame(*tags.map { compose.onNodeWithTag(it) }.toTypedArray())
         assertEquals(3, bounds.size)
-        assertTrue(bounds.zipWithNext().all { (left, right) -> right.center.x > left.center.x })
+        assertTrue("卡片应从左至右排列: $bounds", bounds.zipWithNext().all { (left, right) -> right.center.x > left.center.x })
         assertTrue((bounds.maxOf { it.center.y } - bounds.minOf { it.center.y }) < with(compose.density) { 48.dp.toPx() })
         val deck = compose.onNodeWithTag("player-cover-cards").fetchSemanticsNode().boundsInRoot
         if (deck.width <= with(compose.density) { 400.dp.toPx() }) {

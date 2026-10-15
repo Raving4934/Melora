@@ -203,6 +203,9 @@ class ImmersivePlayerInstrumentedTest {
 
             compose.onNodeWithTag("player-cover-cancel").performScrollTo().also { compose.awaitStable(it) }.performClick()
             compose.onNodeWithTag("player-cover-picker").assertDoesNotExist()
+            // Dialog语义消失不代表宿主窗口已恢复获焦与布局；长按前核对真实窗口状态。
+            compose.waitUntil(5_000) { view.hasWindowFocus() }
+            compose.awaitStable("player-artwork")
             compose.onNodeWithTag("player-artwork").performTouchInput { longClick() }
             compose.awaitStable("player-cover-picker")
             compose.onNodeWithTag(themeTag).assertIsSelected()
@@ -287,6 +290,9 @@ class ImmersivePlayerInstrumentedTest {
     @Test
     fun entryCanReverseMidFlightWithoutReplacingArtworkOrLeavingLayoutOffset() {
         showPlayer(motionEnabled = true, forcePortrait = true)
+        // 冻结Compose时钟前先等原生窗口完成首帧布局，否则比较的是两个不同宿主尺寸。
+        compose.awaitStable("player-pages")
+        compose.awaitStable("player-artwork")
         val original = compose.onNodeWithTag("player-artwork").fetchSemanticsNode()
         val originalCenter = original.boundsInRoot.center
         compose.mainClock.autoAdvance = false
