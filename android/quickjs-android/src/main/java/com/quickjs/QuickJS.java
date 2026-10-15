@@ -153,8 +153,11 @@ public class QuickJS implements Closeable {
         }
         quickJSNative.postVoid(() -> {
             if (QuickJS.this.released) return;
-            JSContext[] values = new JSContext[sContextMap.size()];
-            sContextMap.values().toArray(values);
+            JSContext[] values;
+            synchronized (sContextMap) {
+                values = sContextMap.values().toArray(new JSContext[0]);
+            }
+            // context关闭可能触发其他runtime清理，不能跨关闭回调持有全局表锁。
             for (JSContext context : values) {
                 if (context.getQuickJS() == QuickJS.this) context.close();
             }

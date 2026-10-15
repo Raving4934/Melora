@@ -182,7 +182,7 @@ def verify_release_run(
     expected_commit: str,
     github_repository: str,
 ) -> dict[str, Any]:
-    """Validate the current successful build attempt without mutating GitHub."""
+    """Validate one complete artifact-producing attempt without mutating GitHub."""
     if not REPOSITORY_RE.fullmatch(repository):
         raise VerificationError("repository must be owner/repo")
     if github_repository.casefold() != repository.casefold():
@@ -216,7 +216,33 @@ def verify_release_run(
         raise VerificationError("source run event must be push or workflow_dispatch")
     if source.get("status") != "completed":
         raise VerificationError("source run is not completed")
-    attempt = _positive_int(source.get("run_attempt"), "source run attempt")
+    latest_attempt = _positive_int(source.get("run_attempt"), "source run attempt")
+    artifacts = api.get_paginated(
+        f"{repository_path}/actions/runs/{run_id}/artifacts?per_page=100",
+        result_key="artifacts",
+    )
+    if not isinstance(artifacts, list):
+        raise VerificationError("GitHub returned an invalid artifact list")
+    # A publisher-only rerun increments run_attempt but does not rebuild/upload.
+    # Select the newest build artifact, then validate ALL gates from its attempt.
+    # Never fall back if that attempt failed, expired, or has inconsistent provenance.
+    prefix = f"android-release-assets-{run_id}-"
+    attempts = [
+        int(item["name"][len(prefix):])
+        for item in artifacts
+        if isinstance(item, dict) and isinstance(item.get("name"), str)
+        and item["name"].startswith(prefix)
+        and re.fullmatch(r"[1-9][0-9]*", item["name"][len(prefix):])
+    ]
+    if not attempts:
+        raise VerificationError("source run has no release build artifact")
+    attempt = max(attempts)
+    if attempt > latest_attempt:
+        raise VerificationError("artifact build attempt is newer than the source run")
+    artifact_name = f"{prefix}{attempt}"
+    matches = [item for item in artifacts if isinstance(item, dict) and item.get("name") == artifact_name]
+    if len(matches) != 1:
+        raise VerificationError(f"expected one build-attempt artifact {artifact_name}; found {len(matches)}")
 
     release_job = _validate_jobs(api, repository_path, run_id, attempt)
     release_job_id = _positive_int(release_job.get("id"), "release-build job id")
@@ -232,17 +258,6 @@ def verify_release_run(
     )
     if checkout_commit != expected_commit:
         raise VerificationError("release-build checkout commit does not match --expected-commit")
-
-    artifact_name = f"android-release-assets-{run_id}-{attempt}"
-    artifacts = api.get_paginated(
-        f"{repository_path}/actions/runs/{run_id}/artifacts?per_page=100",
-        result_key="artifacts",
-    )
-    if not isinstance(artifacts, list):
-        raise VerificationError("GitHub returned an invalid artifact list")
-    matches = [item for item in artifacts if isinstance(item, dict) and item.get("name") == artifact_name]
-    if len(matches) != 1:
-        raise VerificationError(f"expected one current-attempt artifact {artifact_name}; found {len(matches)}")
 
     artifact = matches[0]
     artifact_id = _positive_int(artifact.get("id"), "artifact id")

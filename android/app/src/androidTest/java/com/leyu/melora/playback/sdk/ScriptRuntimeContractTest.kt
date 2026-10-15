@@ -65,6 +65,143 @@ class ScriptRuntimeContractTest {
         }
     }
 
+    @Test(timeout = 5_000)
+    fun successfulRequestsRetireTimersButKeepInitializationTimers() = assertRequestTimersRetired("success")
+
+    @Test(timeout = 5_000)
+    fun failedRequestsRetireTimersButKeepInitializationTimers() = assertRequestTimersRetired("failure")
+
+    @Test(timeout = 5_000)
+    fun timedOutRequestsRetireTimersButKeepInitializationTimers() = assertRequestTimersRetired("timeout")
+
+    @Test(timeout = 6_000)
+    fun cancelledRequestsRetireTimersBeforeTheSameRuntimeIsReused() = runBlocking {
+        DelayedHttpServer(0, holdResponseUntilReleased = true).use { server ->
+            LxScriptEngine(InstrumentationRegistry.getInstrumentation().targetContext).use { engine ->
+                engine.load(timerScopeScript(), "timer-scope-cancel.js")
+                val call = launch(Dispatchers.IO) {
+                    engine.withCancellation { token ->
+                        engine.request(token, "kw", "musicUrl", JSONObject().put("mode", "blocked").put("url", server.url), 5_000)
+                    }
+                }
+                // 服务器握手在 JS 已创建全部定时器之后，避免靠固定 sleep 猜测进入状态。
+                assertTrue("request did not enter host HTTP", server.awaitRequest())
+                call.cancel()
+                withTimeout(3_000) { call.join() }
+                assertTrue(call.isCancelled)
+                assertRetiredTimersAndLiveInitialization(engine)
+            }
+        }
+    }
+
+    @Test(timeout = 6_000)
+    fun sdkSuccessAndTimeoutRetireTheSameRequestScopedTimers() = runBlocking {
+        for (mode in listOf("success", "timeout")) {
+            LxScriptEngine(InstrumentationRegistry.getInstrumentation().targetContext).use { engine ->
+                engine.load(timerScopeScript(), "timer-scope-sdk.js")
+                val result = runCatching { engine.sdkCall(mode, "kw", JSONObject(), 150) }
+                if (mode == "success") assertEquals("success", result.getOrThrow().getString("mode"))
+                else assertEquals("目录请求超时", result.exceptionOrNull()?.message)
+                val next = engine.sdkCall("advance", "kw", JSONObject().put("now", 300), 1_000)
+                assertEquals(0, next.getInt("leaked"))
+                assertEquals(1, next.getInt("initializationTicks"))
+            }
+        }
+    }
+
+    @Test(timeout = 6_000)
+    fun cancelledSdkCallsRetireTimersBeforeRuntimeReuse() = runBlocking {
+        DelayedHttpServer(0, holdResponseUntilReleased = true).use { server ->
+            LxScriptEngine(InstrumentationRegistry.getInstrumentation().targetContext).use { engine ->
+                engine.load(timerScopeScript(), "timer-scope-sdk-cancel.js")
+                val call = launch(Dispatchers.IO) {
+                    engine.sdkCall("blocked", "kw", JSONObject().put("url", server.url), 5_000)
+                }
+                assertTrue("SDK did not enter host HTTP", server.awaitRequest())
+                call.cancel()
+                withTimeout(3_000) { call.join() }
+                val next = engine.sdkCall("advance", "kw", JSONObject().put("now", 300), 1_000)
+                assertEquals(0, next.getInt("leaked"))
+                assertEquals(1, next.getInt("initializationTicks"))
+            }
+        }
+    }
+
+    private fun assertRequestTimersRetired(mode: String) {
+        LxScriptEngine(InstrumentationRegistry.getInstrumentation().targetContext).use { engine ->
+            engine.load(timerScopeScript(), "timer-scope-$mode.js")
+            val result = runCatching { engine.request("kw", "musicUrl", JSONObject().put("mode", mode), 150) }
+            when (mode) {
+                "success" -> assertEquals("done", result.getOrThrow())
+                "failure" -> assertTrue(result.exceptionOrNull()?.message?.contains("fixture failure") == true)
+                "timeout" -> assertEquals("脚本解析超时", result.exceptionOrNull()?.message)
+            }
+            assertRetiredTimersAndLiveInitialization(engine)
+        }
+    }
+
+    private fun assertRetiredTimersAndLiveInitialization(engine: LxScriptEngine) {
+        fun advance(now: Int) = JSONObject(engine.request(
+            "kw", "musicUrl", JSONObject().put("mode", "advance").put("now", now), 1_000,
+        ).toString())
+        val next = advance(300)
+        assertEquals(0, next.getInt("leaked"))
+        assertEquals(1, next.getInt("initializationTicks"))
+        val later = advance(600)
+        assertEquals(0, later.getInt("leaked"))
+        assertEquals(2, later.getInt("initializationTicks"))
+        assertEquals(1, later.getInt("initializationNested"))
+    }
+
+    private fun timerScopeScript() = """
+        let clock = 0;
+        Date.now = () => clock;
+        let leaked = 0;
+        let initializationTicks = 0;
+        let initializationNested = 0;
+        setInterval(() => {
+          initializationTicks++;
+          Promise.resolve().then(() => setTimeout(() => initializationNested++, 20));
+        }, 50);
+        function summary() { return {leaked, initializationTicks, initializationNested}; }
+        function scheduleRequestTimers() {
+          setTimeout(() => leaked++, 200);
+          setInterval(() => leaked++, 200);
+          setTimeout(() => setTimeout(() => leaked++, 200), 0);
+        }
+        lx.on('request', ({info}) => {
+          if (info.mode === 'advance') {
+            clock = info.now;
+            return new Promise(resolve => setTimeout(() => resolve(JSON.stringify(summary())), 0));
+          }
+          scheduleRequestTimers();
+          if (info.mode === 'failure') throw new Error('fixture failure');
+          if (info.mode === 'timeout') return new Promise(() => {});
+          if (info.mode === 'blocked') return lx.request(info.url, {timeout:5000});
+          return 'done';
+        });
+        let sdkResult = '';
+        globalThis.__meloraInvoke = (payloadJson) => {
+          const {action, params} = JSON.parse(payloadJson);
+          sdkResult = '';
+          if (action === 'advance') {
+            clock = params.now;
+            setTimeout(() => { sdkResult = JSON.stringify({ok:true, data:summary()}); }, 0);
+            return;
+          }
+          scheduleRequestTimers();
+          if (action === 'timeout') return;
+          if (action === 'blocked') {
+            lx.request(params.url, {timeout:5000}).then(() => {
+              sdkResult = JSON.stringify({ok:true, data:{mode:action}});
+            });
+            return;
+          }
+          sdkResult = JSON.stringify({ok:true, data:{mode:action}});
+        };
+        globalThis.__meloraTake = () => sdkResult;
+    """.trimIndent()
+
     @Test(timeout = 10_000)
     fun cancellingSynchronousRequestKeepsQuickJsRuntimeUsable() = runBlocking {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -411,20 +548,25 @@ class ScriptRuntimeContractTest {
             val loadBalancerField = field(singleton, "loadBalancer")
             val sdkCodeField = field(singleton, "sdkCode")
             val appContextField = field(singleton, "appContext")
-            val originalSlots = slotsField.get(singleton)
-            val originalLoadBalancer = loadBalancerField.get(singleton)
+            // API 37 禁止反射替换 static final；保持池与调度器身份，只替换可变列表中的测试 slot。
+            @Suppress("UNCHECKED_CAST")
+            val slots = slotsField.get(singleton) as MutableList<Any>
+            val originalSlots = slots.toList()
+            val loadBalancer = loadBalancerField.get(singleton) as SlotLoadBalancer
             val originalSdkCode = sdkCodeField.get(singleton)
             val originalAppContext = appContextField.get(singleton)
-            assertTrue("fixture requires an idle SDK pool", (originalLoadBalancer as SlotLoadBalancer).snapshot().all { it == 0 })
-            val slotType = (originalSlots as List<*>).first()!!.javaClass
-            val injectedSlots = listOf(
-                slotType.getDeclaredConstructor(Int::class.javaPrimitiveType!!).apply { isAccessible = true }
-                    .newInstance(0),
-            )
+            assertTrue("fixture requires an idle SDK pool", loadBalancer.snapshot().all { it == 0 })
+            val constructor = originalSlots.first().javaClass
+                .getDeclaredConstructor(Int::class.javaPrimitiveType!!).apply { isAccessible = true }
+            val injectedSlots = slots.indices.map { constructor.newInstance(it) }
+            val heldSlots = mutableListOf<Int>()
             var cancelledCall: Job? = null
             try {
-                slotsField.set(singleton, injectedSlots)
-                loadBalancerField.set(singleton, SlotLoadBalancer(1))
+                slots.indices.forEach { slots[it] = injectedSlots[it] }
+                // 占住其余槽位，使取消前后都经同一个真实 worker，不能由换槽位掩盖取消失效。
+                repeat(slots.size) { heldSlots += loadBalancer.reserve() }
+                loadBalancer.release(0)
+                heldSlots.remove(0)
                 sdkCodeField.set(singleton, loopbackSdkCode(server.url))
                 appContextField.set(singleton, context.applicationContext)
 
@@ -450,8 +592,8 @@ class ScriptRuntimeContractTest {
                         try {
                             closeInjectedSlots(injectedSlots)
                         } finally {
-                            slotsField.set(singleton, originalSlots)
-                            loadBalancerField.set(singleton, originalLoadBalancer)
+                            heldSlots.forEach(loadBalancer::release)
+                            slots.indices.forEach { slots[it] = originalSlots[it] }
                             sdkCodeField.set(singleton, originalSdkCode)
                             appContextField.set(singleton, originalAppContext)
                         }

@@ -64,6 +64,7 @@ import com.leyu.melora.playback.sdk.OnlineRepository
 import com.leyu.melora.playback.sdk.formatPlayCountLabel
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.sdk.SongPage
+import com.leyu.melora.playback.sdk.loadUntilPlayable
 import dev.chrisbanes.haze.ExperimentalHazeApi
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
@@ -318,14 +319,18 @@ fun PlaylistDetailContent(
             try {
                 runCatchingCancellable {
                     val previous = songSnapshot
-                    val fresh = OnlineCache.refresh(detailCacheKey, OnlineCache.CATALOG_TTL_MS) {
+                    val first = OnlineCache.refresh(detailCacheKey, OnlineCache.CATALOG_TTL_MS) {
                         OnlineRepository.playlistSongs(context, playlist.source, playlist.id, 1).forRequestedPage(1)
+                    }
+                    val fresh = first.loadUntilPlayable { page ->
+                        OnlineRepository.playlistSongs(context, playlist.source, playlist.id, page)
                     }
                     if (previous?.list?.isNotEmpty() == true && fresh.list.isEmpty()) {
                         // 空响应不是有效的重载结果：保留正在展示的歌曲，避免内容闪空。
                         OnlineCache.put(detailCacheKey, previous)
                     } else {
                         songSnapshot = fresh
+                        if (fresh !== first) OnlineCache.put(detailCacheKey, fresh)
                     }
                 }.onSuccess {
                     error = null

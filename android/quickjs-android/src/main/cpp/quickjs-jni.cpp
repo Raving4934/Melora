@@ -72,6 +72,26 @@ jfieldID js_value_u_ptr_id;
 
 void initES6Module(JSRuntime *rt);
 
+class ScopedUtfChars {
+public:
+    ScopedUtfChars(JNIEnv *env, jstring value)
+        : env_(env), value_(value),
+          chars_(value != nullptr ? env->GetStringUTFChars(value, nullptr) : nullptr) {}
+
+    ~ScopedUtfChars() {
+        if (chars_ != nullptr) env_->ReleaseStringUTFChars(value_, chars_);
+    }
+
+    ScopedUtfChars(const ScopedUtfChars &) = delete;
+    ScopedUtfChars &operator=(const ScopedUtfChars &) = delete;
+    const char *get() const { return chars_; }
+
+private:
+    JNIEnv *env_;
+    jstring value_;
+    const char *chars_;
+};
+
 struct RuntimeInterruptState {
     // begin/interrupt/end/release are serialized by QuickJS.interruptLifecycleLock.
     uint64_t next_ticket = 0;
@@ -173,11 +193,9 @@ JSValue JobjectToJSValue(JNIEnv *env, JSContext *ctx, jobject value) {
     } else if (env->IsInstanceOf(value, booleanCls)) {
         return JS_NewBool(ctx, env->CallBooleanMethod(value, booleanValueMethodID));
     } else if (env->IsInstanceOf(value, stringCls)) {
-        const char *text = env->GetStringUTFChars((jstring) value, nullptr);
-        if (text == nullptr) return JS_NULL;
-        JSValue result = JS_NewString(ctx, text);
-        env->ReleaseStringUTFChars((jstring) value, text);
-        return result;
+        ScopedUtfChars text(env, (jstring) value);
+        if (text.get() == nullptr) return JS_EXCEPTION;
+        return JS_NewString(ctx, text.get());
     } else if (env->IsInstanceOf(value, jsValueCls)) {
         return JS_DupValue(ctx, TO_JS_VALUE(env, value));
     }
@@ -215,6 +233,10 @@ int GetObjectType(JSContext *ctx, JSValue result) {
 
 jobject To_JObject(JNIEnv *env, jlong context_ptr, int expected_type, JSValue result) {
     auto *ctx = reinterpret_cast<JSContext *>(context_ptr);
+    if (env->ExceptionCheck()) {
+        JS_FreeValue(ctx, result);
+        return nullptr;
+    }
     if (expected_type == TYPE_UNKNOWN) {
         expected_type = GetObjectType(ctx, result);
     }
@@ -422,19 +444,13 @@ Java_com_quickjs_QuickJSNativeImpl__1executeScript(JNIEnv *env, jclass clazz, jl
         return nullptr;
     }
     auto *ctx = reinterpret_cast<JSContext *>(context_ptr);
-    const char *source_ = env->GetStringUTFChars(source, nullptr);
-    const int source_length = env->GetStringUTFLength(source);
-    const char *file_name_;
-    if (file_name == nullptr) {
-        file_name_ = "";
-    } else {
-        file_name_ = env->GetStringUTFChars(file_name, nullptr);
-    }
-    JSValue val = JS_Eval(ctx, source_, (size_t) source_length, file_name_, eval_flags);
-    jobject result = To_JObject(env, context_ptr, expected_type, val);
-    env->ReleaseStringUTFChars(source, source_);
-    if (file_name != nullptr) env->ReleaseStringUTFChars(file_name, file_name_);
-    return result;
+    ScopedUtfChars source_text(env, source);
+    if (source_text.get() == nullptr) return nullptr;
+    ScopedUtfChars file_name_text(env, file_name);
+    if (file_name != nullptr && file_name_text.get() == nullptr) return nullptr;
+    JSValue val = JS_Eval(ctx, source_text.get(), (size_t) env->GetStringUTFLength(source),
+                         file_name != nullptr ? file_name_text.get() : "", eval_flags);
+    return To_JObject(env, context_ptr, expected_type, val);
 }
 extern "C"
 JNIEXPORT jobject JNICALL
@@ -484,22 +500,22 @@ JNIEXPORT jobject JNICALL
 Java_com_quickjs_QuickJSNativeImpl__1get(JNIEnv *env, jclass clazz, jlong context_ptr,
                                          int expected_type,
                                          jobject object_handle, jstring key) {
-    const char *key_ = env->GetStringUTFChars(key, nullptr);
+    ScopedUtfChars key_text(env, key);
+    if (key_text.get() == nullptr) return nullptr;
     auto *ctx = reinterpret_cast<JSContext *>(context_ptr);
     JSValue this_obj = TO_JS_VALUE(env, object_handle);
-    JSValue result = JS_GetPropertyStr(ctx, this_obj, key_);
-    jobject tmp = To_JObject(env, context_ptr, expected_type, result);
-//    JS_FreeValue(ctx, result);
-    return tmp;
+    JSValue result = JS_GetPropertyStr(ctx, this_obj, key_text.get());
+    return To_JObject(env, context_ptr, expected_type, result);
 }
 extern "C"
 JNIEXPORT jobject JNICALL
 Java_com_quickjs_QuickJSNativeImpl__1getValue(JNIEnv *env, jclass clazz, jlong context_ptr,
                                               jobject object_handle, jstring key) {
-    const char *key_ = env->GetStringUTFChars(key, nullptr);
+    ScopedUtfChars key_text(env, key);
+    if (key_text.get() == nullptr) return nullptr;
     auto *ctx = reinterpret_cast<JSContext *>(context_ptr);
     JSValue this_obj = TO_JS_VALUE(env, object_handle);
-    JSValue result = JS_GetPropertyStr(ctx, this_obj, key_);
+    JSValue result = JS_GetPropertyStr(ctx, this_obj, key_text.get());
     return TO_JAVA_OBJECT(env, ctx, result);
 }
 
@@ -534,8 +550,9 @@ Java_com_quickjs_QuickJSNativeImpl__1contains(JNIEnv *env, jclass clazz, jlong c
                                               jobject object_handle, jstring key) {
     auto *ctx = reinterpret_cast<JSContext *>(context_ptr);
     JSValue this_obj = TO_JS_VALUE(env, object_handle);
-    const char *key_ = env->GetStringUTFChars(key, nullptr);
-    JSAtom atom = JS_NewAtom(ctx, key_);
+    ScopedUtfChars key_text(env, key);
+    if (key_text.get() == nullptr) return JNI_FALSE;
+    JSAtom atom = JS_NewAtom(ctx, key_text.get());
     int result = JS_HasProperty(ctx, this_obj, atom);
     JS_FreeAtom(ctx, atom);
     return result;
@@ -610,9 +627,11 @@ JNIEXPORT jobject JNICALL
 Java_com_quickjs_QuickJSNativeImpl__1executeFunction(JNIEnv *env, jclass clazz, jlong context_ptr,
                                                      jint expected_type, jobject object_handle,
                                                      jstring name, jobject parameters_handle) {
+    ScopedUtfChars name_text(env, name);
+    if (name_text.get() == nullptr) return nullptr;
     auto *ctx = reinterpret_cast<JSContext *>(context_ptr);
     JSValue this_obj = TO_JS_VALUE(env, object_handle);
-    JSValue func_obj = JS_GetPropertyStr(ctx, this_obj, env->GetStringUTFChars(name, nullptr));
+    JSValue func_obj = JS_GetPropertyStr(ctx, this_obj, name_text.get());
     JSValue value = executeFunction(env, context_ptr, object_handle, func_obj, parameters_handle);
     jobject result = To_JObject(env, context_ptr, expected_type, value);
     return result;
@@ -644,12 +663,7 @@ callJavaCallback(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *
                                                  void_method
     );
 
-    JSValue value = JobjectToJSValue(env, ctx, result);
-    if (env->IsInstanceOf(result, jsValueCls)) {
-//        JS_FreeValue(ctx,value);
-//        JS_DupValue(ctx, value);
-    }
-    return value;
+    return JobjectToJSValue(env, ctx, result);
 }
 
 JSValue newFunction(jlong context_ptr, jboolean void_method, int callbackId) {
@@ -680,11 +694,12 @@ Java_com_quickjs_QuickJSNativeImpl__1registerJavaMethod(JNIEnv *env, jclass claz
                                                         jstring function_name,
                                                         jint callbackId,
                                                         jboolean void_method) {
-    const char *name_ = env->GetStringUTFChars(function_name, nullptr);
+    ScopedUtfChars name_text(env, function_name);
+    if (name_text.get() == nullptr) return nullptr;
     auto *ctx = reinterpret_cast<JSContext *>(context_ptr);
     JSValue func = newFunction(context_ptr, void_method, callbackId);
     JSValue this_obj = TO_JS_VALUE(env, object_handle);
-    JS_SetPropertyStr(ctx, this_obj, name_, JS_DupValue(ctx, func));
+    JS_SetPropertyStr(ctx, this_obj, name_text.get(), JS_DupValue(ctx, func));
     return TO_JAVA_OBJECT(env, ctx, func);
 }
 
@@ -701,10 +716,13 @@ extern "C"
 JNIEXPORT void JNICALL
 Java_com_quickjs_QuickJSNativeImpl__1set(JNIEnv *env, jclass clazz, jlong context_ptr,
                                          jobject object_handle, jstring key, jobject value) {
-    const char *key_ = env->GetStringUTFChars(key, nullptr);
+    ScopedUtfChars key_text(env, key);
+    if (key_text.get() == nullptr) return;
     auto *ctx = reinterpret_cast<JSContext *>(context_ptr);
     JSValue this_obj = TO_JS_VALUE(env, object_handle);
-    JS_SetPropertyStr(ctx, this_obj, key_, JobjectToJSValue(env, ctx, value));
+    JSValue js_value = JobjectToJSValue(env, ctx, value);
+    if (JS_IsException(js_value)) return;
+    JS_SetPropertyStr(ctx, this_obj, key_text.get(), js_value);
 }
 
 extern "C"
@@ -714,7 +732,9 @@ Java_com_quickjs_QuickJSNativeImpl__1arrayAdd(JNIEnv *env, jclass clazz, jlong c
     auto *ctx = reinterpret_cast<JSContext *>(context_ptr);
     JSValue this_obj = TO_JS_VALUE(env, object_handle);
     int len = GetArrayLength(ctx, this_obj);
-    JS_SetPropertyUint32(ctx, this_obj, len, JobjectToJSValue(env, ctx, value));
+    JSValue js_value = JobjectToJSValue(env, ctx, value);
+    if (JS_IsException(js_value)) return;
+    JS_SetPropertyUint32(ctx, this_obj, len, js_value);
 }
 extern "C"
 JNIEXPORT jboolean JNICALL
@@ -768,44 +788,63 @@ Java_com_quickjs_QuickJSNativeImpl__1getException(JNIEnv *env, jclass clazz, jlo
     return stringArray;
 }
 
-const char *GetModuleScript(JSContext *ctx, const char *module_name, int *scriptLen) {
-    JNIEnv *env;
-    jvm->GetEnv((void **) &env, JNI_VERSION_1_6);
-    jobject result = env->CallStaticObjectMethod(quickJSCls, getModuleScriptMethodID, (jlong) ctx,
-                                                 env->NewStringUTF(module_name));
-    if (result == nullptr) {
-        return nullptr;
-    }
-    *scriptLen = env->GetStringUTFLength((jstring) result);
-    return env->GetStringUTFChars((jstring) result, nullptr);
-}
-
 JSModuleDef *_JSModuleLoaderFunc(JSContext *ctx, const char *module_name, void *opaque) {
-    int scriptLen;
-    void *m;
-    const char *script = GetModuleScript(ctx, module_name, &scriptLen);
-    if (script == nullptr) {
+    JNIEnv *env = nullptr;
+    if (jvm->GetEnv((void **) &env, JNI_VERSION_1_6) != JNI_OK) return nullptr;
+    jstring name = env->NewStringUTF(module_name);
+    if (name == nullptr) return nullptr;
+    auto result = (jstring) env->CallStaticObjectMethod(
+        quickJSCls, getModuleScriptMethodID, (jlong) ctx, name);
+    env->DeleteLocalRef(name);
+    if (env->ExceptionCheck() || result == nullptr) {
+        env->DeleteLocalRef(result);
         return nullptr;
     }
-    JSValue func_val = JS_Eval(ctx, script, scriptLen, module_name,
-                               JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
-    m = JS_VALUE_GET_PTR(func_val);
+
+    JSValue func_val = JS_EXCEPTION;
+    {
+        ScopedUtfChars script(env, result);
+        if (script.get() != nullptr) {
+            func_val = JS_Eval(ctx, script.get(), (size_t) env->GetStringUTFLength(result),
+                              module_name, JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
+        }
+    }
+    env->DeleteLocalRef(result);
+    if (JS_IsException(func_val)) return nullptr;
+    auto *module = (JSModuleDef *) JS_VALUE_GET_PTR(func_val);
     JS_FreeValue(ctx, func_val);
-    return (JSModuleDef *) m;
+    return module;
 }
 
 char *_JSModuleNormalizeFunc(JSContext *ctx,
                              const char *module_base_name,
                              const char *module_name, void *opaque) {
-    JNIEnv *env;
-    jvm->GetEnv((void **) &env, JNI_VERSION_1_6);
-    jobject result = env->CallStaticObjectMethod(quickJSCls, convertModuleNameMethodID, (jlong) ctx,
-                                                 env->NewStringUTF(module_base_name),
-                                                 env->NewStringUTF(module_name));
-    if (result == nullptr) {
+    JNIEnv *env = nullptr;
+    if (jvm->GetEnv((void **) &env, JNI_VERSION_1_6) != JNI_OK) return nullptr;
+    jstring base_name = env->NewStringUTF(module_base_name);
+    if (base_name == nullptr) return nullptr;
+    jstring name = env->NewStringUTF(module_name);
+    if (name == nullptr) {
+        env->DeleteLocalRef(base_name);
         return nullptr;
     }
-    return (char *) env->GetStringUTFChars((jstring) result, nullptr);
+    auto result = (jstring) env->CallStaticObjectMethod(
+        quickJSCls, convertModuleNameMethodID, (jlong) ctx, base_name, name);
+    env->DeleteLocalRef(base_name);
+    env->DeleteLocalRef(name);
+    if (env->ExceptionCheck() || result == nullptr) {
+        env->DeleteLocalRef(result);
+        return nullptr;
+    }
+
+    char *normalized = nullptr;
+    {
+        ScopedUtfChars text(env, result);
+        // QuickJS 会 js_free 返回值，不能转交 JNI 所有的 UTF 缓冲区。
+        if (text.get() != nullptr) normalized = js_strdup(ctx, text.get());
+    }
+    env->DeleteLocalRef(result);
+    return normalized;
 }
 
 void initES6Module(JSRuntime *rt) {

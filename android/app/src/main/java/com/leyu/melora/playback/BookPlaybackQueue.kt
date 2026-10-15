@@ -4,6 +4,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import com.leyu.melora.playback.sdk.KwBookApi
+import com.leyu.melora.playback.sdk.OnlineCache
 import com.leyu.melora.playback.sdk.OnlineSong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -21,7 +22,7 @@ internal fun OnlineSong.bookId(): String? = canonicalBookId(source, albumId)
 
 internal fun bookQueueId(id: String): String = "playlist.kw.book_album_$id"
 
-/** 旧记录没有页码时才逐页定位；有坐标时最多请求当前页余下章节或下一页。 */
+/** 旧记录逐页定位；持久化尾页终态只是提示，必须新鲜读取原尾页再决定是否结束。 */
 internal suspend fun followingBookChapters(
     tail: OnlineSong,
     load: suspend (String, Int) -> KwBookApi.BookChapters,
@@ -29,15 +30,31 @@ internal suspend fun followingBookChapters(
     val id = checkNotNull(tail.bookId())
     val knownPage = tail.raw.optInt("bookPage", 0)
     val lastInPage = tail.raw.optBoolean("bookPageEnd")
-    if (knownPage > 0 && lastInPage && !tail.raw.optBoolean("bookHasMore")) return emptyList()
-    var page = if (knownPage > 0) knownPage + if (lastInPage) 1 else 0 else 1
-    var located = knownPage > 0 && lastInPage
+    val refreshTail = knownPage > 0 && lastInPage && !tail.raw.optBoolean("bookHasMore")
+    var page = if (knownPage > 0) knownPage + if (lastInPage && !refreshTail) 1 else 0 else 1
+    var located = knownPage > 0 && lastInPage && !refreshTail
     val visited = mutableSetOf<String>()
     while (true) {
         currentCoroutineContext().ensureActive()
-        val result = load(id, page)
-        check(result.items.isNotEmpty()) { "后续章节加载失败，请点击播放或下一集重试" }
-        check(result.items.all { it.bookId() == id }) { "章节目录不匹配，请重试" }
+        val fetch: suspend () -> KwBookApi.BookChapters = {
+            load(id, page).also { result ->
+                check(result.items.isNotEmpty()) { "后续章节加载失败，请点击播放或下一集重试" }
+                check(result.items.all { it.bookId() == id }) { "章节目录不匹配，请重试" }
+                check(!refreshTail || page != knownPage || result.items.any { it.uid == tail.uid }) {
+                    "未找到当前章节，请重新打开目录选择章节"
+                }
+            }.copy(page = page)
+        }
+        val result = if (refreshTail && page == knownPage) {
+            val key = "playlistDetail.book.book_album_$id"
+            OnlineCache.refresh("$key.window.$page", OnlineCache.CATALOG_TTL_MS,
+                force = true, cancelWhenUnobserved = true) {
+                // 第一页有两个既有缓存入口；同时强刷，不能让任一旧终态充当网络结果。
+                if (page == 1) OnlineCache.refresh(key, OnlineCache.CATALOG_TTL_MS,
+                    force = true, cancelWhenUnobserved = true, load = fetch)
+                else fetch()
+            }
+        } else fetch()
         check(visited.add(result.items.last().uid)) { "章节目录重复，请重新打开目录后重试" }
         val index = if (located) -1 else result.items.indexOfFirst { it.uid == tail.uid }
         if (located || index >= 0) {
@@ -121,16 +138,15 @@ internal class BookPlaybackQueue(
 
     fun retry() {
         failed = false
+        exhausted = false
         check()
     }
 
     /** 末尾目录尚未回来时保留“下一集”意图，不从当前章节开头重播。 */
     fun next(): Boolean {
         if (albumId == null || player.hasNextMediaItem()) return false
-        if (!exhausted) {
-            advanceFrom = player.currentMediaItem?.mediaId
-            retry()
-        }
+        advanceFrom = player.currentMediaItem?.mediaId
+        retry()
         return true
     }
 

@@ -61,6 +61,8 @@ class BackupRoundTripTest {
 
         @AfterClass @JvmStatic fun cleanupFixture() {
             synchronized(BackupStateLock.monitor) {
+                context.commitAction = null
+                BackupRestoreTransaction.recover(context)
                 libraryFile.set(UserLibrary, previousFile)
                 settingsPrefs.set(MeloraSettings, previousPrefs)
                 settingsInitialized.setBoolean(MeloraSettings, previousInitialized)
@@ -74,6 +76,7 @@ class BackupRoundTripTest {
     @Before
     fun resetFixture() {
         context.commitAction = null
+        context.resetPreferenceFailureModel()
         BackupManager.recoverInterruptedRestore(context)
         context.filesDir.deleteRecursively(); context.filesDir.mkdirs()
         context.cacheDir.deleteRecursively(); context.cacheDir.mkdirs()
@@ -338,6 +341,151 @@ class BackupRoundTripTest {
         assertNull(LxScriptStore(context).code("new.js"))
     }
 
+    private suspend fun failCommitAndRollback(memoryFirstFailure: Boolean = false) {
+        seedExistingData()
+        if (memoryFirstFailure) context.emulateMemoryFirstCommitFailures()
+        var rollingBack = false
+        context.commitAction = { name ->
+            when {
+                !rollingBack && name == LxScriptStore.PREFS -> { rollingBack = true; false }
+                rollingBack && name == MeloraSettings.PREFS -> false
+                else -> true
+            }
+        }
+        assertTrue(BackupManager.import(context, incoming()).isFailure)
+        assertNotNull(BackupRestoreTransaction.failure.value)
+        assertTrue(File(context.filesDir, "backup-restore/ready").isFile)
+    }
+
+    @Test
+    fun failedRollbackCannotAcceptWritesThatTheNextRecoveryWouldErase() = runBlocking<Unit> {
+        failCommitAndRollback()
+        val favorites = UserLibrary.favorites.value
+        val recents = UserLibrary.recents.value
+        val exit = MeloraSettings.showExitButton.value
+        MeloraSettings.updateShowExit(!exit)
+        UserLibrary.markPlayed(favorites.single())
+        assertEquals(exit, MeloraSettings.showExitButton.value)
+        assertEquals(recents, UserLibrary.recents.value)
+        assertTrue(runCatching { UserLibrary.createPlaylist("must-not-save") }.isFailure)
+        assertTrue(runCatching { LxScriptStore(context).import("blocked.js", "// blocked") }.isFailure)
+        assertFalse(File(context.filesDir, "lx-sources/blocked.js").exists())
+        assertTrue(UserLibrary.playlists.value.isEmpty())
+
+        // 存储恢复后，首个成功保存必须先完成旧回滚，再以恢复后的快照构造新状态。
+        context.commitAction = null
+        val saved = UserLibrary.createPlaylist("saved-after-recovery")
+        assertNull(BackupRestoreTransaction.failure.value)
+        assertEquals("existing", UserLibrary.favorites.value.single().name)
+        BackupManager.recoverInterruptedRestore(context)
+        UserLibrary.reloadAfterRestore()
+        assertEquals(listOf(saved.id), UserLibrary.playlists.value.map { it.id })
+        assertFalse(File(context.filesDir, "backup-restore").exists())
+    }
+
+    @Test
+    fun runtimeRecoveryRetryReloadsMemoryAndReopensAllStores() = runBlocking<Unit> {
+        failCommitAndRollback()
+        context.commitAction = null
+        BackupManager.recoverInterruptedRestore(context)
+        assertNull(BackupRestoreTransaction.failure.value)
+        assertTrue(MeloraSettings.showExitButton.value)
+        assertEquals("existing", UserLibrary.favorites.value.single().name)
+        MeloraSettings.updateShowExit(false)
+        UserLibrary.markPlayed(UserLibrary.favorites.value.single())
+        LxScriptStore(context).import("after-retry.js", "// after retry")
+        BackupManager.recoverInterruptedRestore(context)
+        MeloraSettings.reloadAfterRestore(); UserLibrary.reloadAfterRestore()
+        assertFalse(MeloraSettings.showExitButton.value)
+        assertEquals("existing", UserLibrary.recents.value.single().name)
+        assertNotNull(LxScriptStore(context).code("after-retry.js"))
+    }
+
+    @Test
+    fun retainingFailedRuntimeRestoreReloadsTheKeptDiskBeforeAllowingWrites() = runBlocking<Unit> {
+        failCommitAndRollback()
+        context.commitAction = null
+        val journal = File(context.filesDir, "backup-restore")
+        val bytes = journal.walkTopDown().filter(File::isFile)
+            .associate { it.relativeTo(journal).path to it.readBytes().toList() }
+        val retained = BackupRestoreTransaction.retain(context)
+        assertNull(BackupRestoreTransaction.failure.value)
+        assertEquals(bytes, retained.walkTopDown().filter(File::isFile)
+            .associate { it.relativeTo(retained).path to it.readBytes().toList() })
+        // 文件回滚已完成，偏好回滚失败；保留继续必须显示实际保留的这份状态。
+        assertEquals("existing", UserLibrary.favorites.value.single().name)
+        assertFalse(MeloraSettings.showExitButton.value)
+        val saved = UserLibrary.createPlaylist("after-retention")
+        BackupManager.recoverInterruptedRestore(context)
+        UserLibrary.reloadAfterRestore()
+        assertEquals(saved.id, UserLibrary.playlists.value.single().id)
+        assertTrue(retained.isDirectory)
+    }
+
+    @Test
+    fun retainingMemoryFirstCommitFailurePersistsBothSnapshotsBeforeAllowingWrites() = runBlocking<Unit> {
+        failCommitAndRollback(memoryFirstFailure = true)
+        val settings = context.getSharedPreferences(MeloraSettings.PREFS, Context.MODE_PRIVATE).all
+        val scripts = context.getSharedPreferences(LxScriptStore.PREFS, Context.MODE_PRIVATE).all
+        assertEquals(true, settings[MeloraSettings.KEY_SHOW_EXIT])
+        assertFalse(MeloraSettings.showExitButton.value)
+        assertEquals(false, context.persistedPreferenceValues(MeloraSettings.PREFS)[MeloraSettings.KEY_SHOW_EXIT])
+        assertTrue(scripts.containsKey("new.js"))
+        assertFalse(context.persistedPreferenceValues(LxScriptStore.PREFS).containsKey("new.js"))
+
+        val journal = File(context.filesDir, "backup-restore")
+        val commits = mutableListOf<String>()
+        context.commitAction = { name ->
+            assertNotNull(BackupRestoreTransaction.failure.value)
+            assertTrue(journal.isDirectory)
+            commits += name
+            true
+        }
+        val retained = BackupRestoreTransaction.retain(context)
+        context.commitAction = null
+        assertEquals(setOf(MeloraSettings.PREFS, LxScriptStore.PREFS), commits.toSet())
+        assertNull(BackupRestoreTransaction.failure.value)
+        assertEquals(settings, context.persistedPreferenceValues(MeloraSettings.PREFS))
+        assertEquals(scripts, context.persistedPreferenceValues(LxScriptStore.PREFS))
+
+        // 丢弃进程可读值后，只从故障模型已确认持久化的快照恢复。
+        context.reloadPersistedPreferences()
+        MeloraSettings.reloadAfterRestore()
+        assertTrue(MeloraSettings.showExitButton.value)
+        assertEquals(settings, context.getSharedPreferences(MeloraSettings.PREFS, Context.MODE_PRIVATE).all)
+        assertEquals(scripts, context.getSharedPreferences(LxScriptStore.PREFS, Context.MODE_PRIVATE).all)
+        val saved = UserLibrary.createPlaylist("after-memory-first-retention")
+        BackupManager.recoverInterruptedRestore(context)
+        UserLibrary.reloadAfterRestore()
+        assertEquals(saved.id, UserLibrary.playlists.value.single().id)
+        assertTrue(retained.isDirectory)
+    }
+
+    @Test
+    fun retentionCommitFailureKeepsJournalAndWritesBlockedForEitherPreferenceStore() = runBlocking<Unit> {
+        for (failedName in listOf(MeloraSettings.PREFS, LxScriptStore.PREFS)) {
+            failCommitAndRollback(memoryFirstFailure = true)
+            val journal = File(context.filesDir, "backup-restore")
+            val bytes = journal.walkTopDown().filter(File::isFile)
+                .associate { it.relativeTo(journal).path to it.readBytes().toList() }
+            context.commitAction = { name -> name != failedName }
+            val failure = runCatching { BackupRestoreTransaction.retain(context) }.exceptionOrNull()
+            assertNotNull(failure)
+            assertSame(failure, BackupRestoreTransaction.failure.value)
+            assertTrue(File(journal, "ready").isFile)
+            assertEquals(bytes, journal.walkTopDown().filter(File::isFile)
+                .associate { it.relativeTo(journal).path to it.readBytes().toList() })
+            assertFalse(context.filesDir.listFiles().orEmpty().any { it.name.startsWith("backup-restore-retained-") })
+            assertTrue(runCatching { UserLibrary.createPlaylist("must-stay-blocked") }.isFailure)
+            assertNotNull(BackupRestoreTransaction.failure.value)
+
+            context.commitAction = null
+            BackupManager.recoverInterruptedRestore(context)
+            assertNull(BackupRestoreTransaction.failure.value)
+            assertFalse(journal.exists())
+        }
+    }
+
     @Test
     fun cancellationAfterSettingsCommitRollsBackBeforeReturning() = runBlocking<Unit> {
         seedExistingData()
@@ -582,8 +730,33 @@ class BackupRoundTripTest {
     private class BackupContext(base: Context) : ContextWrapper(base) {
         private val root = File(base.cacheDir, "isolated-backup-tests").apply { mkdirs() }
         var commitAction: ((String) -> Boolean)? = null
+        private var memoryFirstCommitFailure = false
+        private val persistedPreferences = mutableMapOf<String, Map<String, *>>()
+
+        fun emulateMemoryFirstCommitFailures() {
+            memoryFirstCommitFailure = true
+            for (name in listOf(MeloraSettings.PREFS, LxScriptStore.PREFS)) {
+                persistedPreferences[name] = super.getSharedPreferences("isolated-backup-tests.$name", Context.MODE_PRIVATE).all
+            }
+        }
+
+        fun persistedPreferenceValues(name: String): Map<String, *> = persistedPreferences.getValue(name)
+
+        fun reloadPersistedPreferences() {
+            for ((name, values) in persistedPreferences) {
+                super.getSharedPreferences("isolated-backup-tests.$name", Context.MODE_PRIVATE)
+                    .replaceValues(values, clear = true)
+            }
+        }
+
+        fun resetPreferenceFailureModel() {
+            memoryFirstCommitFailure = false
+            persistedPreferences.clear()
+        }
+
         fun cleanup() {
             commitAction = null
+            resetPreferenceFailureModel()
             root.deleteRecursively()
             for (name in listOf(MeloraSettings.PREFS, LxScriptStore.PREFS)) {
                 super.deleteSharedPreferences("isolated-backup-tests.$name")
@@ -601,7 +774,19 @@ class BackupRoundTripTest {
                 override fun edit(): SharedPreferences.Editor {
                     val editor = real.edit()
                     return object : SharedPreferences.Editor by editor {
-                        override fun commit(): Boolean = if (commitAction?.invoke(name) == false) false else editor.commit()
+                        override fun commit(): Boolean {
+                            val persist = commitAction?.invoke(name) != false
+                            if (!persist && !memoryFirstCommitFailure) return false
+                            // real 承载可读内存；失败时更新它，但不推进模型的持久化快照。
+                            val committed = editor.commit()
+                            if (committed && persist && memoryFirstCommitFailure) persistedPreferences[name] = real.all
+                            return persist && committed
+                        }
+
+                        override fun apply() {
+                            editor.apply()
+                            if (memoryFirstCommitFailure) persistedPreferences[name] = real.all
+                        }
                     }
                 }
             }

@@ -233,9 +233,15 @@ object KwBookApi {
     suspend fun rank(tabId: String, tagId: String, page: Int): BookPage {
         val url = "https://wapi.kuwo.cn/openapi/v1/album/bang/dataList" +
             "?tabId=${urlencode(tabId)}&tagId=${urlencode(tagId)}&pn=$page&rn=$PAGE_SIZE_RANK"
-        val response = get(url, ::JSONObject) ?: return BookPage(emptyList(), false)
-        if (response.optInt("code", -1) != 200) return BookPage(emptyList(), false)
-        val rows = response.optJSONObject("data")?.optJSONArray("list") ?: return BookPage(emptyList(), false)
+        return rankPageFromResponse(get(url, ::JSONObject))
+    }
+
+    internal fun rankPageFromResponse(response: JSONObject?): BookPage {
+        checkNotNull(response) { "听书榜单读取失败，请重试" }
+        check(response.optInt("code", -1) == 200) { "听书榜单响应失败，请重试" }
+        val rows = checkNotNull(response.optJSONObject("data")?.optJSONArray("list")) {
+            "听书榜单响应不完整，请重试"
+        }
         val items = mutableListOf<OnlinePlaylist>()
         val seen = mutableSetOf<String>()
         for (i in 0 until rows.length()) {

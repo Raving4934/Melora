@@ -31,7 +31,9 @@ class LxScriptEngine(private val context: Context) : Closeable {
             jsContext = runtime.createContext()
             val shim = context.assets.open("lx-shim.js").use { it.readBytes().decodeToString() }
             val native = JSObject(jsContext)
-            native.registerJavaMethod(JavaCallback { _, args -> host.http(args.getString(0)) }, "http")
+            native.registerJavaMethod(JavaCallback { _, args ->
+                host.http(args.getString(0), args.getString(1))
+            }, "http")
             native.registerJavaMethod(JavaCallback { _, args -> host.hash(args.getString(0), args.getString(1)) }, "hash")
             native.registerJavaMethod(JavaCallback { _, args -> host.zlibInflate(args.getString(0)) }, "zlibInflate")
             native.registerJavaMethod(JavaCallback { _, args -> host.zlibDeflate(args.getString(0)) }, "zlibDeflate")
@@ -157,7 +159,7 @@ class LxScriptEngine(private val context: Context) : Closeable {
         action: String,
         info: JSONObject,
         timeoutMs: Long = 20_000,
-    ): Any = executeWithBudget(token, timeoutMs, "脚本解析超时") { deadlineNanos ->
+    ): Any = executeWithBudget(token, timeoutMs, "脚本解析超时", requestScoped = true) { deadlineNanos ->
         val payload = JSONObject()
             .put("source", source)
             .put("action", action)
@@ -181,7 +183,7 @@ class LxScriptEngine(private val context: Context) : Closeable {
 
     // 调用内置 musicSdk 协议：__meloraInvoke / __meloraTake。
     suspend fun sdkCall(action: String, source: String, params: JSONObject, timeoutMs: Long = 25_000): JSONObject = withCancellation { token ->
-        executeWithBudget(token, timeoutMs, "目录请求超时") { deadlineNanos ->
+        executeWithBudget(token, timeoutMs, "目录请求超时", requestScoped = true) { deadlineNanos ->
             val payload = JSONObject()
                 .put("action", action)
                 .put("source", source)
@@ -208,16 +210,21 @@ class LxScriptEngine(private val context: Context) : Closeable {
         token: LxRequestToken,
         timeoutMs: Long,
         timeoutMessage: String,
+        requestScoped: Boolean = false,
         block: (Long) -> T,
     ): T {
         val deadlineNanos = monotonicDeadlineAfter(timeoutMs)
         val ticket = quickJs.beginInterruptibleExecution(deadlineNanos)
         token.runtimeTicket.set(ticket)
+        var executionFailure: Throwable? = null
         try {
             if (token.cancelled.get()) quickJs.interruptExecution(ticket)
             return host.withinRequestDeadline(token, deadlineNanos) {
                 try {
                     ensureActive(token)
+                    if (requestScoped) {
+                        jsContext.executeVoidScript("globalThis.__lxBeginRequest(${JSONObject.quote(token.scopeId)})", null)
+                    }
                     val result = block(deadlineNanos)
                     ensureActive(token)
                     if (System.nanoTime() >= deadlineNanos) throw LxScriptTimeoutException(timeoutMessage)
@@ -232,9 +239,26 @@ class LxScriptEngine(private val context: Context) : Closeable {
                     throw failure
                 }
             }
+        } catch (failure: Throwable) {
+            executionFailure = failure
+            throw failure
         } finally {
             token.runtimeTicket.compareAndSet(ticket, 0)
             quickJs.endInterruptibleExecution(ticket)
+            if (requestScoped) {
+                try {
+                    // 中断标志先清除，再在所有者队列中回收；清理仍有独立上限，不能无限执行 JS。
+                    val cleanupTicket = quickJs.beginInterruptibleExecution(monotonicDeadlineAfter(250))
+                    try {
+                        jsContext.executeVoidScript("globalThis.__lxEndRequest(${JSONObject.quote(token.scopeId)})", null)
+                    } finally {
+                        quickJs.endInterruptibleExecution(cleanupTicket)
+                    }
+                } catch (cleanupFailure: Throwable) {
+                    if (executionFailure == null) throw cleanupFailure
+                    if (cleanupFailure !== executionFailure) executionFailure.addSuppressed(cleanupFailure)
+                }
+            }
         }
     }
 

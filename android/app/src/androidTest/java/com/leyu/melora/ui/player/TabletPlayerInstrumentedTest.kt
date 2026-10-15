@@ -66,7 +66,8 @@ class TabletPlayerInstrumentedTest {
                 }
             }
         }
-        compose.waitForIdle()
+        // Compose 空闲不代表原生窗口/Insets 已完成布局，先确认控制区真实可见且几何稳定。
+        compose.awaitStable("player-transport")
     }
 
     @Test fun expandedPlayerHasOneCoverAndOneReadingPaneAndCollapseRemainsReachable() {
@@ -130,8 +131,11 @@ class TabletPlayerInstrumentedTest {
 
     @Test fun lyricSettingsAlignWithTheFiveTransportActions() {
         showPlayer()
-        val lyrics = compose.onNodeWithContentDescription("展开歌词设置").fetchSemanticsNode().boundsInRoot
-        val controls = compose.onNodeWithContentDescription("循环模式").fetchSemanticsNode().boundsInRoot
+        val lyricsNode = compose.onNodeWithContentDescription("展开歌词设置")
+        val controlsNode = compose.onNodeWithContentDescription("循环模式")
+        compose.awaitStable(lyricsNode)
+        compose.awaitStable(controlsNode)
+        val (lyrics, controls) = compose.boundsInSameFrame(lyricsNode, controlsNode)
         assertEquals(controls.center.y, lyrics.center.y, 1f)
     }
 
@@ -201,8 +205,10 @@ class TabletPlayerInstrumentedTest {
         showPlayer()
         compose.onNodeWithTag("player-transport").assertIsDisplayed()
         compose.onNodeWithTag("player-collapse").assertIsDisplayed()
-        val cover = compose.onNodeWithTag("player-artwork").fetchSemanticsNode().boundsInRoot
-        val transport = compose.onNodeWithTag("player-transport").fetchSemanticsNode().boundsInRoot
+        compose.awaitStable("player-artwork")
+        val (cover, transport) = compose.boundsInSameFrame(
+            compose.onNodeWithTag("player-artwork"), compose.onNodeWithTag("player-transport"),
+        )
         assertTrue(cover.bottom <= transport.top)
     }
 }

@@ -34,6 +34,11 @@ object MeloraSettings {
 
     internal fun reloadAfterRestore() { if (initialized) load() }
 
+    private inline fun update(block: () -> Unit) = synchronized(BackupStateLock.monitor) {
+        // 恢复对话框处理失败事务期间，不接受来自后台或旧界面的设置变更。
+        if (BackupRestoreTransaction.failure.value == null) block()
+    }
+
     private fun persist(block: SharedPreferences.Editor.() -> Unit) {
         if (!initialized) return
         prefs.edit { block() }
@@ -193,80 +198,80 @@ object MeloraSettings {
         localSortAscending.value = prefs.getBoolean(KEY_LOCAL_SORT_ASCENDING, true)
     }
 
-    fun updateAutoPlay(value: Boolean) = synchronized(BackupStateLock.monitor) { autoPlayOnStart.value = value; persist { putBoolean(KEY_AUTO_PLAY, value) } }
-    fun updateRestoreLastPage(value: Boolean) = synchronized(BackupStateLock.monitor) { restoreLastPage.value = value; persist { putBoolean(KEY_RESTORE_LAST_PAGE, value) } }
-    fun updateLastTab(value: Int) = synchronized(BackupStateLock.monitor) { lastTab.value = value; persist { putInt(KEY_LAST_TAB, value) } }
-    fun updateShowExit(value: Boolean) = synchronized(BackupStateLock.monitor) { showExitButton.value = value; persist { putBoolean(KEY_SHOW_EXIT, value) } }
-    fun updateThemeMode(value: ThemeMode) = synchronized(BackupStateLock.monitor) { themeMode.value = value; persist { putString(THEME_MODE_PREFERENCE, value.storageValue) } }
-    fun updateHideStatusBar(value: Boolean) = synchronized(BackupStateLock.monitor) { hideStatusBar.value = value; persist { putBoolean(KEY_HIDE_STATUS_BAR, value) } }
-    fun updateBlurTopBar(value: Boolean) = synchronized(BackupStateLock.monitor) { blurTopBar.value = value; persist { putBoolean(KEY_BLUR_TOP_BAR, value) } }
-    fun updateShowSongCovers(value: Boolean) = synchronized(BackupStateLock.monitor) { showSongCovers.value = value; persist { putBoolean(KEY_SHOW_SONG_COVERS, value) } }
-    fun updatePullToRefresh(value: Boolean) = synchronized(BackupStateLock.monitor) { pullToRefresh.value = value; persist { putBoolean(KEY_PULL_REFRESH, value) } }
-    fun updateSearchPlatform(value: String) = synchronized(BackupStateLock.monitor) { searchPlatform.value = value; persist { putString(KEY_SEARCH_PLATFORM, value) } }
-    fun updateLeaderboardPlatform(value: String) = synchronized(BackupStateLock.monitor) { leaderboardPlatform.value = value; persist { putString(KEY_LEADERBOARD_PLATFORM, value) } }
-    fun updatePlaylistPlatform(value: String) = synchronized(BackupStateLock.monitor) { playlistPlatform.value = value; persist { putString(KEY_PLAYLIST_PLATFORM, value) } }
-    fun updatePlaylistTag(id: String, name: String) = synchronized(BackupStateLock.monitor) {
+    fun updateAutoPlay(value: Boolean) = update { autoPlayOnStart.value = value; persist { putBoolean(KEY_AUTO_PLAY, value) } }
+    fun updateRestoreLastPage(value: Boolean) = update { restoreLastPage.value = value; persist { putBoolean(KEY_RESTORE_LAST_PAGE, value) } }
+    fun updateLastTab(value: Int) = update { lastTab.value = value; persist { putInt(KEY_LAST_TAB, value) } }
+    fun updateShowExit(value: Boolean) = update { showExitButton.value = value; persist { putBoolean(KEY_SHOW_EXIT, value) } }
+    fun updateThemeMode(value: ThemeMode) = update { themeMode.value = value; persist { putString(THEME_MODE_PREFERENCE, value.storageValue) } }
+    fun updateHideStatusBar(value: Boolean) = update { hideStatusBar.value = value; persist { putBoolean(KEY_HIDE_STATUS_BAR, value) } }
+    fun updateBlurTopBar(value: Boolean) = update { blurTopBar.value = value; persist { putBoolean(KEY_BLUR_TOP_BAR, value) } }
+    fun updateShowSongCovers(value: Boolean) = update { showSongCovers.value = value; persist { putBoolean(KEY_SHOW_SONG_COVERS, value) } }
+    fun updatePullToRefresh(value: Boolean) = update { pullToRefresh.value = value; persist { putBoolean(KEY_PULL_REFRESH, value) } }
+    fun updateSearchPlatform(value: String) = update { searchPlatform.value = value; persist { putString(KEY_SEARCH_PLATFORM, value) } }
+    fun updateLeaderboardPlatform(value: String) = update { leaderboardPlatform.value = value; persist { putString(KEY_LEADERBOARD_PLATFORM, value) } }
+    fun updatePlaylistPlatform(value: String) = update { playlistPlatform.value = value; persist { putString(KEY_PLAYLIST_PLATFORM, value) } }
+    fun updatePlaylistTag(id: String, name: String) = update {
         playlistTagId.value = id
         playlistTagName.value = name
         persist { putString(KEY_PLAYLIST_TAG_ID, id); putString(KEY_PLAYLIST_TAG_NAME, name) }
     }
-    fun updatePlaylistSort(value: Int) = synchronized(BackupStateLock.monitor) { playlistSort.value = value; persist { putInt(KEY_PLAYLIST_SORT, value) } }
-    fun updateDownloadPath(value: String) = synchronized(BackupStateLock.monitor) { downloadPath.value = value; persist { putString(KEY_DOWNLOAD_PATH, value) } }
-    fun updateDownloadQuality(value: String) = synchronized(BackupStateLock.monitor) { downloadQuality.value = value; persist { putString(KEY_DOWNLOAD_QUALITY, value) } }
-    fun updateDownloadSkipSameName(value: Boolean) = synchronized(BackupStateLock.monitor) { downloadSkipSameName.value = value; persist { putBoolean(KEY_DL_SKIP_SAME, value) } }
-    fun updateDownloadAutoSwitchSource(value: Boolean) = synchronized(BackupStateLock.monitor) { downloadAutoSwitchSource.value = value; persist { putBoolean(KEY_DL_AUTO_SWITCH, value) } }
-    fun updateDownloadConcurrentTasks(value: Int) = synchronized(BackupStateLock.monitor) { downloadConcurrentTasks.value = value; persist { putInt(KEY_DL_CONCURRENT, value) } }
-    fun updateDownloadFileNameFormat(value: String) = synchronized(BackupStateLock.monitor) { downloadFileNameFormat.value = value; persist { putString(KEY_DL_NAME_FORMAT, value) } }
-    fun updateDownloadEmbedCover(value: Boolean) = synchronized(BackupStateLock.monitor) { downloadEmbedCover.value = value; persist { putBoolean(KEY_DL_EMBED_COVER, value) } }
-    fun updateDownloadEmbedLyric(value: Boolean) = synchronized(BackupStateLock.monitor) { downloadEmbedLyric.value = value; persist { putBoolean(KEY_DL_EMBED_LYRIC, value) } }
-    fun updateAutoSwitchSource(value: Boolean) = synchronized(BackupStateLock.monitor) { autoSwitchSource.value = value; persist { putBoolean(KEY_AUTO_SWITCH_SOURCE, value) } }
-    fun updateRememberProgress(value: Boolean) = synchronized(BackupStateLock.monitor) { rememberProgress.value = value; persist { putBoolean(KEY_REMEMBER_PROGRESS, value) } }
-    fun updateAutoClearPlayed(value: Boolean) = synchronized(BackupStateLock.monitor) { autoClearPlayed.value = value; persist { putBoolean(KEY_AUTO_CLEAR_PLAYED, value) } }
-    fun updatePauseOnOtherAudio(value: Boolean) = synchronized(BackupStateLock.monitor) { pauseOnOtherAudio.value = value; persist { putBoolean(KEY_PAUSE_OTHER_AUDIO, value) } }
-    fun updatePlayerThemeMode(value: ThemeMode) = synchronized(BackupStateLock.monitor) { playerThemeMode.value = value; persist { putString(KEY_PLAYER_THEME_MODE, value.storageValue) } }
-    fun updateKeepScreenAwake(value: Boolean) = synchronized(BackupStateLock.monitor) { keepScreenAwake.value = value; persist { putBoolean(KEY_KEEP_SCREEN_AWAKE, value) } }
-    fun updateMiniLyricsEnabled(value: Boolean) = synchronized(BackupStateLock.monitor) { miniLyricsEnabled.value = value; persist { putBoolean(KEY_MINI_LYRICS_ENABLED, value) } }
-    fun updatePlayerCoverStyle(value: PlayerCoverStyle) = synchronized(BackupStateLock.monitor) { playerCoverStyle.value = value; persist { putString(KEY_PLAYER_COVER_STYLE, value.storageValue) } }
-    internal fun updateMusicPlayMode(value: PlayMode) = synchronized(BackupStateLock.monitor) { musicPlayMode.value = value; persist { putString(KEY_MUSIC_PLAY_MODE, value.storageValue) } }
-    fun toggleAudioEffectPreset(value: String) = synchronized(BackupStateLock.monitor) {
+    fun updatePlaylistSort(value: Int) = update { playlistSort.value = value; persist { putInt(KEY_PLAYLIST_SORT, value) } }
+    fun updateDownloadPath(value: String) = update { downloadPath.value = value; persist { putString(KEY_DOWNLOAD_PATH, value) } }
+    fun updateDownloadQuality(value: String) = update { downloadQuality.value = value; persist { putString(KEY_DOWNLOAD_QUALITY, value) } }
+    fun updateDownloadSkipSameName(value: Boolean) = update { downloadSkipSameName.value = value; persist { putBoolean(KEY_DL_SKIP_SAME, value) } }
+    fun updateDownloadAutoSwitchSource(value: Boolean) = update { downloadAutoSwitchSource.value = value; persist { putBoolean(KEY_DL_AUTO_SWITCH, value) } }
+    fun updateDownloadConcurrentTasks(value: Int) = update { downloadConcurrentTasks.value = value; persist { putInt(KEY_DL_CONCURRENT, value) } }
+    fun updateDownloadFileNameFormat(value: String) = update { downloadFileNameFormat.value = value; persist { putString(KEY_DL_NAME_FORMAT, value) } }
+    fun updateDownloadEmbedCover(value: Boolean) = update { downloadEmbedCover.value = value; persist { putBoolean(KEY_DL_EMBED_COVER, value) } }
+    fun updateDownloadEmbedLyric(value: Boolean) = update { downloadEmbedLyric.value = value; persist { putBoolean(KEY_DL_EMBED_LYRIC, value) } }
+    fun updateAutoSwitchSource(value: Boolean) = update { autoSwitchSource.value = value; persist { putBoolean(KEY_AUTO_SWITCH_SOURCE, value) } }
+    fun updateRememberProgress(value: Boolean) = update { rememberProgress.value = value; persist { putBoolean(KEY_REMEMBER_PROGRESS, value) } }
+    fun updateAutoClearPlayed(value: Boolean) = update { autoClearPlayed.value = value; persist { putBoolean(KEY_AUTO_CLEAR_PLAYED, value) } }
+    fun updatePauseOnOtherAudio(value: Boolean) = update { pauseOnOtherAudio.value = value; persist { putBoolean(KEY_PAUSE_OTHER_AUDIO, value) } }
+    fun updatePlayerThemeMode(value: ThemeMode) = update { playerThemeMode.value = value; persist { putString(KEY_PLAYER_THEME_MODE, value.storageValue) } }
+    fun updateKeepScreenAwake(value: Boolean) = update { keepScreenAwake.value = value; persist { putBoolean(KEY_KEEP_SCREEN_AWAKE, value) } }
+    fun updateMiniLyricsEnabled(value: Boolean) = update { miniLyricsEnabled.value = value; persist { putBoolean(KEY_MINI_LYRICS_ENABLED, value) } }
+    fun updatePlayerCoverStyle(value: PlayerCoverStyle) = update { playerCoverStyle.value = value; persist { putString(KEY_PLAYER_COVER_STYLE, value.storageValue) } }
+    internal fun updateMusicPlayMode(value: PlayMode) = update { musicPlayMode.value = value; persist { putString(KEY_MUSIC_PLAY_MODE, value.storageValue) } }
+    fun toggleAudioEffectPreset(value: String) = update {
         // 读取即时值而不是UI捕获的快照，连续两次点击也能正确开/关。
         updateAudioEffectPreset(if (audioEffectPreset.value == value) AudioEffects.OFF else value)
     }
-    fun updateAudioEffectPreset(value: String) = synchronized(BackupStateLock.monitor) {
+    fun updateAudioEffectPreset(value: String) = update {
         val id = AudioEffects.restoreId(value)
         audioEffectPreset.value = id
         persist { putString(KEY_AUDIO_EFFECT, id) }
     }
-    fun updateNotificationCover(value: Boolean) = synchronized(BackupStateLock.monitor) { showNotificationCover.value = value; persist { putBoolean(KEY_NOTIFICATION_COVER, value) } }
-    fun updatePlayQualityWifi(value: String) = synchronized(BackupStateLock.monitor) { playQualityWifi.value = value; persist { putString(KEY_QUALITY_WIFI, value) } }
-    fun updatePlayQualityMobile(value: String) = synchronized(BackupStateLock.monitor) { playQualityMobile.value = value; persist { putString(KEY_QUALITY_MOBILE, value) } }
-    fun updateMaxCacheMb(value: Int) = synchronized(BackupStateLock.monitor) { maxCacheMb.value = value; persist { putInt(KEY_MAX_CACHE_MB, value) } }
+    fun updateNotificationCover(value: Boolean) = update { showNotificationCover.value = value; persist { putBoolean(KEY_NOTIFICATION_COVER, value) } }
+    fun updatePlayQualityWifi(value: String) = update { playQualityWifi.value = value; persist { putString(KEY_QUALITY_WIFI, value) } }
+    fun updatePlayQualityMobile(value: String) = update { playQualityMobile.value = value; persist { putString(KEY_QUALITY_MOBILE, value) } }
+    fun updateMaxCacheMb(value: Int) = update { maxCacheMb.value = value; persist { putInt(KEY_MAX_CACHE_MB, value) } }
 
-    fun updateLocalUseMediaStore(value: Boolean) = synchronized(BackupStateLock.monitor) { localUseMediaStore.value = value; persist { putBoolean(KEY_LOCAL_MEDIA_STORE, value) } }
-    fun updateLocalFolders(value: List<String>) = synchronized(BackupStateLock.monitor) {
+    fun updateLocalUseMediaStore(value: Boolean) = update { localUseMediaStore.value = value; persist { putBoolean(KEY_LOCAL_MEDIA_STORE, value) } }
+    fun updateLocalFolders(value: List<String>) = update {
         localFolders.value = value
         persist { putString(KEY_LOCAL_FOLDERS, org.json.JSONArray(value).toString()) }
     }
-    fun updateLocalExcludeShort(value: Boolean) = synchronized(BackupStateLock.monitor) { localExcludeShort.value = value; persist { putBoolean(KEY_LOCAL_EXCLUDE_SHORT, value) } }
-    fun updateLocalExcludeSmall(value: Boolean) = synchronized(BackupStateLock.monitor) { localExcludeSmall.value = value; persist { putBoolean(KEY_LOCAL_EXCLUDE_SMALL, value) } }
-    fun updateLocalAutoFillInfo(value: Boolean) = synchronized(BackupStateLock.monitor) { localAutoFillInfo.value = value; persist { putBoolean(KEY_LOCAL_AUTO_FILL, value) } }
-    internal fun updateLocalSortField(value: LocalSortField) = synchronized(BackupStateLock.monitor) { localSortField.value = value; persist { putString(KEY_LOCAL_SORT_FIELD, value.storageValue) } }
-    internal fun updateLocalSortAscending(value: Boolean) = synchronized(BackupStateLock.monitor) { localSortAscending.value = value; persist { putBoolean(KEY_LOCAL_SORT_ASCENDING, value) } }
+    fun updateLocalExcludeShort(value: Boolean) = update { localExcludeShort.value = value; persist { putBoolean(KEY_LOCAL_EXCLUDE_SHORT, value) } }
+    fun updateLocalExcludeSmall(value: Boolean) = update { localExcludeSmall.value = value; persist { putBoolean(KEY_LOCAL_EXCLUDE_SMALL, value) } }
+    fun updateLocalAutoFillInfo(value: Boolean) = update { localAutoFillInfo.value = value; persist { putBoolean(KEY_LOCAL_AUTO_FILL, value) } }
+    internal fun updateLocalSortField(value: LocalSortField) = update { localSortField.value = value; persist { putString(KEY_LOCAL_SORT_FIELD, value.storageValue) } }
+    internal fun updateLocalSortAscending(value: Boolean) = update { localSortAscending.value = value; persist { putBoolean(KEY_LOCAL_SORT_ASCENDING, value) } }
 
-    fun updatePlayerLyrics(value: LyricsUiConfig) = synchronized(BackupStateLock.monitor) {
+    fun updatePlayerLyrics(value: LyricsUiConfig) = update {
         val normalized = value.normalized()
         playerLyrics.value = normalized
         persist { putString(KEY_PLAYER_LYRICS, normalized.toJson().toString()) }
     }
 
-    fun updateShowDesktopLyrics(value: Boolean) = synchronized(BackupStateLock.monitor) { showDesktopLyrics.value = value; persist { putBoolean(KEY_DESKTOP_LYRICS, value) } }
-    fun updateLockLyrics(value: Boolean) = synchronized(BackupStateLock.monitor) { lockLyrics.value = value; persist { putBoolean(KEY_LYRICS_LOCK, value) } }
-    fun updateSingleLine(value: Boolean) = synchronized(BackupStateLock.monitor) { singleLineLyric.value = value; persist { putBoolean(KEY_LYRICS_SINGLE_LINE, value) } }
-    fun updateLyricFontSize(value: Float) = synchronized(BackupStateLock.monitor) { lyricFontSize.value = value; persist { putFloat(KEY_LYRICS_FONT_SIZE, value) } }
-    fun updateLyricMaxLines(value: Float) = synchronized(BackupStateLock.monitor) { lyricMaxLines.value = value; persist { putFloat(KEY_LYRICS_MAX_LINES, value) } }
-    fun updateLyricAlpha(value: Float) = synchronized(BackupStateLock.monitor) { lyricAlpha.value = value; persist { putFloat(KEY_LYRICS_ALPHA, value) } }
-    fun updateLyricHAlign(value: Int) = synchronized(BackupStateLock.monitor) {
-        if (lyricHAlign.value == value) return@synchronized
+    fun updateShowDesktopLyrics(value: Boolean) = update { showDesktopLyrics.value = value; persist { putBoolean(KEY_DESKTOP_LYRICS, value) } }
+    fun updateLockLyrics(value: Boolean) = update { lockLyrics.value = value; persist { putBoolean(KEY_LYRICS_LOCK, value) } }
+    fun updateSingleLine(value: Boolean) = update { singleLineLyric.value = value; persist { putBoolean(KEY_LYRICS_SINGLE_LINE, value) } }
+    fun updateLyricFontSize(value: Float) = update { lyricFontSize.value = value; persist { putFloat(KEY_LYRICS_FONT_SIZE, value) } }
+    fun updateLyricMaxLines(value: Float) = update { lyricMaxLines.value = value; persist { putFloat(KEY_LYRICS_MAX_LINES, value) } }
+    fun updateLyricAlpha(value: Float) = update { lyricAlpha.value = value; persist { putFloat(KEY_LYRICS_ALPHA, value) } }
+    fun updateLyricHAlign(value: Int) = update {
+        if (lyricHAlign.value == value) return@update
         val position = desktopLyricPosition.value.copy(xFraction = null).normalized()
         lyricHAlign.value = value
         desktopLyricPosition.value = position
@@ -275,8 +280,8 @@ object MeloraSettings {
             putString(KEY_DESKTOP_LYRIC_POSITION, position.toJson().toString())
         }
     }
-    fun updateLyricVAlign(value: Int) = synchronized(BackupStateLock.monitor) {
-        if (lyricVAlign.value == value) return@synchronized
+    fun updateLyricVAlign(value: Int) = update {
+        if (lyricVAlign.value == value) return@update
         val position = desktopLyricPosition.value.copy(yFraction = null).normalized()
         lyricVAlign.value = value
         desktopLyricPosition.value = position
@@ -285,15 +290,15 @@ object MeloraSettings {
             putString(KEY_DESKTOP_LYRIC_POSITION, position.toJson().toString())
         }
     }
-    internal fun updateDesktopLyricPosition(value: DesktopLyricPosition) = synchronized(BackupStateLock.monitor) {
+    internal fun updateDesktopLyricPosition(value: DesktopLyricPosition) = update {
         val normalized = value.normalized()
         desktopLyricPosition.value = normalized
         persist { putString(KEY_DESKTOP_LYRIC_POSITION, normalized.toJson().toString()) }
     }
-    fun updateLyricColorIndex(value: Int) = synchronized(BackupStateLock.monitor) { lyricColorIndex.value = value; persist { putInt(KEY_LYRICS_COLOR_INDEX, value) } }
-    fun updateLyricBackground(value: Boolean) = synchronized(BackupStateLock.monitor) { lyricBackground.value = value; persist { putBoolean(KEY_LYRICS_BACKGROUND, value) } }
-    fun updateNotificationLyrics(value: Boolean) = synchronized(BackupStateLock.monitor) { notificationLyrics.value = value; persist { putBoolean(KEY_NOTIFICATION_LYRICS, value) } }
-    fun updateSourceAlias(value: Boolean) = synchronized(BackupStateLock.monitor) { sourceAliasEnabled.value = value; persist { putBoolean(KEY_SOURCE_ALIAS, value) } }
+    fun updateLyricColorIndex(value: Int) = update { lyricColorIndex.value = value; persist { putInt(KEY_LYRICS_COLOR_INDEX, value) } }
+    fun updateLyricBackground(value: Boolean) = update { lyricBackground.value = value; persist { putBoolean(KEY_LYRICS_BACKGROUND, value) } }
+    fun updateNotificationLyrics(value: Boolean) = update { notificationLyrics.value = value; persist { putBoolean(KEY_NOTIFICATION_LYRICS, value) } }
+    fun updateSourceAlias(value: Boolean) = update { sourceAliasEnabled.value = value; persist { putBoolean(KEY_SOURCE_ALIAS, value) } }
 
     const val DEFAULT_DOWNLOAD_PATH = "/storage/emulated/0/Music/Melora"
     internal const val KEY_AUTO_PLAY = "basic.autoPlayOnStart"

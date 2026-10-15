@@ -1,6 +1,8 @@
 package com.leyu.melora.playback.sdk
 
 import java.util.Calendar
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import org.json.JSONObject
 
 /** 在线歌曲：包装 musicSdk 归一化后的 old-format JSON（与音源脚本互通）。 */
@@ -106,15 +108,16 @@ internal fun qualityBadgeForCapabilities(qualities: Iterable<String>): String? {
 internal fun Iterable<OnlineSong>.musicOnly(): List<OnlineSong> = filterNot(OnlineSong::isBookChapter)
 
 private fun inferredSongPageHasMore(
-    pageItemCount: Int,
+    rawCount: Int,
+    pageSize: Int,
     total: Int,
     page: Int,
     allPage: Int,
     loadedCount: Int,
-): Boolean = pageItemCount > 0 && when {
+): Boolean = rawCount > 0 && when {
     allPage > 0 -> page < allPage
     total > 0 -> loadedCount < total
-    else -> pageItemCount >= 30
+    else -> rawCount >= pageSize
 }
 
 data class SongPage(
@@ -129,10 +132,13 @@ data class SongPage(
     val playlistCover: String? = null,
     val pageSize: Int = 30,
     val rawCount: Int = list.size,
+    /** 实际收到的原始条目累计；不能用去重/过滤后的展示数量代替。 */
+    val receivedCount: Int = rawCount,
 ) {
     /** 优先使用已保存的合并快照状态；未知总数时才以当前页满页推断。 */
-    fun hasMore(loadedCount: Int = list.size): Boolean = snapshotHasMore ?: inferredSongPageHasMore(
-        pageItemCount = list.size,
+    fun hasMore(loadedCount: Int = receivedCount): Boolean = snapshotHasMore ?: inferredSongPageHasMore(
+        rawCount = rawCount,
+        pageSize = pageSize,
         total = total,
         page = page,
         allPage = allPage,
@@ -145,11 +151,12 @@ data class SongPage(
         return copy(
             page = cursor,
             snapshotHasMore = inferredSongPageHasMore(
-                pageItemCount = list.size,
+                rawCount = rawCount,
+                pageSize = pageSize,
                 total = total,
                 page = cursor,
                 allPage = allPage,
-                loadedCount = list.size,
+                loadedCount = receivedCount,
             ),
         )
     }
@@ -160,21 +167,44 @@ data class SongPage(
         val merged = (list + next.list).distinctBy(OnlineSong::uid)
         val resolvedTotal = next.total.takeIf { it > 0 } ?: total
         val resolvedAllPage = next.allPage.takeIf { it > 0 } ?: allPage
+        val received = receivedCount + next.rawCount
         val nextHasMore = next.snapshotHasMore ?: inferredSongPageHasMore(
-            pageItemCount = next.list.size,
+            rawCount = next.rawCount,
+            pageSize = next.pageSize,
             total = resolvedTotal,
             page = cursor,
             allPage = resolvedAllPage,
-            loadedCount = merged.size,
+            loadedCount = received,
         )
         return SongPage(
             list = merged,
             total = resolvedTotal,
             page = cursor,
             allPage = resolvedAllPage,
-            snapshotHasMore = next.list.isNotEmpty() && merged.size > list.size && nextHasMore,
+            snapshotHasMore = next.rawCount > 0 &&
+                (next.list.isEmpty() || merged.size > list.size) && nextHasMore,
+            playlistName = next.playlistName ?: playlistName,
+            playlistCover = next.playlistCover ?: playlistCover,
+            pageSize = next.pageSize,
+            rawCount = next.rawCount,
+            receivedCount = received,
         )
     }
+}
+
+/** 首屏没有可滚动行时跨过全过滤页；未知总数的异常响应也不能无界读取。 */
+internal suspend fun SongPage.loadUntilPlayable(fetch: suspend (Int) -> SongPage): SongPage {
+    var snapshot = this
+    var skipped = 0
+    while (snapshot.list.isEmpty() && snapshot.hasMore()) {
+        currentCoroutineContext().ensureActive()
+        check(skipped++ < 500) { "目录连续返回不可用条目，请重试" }
+        val nextPage = snapshot.page + 1
+        val next = fetch(nextPage)
+        currentCoroutineContext().ensureActive()
+        snapshot = snapshot.append(next, nextPage)
+    }
+    return snapshot
 }
 
 data class OnlinePlaylist(val raw: JSONObject) {

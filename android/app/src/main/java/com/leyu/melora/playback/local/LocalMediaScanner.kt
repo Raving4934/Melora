@@ -294,6 +294,8 @@ object LocalMediaScanner {
             // DocumentFile.listFiles会吞查询异常并返回空数组；直接查询才能区别“空目录”和“扫描失败”。
             val cursor = query(context, children, projection)
             cursor.use {
+                // SAF 可先返回空/部分结果；任一子目录未加载完时，整棵树沿用扫描前的索引。
+                check(!it.extras.getBoolean(DocumentsContract.EXTRA_LOADING, false)) { "自定义目录仍在加载" }
                 while (it.moveToNext()) {
                     currentCoroutineContext().ensureActive()
                     val id = it.getString(0) ?: error("目录条目缺少ID")

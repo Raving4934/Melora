@@ -1,5 +1,6 @@
 package com.leyu.melora.playback
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
 import com.leyu.melora.playback.lx.LxScriptStore
@@ -7,25 +8,56 @@ import java.io.File
 import java.util.UUID
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /** 设置、用户库与源文件的短暂持久化临界区；常规更新和恢复共用，不跨挂起点持锁。 */
-internal object BackupStateLock { val monitor = Any() }
+internal object BackupStateLock {
+    val monitor = Any()
+
+    /** 未完成的回滚必须先解决，再读取候选状态和接受下一次保存。 */
+    inline fun <T> write(block: () -> T): T = synchronized(monitor) {
+        BackupRestoreTransaction.ensureWritable()
+        block()
+    }
+}
 
 /** 可恢复提交：先落盘原始快照，异常回滚；进程中断由启动屏障先回滚，再初始化播放器。 */
+// 仅保存 applicationContext，绝不持有 Activity；未完成恢复期间必须强引用，恢复/保留成功即清空。
+@SuppressLint("StaticFieldLeak")
 internal object BackupRestoreTransaction {
+    private var pendingRecovery: Context? = null
+    private val _failure = MutableStateFlow<Exception?>(null)
+    val failure = _failure.asStateFlow()
+
+    internal fun ensureWritable() {
+        check(Thread.holdsLock(BackupStateLock.monitor))
+        pendingRecovery?.let(::recover)
+    }
+
     private fun directory(context: Context) = File(context.filesDir, "backup-restore")
     private val libraryFiles = listOf("user-library.json", "user-library.json.bak", "user-library.json.tmp")
     private val preferenceNames = listOf(MeloraSettings.PREFS, LxScriptStore.PREFS)
 
     fun recover(context: Context) = synchronized(BackupStateLock.monitor) {
-        val journal = directory(context)
-        if (!journal.exists()) return@synchronized
-        if (File(journal, "ready").isFile && !File(journal, "committed").isFile) {
-            rollback(context, journal)
-            MeloraSettings.reloadAfterRestore()
-            UserLibrary.reloadAfterRestore()
+        try {
+            val journal = directory(context)
+            if (journal.exists()) {
+                if (File(journal, "ready").isFile && !File(journal, "committed").isFile) {
+                    rollback(context, journal)
+                    MeloraSettings.reloadAfterRestore()
+                    UserLibrary.reloadAfterRestore()
+                }
+                check(journal.deleteRecursively()) { "无法清理恢复日志" }
+            }
+            pendingRecovery = null
+            _failure.value = null
+        } catch (error: Exception) {
+            // 在释放共用写锁之前关闸，运行中导入失败与冷启动恢复使用同一状态。
+            pendingRecovery = context.applicationContext
+            _failure.value = error
+            throw error
         }
-        check(journal.deleteRecursively()) { "无法清理恢复日志" }
     }
 
     /** 单独暴露准备阶段给故障恢复测试；正式入口始终通过run提交。 */
@@ -70,12 +102,28 @@ internal object BackupRestoreTransaction {
         }
     }
 
-    /** 仅在用户明确选择继续时保留整个现场；原子改名，不删除、不覆盖现有数据。 */
+    /** 先确认当前偏好落盘，再原子改名保留现场；失败仍由原日志保护。 */
     fun retain(context: Context): File = synchronized(BackupStateLock.monitor) {
-        val journal = directory(context)
-        val retained = File(context.filesDir, "backup-restore-retained-${UUID.randomUUID()}")
-        check(journal.isDirectory && journal.renameTo(retained)) { "无法保留恢复快照，请释放存储空间后重试" }
-        retained
+        try {
+            val journal = directory(context)
+            check(journal.isDirectory) { "无法保留恢复快照，请释放存储空间后重试" }
+            // commit=false 也可能已更新 SharedPreferences 缓存，必须确认两组当前值均落盘。
+            preferenceNames.forEach { name ->
+                val prefs = context.getSharedPreferences(name, Context.MODE_PRIVATE)
+                prefs.replaceValues(prefs.all, clear = true)
+            }
+            MeloraSettings.reloadAfterRestore()
+            UserLibrary.reloadAfterRestore()
+            val retained = File(context.filesDir, "backup-restore-retained-${UUID.randomUUID()}")
+            check(journal.renameTo(retained)) { "无法保留恢复快照，请释放存储空间后重试" }
+            pendingRecovery = null
+            _failure.value = null
+            retained
+        } catch (error: Exception) {
+            pendingRecovery = context.applicationContext
+            _failure.value = error
+            throw error
+        }
     }
 
     private fun rollback(context: Context, journal: File) {

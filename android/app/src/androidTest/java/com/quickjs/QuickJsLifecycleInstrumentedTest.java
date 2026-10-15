@@ -5,6 +5,11 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -87,6 +92,54 @@ public class QuickJsLifecycleInstrumentedTest {
         }
         runtime.close();
         runtime.close();
+    }
+
+    @Test(timeout = 30000)
+    public void concurrentRuntimeCloseReleasesOnlyOwnedContextsOutsideTheRegistryLock() throws Exception {
+        int workers = 4;
+        CyclicBarrier closing = new CyclicBarrier(workers);
+        ExecutorService executor = Executors.newFixedThreadPool(workers);
+        List<Future<?>> results = new ArrayList<>();
+        try (QuickJS survivor = QuickJS.createRuntimeWithEventQueue(); JSContext survivorContext = survivor.createContext()) {
+            for (int worker = 0; worker < workers; worker++) {
+                results.add(executor.submit(() -> {
+                    for (int round = 0; round < 64; round++) {
+                        try (QuickJS runtime = QuickJS.createRuntime()) {
+                            List<JSContext> contexts = new ArrayList<>();
+                            for (int index = 0; index < 4; index++) {
+                                JSContext context = runtime.createContext();
+                                context.addPlugin(new Plugin() {
+                                    @Override protected void setup(JSContext context) { }
+                                    @Override protected void close(JSContext context) {
+                                        assertFalse("context cleanup must not hold the global registry lock",
+                                                Thread.holdsLock(QuickJS.sContextMap));
+                                    }
+                                });
+                                contexts.add(context);
+                            }
+                            closing.await(5, TimeUnit.SECONDS);
+                            runtime.close();
+                            assertTrue("every runtime must finish closing", runtime.isReleased());
+                            for (JSContext context : contexts) {
+                                assertTrue("runtime close must release every owned context", context.released);
+                                assertNotSame("released contexts must leave the registry", context,
+                                        QuickJS.sContextMap.get(context.getContextPtr()));
+                            }
+                            // 本轮全部关闭完成后才重新分配native指针，隔离并发关闭这一条链路。
+                            closing.await(5, TimeUnit.SECONDS);
+                        }
+                    }
+                    return null;
+                }));
+            }
+            for (Future<?> result : results) result.get(20, TimeUnit.SECONDS);
+            assertFalse(survivor.isReleased());
+            assertFalse(survivorContext.released);
+            assertEquals(42, survivorContext.executeIntegerScript("6 * 7", "after-concurrent-close.js"));
+        } finally {
+            executor.shutdownNow();
+            assertTrue("runtime close workers must terminate", executor.awaitTermination(5, TimeUnit.SECONDS));
+        }
     }
 
     @Test

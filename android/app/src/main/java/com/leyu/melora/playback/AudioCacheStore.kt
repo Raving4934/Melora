@@ -392,8 +392,7 @@ object AudioCacheStore {
             )
             evictor = dynamicEvictor
             cache = created
-            // 存量缓存可能达到数 GB；LRU 账本重建禁止阻塞 PlaybackService.onCreate 主线程。
-            scope.launch { dynamicEvictor.attach(created) }
+            // LRU账本由SimpleCache初始化线程在onCacheInitialized统一重建，不另起重复扫描。
             return created
         }
     }

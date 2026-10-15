@@ -100,7 +100,14 @@ class MainActivity : ComponentActivity() {
         requestHighRefreshRate()
         observeLocalTagWriteAuthorization()
         val app = application as MeloraApplication
-        app.restoreFailure?.let { showStartupRecovery(it) }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                BackupRestoreTransaction.failure.collect { failure ->
+                    if (failure != null) showStartupRecovery(failure)
+                    else { recoveryDialog?.dismiss(); recoveryDialog = null }
+                }
+            }
+        }
         lifecycleScope.launch {
             app.awaitStartup()
             val initialTab = resolveStartupTab(
@@ -135,7 +142,7 @@ class MainActivity : ComponentActivity() {
             builder.context.theme.resolveAttribute(android.R.attr.textColorSecondary, it, true)
         }.data
         val message = SpannableStringBuilder(
-            "恢复记录损坏或无法读取，尚未载入应用数据。请勿清除应用数据。\n\n" +
+            "恢复尚未完成，已暂停保存设置与用户库。请勿清除应用数据。\n\n" +
                 "可释放存储空间后重试；或保留恢复快照，使用当前数据继续（内容可能不完整）。\n\n",
         ).apply {
             val detailStart = length

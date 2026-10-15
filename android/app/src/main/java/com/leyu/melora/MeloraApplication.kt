@@ -15,6 +15,7 @@ import coil3.SingletonImageLoader
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.request.crossfade
 import com.leyu.melora.playback.BackupManager
+import com.leyu.melora.playback.BackupRestoreTransaction
 import com.leyu.melora.playback.CrashLogger
 import com.leyu.melora.playback.DownloadCenter
 import com.leyu.melora.playback.MeloraSettings
@@ -38,8 +39,7 @@ class MeloraApplication : Application(), SingletonImageLoader.Factory {
     private val startupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val startupReady = CompletableDeferred<Unit>()
     private var startupStarted = false
-    @Volatile internal var restoreFailure: Exception? = null
-        private set
+    internal val restoreFailure: Exception? get() = BackupRestoreTransaction.failure.value
 
     override fun onCreate() {
         super.onCreate()
@@ -50,14 +50,18 @@ class MeloraApplication : Application(), SingletonImageLoader.Factory {
 
     /** 恢复失败只开放恢复入口；不让界面或后台服务使用半回滚的数据。 */
     internal fun continueStartup(): Boolean {
-        if (startupStarted) return true
         try {
             BackupManager.recoverInterruptedRestore(this)
-            restoreFailure = null
         } catch (error: Exception) {
-            restoreFailure = error
             Log.e(TAG, "启动恢复未完成，已保留现场", error)
             return false
+        }
+        if (startupStarted) {
+            startupScope.launch {
+                val warning = BackupManager.syncRestoredRuntime(this@MeloraApplication, emptySet())
+                if (warning.isNotEmpty()) Log.w(TAG, warning)
+            }
+            return true
         }
         MeloraSettings.init(this)
         startupStarted = true

@@ -766,7 +766,7 @@ class PlayerSheetNavigationInstrumentedTest {
     }
 
     @Test fun miniQueueBackAndHeaderCloseReturnToTheUnderlyingPage() {
-        show()
+        show(forcePortrait = true)
         openQueue()
         Espresso.pressBack()
         assertCollapsed()
@@ -779,7 +779,7 @@ class PlayerSheetNavigationInstrumentedTest {
     }
 
     @Test fun queueOpenedFromFullPlayerReturnsToThatPlayerBeforeCollapsing() {
-        show()
+        show(forcePortrait = true)
         expand()
         compose.onNodeWithTag("player-pages").performTouchInput { swipeRight() }
         compose.awaitStable("player-page-0")
@@ -801,7 +801,7 @@ class PlayerSheetNavigationInstrumentedTest {
     }
 
     @Test fun queueOpenedFromLyricsReturnsToLyricsNotCover() {
-        show()
+        show(forcePortrait = true)
         expand()
         compose.onNodeWithTag("player-pages").performTouchInput { swipeLeft() }
         compose.awaitStable("player-page-2")
@@ -814,7 +814,7 @@ class PlayerSheetNavigationInstrumentedTest {
     }
 
     @Test fun lyricsBackCollapsesInOneStepRatherThanReturningToCover() {
-        show()
+        show(forcePortrait = true)
         expand()
         compose.onNodeWithTag("player-pages").performTouchInput { swipeLeft() }
         compose.awaitStable("player-page-2")
@@ -823,7 +823,7 @@ class PlayerSheetNavigationInstrumentedTest {
     }
 
     @Test fun informationBackAlsoCollapsesInOneStep() {
-        show()
+        show(forcePortrait = true)
         expand()
         compose.onNodeWithTag("player-pages").performTouchInput { swipeRight() }
         compose.awaitStable("player-page-0")

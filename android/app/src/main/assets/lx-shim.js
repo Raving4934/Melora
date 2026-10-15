@@ -7,6 +7,36 @@
   const handlers = Object.create(null)
   let invokeResult = undefined
   let invokeGeneration = 0
+  let requestScope = null
+  let currentScope = null
+
+  const inScope = (scope, callback, args) => {
+    if (scope && !scope.active) return
+    const previous = currentScope
+    currentScope = scope
+    try {
+      return callback(...args)
+    } finally {
+      currentScope = previous
+    }
+  }
+
+  // Promise 回调与定时器一样继承注册时的所有者，不能借用下一次请求的宿主 budget。
+  const promiseThen = Promise.prototype.then
+  Promise.prototype.then = function (onFulfilled, onRejected) {
+    const scope = currentScope
+    const bind = (callback) => typeof callback === 'function'
+      ? (value) => inScope(scope, callback, [value])
+      : callback
+    return promiseThen.call(this, bind(onFulfilled), bind(onRejected))
+  }
+
+  // 内置 SDK 直接使用 __lxNative.http，也必须经过同一个作用域校验。
+  const nativeHttp = native.http
+  native.http = (payload) => {
+    if (currentScope && !currentScope.active) throw new Error('脚本请求已结束')
+    return nativeHttp.call(native, payload, currentScope ? currentScope.id : '')
+  }
 
   // 控制台与定时器：QuickJS 无宿主事件循环，定时器由 Kotlin 泵每轮调用 __lxTick 触发。
   if (typeof globalThis.console === 'undefined') {
@@ -28,42 +58,56 @@
     }
   }
 
-  const timerList = []
+  const timers = new Map()
   let timerSeq = 0
-  globalThis.setTimeout = (handler, timeout, ...args) => {
+  const addTimer = (handler, timeout, args, repeat) => {
     const id = ++timerSeq
-    timerList.push({ id, at: Date.now() + (Number(timeout) || 0), handler, args, repeat: 0 })
+    if (!currentScope || currentScope.active) {
+      timers.set(id, { id, at: Date.now() + (Number(timeout) || 0), handler, args, repeat, scope: currentScope })
+    }
     return id
+  }
+  globalThis.setTimeout = (handler, timeout, ...args) => {
+    return addTimer(handler, timeout, args, 0)
   }
   globalThis.setInterval = (handler, timeout, ...args) => {
-    const id = ++timerSeq
-    timerList.push({ id, at: Date.now() + (Number(timeout) || 0), handler, args, repeat: Math.max(Number(timeout) || 0, 16) })
-    return id
+    return addTimer(handler, timeout, args, Math.max(Number(timeout) || 0, 16))
   }
-  const clearTimer = (id) => {
-    const index = timerList.findIndex((timer) => timer.id === id)
-    if (index >= 0) timerList.splice(index, 1)
-  }
+  const clearTimer = (id) => { timers.delete(id) }
   globalThis.clearTimeout = clearTimer
   globalThis.clearInterval = clearTimer
 
+  globalThis.__lxBeginRequest = (id) => {
+    if (requestScope) throw new Error('脚本请求尚未结束')
+    requestScope = { id, active: true }
+    currentScope = requestScope
+  }
+
+  globalThis.__lxEndRequest = (id) => {
+    const scope = requestScope
+    if (!scope || scope.id !== id) return
+    scope.active = false
+    for (const [timerId, timer] of timers) {
+      if (timer.scope === scope) timers.delete(timerId)
+    }
+    requestScope = null
+    if (currentScope === scope) currentScope = null
+    ++invokeGeneration
+    invokeResult = undefined
+  }
+
   globalThis.__lxTick = () => {
     const now = Date.now()
-    for (let i = 0; i < timerList.length;) {
-      const timer = timerList[i]
-      if (timer.at > now) {
-        i++
-        continue
-      }
+    // 回调可以取消自身/其它定时器；快照避免下标移动漏跑相邻回调。
+    for (const timer of [...timers.values()]) {
+      if (!timers.has(timer.id) || timer.at > now) continue
       if (timer.repeat > 0) timer.at = now + timer.repeat
-      else timerList.splice(i, 1)
+      else timers.delete(timer.id)
       try {
-        timer.handler(...timer.args)
+        inScope(timer.scope, timer.handler, timer.args)
       } catch (error) {
         globalThis.console.error('定时器回调异常: ' + String((error && error.message) || error))
       }
-      if (timer.repeat === 0) continue
-      i++
     }
   }
 

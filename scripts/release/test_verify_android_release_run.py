@@ -83,6 +83,7 @@ class FakeApi:
             "workflow_run": {"id": RUN_ID, "repository_id": 1373633612},
         }]
         self.logs = build_log()
+        self.jobs_by_attempt: dict[int, list[dict[str, object]]] = {}
         self.calls: list[tuple[str, object]] = []
 
     @staticmethod
@@ -114,7 +115,8 @@ class FakeApi:
     def get_paginated(self, path: str, *, result_key: str) -> list[dict[str, object]]:
         self.calls.append(("get_paginated", (path, result_key)))
         if "/attempts/" in path and path.endswith("/jobs?per_page=100") and result_key == "jobs":
-            return self.jobs
+            attempt = int(path.split("/attempts/")[1].split("/")[0])
+            return self.jobs_by_attempt.get(attempt, self.jobs)
         if path.endswith("/artifacts?per_page=100") and result_key == "artifacts":
             return self.artifacts
         raise AssertionError(f"unexpected paginated GET {path} ({result_key})")
@@ -251,6 +253,44 @@ class VerifyAndroidReleaseRunTest(unittest.TestCase):
         self.api.artifacts.append(dict(self.api.artifacts[0]))
         with self.assertRaisesRegex(VerificationError, "found 2"):
             self.verify()
+
+    def test_publisher_only_rerun_uses_the_original_complete_build_attempt(self) -> None:
+        self.api.jobs_by_attempt[1] = self.api.jobs
+        release = FakeApi.job("release", 107, "failure")
+        release["run_attempt"] = 2
+        self.api.jobs_by_attempt[2] = [release]
+        self.api.run["run_attempt"] = 2
+        result = self.verify()
+        self.assertEqual(11703074332, result["artifact_id"])
+        self.assertIn(("get_paginated", (
+            f"/repos/{REPOSITORY}/actions/runs/{RUN_ID}/attempts/1/jobs?per_page=100", "jobs",
+        )), self.api.calls)
+
+    def test_newer_failed_build_cannot_fall_back_to_older_green_artifact(self) -> None:
+        self.api.run["run_attempt"] = 2
+        self.api.jobs_by_attempt[1] = self.api.jobs
+        second = [dict(job, run_attempt=2) for job in self.api.jobs]
+        second[1]["conclusion"] = "failure"
+        self.api.jobs_by_attempt[2] = second
+        self.api.artifacts.append(dict(self.api.artifacts[0],
+            id=11703074333, name=f"android-release-assets-{RUN_ID}-2"))
+        with self.assertRaisesRegex(VerificationError, "verify.*successfully"):
+            self.verify()
+
+    def test_original_build_gates_are_not_replaced_with_newer_job_results(self) -> None:
+        self.api.run["run_attempt"] = 2
+        self.api.jobs_by_attempt[2] = [dict(job, run_attempt=2) for job in self.api.jobs]
+        self.api.jobs[1]["conclusion"] = "failure"
+        self.api.jobs_by_attempt[1] = self.api.jobs
+        with self.assertRaisesRegex(VerificationError, "verify.*successfully"):
+            self.verify()
+
+    def test_artifact_attempt_outside_the_run_is_rejected(self) -> None:
+        for suffix in ("0", "2", "01", "not-a-number"):
+            with self.subTest(suffix=suffix):
+                self.api.artifacts[0]["name"] = f"android-release-assets-{RUN_ID}-{suffix}"
+                with self.assertRaises(VerificationError):
+                    self.verify()
 
     def test_cli_writes_only_verified_numeric_ids_and_tag_version(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

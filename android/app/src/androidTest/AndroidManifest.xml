@@ -14,5 +14,20 @@
             android:permission="android.permission.MANAGE_DOCUMENTS"
             android:exported="true"
             android:grantUriPermissions="true" />
+        <provider
+            android:name="com.leyu.melora.playback.local.LocalTagWriteProvider"
+            android:authorities="${applicationId}.local-tag-fixture"
+            android:exported="true"
+            android:grantUriPermissions="true" />
+        <provider
+            android:name="com.leyu.melora.playback.local.LoadingDocumentsProvider"
+            android:authorities="${applicationId}.scanner-fixture"
+            android:permission="android.permission.MANAGE_DOCUMENTS"
+            android:exported="true"
+            android:grantUriPermissions="true">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
     </application>
 </manifest>

@@ -174,12 +174,15 @@ jobs:
         run: |
           set -euo pipefail
           python3 -B scripts/release/test_verify_public_repository.py
+          python3 -B scripts/release/test_verify_android_release_run.py
           python3 -B scripts/release/test_verify_android_apk.py
           python3 -B scripts/release/test_licenses.py
           python3 -B scripts/release/test_export_changelog_section.py
           python3 -B scripts/release/test_github_api.py
           python3 -B scripts/release/test_publish_android_release.py
           python3 -B scripts/release/test_release_workflows.py
+      - name: 验证 QuickJS JNI 字符串所有权
+        run: python3 -B android/quickjs-android/tests/test_jni_utf_resources.py
       - name: 执行 Android 单元测试与 lint
         working-directory: android
         shell: bash

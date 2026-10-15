@@ -4,11 +4,11 @@ import android.app.RecoverableSecurityException
 import android.content.Context
 import android.net.Uri
 import android.os.Build
+import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.util.Log
 import androidx.activity.result.IntentSenderRequest
 import androidx.core.net.toUri
-import androidx.documentfile.provider.DocumentFile
 import com.leyu.melora.playback.DownloadMetadataWriter
 import com.leyu.melora.playback.EmbeddedLyrics
 import com.leyu.melora.playback.LyricParser
@@ -27,7 +27,9 @@ import java.io.Closeable
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
 import java.io.IOException
+import java.io.InputStream
 import java.io.OutputStream
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
@@ -42,6 +44,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONObject
 
 /** 待系统确认的媒体文件标签写入。只暴露启动授权所需数据，写入内容继续封装在本地补全器中。 */
 internal data class LocalTagWriteAuthorization(
@@ -324,8 +327,6 @@ object LocalTagFiller {
             requireNotNull(local)
             val extension = requireNotNull(request.extension) { "不支持的音频容器" }
             val uri = local.uri.toUri()
-            // file读取仍在写租约前进行，避免嵌套读锁；拿到写租约后重新核对真实文件版本。
-            val prepared = if (uri.scheme == "file") request.preservingContent(context, local, local.uri) else request
             LocalMediaIoCoordinator.withWrite(context, uri) {
                 if (shouldDeferWrite(request)) TagWriteOutcome.Deferred else {
                     check(request.local.sameFileVersion(LocalMediaStore.find(local.id))) {
@@ -336,7 +337,7 @@ object LocalTagFiller {
                             checkStorageState(context, local)
                             val file = uri.path?.let(::File)?.takeIf { it.isFile && it.canWrite() }
                                 ?: error("文件不存在或不可写")
-                            writeMetadata(file, extension, local, prepared)
+                            writeMetadata(file, extension, local, request)
                             TagWriteOutcome.Written(refreshStorageState(context, local))
                         }
                         "content" -> writeContentTags(context, local, uri, extension, request, allowAuthorization)
@@ -360,14 +361,25 @@ object LocalTagFiller {
         allowAuthorization: Boolean,
     ): TagWriteOutcome {
         val root = File(context.filesDir, "local-tag-writes")
+        var writtenVersion: StorageVersion? = null
         val transaction = try {
             // 上次恢复未获授权时保留原件；同一 URI 再次写入前必须先恢复，不能备份损坏文件。
-            ContentTagWrite.recover(root, uri.toString()) { target ->
+            ContentTagWrite.recover(root, uri.toString(), onRestored = { target, original ->
+                recordRestoredVersion(context, target, original)
+            }) { target ->
                 context.contentResolver.openOutputStream(target.toUri(), "rwt") ?: error("无法恢复媒体文件")
             }
             checkStorageState(context, local)
             root.mkdirs()
-            ContentTagWrite(Files.createTempDirectory(root.toPath(), "write-").toFile())
+            ContentTagWrite(Files.createTempDirectory(root.toPath(), "write-").toFile(),
+                onRestored = { target, original -> recordRestoredVersion(context, target, original) },
+                onWritten = { target, rewritten ->
+                    val actual = storageVersion(context, target.toUri())
+                    if (actual.modifiedAt == null && local.modifiedAt > 0L) {
+                        recordRestoredVersion(context, target, rewritten, actual)
+                    } else restoredVersionFile(context, target).delete()
+                    writtenVersion = actual
+                })
         } catch (error: Exception) {
             if (error is CancellationException) throw error
             if (error is SecurityException && allowAuthorization) return TagWriteOutcome.NeedsAuthorization(error)
@@ -381,12 +393,13 @@ object LocalTagFiller {
                 }
             } ?: error("无法读取媒体文件")
             transaction.original.copyTo(transaction.rewritten)
-            writeMetadata(transaction.rewritten, extension, local,
-                request.preservingContent(context, local, transaction.original.toURI().toString()))
+            writeMetadata(transaction.rewritten, extension, local, request)
             transaction.overwrite(uri.toString()) {
                 context.contentResolver.openOutputStream(uri, "rwt") ?: error("无法打开媒体文件写入流")
             }
-            return TagWriteOutcome.Written(refreshStorageState(context, local))
+            val actual = checkNotNull(writtenVersion)
+            return TagWriteOutcome.Written(local.copy(sizeBytes = actual.sizeBytes ?: local.sizeBytes,
+                modifiedAt = actual.modifiedAt ?: local.modifiedAt))
         } catch (error: Throwable) {
             if (error is CancellationException) {
                 if (transaction.pending) PlaybackController.postMessage(context,
@@ -406,7 +419,9 @@ object LocalTagFiller {
         val root = File(context.filesDir, "local-tag-writes")
         root.listFiles()?.filter(File::isDirectory)?.forEach { directory ->
             try {
-                ContentTagWrite(directory).use { transaction ->
+                ContentTagWrite(directory, onRestored = { target, original ->
+                    recordRestoredVersion(context, target, original)
+                }).use { transaction ->
                     transaction.recover { target ->
                         context.contentResolver.openOutputStream(target.toUri(), "rwt")
                             ?: error("无法恢复媒体文件")
@@ -418,15 +433,6 @@ object LocalTagFiller {
             }
         }
     }
-
-    private fun PendingTagWrite.preservingContent(context: Context, local: LocalSong, readUri: String) = copy(
-        coverBytes = when {
-            manual -> null
-            gaps.cover -> coverBytes
-            else -> LocalTagReader.embeddedPicture(context, readUri) ?: readCachedCover(context, local.coverUri)
-        },
-        lyric = if (gaps.lyric) lyric else LocalTagReader.embeddedLyrics(context, readUri, local.mimeType),
-    )
 
     private fun writeMetadata(
         file: File,
@@ -440,8 +446,9 @@ object LocalTagFiller {
             title = if (request.manual) "" else local.title.ifBlank { request.matched?.name.orEmpty() },
             artist = if (request.manual) "" else local.artist.ifBlank { request.matched?.singer.orEmpty() },
             album = if (request.manual) "" else local.album.ifBlank { request.matched?.albumName.orEmpty() },
-            cover = request.coverBytes,
-            lyric = request.lyric,
+            // null 表示不修改；不要把已有内容解码后重写，否则会丢失 APIC 类型/描述及其他原始帧。
+            cover = if (request.gaps.cover) request.coverBytes else null,
+            lyric = if (request.gaps.lyric) request.lyric else null,
             year = if (request.manual) null else local.year.takeIf { it in 1900..2100 } ?: request.matched?.year,
         )
     }
@@ -547,35 +554,113 @@ object LocalTagFiller {
         ?.id
 
     private fun checkStorageState(context: Context, song: LocalSong) {
-        val actual = refreshStorageState(context, song)
-        // 旧索引的0表示未知；Provider恢复相同原件也会改变mtime，不能将其当作媒体版本号。
-        val sizeChanged = song.sizeBytes > 0L && song.sizeBytes != actual.sizeBytes
-        val timeChanged = song.uri.toUri().scheme == "file" && song.modifiedAt > 0L && song.modifiedAt != actual.modifiedAt
+        val actual = storageVersion(context, song.uri.toUri())
+        val receiptFile = restoredVersionFile(context, song.uri)
+        val restored = readRestoredVersion(receiptFile, song.uri)
+        // 只信任本应用成功恢复后持久化的精确版本，不豁免后续外部替换。
+        val ownRestore = when {
+            actual.modifiedAt != null && actual == restored?.storage -> true
+            // 恢复时 Provider 可能暂不提供 mtime：只在原始内容散列相同且读取期间版本稳定时协调新版本。
+            restored?.storage?.modifiedAt == null && restored?.sha256 != null && actual.modifiedAt != null -> {
+                val matches = context.contentResolver.openInputStream(song.uri.toUri())?.use { sha256(it) } == restored.sha256
+                if (matches && storageVersion(context, song.uri.toUri()) == actual) {
+                    writeRestoredVersion(receiptFile, song.uri, RestoredVersion(actual))
+                    true
+                } else false
+            }
+            else -> false
+        }
+        val previous = restored?.storage
+        if (!ownRestore && previous != null &&
+            ((actual.sizeBytes != null && previous.sizeBytes != null && actual.sizeBytes != previous.sizeBytes) ||
+                (actual.modifiedAt != null && actual.modifiedAt != previous.modifiedAt))) receiptFile.delete()
+        // 旧索引的 0 和 Provider 的 null 均表示未知；真实零长度仍必须拒绝旧请求。
+        val sizeChanged = song.sizeBytes > 0L && actual.sizeBytes != null && song.sizeBytes != actual.sizeBytes
+        val timeChanged = song.modifiedAt > 0L && actual.modifiedAt != null && song.modifiedAt != actual.modifiedAt && !ownRestore
         check(!sizeChanged && !timeChanged) { "本地文件已变化，请重新读取后再写入" }
     }
 
     private fun refreshStorageState(context: Context, song: LocalSong): LocalSong {
-        val uri = song.uri.toUri()
-        val file = writableFile(song.uri)
+        val actual = storageVersion(context, song.uri.toUri())
+        return song.copy(sizeBytes = actual.sizeBytes ?: song.sizeBytes, modifiedAt = actual.modifiedAt ?: song.modifiedAt)
+    }
+
+    private data class StorageVersion(val sizeBytes: Long? = null, val modifiedAt: Long? = null)
+    private data class RestoredVersion(val storage: StorageVersion, val sha256: String? = null)
+
+    private fun storageVersion(context: Context, uri: Uri): StorageVersion {
+        val file = writableFile(uri.toString())
         if (file != null) {
-            return song.copy(
+            return StorageVersion(
                 sizeBytes = file.length(),
-                modifiedAt = file.lastModified().takeIf { it > 0L } ?: song.modifiedAt,
+                modifiedAt = file.lastModified().takeIf { it > 0L },
             )
         }
-        if (uri.authority == MediaStore.AUTHORITY) {
-            val columns = arrayOf(MediaStore.MediaColumns.SIZE, MediaStore.MediaColumns.DATE_MODIFIED)
-            return context.contentResolver.query(uri, columns, null, null, null)?.use { cursor ->
-                if (!cursor.moveToFirst()) return@use song
-                song.copy(sizeBytes = cursor.getLong(0).takeIf { it > 0L } ?: song.sizeBytes,
-                    modifiedAt = (cursor.getLong(1) * 1000L).takeIf { it > 0L } ?: song.modifiedAt)
-            } ?: song
+        val media = uri.authority == MediaStore.AUTHORITY
+        val columns = if (media) arrayOf(MediaStore.MediaColumns.SIZE, MediaStore.MediaColumns.DATE_MODIFIED)
+            else arrayOf(DocumentsContract.Document.COLUMN_SIZE, DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+        val result = runCatching {
+            context.contentResolver.query(uri, columns, null, null, null)?.use { cursor ->
+                if (!cursor.moveToFirst()) return@use StorageVersion()
+                fun value(column: String): Long? = cursor.getColumnIndex(column).takeIf { it >= 0 }
+                    ?.takeUnless(cursor::isNull)?.let(cursor::getLong)
+                StorageVersion(sizeBytes = value(columns[0])?.takeIf { it >= 0L },
+                    modifiedAt = value(columns[1])?.takeIf { it > 0L }?.let { if (media) it * 1000L else it })
+            } ?: StorageVersion()
         }
-        val document = runCatching { DocumentFile.fromSingleUri(context, uri) }.getOrNull()
-        return song.copy(
-            sizeBytes = document?.length()?.takeIf { it > 0L } ?: song.sizeBytes,
-            modifiedAt = document?.lastModified()?.takeIf { it > 0L } ?: song.modifiedAt,
-        )
+        return if (media) result.getOrThrow() else result.getOrDefault(StorageVersion())
+    }
+
+    private fun restoredVersionFile(context: Context, uri: String): File {
+        val key = MessageDigest.getInstance("SHA-256").digest(uri.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+        return File(context.filesDir, "local-tag-writes/restored-$key.json")
+    }
+
+    private fun readRestoredVersion(file: File, uri: String): RestoredVersion? = runCatching {
+        val json = JSONObject(file.readText())
+        if (json.optString("uri") != uri) return@runCatching null
+        val modifiedAt = json.optLong("modifiedAt").takeIf { it > 0L }
+        val hash = json.optString("sha256").takeIf { it.matches(Regex("[0-9a-f]{64}")) }
+        if (modifiedAt == null && hash == null) return@runCatching null
+        RestoredVersion(StorageVersion(json.optLong("sizeBytes", -1L).takeIf { it >= 0L }, modifiedAt), hash)
+    }.getOrNull()
+
+    /** 恢复流成功关闭后、撤销 pending 前落盘，跨进程保留恢复造成的 mtime 变更凭据。 */
+    private fun recordRestoredVersion(
+        context: Context,
+        uri: String,
+        source: File,
+        actual: StorageVersion = storageVersion(context, uri.toUri()),
+    ) {
+        val receipt = restoredVersionFile(context, uri)
+        val hash = if (actual.modifiedAt == null) source.inputStream().use { sha256(it) } else null
+        writeRestoredVersion(receipt, uri, RestoredVersion(actual, hash))
+    }
+
+    private fun sha256(input: InputStream): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            digest.update(buffer, 0, count)
+        }
+        return digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+    }
+
+    private fun writeRestoredVersion(receipt: File, uri: String, version: RestoredVersion) {
+        receipt.parentFile?.mkdirs()
+        val ready = File(receipt.path + ".tmp")
+        try {
+            ready.outputStream().use { output ->
+                output.write(JSONObject().put("uri", uri).put("sizeBytes", version.storage.sizeBytes ?: JSONObject.NULL)
+                    .put("modifiedAt", version.storage.modifiedAt ?: JSONObject.NULL)
+                    .put("sha256", version.sha256 ?: JSONObject.NULL).toString().toByteArray(Charsets.UTF_8))
+                output.fd.sync()
+            }
+            Files.move(ready.toPath(), receipt.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+        } finally { ready.delete() }
     }
 
     private suspend fun fetchCover(context: Context, song: OnlineSong): ByteArray? {
@@ -589,18 +674,6 @@ object LocalTagFiller {
             if (body.contentLength() > MAX_EMBEDDED_COVER_BYTES) return@use null
             val bytes = body.byteStream().use { it.readBoundedBytes(MAX_EMBEDDED_COVER_BYTES) } ?: return@use null
             if (bytes.size < 200) null else bytes
-        }
-    }
-
-    private fun readCachedCover(context: Context, value: String?): ByteArray? {
-        val uri = value?.toUri() ?: return null
-        return LocalMediaIoCoordinator.withRead(context, uri) {
-            val input = when (uri.scheme) {
-                "file" -> uri.path?.let(::File)?.takeIf(File::isFile)?.inputStream()
-                "content" -> context.contentResolver.openInputStream(uri)
-                else -> null
-            } ?: return@withRead null
-            input.use { it.readBoundedBytes(MAX_EMBEDDED_COVER_BYTES) }
         }
     }
 
@@ -659,7 +732,11 @@ internal fun shouldDeferTagWriteForQueuedManual(
 ): Boolean = queuedIsManual && (!requestIsManual || !sameRequest)
 
 /** 一个原件、一份持久化 URI 日志；普通异常和进程中断走同一恢复路径。 */
-internal class ContentTagWrite(private val directory: File) : Closeable {
+internal class ContentTagWrite(
+    private val directory: File,
+    private val onRestored: (String, File) -> Unit = { _, _ -> },
+    private val onWritten: (String, File) -> Unit = { _, _ -> },
+) : Closeable {
     val original = File(directory, "original")
     val rewritten = File(directory, "rewritten")
     private val journal = File(directory, "pending")
@@ -683,6 +760,8 @@ internal class ContentTagWrite(private val directory: File) : Closeable {
         }
         try {
             output.use { target -> rewritten.inputStream().use { it.copyTo(target) } }
+            // 版本凭据与文件同属一次提交；发布失败仍沿统一恢复路径回滚原件。
+            onWritten(uri, rewritten)
             Files.delete(journal.toPath())
         } catch (error: Throwable) {
             try {
@@ -696,10 +775,12 @@ internal class ContentTagWrite(private val directory: File) : Closeable {
 
     fun recover(openOutput: (String) -> OutputStream) {
         if (!pending) return
+        val uri = journal.readText()
         // 先打开并确认原件可读，再申请可能截断目标的写流。
         original.inputStream().use { input ->
-            openOutput(journal.readText()).use { target -> input.copyTo(target) }
+            openOutput(uri).use { target -> input.copyTo(target) }
         }
+        onRestored(uri, original)
         Files.delete(journal.toPath())
     }
 
@@ -708,9 +789,9 @@ internal class ContentTagWrite(private val directory: File) : Closeable {
     }
 
     companion object {
-        fun recover(root: File, uri: String, openOutput: (String) -> OutputStream) {
+        fun recover(root: File, uri: String, onRestored: (String, File) -> Unit = { _, _ -> }, openOutput: (String) -> OutputStream) {
             root.listFiles()?.filter(File::isDirectory)?.forEach { directory ->
-                val transaction = ContentTagWrite(directory)
+                val transaction = ContentTagWrite(directory, onRestored)
                 if (transaction.pending && transaction.journal.readText() == uri) {
                     transaction.use { it.recover(openOutput) }
                 }

@@ -87,19 +87,7 @@ object BackupManager {
                 settings?.second.orEmpty()
             }
             // 一旦commit完成，取消不能跳过运行时同步；源初始化失败是运行状态提示，不误报数据恢复失败。
-            val runtimeNotice = withContext(NonCancellable) {
-                SourceResolver.clearCache()
-                var warning = ""
-                if (backup.scripts != null) runCatching { LxScriptPool.refresh(context, changedScripts) }.onFailure {
-                    warning += "音源已保存，初始化未完成，请到音源设置重试。"
-                }
-                withContext(Dispatchers.Main.immediate) {
-                    runCatching { applyRuntimeSettings(context) }.onFailure {
-                        warning += "设置已恢复，部分运行状态需重启应用后生效。"
-                    }
-                }
-                warning
-            }
+            val runtimeNotice = syncRestoredRuntime(context, changedScripts.takeIf { backup.scripts != null })
             "恢复完成：设置 ${backup.settings?.length() ?: 0} 项、脚本 ${backup.scripts?.size ?: 0} 个、用户库${if (backup.library == null) "未包含" else "已恢复"}。" + notice + runtimeNotice
         }
     }
@@ -109,6 +97,22 @@ object BackupManager {
         BackupRestoreTransaction.recover(context)
         hasExportRecovery.value = retainedExports(context).isNotEmpty()
     }
+
+    /** 正常导入及运行中恢复重试共用运行态同步，不能只重载磁盘快照。 */
+    internal suspend fun syncRestoredRuntime(context: Context, changedScripts: Set<String>?): String =
+        withContext(NonCancellable) {
+            SourceResolver.clearCache()
+            var warning = ""
+            if (changedScripts != null) runCatching { LxScriptPool.refresh(context, changedScripts) }.onFailure {
+                warning += "音源已保存，初始化未完成，请到音源设置重试。"
+            }
+            withContext(Dispatchers.Main.immediate) {
+                runCatching { applyRuntimeSettings(context) }.onFailure {
+                    warning += "设置已恢复，部分运行状态需重启应用后生效。"
+                }
+            }
+            warning
+        }
 
     private fun applyRuntimeSettings(context: Context) {
         PlaybackController.applyMusicPlayMode()

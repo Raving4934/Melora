@@ -13,9 +13,13 @@ class DynamicCacheEvictor(private val maxBytesProvider: () -> Long) : CacheEvict
     private val sizes = LinkedHashMap<String, Long>()
     private var currentBytes = 0L
     private var cache: Cache? = null
+    private var initialized = false
 
     override fun requiresCacheSpanTouches(): Boolean = true
-    override fun onCacheInitialized() = Unit
+    override fun onCacheInitialized() {
+        val target = synchronized(this) { initialized = true; cache } ?: return
+        attach(target)
+    }
 
     @Synchronized
     override fun onStartFile(cache: Cache, key: String, position: Long, length: Long) {
@@ -27,7 +31,8 @@ class DynamicCacheEvictor(private val maxBytesProvider: () -> Long) : CacheEvict
     override fun onSpanAdded(cache: Cache, span: CacheSpan) {
         this.cache = cache
         recordAddedLocked(span.key, span.length)
-        trimLocked(cache)
+        // 初始化按磁盘枚举顺序回放分片；收齐真实访问时间后才能决定淘汰谁。
+        if (initialized) trimLocked(cache)
     }
 
     @Synchronized
@@ -52,6 +57,7 @@ class DynamicCacheEvictor(private val maxBytesProvider: () -> Long) : CacheEvict
      * 外部操作统一按 Cache → Evictor 顺序取锁，禁止反向锁序造成播放服务启动死锁。
      */
     fun attach(cache: Cache) = withCacheLock(cache) {
+        initialized = true
         this.cache = cache
         refreshFromCacheLocked(cache)
         trimLocked(cache)
@@ -108,9 +114,11 @@ class DynamicCacheEvictor(private val maxBytesProvider: () -> Long) : CacheEvict
     private fun refreshFromCacheLocked(cache: Cache) {
         sizes.clear()
         currentBytes = 0L
-        cache.keys.forEach { key ->
-            cache.getCachedSpans(key).forEach { span -> if (span.isCached) recordAddedLocked(key, span.length) }
-        }
+        // 资源任一分片被读过即视为资源最近使用；不能用keys/文件名顺序重建LRU。
+        cache.keys.mapNotNull { key ->
+            val spans = cache.getCachedSpans(key).filter { it.isCached }
+            if (spans.isEmpty()) null else Triple(key, spans.sumOf { it.length }, spans.maxOf { it.lastTouchTimestamp })
+        }.sortedBy { it.third }.forEach { (key, bytes, _) -> recordAddedLocked(key, bytes) }
     }
 
     private fun trimLocked(cache: Cache) {

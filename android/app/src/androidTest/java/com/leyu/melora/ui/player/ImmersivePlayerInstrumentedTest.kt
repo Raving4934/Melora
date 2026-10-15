@@ -77,6 +77,7 @@ class ImmersivePlayerInstrumentedTest {
         motionEnabled: Boolean = false,
         compact: Boolean = false,
         landscape: Boolean = false,
+        forcePortrait: Boolean = false,
         observeCoverStyle: Boolean = false,
         linesOverride: androidx.compose.runtime.State<List<LyricLine>>? = null,
         playerVisible: androidx.compose.runtime.State<Boolean>? = null,
@@ -106,6 +107,8 @@ class ImmersivePlayerInstrumentedTest {
                     modifier = when {
                         landscape -> Modifier.requiredSize(720.dp, 360.dp)
                         compact -> Modifier.fillMaxWidth().height(340.dp)
+                        // 依赖窄屏三页或竖屏几何的用例显式固定视口，不跟随宿主平板尺寸。
+                        forcePortrait -> Modifier.requiredSize(360.dp, 640.dp)
                         else -> Modifier.fillMaxSize()
                     },
                 )
@@ -124,6 +127,7 @@ class ImmersivePlayerInstrumentedTest {
         val normal = compose.onNodeWithTag("player-pages").fetchSemanticsNode().boundsInRoot
         compose.onNodeWithTag("player-artwork").performTouchInput { longClick() }
         compose.onNodeWithTag("player-cover-immersive").performScrollTo().also { compose.awaitStable(it) }.performClick()
+        compose.waitUntil(5_000) { immersive.value }
         compose.runOnIdle { assertTrue(immersive.value) }
         compose.waitUntil(5_000) {
             ViewCompat.getRootWindowInsets(view)?.isVisible(WindowInsetsCompat.Type.statusBars()) == false
@@ -155,6 +159,8 @@ class ImmersivePlayerInstrumentedTest {
             compose.awaitStable("player-cover-picker")
             compose.runOnIdle { assertFalse(immersive.value) }
             compose.onNodeWithTag(selectedTag).performClick()
+            // 选择在抽屉退场后的 onHidden 回调提交，Compose 空闲不等于该回调已执行。
+            compose.waitUntil(5_000) { MeloraSettings.playerCoverStyle.value == selectedStyle }
             compose.runOnIdle {
                 assertEquals(selectedStyle, MeloraSettings.playerCoverStyle.value)
                 assertFalse(immersive.value)
@@ -215,6 +221,7 @@ class ImmersivePlayerInstrumentedTest {
             compose.runOnIdle { immersive.value = true }
             compose.onNodeWithTag("player-artwork").performTouchInput { longClick() }
             compose.onNodeWithTag("player-cover-vinyl").performClick()
+            compose.waitUntil(5_000) { MeloraSettings.playerCoverStyle.value == PlayerCoverStyle.Vinyl }
             compose.runOnIdle {
                 assertEquals(PlayerCoverStyle.Vinyl, MeloraSettings.playerCoverStyle.value)
                 assertTrue(immersive.value)
@@ -245,7 +252,7 @@ class ImmersivePlayerInstrumentedTest {
 
     @Test
     fun allThreePagesStayReachableAndLeavingCoverClearsTemporaryControls() {
-        showPlayer()
+        showPlayer(forcePortrait = true)
         compose.runOnIdle { immersive.value = true }
         compose.onNodeWithTag("player-artwork").performClick()
         compose.onNodeWithTag("player-pages").performTouchInput { swipeLeft() }
@@ -279,7 +286,7 @@ class ImmersivePlayerInstrumentedTest {
 
     @Test
     fun entryCanReverseMidFlightWithoutReplacingArtworkOrLeavingLayoutOffset() {
-        showPlayer(motionEnabled = true)
+        showPlayer(motionEnabled = true, forcePortrait = true)
         val original = compose.onNodeWithTag("player-artwork").fetchSemanticsNode()
         val originalCenter = original.boundsInRoot.center
         compose.mainClock.autoAdvance = false
@@ -332,7 +339,7 @@ class ImmersivePlayerInstrumentedTest {
 
     @Test
     fun portraitImmersionDoesNotComposeTheTitleWatermark() {
-        showPlayer()
+        showPlayer(forcePortrait = true)
         compose.runOnIdle { immersive.value = true }
         compose.onNodeWithTag("immersive-title-watermark").assertDoesNotExist()
     }
@@ -394,7 +401,7 @@ class ImmersivePlayerInstrumentedTest {
         val original = MeloraSettings.showDesktopLyrics.value
         try {
             MeloraSettings.showDesktopLyrics.value = false
-            showPlayer()
+            showPlayer(forcePortrait = true)
             compose.onNodeWithTag("player-pages").performTouchInput { swipeLeft() }
             val before = compose.onNodeWithTag("player-pages").fetchSemanticsNode().boundsInRoot
             compose.onNodeWithContentDescription("展开歌词设置").performClick()
@@ -412,7 +419,7 @@ class ImmersivePlayerInstrumentedTest {
         val visible = mutableStateOf(true)
         try {
             MeloraSettings.updatePlayerLyrics(LyricsUiConfig(22f, true, true, true))
-            showPlayer(playerVisible = visible)
+            showPlayer(forcePortrait = true, playerVisible = visible)
             compose.onNodeWithTag("player-pages").performTouchInput { swipeLeft() }
             compose.onNodeWithContentDescription("展开歌词设置").performClick()
             compose.onNodeWithContentDescription("增大字号，当前22sp").performScrollTo().performClick()
@@ -429,7 +436,7 @@ class ImmersivePlayerInstrumentedTest {
     }
 
     @Test fun lyricSourceMenuKeepsTheExistingPageGeometryAndCannotWriteAnOnlineTrack() {
-        showPlayer()
+        showPlayer(forcePortrait = true)
         compose.onNodeWithTag("player-pages").performTouchInput { swipeLeft() }
         val before = compose.onNodeWithTag("player-pages").fetchSemanticsNode().boundsInRoot
         compose.onNodeWithContentDescription("展开歌词设置").performClick()
@@ -511,7 +518,7 @@ class ImmersivePlayerInstrumentedTest {
 
     @Test fun backgroundWordEnrichmentDoesNotRecreateTheLyricsViewport() {
         val lines = mutableStateOf(listOf(LyricLine(0, "慢慢听见海风"), LyricLine(5000, "灯火落在远方")))
-        showPlayer(linesOverride = lines)
+        showPlayer(forcePortrait = true, linesOverride = lines)
         compose.onNodeWithTag("player-pages").performTouchInput { swipeLeft() }
         val before = compose.onNodeWithTag("player-full-lyrics").fetchSemanticsNode()
         compose.runOnIdle {

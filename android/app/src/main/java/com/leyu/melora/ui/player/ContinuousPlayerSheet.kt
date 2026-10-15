@@ -1,7 +1,7 @@
 package com.leyu.melora.ui.player
 
 import com.leyu.melora.ui.common.PageBackHandler as BackHandler
-import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.Spring
@@ -17,8 +17,7 @@ import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.anchoredDraggable
 import androidx.compose.foundation.gestures.animateTo
 import androidx.compose.foundation.gestures.animateToWithDecay
-import androidx.compose.foundation.gestures.draggable
-import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.rememberPagerState
@@ -43,6 +42,9 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.input.pointer.util.addPointerInputChange
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onPlaced
@@ -51,6 +53,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Velocity
@@ -65,6 +68,8 @@ import com.leyu.melora.playback.PlayerUiState
 import com.leyu.melora.ui.common.LocalPageActive
 import com.leyu.melora.ui.theme.SystemBarsAppearance
 import com.leyu.melora.ui.theme.LocalForceHideStatusBar
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
@@ -79,6 +84,9 @@ internal fun ContinuousPlayerSheet(
     state: PlayerUiState,
     modifier: Modifier = Modifier,
     backState: PlayerSheetBackState = rememberPlayerSheetBackState(),
+    onSeek: (Long) -> Unit = { PlaybackController.seekTo(it) },
+    onPrevious: () -> Unit = { PlaybackController.previous() },
+    onNext: () -> Unit = { PlaybackController.next() },
 ) {
     // 迷你条、过渡封面和全屏共用当前曲目；空队列不能保留已失效的旧封面。
     val track = state.current ?: return
@@ -104,13 +112,15 @@ internal fun ContinuousPlayerSheet(
         if (playerMotionEnabled) PlayerCoverMorphSpec else snap(), label = "sharedCoverRoundness",
     )
     val playerLyric by PlaybackController.lyric.collectAsStateWithLifecycle()
-    val lyricLines = playerLyricLines(state.current?.uid, playerLyric)
+    val lyricLines = playerLyricLines(track.uid, playerLyric)
     val lyricPosition = rememberLyricPosition(state, visible = lyricLines.isNotEmpty())
     val displayLyricLines = remember(state.current, lyricLines) { fullPlayerLyricsOrFallback(state.current, lyricLines) }
     val lyricFrameState = rememberLyricFrame(displayLyricLines, lyricPosition)
     val lyricFrame by lyricFrameState
     val sheetState = backState.sheet
-    val swipeOffset = remember { Animatable(0f) }
+    val swipeOffset = remember(track.uid) { mutableFloatStateOf(0f) }
+    val currentPrevious by rememberUpdatedState(onPrevious)
+    val currentNext by rememberUpdatedState(onNext)
     val verticalPagerState = rememberPagerState(pageCount = { 2 })
     var queueReturnTarget by rememberSaveable { mutableStateOf(PlayerSheetAnchor.Expanded) }
     LaunchedEffect(verticalPagerState.settledPage) {
@@ -260,9 +270,6 @@ internal fun ContinuousPlayerSheet(
 
         val maxSwipePx = with(density) { 88.dp.toPx() }
         val swipeThresholdPx = with(density) { 56.dp.toPx() }
-        val swipeDragState = rememberDraggableState { delta ->
-            scope.launch { swipeOffset.snapTo((swipeOffset.value + delta).coerceIn(-maxSwipePx, maxSwipePx)) }
-        }
         // 迷你条第二行：当前歌词（无歌词/间奏时给出占位）
         val currentLine = lyricLines.getOrNull(lyricFrame.focusIndex)
         val currentLyricText = currentLine?.text?.trim()?.ifBlank { "♪" }
@@ -359,6 +366,9 @@ internal fun ContinuousPlayerSheet(
                                 coverStyle = playerCoverStyle,
                                 artworkRotation = vinylRotation,
                                 onPageVisualChanged = { cover, light, blocksCollapse -> pageShowsCover = cover; pageIsLight = light; pageBlocksCollapse = blocksCollapse },
+                                onSeek = onSeek,
+                                onPrevious = onPrevious,
+                                onNext = onNext,
                             )
                         }
                     }
@@ -389,7 +399,8 @@ internal fun ContinuousPlayerSheet(
                                 Row(
                                     modifier = Modifier
                                         .weight(1f)
-                                        .graphicsLayer { translationX = swipeOffset.value }
+                                        .graphicsLayer { translationX = swipeOffset.floatValue }
+                                        .testTag("player-mini-track")
                                         .clickable(
                                             enabled = showMini,
                                             indication = null,
@@ -397,30 +408,60 @@ internal fun ContinuousPlayerSheet(
                                         ) {
                                             expandPlayer()
                                         }
-                                        .draggable(
-                                            enabled = showMini,
-                                            state = swipeDragState,
-                                            orientation = Orientation.Horizontal,
-                                            onDragStopped = { velocity ->
-                                                val offset = swipeOffset.value
-                                                when {
-                                                    velocity < -600f || offset < -swipeThresholdPx -> {
-                                                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                        PlaybackController.next()
-                                                    }
-                                                    velocity > 600f || offset > swipeThresholdPx -> {
-                                                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                        PlaybackController.previous()
+                                        .pointerInput(track.uid, showMini, maxSwipePx, swipeThresholdPx) {
+                                            if (!showMini) return@pointerInput
+                                            coroutineScope {
+                                                var resetJob: Job? = null
+                                                val velocityTracker = VelocityTracker()
+                                                fun resetSwipe() {
+                                                    resetJob?.cancel()
+                                                    resetJob = launch {
+                                                        animate(
+                                                            initialValue = swipeOffset.floatValue,
+                                                            targetValue = 0f,
+                                                            animationSpec = spring(dampingRatio = 1f, stiffness = Spring.StiffnessMedium),
+                                                        ) { value, _ -> swipeOffset.floatValue = value }
                                                     }
                                                 }
-                                                scope.launch {
-                                                    swipeOffset.animateTo(
-                                                        targetValue = 0f,
-                                                        animationSpec = spring(dampingRatio = 1f, stiffness = Spring.StiffnessMedium),
+                                                try {
+                                                    detectDragGestures(
+                                                        orientationLock = Orientation.Horizontal,
+                                                        onDragStart = { down, _, _ ->
+                                                            resetJob?.cancel()
+                                                            velocityTracker.resetTracking()
+                                                            velocityTracker.addPointerInputChange(down)
+                                                        },
+                                                        onDrag = { change, delta ->
+                                                            velocityTracker.addPointerInputChange(change)
+                                                            swipeOffset.floatValue = (swipeOffset.floatValue + delta.x)
+                                                                .coerceIn(-maxSwipePx, maxSwipePx)
+                                                        },
+                                                        onDragEnd = { up ->
+                                                            velocityTracker.addPointerInputChange(up)
+                                                            val velocity = velocityTracker.calculateVelocity().x
+                                                            val offset = swipeOffset.floatValue
+                                                            when {
+                                                                velocity < -600f || offset < -swipeThresholdPx -> {
+                                                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                                    currentNext()
+                                                                }
+                                                                velocity > 600f || offset > swipeThresholdPx -> {
+                                                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                                    currentPrevious()
+                                                                }
+                                                            }
+                                                            resetSwipe()
+                                                        },
+                                                        // 取消不是零速度松手；只能复位，不能按位移阈值切歌。
+                                                        onDragCancel = { resetSwipe() },
                                                     )
+                                                } finally {
+                                                    // 切歌、迷你条退场或卸载同时终止手势与回弹。
+                                                    resetJob?.cancel()
+                                                    swipeOffset.floatValue = 0f
                                                 }
-                                            },
-                                        )
+                                            }
+                                        }
                                         .padding(end = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
@@ -434,7 +475,7 @@ internal fun ContinuousPlayerSheet(
                                                 val parent = sheetCoordinates
                                                 if (parent != null && parent.isAttached && child.isAttached) {
                                                     miniBounds = parent.localBoundingBoxOf(child, clipBounds = false)
-                                                        .translate(Offset(-swipeOffset.value, 0f))
+                                                        .translate(Offset(-swipeOffset.floatValue, 0f))
                                                 }
                                             }
                                             .graphicsLayer { alpha = if (morphing()) 0f else 1f },
@@ -522,7 +563,7 @@ internal fun ContinuousPlayerSheet(
                             rotationDegrees = vinylRotation, motionEnabled = playerMotionEnabled,
                             modifier = Modifier.size(fullSide).zIndex(2f).graphicsLayer {
                                 val p = progress()
-                                val rect = playerArtworkBounds(mini.translate(Offset(swipeOffset.value, 0f)), full, p)
+                                val rect = playerArtworkBounds(mini.translate(Offset(swipeOffset.floatValue, 0f)), full, p)
                                 val scale = (rect.width / full.width).coerceAtLeast(0.001f)
                                 transformOrigin = TransformOrigin(0f, 0f)
                                 translationX = rect.left

@@ -2,6 +2,7 @@ package com.leyu.melora.playback
 
 import com.leyu.melora.playback.sdk.KwBookApi
 import com.leyu.melora.playback.sdk.OnlineSong
+import com.leyu.melora.playback.sdk.OnlineCache
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -11,15 +12,21 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
+import org.junit.After
 import org.junit.Assert.*
 import org.junit.Test
 
 @androidx.annotation.OptIn(UnstableApi::class)
 class BookPlaybackQueueTest {
+    @After fun clearBookCache() { OnlineCache.clear("playlistDetail.book.") }
+
     @Test fun onlyBookChaptersWithAlbumIdentityUseBookQueue() {
         assertNull(chapter(1).let { OnlineSong(JSONObject(it.raw.toString()).put("isBookChapter", false)) }.bookId())
         assertNull(OnlineSong(JSONObject(chapter(1).raw.toString()).put("albumId", "")).bookId())
@@ -54,9 +61,114 @@ class BookPlaybackQueueTest {
         }
     }
 
-    @Test fun finalChapterDoesNotFetchOrWrapToBeginning() = runBlocking {
+    @Test fun finalChapterRevalidatesItsPageAndDoesNotWrapToBeginning() = runBlocking {
         val final = chapter(237, end = true, more = false)
-        assertTrue(followingBookChapters(final) { _, _ -> error("must not fetch") }.isEmpty())
+        val calls = mutableListOf<Int>()
+        assertTrue(followingBookChapters(final) { _, requested ->
+            calls += requested
+            terminalPage(requested, 237)
+        }.isEmpty())
+        assertEquals(listOf(3), calls)
+    }
+
+    @Test fun stalePartialTailFindsNewChaptersOnTheSamePageAndUpdatesItsCache() = runBlocking {
+        val key = "playlistDetail.book.book_album_fixture.window.3"
+        OnlineCache.put(key, terminalPage(3, 237))
+        val calls = mutableListOf<Int>()
+        val result = followingBookChapters(chapter(237, end = true, more = false)) { _, requested ->
+            calls += requested
+            terminalPage(requested, 240)
+        }
+        assertEquals(listOf(3), calls)
+        assertEquals((238..240).map { "kw_chapter_$it" }, result.map { it.uid })
+        assertEquals("kw_chapter_240", OnlineCache.peek<KwBookApi.BookChapters>(key)?.items?.last()?.uid)
+    }
+
+    @Test fun staleExactBoundaryRefreshesOldPageBeforeRequestingNextPage() = runBlocking {
+        val calls = mutableListOf<Int>()
+        val result = followingBookChapters(chapter(300, end = true, more = false)) { _, requested ->
+            calls += requested
+            if (requested == 3) terminalPage(3, 300).copy(hasMore = true)
+            else terminalPage(4, 301)
+        }
+        assertEquals(listOf(3, 4), calls)
+        assertEquals(listOf("kw_chapter_301"), result.map { it.uid })
+    }
+
+    @Test fun staleFirstPageRefreshesBothAliasesWithOnlyOneNetworkRequest() = runBlocking {
+        val key = "playlistDetail.book.book_album_fixture"
+        val old = terminalPage(1, 37)
+        OnlineCache.put(key, old)
+        OnlineCache.put("$key.window.1", old)
+        var calls = 0
+        val result = followingBookChapters(chapter(37, end = true, more = false)) { _, requested ->
+            calls++
+            terminalPage(requested, 40)
+        }
+        assertEquals(1, calls)
+        assertEquals((38..40).map { "kw_chapter_$it" }, result.map { it.uid })
+        assertEquals("kw_chapter_40", OnlineCache.peek<KwBookApi.BookChapters>(key)?.items?.last()?.uid)
+        assertSame(OnlineCache.peek<KwBookApi.BookChapters>(key),
+            OnlineCache.peek<KwBookApi.BookChapters>("$key.window.1"))
+    }
+
+    @Test fun failedTailRefreshDoesNotOverwriteEitherCachedSnapshot() = runBlocking {
+        val key = "playlistDetail.book.book_album_fixture"
+        val old = terminalPage(1, 37)
+        OnlineCache.put(key, old)
+        OnlineCache.put("$key.window.1", old)
+        val failure = runCatching {
+            followingBookChapters(chapter(37, end = true, more = false)) { _, _ ->
+                KwBookApi.BookChapters(emptyList(), false)
+            }
+        }.exceptionOrNull()
+        assertTrue(failure is IllegalStateException)
+        assertSame(old, OnlineCache.peek<KwBookApi.BookChapters>(key))
+        assertSame(old, OnlineCache.peek<KwBookApi.BookChapters>("$key.window.1"))
+    }
+
+    @Test fun confirmedEndDoesNotPollButExplicitNextCanDiscoverNewChapters() = runBlocking {
+        var calls = 0
+        val queue = Queue(chapter(237, end = true, more = false))
+        val manager = manager(queue, this) { _, requested ->
+            calls++
+            terminalPage(requested, if (calls == 1) 237 else 240)
+        }
+        manager.start("fixture")
+        coroutineContext[Job]!!.children.toList().forEach { it.join() }
+        repeat(100) { manager.check() }
+        assertEquals(1, calls)
+        assertTrue(manager.next())
+        await { queue.index == 1 }
+        assertEquals("kw_chapter_238", queue.items[queue.index].mediaId)
+        manager.stop()
+    }
+
+    @Test fun lateOldTailFlightCannotOverwriteTheFreshTailCache() = runBlocking {
+        val key = "playlistDetail.book.book_album_fixture.window.3"
+        val started = CompletableDeferred<Unit>()
+        val oldResponse = CompletableDeferred<KwBookApi.BookChapters>()
+        val old = async(start = CoroutineStart.UNDISPATCHED) {
+            OnlineCache.refresh(key, -1L) { started.complete(Unit); oldResponse.await() }
+        }
+        started.await()
+        followingBookChapters(chapter(237, end = true, more = false)) { _, requested ->
+            terminalPage(requested, 240)
+        }
+        oldResponse.complete(terminalPage(3, 237))
+        old.await()
+        assertEquals("kw_chapter_240", OnlineCache.peek<KwBookApi.BookChapters>(key)?.items?.last()?.uid)
+    }
+
+    @Test fun missingTailUidCannotPolluteTheFreshPageCache() = runBlocking {
+        val key = "playlistDetail.book.book_album_fixture.window.3"
+        val old = terminalPage(3, 237)
+        OnlineCache.put(key, old)
+        val failure = runCatching {
+            followingBookChapters(chapter(237, end = true, more = false)) { _, _ -> terminalPage(1, 100) }
+        }.exceptionOrNull()
+        assertTrue(failure is IllegalStateException)
+        assertSame(old, OnlineCache.peek<KwBookApi.BookChapters>(key))
     }
 
     @Test fun lastPagePartialRemainderStopsAtRealEnd() = runBlocking {
@@ -343,6 +455,11 @@ class BookPlaybackQueueTest {
 
     private fun page(number: Int) = KwBookApi.BookChapters(
         ((number - 1) * 100 + 1..number * 100).map { chapter(it) }, true, page = number,
+    )
+
+    private fun terminalPage(number: Int, last: Int) = KwBookApi.BookChapters(
+        ((number - 1) * 100 + 1..last).map { chapter(it, end = it == last, more = false) },
+        false, metadata = KwBookApi.BookMetadata(total = last), page = number,
     )
 
     private fun chapter(number: Int, end: Boolean = number % 100 == 0, more: Boolean = true) = OnlineSong(

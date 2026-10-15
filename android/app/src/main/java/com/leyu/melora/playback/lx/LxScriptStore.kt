@@ -47,7 +47,7 @@ class LxScriptStore(context: Context) {
     fun code(id: String): String? = synchronized(enabledStateLock) { dir.resolve(id).takeIf { it.isFile }?.readText() }
 
     fun import(name: String, code: String, originUrl: String? = null, expectedCode: String? = null): LxScript =
-        synchronized(enabledStateLock) {
+        BackupStateLock.write {
             validateImportedScriptCode(code)
             val normalizedOriginUrl = originUrl?.let { LxSourceUrlPolicy.validate(it).toString() }
             val file = File(dir, backupScriptId(name))
@@ -76,7 +76,7 @@ class LxScriptStore(context: Context) {
         )
     }
 
-    fun remove(id: String) = synchronized(enabledStateLock) {
+    fun remove(id: String) = BackupStateLock.write {
         dir.resolve(id).delete()
         dir.resolve("$id.bak").delete()
         dir.resolve("$id.tmp").delete()
@@ -92,14 +92,14 @@ class LxScriptStore(context: Context) {
      * 返回值是这次操作后的启用 id 集合，供 UI 立即同步内存状态。SharedPreferences 的
      * apply 会先更新进程内状态，不需要为开关操作重建脚本池。
      */
-    fun setEnabled(id: String, enabled: Boolean): Set<String> = synchronized(enabledStateLock) {
+    fun setEnabled(id: String, enabled: Boolean): Set<String> = BackupStateLock.write {
         val installedIds = dir
             .listFiles { file -> file.isFile && file.name.endsWith(".js") }
             ?.map { it.name }
             ?.toSet()
             ?: emptySet()
         val currentEnabledIds = installedIds.filter { prefs.getBoolean(it, false) }
-        if (id !in installedIds) return@synchronized currentEnabledIds.toSet()
+        if (id !in installedIds) return@write currentEnabledIds.toSet()
 
         val nextEnabledIds = singleSelectEnabledIds(
             installedIds = installedIds,
@@ -131,7 +131,7 @@ class LxScriptStore(context: Context) {
     }
 
     /** 保持历史合并语义：同名覆盖、其它已装源保留；单选启用状态最后统一commit。 */
-    internal fun restoreBackup(scripts: List<BackupScript>, checkCancelled: () -> Unit) = synchronized(enabledStateLock) {
+    internal fun restoreBackup(scripts: List<BackupScript>, checkCancelled: () -> Unit) = BackupStateLock.write {
         val installed = dir.listFiles { file -> file.isFile && file.name.endsWith(".js") }?.map { it.name }?.toMutableSet()
             ?: error("无法读取音源目录")
         var enabled = installed.filter { prefs.getBoolean(it, false) }.toSet()

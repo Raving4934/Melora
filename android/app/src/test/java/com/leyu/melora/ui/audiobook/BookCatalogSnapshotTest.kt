@@ -87,4 +87,31 @@ class BookCatalogSnapshotTest {
         assertSame(first, OnlineCache.peek<BookCatalogSnapshot>("book.rank.1.30"))
         assertSame(second, OnlineCache.peek<BookCatalogSnapshot>("book.rank.1.31"))
     }
+
+    @Test fun failedRankRefreshOrMorePreservesSnapshotCacheAndCursor() {
+        val key = "book.rank.13.27"
+        val old = BookCatalogSnapshot().withPage(page("old"), 2)
+        for (requested in listOf(1, 3)) {
+            var shown = old
+            OnlineCache.put(key, old)
+            val result = runCatching { KwBookApi.rankPageFromResponse(null) }
+                .onSuccess { shown = shown.withPage(it, requested); OnlineCache.put(key, shown) }
+            assertTrue(result.isFailure)
+            assertSame(old, shown)
+            assertSame(old, OnlineCache.peek<BookCatalogSnapshot>(key))
+            assertEquals(3, shown.page + 1)
+            assertTrue(shown.hasMore)
+        }
+    }
+
+    @Test fun legitimateEmptyRankRefreshMayReplaceAndCacheOldContent() {
+        val key = "book.rank.13.27"
+        val old = BookCatalogSnapshot().withPage(page("old"), 2)
+        val empty = KwBookApi.rankPageFromResponse(JSONObject("""{"code":200,"data":{"list":[]}}"""))
+        val refreshed = old.withPage(empty, 1)
+        OnlineCache.put(key, refreshed)
+        assertTrue(refreshed.items.isEmpty())
+        assertFalse(refreshed.hasMore)
+        assertSame(refreshed, OnlineCache.peek<BookCatalogSnapshot>(key))
+    }
 }

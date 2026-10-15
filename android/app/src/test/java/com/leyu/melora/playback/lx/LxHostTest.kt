@@ -31,6 +31,34 @@ import java.util.zip.Deflater
 
 class LxHostTest {
     @Test
+    fun retiredScopeCannotBorrowTheNextRequestsHttpDeadline() {
+        val calls = AtomicInteger()
+        val host = LxHost(client { calls.incrementAndGet(); error("must not reach OkHttp") })
+        val retired = host.newRequestToken()
+        host.withinRequestDeadline(retired, monotonicDeadlineAfter(1_000)) { Unit }
+        assertTrue(retired.cancelled.get())
+        val current = host.newRequestToken()
+        val result = host.withinRequestDeadline(current, monotonicDeadlineAfter(1_000)) {
+            JSONObject(host.http(requestPayload(), retired.scopeId))
+        }
+        assertEquals(0, calls.get())
+        assertTrue(result.getString("error").contains("结束"))
+        assertTrue(current.cancelled.get())
+        assertTrue(JSONObject(host.http(requestPayload(), retired.scopeId)).has("error"))
+        assertEquals(0, calls.get())
+    }
+
+    @Test
+    fun exceptionalRequestRetiresItsHostToken() {
+        val host = LxHost()
+        val token = host.newRequestToken()
+        assertThrows(IllegalStateException::class.java) {
+            host.withinRequestDeadline(token, monotonicDeadlineAfter(1_000)) { error("fixture") }
+        }
+        assertTrue(token.cancelled.get())
+    }
+
+    @Test
     fun outerRequestDeadlineCapsEveryHostHttpCall() {
         assertEquals(15_000, effectiveHttpTimeoutMs(15_000, Long.MAX_VALUE))
         assertEquals(700, effectiveHttpTimeoutMs(15_000, 700))

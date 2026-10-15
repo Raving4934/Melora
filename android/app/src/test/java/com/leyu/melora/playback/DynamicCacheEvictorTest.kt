@@ -33,9 +33,45 @@ class DynamicCacheEvictorTest {
         assertEquals(100L * 1024 * 1024, evictor.trackedBytes())
     }
 
-    private fun fakeCache(evictor: DynamicCacheEvictor, sizes: LinkedHashMap<String, Long>, locked: String): androidx.media3.datasource.cache.Cache {
+    @Test
+    fun attachEvictsOldestResourceNotFirstEnumeratedKey() {
+        val evictor = DynamicCacheEvictor { 64L * 1024 * 1024 }
+        val cache = fakeCache(evictor, linkedMapOf("recent" to 40L * 1024 * 1024,
+            "old" to 40L * 1024 * 1024), "unused", mapOf("recent" to 20L, "old" to 10L))
+        evictor.attach(cache)
+        assertEquals(setOf("recent"), cache.keys)
+    }
+
+    @Test
+    fun loweringLimitPreservesTheMostRecentlyTouchedResource() {
+        var limit = Long.MAX_VALUE
+        val evictor = DynamicCacheEvictor { limit }
+        val timestamps = mutableMapOf("first" to 10L, "second" to 20L)
+        val cache = fakeCache(evictor, linkedMapOf("first" to 40L * 1024 * 1024,
+            "second" to 40L * 1024 * 1024), "unused", timestamps)
+        evictor.attach(cache)
+        val old = cache.getCachedSpans("first").first()
+        timestamps["first"] = 30L
+        evictor.onSpanTouched(cache, old, cache.getCachedSpans("first").first())
+        limit = 64L * 1024 * 1024
+        evictor.trimNow()
+        assertEquals(setOf("first"), cache.keys)
+    }
+
+    @Test
+    fun initializationWaitsForAllTimestampsBeforeEvicting() {
+        val evictor = DynamicCacheEvictor { 64L * 1024 * 1024 }
+        val cache = fakeCache(evictor, linkedMapOf("recent" to 40L * 1024 * 1024,
+            "old" to 40L * 1024 * 1024), "unused", mapOf("recent" to 20L, "old" to 10L))
+        // SimpleCache按文件枚举顺序回放onSpanAdded，不代表真实最近使用顺序。
+        cache.keys.toList().forEach { key -> evictor.onSpanAdded(cache, cache.getCachedSpans(key).first()) }
+        evictor.onCacheInitialized()
+        assertEquals(setOf("recent"), cache.keys)
+    }
+
+    private fun fakeCache(evictor: DynamicCacheEvictor, sizes: LinkedHashMap<String, Long>, locked: String, timestamps: Map<String, Long> = emptyMap()): androidx.media3.datasource.cache.Cache {
         val type = androidx.media3.datasource.cache.Cache::class.java
-        fun span(key: String) = androidx.media3.datasource.cache.CacheSpan(key, 0, sizes.getValue(key), 1, java.io.File("$key.cache"))
+        fun span(key: String) = androidx.media3.datasource.cache.CacheSpan(key, 0, sizes.getValue(key), timestamps[key] ?: 1, java.io.File("$key.cache"))
         return java.lang.reflect.Proxy.newProxyInstance(type.classLoader, arrayOf(type)) { proxy, method, args ->
             when (method.name) {
                 "getKeys" -> sizes.keys.toSet()

@@ -190,6 +190,99 @@ class LocalLyricWriteTest {
         } finally { directory.deleteRecursively() }
     }
 
+    @Test fun recoveryPublishesVersionOnlyAfterCloseAndBeforeRetiringJournal() {
+        val directory = java.nio.file.Files.createTempDirectory("tag-version-receipt").toFile()
+        try {
+            val uri = "content://fixture/audio"
+            java.io.File(directory, "original").writeText("original audio")
+            java.io.File(directory, "pending").writeText(uri)
+            var closed = false
+            var receipts = 0
+            val output = object : java.io.ByteArrayOutputStream() {
+                override fun close() { closed = true; super.close() }
+            }
+            val transaction = ContentTagWrite(directory, onRestored = { restored, original ->
+                assertEquals(uri, restored)
+                assertEquals("original audio", original.readText())
+                assertTrue(closed)
+                assertTrue(java.io.File(directory, "pending").isFile)
+                receipts++
+            })
+            transaction.use {
+                it.recover { output }
+                it.recover { error("已恢复的事务不应再次申请写流") }
+            }
+            assertEquals(1, receipts)
+            assertEquals("original audio", output.toString("UTF-8"))
+            assertFalse(directory.exists())
+        } finally { directory.deleteRecursively() }
+    }
+
+    @Test fun failedRestoreCloseOrReceiptPublicationRetainsTheOriginalAndJournal() {
+        for (failClose in listOf(false, true)) {
+            val directory = java.nio.file.Files.createTempDirectory("tag-version-failure").toFile()
+            try {
+                java.io.File(directory, "original").writeText("original audio")
+                java.io.File(directory, "pending").writeText("content://fixture/audio")
+                var receipts = 0
+                org.junit.Assert.assertThrows(java.io.IOException::class.java) {
+                    ContentTagWrite(directory, onRestored = { _, _ ->
+                        receipts++
+                        throw java.io.IOException("receipt unavailable")
+                    }).use { transaction ->
+                        transaction.recover {
+                            object : java.io.ByteArrayOutputStream() {
+                                override fun close() {
+                                    if (failClose) throw java.io.IOException("close failed")
+                                    super.close()
+                                }
+                            }
+                        }
+                    }
+                }
+                assertEquals(if (failClose) 0 else 1, receipts)
+                assertEquals("original audio", java.io.File(directory, "original").readText())
+                assertTrue(java.io.File(directory, "pending").isFile)
+            } finally { directory.deleteRecursively() }
+        }
+    }
+
+    @Test fun failedWriteReceiptPublicationRollsBackBeforeRetiringJournal() {
+        val directory = java.nio.file.Files.createTempDirectory("tag-commit-receipt-failure").toFile()
+        try {
+            var bytes = byteArrayOf()
+            var closes = 0
+            var restorations = 0
+            val transaction = ContentTagWrite(directory, onRestored = { _, original ->
+                assertEquals("original audio", original.readText())
+                assertEquals(2, closes)
+                restorations++
+            }, onWritten = { uri, rewritten ->
+                assertEquals("content://fixture/audio", uri)
+                assertEquals("updated tags", rewritten.readText())
+                assertTrue(java.io.File(directory, "pending").isFile)
+                assertEquals(1, closes)
+                throw java.io.IOException("receipt unavailable")
+            })
+            transaction.original.writeText("original audio")
+            transaction.rewritten.writeText("updated tags")
+            org.junit.Assert.assertThrows(java.io.IOException::class.java) {
+                transaction.overwrite("content://fixture/audio") {
+                    bytes = byteArrayOf()
+                    object : java.io.OutputStream() {
+                        override fun write(value: Int) { bytes += value.toByte() }
+                        override fun close() { closes++ }
+                    }
+                }
+            }
+            assertEquals("original audio", bytes.toString(Charsets.UTF_8))
+            assertEquals(1, restorations)
+            assertFalse(transaction.pending)
+            transaction.close()
+            assertFalse(directory.exists())
+        } finally { directory.deleteRecursively() }
+    }
+
     @Test fun contentWriteFailureAndCancellationRestoreOriginalBytes() {
         for (failure in listOf(java.io.IOException("write failed"), kotlinx.coroutines.CancellationException("cancelled"))) {
             val directory = java.nio.file.Files.createTempDirectory("lyric-rollback").toFile()

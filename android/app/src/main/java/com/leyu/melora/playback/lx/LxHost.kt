@@ -33,7 +33,7 @@ import javax.crypto.spec.SecretKeySpec
 private const val MAX_ZLIB_INPUT_BYTES = 8 * 1024 * 1024
 private const val MAX_ZLIB_OUTPUT_BYTES = 16 * 1024 * 1024
 
-internal class LxRequestToken {
+internal class LxRequestToken(internal val scopeId: String) {
     internal val cancelled = AtomicBoolean(false)
     internal val currentCall = AtomicReference<Call?>(null)
     internal val runtimeTicket = AtomicLong(0)
@@ -55,11 +55,12 @@ class LxHost internal constructor(
         .build(),
 ) {
     private val random = SecureRandom()
+    private val requestSequence = AtomicLong(0)
     // JS JavaCallbacks run on QuickJS's event thread, not the IO caller that starts the request.
     // One engine serializes executions, so this per-host context is shared across that queue hop.
     @Volatile private var requestContext: LxRequestContext? = null
 
-    internal fun newRequestToken(): LxRequestToken = LxRequestToken()
+    internal fun newRequestToken(): LxRequestToken = LxRequestToken(requestSequence.incrementAndGet().toString())
 
     /**
      * 取消指定脚本调用当前正在执行的 OkHttp Call。
@@ -81,6 +82,8 @@ class LxHost internal constructor(
         return try {
             block()
         } finally {
+            // 成功/异常/超时和外部取消走同一条退役路径，不能遗留宿主 Call。
+            cancelRequest(token)
             requestContext = previous
         }
     }
@@ -91,9 +94,10 @@ class LxHost internal constructor(
     }
 
     @JavascriptInterface
-    fun http(payloadJson: String): String = try {
+    fun http(payloadJson: String, scopeId: String = ""): String = try {
         val context = requestContext
         val token = context?.token
+        if (scopeId.isNotEmpty() && scopeId != token?.scopeId) throw IOException("脚本请求已结束")
         if (token?.cancelled?.get() == true) throw IOException("脚本请求已取消")
         val payload = JSONObject(payloadJson)
         val url = payload.getString("url")

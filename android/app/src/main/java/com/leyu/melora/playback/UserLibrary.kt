@@ -140,7 +140,7 @@ object UserLibrary {
 
     fun replaceFromBackup(json: String) {
         val root = JSONObject(json)
-        synchronized(lock) {
+        BackupStateLock.write {
             writeTextAtomically(file, root.toString())
             applyRoot(root)
         }
@@ -272,7 +272,7 @@ object UserLibrary {
     private inline fun <T> mutate(
         shouldPersist: (T) -> Boolean = { true },
         change: Snapshot.() -> T,
-    ): T = synchronized(lock) {
+    ): T = BackupStateLock.write {
         val snapshot = Snapshot()
         val result = snapshot.change()
         if (shouldPersist(result)) {
@@ -282,10 +282,15 @@ object UserLibrary {
         result
     }
 
+    /** 后台播放记录不抢占恢复入口，也不能把半恢复内存重新写回磁盘。 */
+    private inline fun record(change: Snapshot.() -> Unit) = synchronized(lock) {
+        if (BackupRestoreTransaction.failure.value == null) mutate(change = change)
+    }
+
     fun isFavorite(uid: String): Boolean = uid in favoriteUids.value
 
     fun toggleFavorite(song: OnlineSong) {
-        synchronized(lock) { setFavorites(listOf(song), favorite = !isFavorite(song.uid)) }
+        BackupStateLock.write { setFavorites(listOf(song), favorite = !isFavorite(song.uid)) }
     }
 
     /** 批量设置而非逐首反转，一次持久化；重复取消不会意外重新收藏。 */
@@ -296,7 +301,7 @@ object UserLibrary {
         kotlin.math.abs(after.size - before.size)
     }
 
-    fun markPlayed(song: OnlineSong) = mutate {
+    fun markPlayed(song: OnlineSong) = record {
         recents = (listOf(song) + recents.filterNot { it.uid == song.uid }).take(MAX_RECENTS)
     }
 
@@ -379,8 +384,8 @@ object UserLibrary {
     }
 
     /** 记录最近播放的容器（歌单/专辑/榜单/听书专辑/推荐），按容器去重后置顶。 */
-    fun markContainerPlayed(container: PlayContainer) = mutate {
-        if (container.id.isBlank() || container.name.isBlank()) return@mutate
+    fun markContainerPlayed(container: PlayContainer) = record {
+        if (container.id.isBlank() || container.name.isBlank()) return@record
         val entry = RecentContainer(
             kind = container.kind,
             id = container.id,
@@ -395,8 +400,8 @@ object UserLibrary {
     }
 
     /** 容器封面缺失/不满意时补齐（不改变排序）。 */
-    fun updateContainerCover(key: String, img: String) = mutate {
-        if (img.isBlank()) return@mutate
+    fun updateContainerCover(key: String, img: String) = record {
+        if (img.isBlank()) return@record
         recentContainers = recentContainers.map {
             if (it.key == key && it.img != img) it.copy(img = img) else it
         }
@@ -450,7 +455,7 @@ object UserLibrary {
         name: String,
         result: PlaylistImportResult,
         allowCopy: Boolean = false,
-    ): UserPlaylist = synchronized(lock) {
+    ): UserPlaylist = BackupStateLock.write {
         val source = requireNotNull(result.importSource) { "缺少可信歌单来源，请重新读取" }
         require(PlaylistImportLink.parse(source.value) == source) { "歌单来源无效" }
         require(result.songs.isNotEmpty()) { "未获取到歌曲" }
@@ -469,7 +474,7 @@ object UserLibrary {
         caller.ensureActive()
         return withContext(NonCancellable) {
             withContext(Dispatchers.IO) {
-                synchronized(lock) {
+                BackupStateLock.write {
                     caller.ensureActive()
                     createImportedPlaylist(name, result, allowCopy)
                 }

@@ -78,6 +78,12 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertNotIn("android-ci-result:", publish)
         self.assertNotIn("needs.prepare.outputs.artifact-id", publish)
 
+    def test_release_provenance_regression_is_part_of_android_verify(self) -> None:
+        self.assertIn("python3 -B scripts/release/test_verify_android_release_run.py",
+                      job(self.android, "verify"))
+        self.assertIn("python3 -B android/quickjs-android/tests/test_jni_utf_resources.py",
+                      job(self.android, "verify"))
+
     def test_baseline_tags_trigger_only_their_own_channel(self) -> None:
         for tag, android_expected, web_expected in (
             ("android-v0.1.0", True, False), ("v0.1.0", False, True), ("unrelated", False, False),

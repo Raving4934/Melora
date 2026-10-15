@@ -250,6 +250,9 @@ internal fun FullPlayerPageContent(
     isCollapsed: Boolean = false,
     onCollapse: () -> Unit = {},
     queueMotionEnabled: Boolean = motionEnabled,
+    onSeek: (Long) -> Unit = { PlaybackController.seekTo(it) },
+    onPrevious: () -> Unit = { PlaybackController.previous() },
+    onNext: () -> Unit = { PlaybackController.next() },
 ) {
     val track = state.current
     val autoSwitch by MeloraSettings.autoSwitchSource.collectAsStateWithLifecycle()
@@ -513,63 +516,66 @@ internal fun FullPlayerPageContent(
         val currentPane by rememberUpdatedState(paneContent)
         val pane = remember { movableContentOf<Modifier> { currentPane(it) } }
         val transport: @Composable () -> Unit = {
-            // 细长进度线（无圆点极简纯线条设计） + 左右时间（消除48dp隐形留白干扰）
-            var dragging by remember { mutableStateOf<Float?>(null) }
-            val range = 0f..(state.durationMs.takeIf { it > 0 }?.toFloat() ?: 1f)
-            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
-                Slider(
-                    value = dragging ?: state.positionMs.toFloat(),
-                    onValueChange = { dragging = it },
-                    onValueChangeFinished = {
-                        dragging?.let { PlaybackController.seekTo(it.toLong()) }
-                        dragging = null
-                    },
-                    valueRange = range,
-                    enabled = state.durationMs > 0,
-                    colors = SliderDefaults.colors(
-                        activeTrackColor = FullPlayerProgressActive,
-                        inactiveTrackColor = FullPlayerProgressInactive,
-                    ),
-                    thumb = {},
-                    track = { sliderState: SliderState ->
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .height(2.5.dp)
-                                .clip(RoundedCornerShape(1.5.dp))
-                                .background(FullPlayerProgressInactive),
-                        ) {
+            // 曲目切换必须一起销毁 Slider 内部拖动和预览，不能只清空外部数值。
+            key(track?.uid) {
+                // 细长进度线（无圆点极简纯线条设计） + 左右时间（消除48dp隐形留白干扰）
+                var dragging by remember { mutableStateOf<Float?>(null) }
+                val range = 0f..(state.durationMs.takeIf { it > 0 }?.toFloat() ?: 1f)
+                CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+                    Slider(
+                        value = dragging ?: state.positionMs.toFloat(),
+                        onValueChange = { dragging = it },
+                        onValueChangeFinished = {
+                            dragging?.let { onSeek(it.toLong()) }
+                            dragging = null
+                        },
+                        valueRange = range,
+                        enabled = state.durationMs > 0,
+                        colors = SliderDefaults.colors(
+                            activeTrackColor = FullPlayerProgressActive,
+                            inactiveTrackColor = FullPlayerProgressInactive,
+                        ),
+                        thumb = {},
+                        track = { sliderState: SliderState ->
                             Box(
                                 Modifier
-                                    .fillMaxWidth(
-                                        ((sliderState.value - range.start) / (range.endInclusive - range.start))
-                                            .coerceIn(0f, 1f),
-                                    )
+                                    .fillMaxWidth()
                                     .height(2.5.dp)
-                                    .background(FullPlayerProgressActive),
-                            )
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth().height(20.dp),
-                )
-            }
+                                    .clip(RoundedCornerShape(1.5.dp))
+                                    .background(FullPlayerProgressInactive),
+                            ) {
+                                Box(
+                                    Modifier
+                                        .fillMaxWidth(
+                                            ((sliderState.value - range.start) / (range.endInclusive - range.start))
+                                                .coerceIn(0f, 1f),
+                                        )
+                                        .height(2.5.dp)
+                                        .background(FullPlayerProgressActive),
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().height(20.dp).testTag("player-seek-slider"),
+                    )
+                }
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 2.dp),
-            ) {
-                Text(
-                    formatClock(dragging?.toLong() ?: state.positionMs),
-                    color = FullPlayerTextMuted,
-                    fontSize = 12.sp,
-                )
-                Spacer(Modifier.weight(1f))
-                Text(
-                    formatClock(state.durationMs),
-                    color = FullPlayerTextMuted,
-                    fontSize = 12.sp,
-                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 2.dp),
+                ) {
+                    Text(
+                        formatClock(dragging?.toLong() ?: state.positionMs),
+                        color = FullPlayerTextMuted,
+                        fontSize = 12.sp,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        formatClock(state.durationMs),
+                        color = FullPlayerTextMuted,
+                        fontSize = 12.sp,
+                    )
+                }
             }
 
             // 紧凑控制区：进度条与播放控制紧密贴合
@@ -578,9 +584,9 @@ internal fun FullPlayerPageContent(
             // 主播放控制：上一首 / 纯白大号播放键（无底圆） / 下一首
             FullPlayerPrimaryControls(
                 playing = state.playing,
-                onPrevious = { PlaybackController.previous() },
+                onPrevious = onPrevious,
                 onToggle = { PlaybackController.toggle() },
-                onNext = { PlaybackController.next() },
+                onNext = onNext,
             )
 
             Spacer(Modifier.height(4.dp))

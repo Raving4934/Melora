@@ -54,6 +54,8 @@ class DownloadTransferInstrumentedTest {
     private val songs = mutableSetOf<String>()
 
     @Before fun setup() = runBlocking<Unit> {
+        // 前面的 Service 用例可能创建全局缓存；先退役，避免本组首例复用其它目录的完整音频。
+        releaseAudioCacheFixture()
         resetDownloadCenterStorage()
         context.root.deleteRecursively()
         context.root.mkdirs()
@@ -308,8 +310,8 @@ class DownloadTransferInstrumentedTest {
         )).use { server ->
             installSources(server,
                 Source("primary", "/one"), Source("backup-two", "/two"),
-                Source("backup-three", "/three", responseDelayMs = 250),
-                Source("backup-four", "/four", responseDelayMs = 750),
+                Source("backup-three", "/three"),
+                Source("backup-four", "/four"),
             )
             val song = song("transfer-resource-cap")
 
@@ -356,27 +358,31 @@ class DownloadTransferInstrumentedTest {
     }
 
     private suspend fun installSources(server: LoopbackAudioServer, vararg sources: Source) {
-        val imported = sources.map { source ->
-            scriptStore.import(source.name, script(source, server.port))
+        val imported = sources.mapIndexed { index, source ->
+            // DOWNLOAD 会竞速全部脚本；备源只有在前一资源真的开始 HTTP 下载后才能返回 URL。
+            val gate = sources.getOrNull(index - 1)?.let { server.gateAfterRequest(it.path) }
+            scriptStore.import(source.name, script(source, server.port, gate))
         }
         scriptStore.setEnabled(imported.first().id, true)
         LxScriptPool.reload(context)
     }
 
-    private fun script(source: Source, port: Int): String = """
+    private fun script(source: Source, port: Int, gate: String?): String {
+        val ready = if (gate == null) "Promise.resolve()" else
+            "lx.request('http://127.0.0.1:$port$gate', {timeout: 5000, responseType: 'text'})"
+        return """
         // @name ${source.name}
         // @version 1
         const initialize = () => lx.send('inited', {sources: {kw: {
             name: 'download fixture', actions: ['musicUrl'], qualitys: ['flac24bit', 'flac', '320k', '128k']
         }}});
         initialize();
-        lx.on('request', ({info}) => new Promise(resolve => {
-            const result = {url: 'http://127.0.0.1:$port${source.path}',
-                type: info.type, resourceId: '${source.name}-resource'};
-            if (${source.responseDelayMs} > 0) setTimeout(() => resolve(result), ${source.responseDelayMs});
-            else resolve(result);
-        }));
-    """.trimIndent()
+        lx.on('request', ({info}) => $ready.then(() => ({
+            url: 'http://127.0.0.1:$port${source.path}',
+            type: info.type, resourceId: '${source.name}-resource'
+        })));
+        """.trimIndent()
+    }
 
     private fun song(uid: String): OnlineSong {
         return OnlineSong(JSONObject().put("source", "kw").put("songmid", uid)
@@ -401,7 +407,7 @@ class DownloadTransferInstrumentedTest {
         assertTrue(File(context.cacheDir, Downloader.TEMP_DIRECTORY).listFiles().orEmpty().isEmpty())
     }
 
-    private data class Source(val name: String, val path: String, val responseDelayMs: Int = 0)
+    private data class Source(val name: String, val path: String)
 
     private data class HttpResponse(
         val status: Int,
@@ -416,15 +422,20 @@ class DownloadTransferInstrumentedTest {
         private val executor = Executors.newCachedThreadPool()
         private val running = AtomicInteger(1)
         private val counts = ConcurrentHashMap<String, AtomicInteger>()
+        private val requestsStarted = ConcurrentHashMap<String, CountDownLatch>()
+        private val gates = ConcurrentHashMap<String, CountDownLatch>()
+        private val clients = ConcurrentHashMap.newKeySet<Socket>()
         val port: Int get() = server.localPort
         private val acceptThread = Thread({
             while (running.get() == 1) {
                 try {
                     val socket = server.accept()
+                    clients.add(socket)
                     executor.execute {
                         try { serve(socket) }
                         catch (_: java.io.IOException) { /* 客户端取消会关闭连接，服务端不能因此终止测试进程。 */ }
                         catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+                        finally { clients.remove(socket) }
                     }
                 } catch (_: Exception) { if (running.get() != 1) break }
             }
@@ -432,14 +443,29 @@ class DownloadTransferInstrumentedTest {
 
         fun count(path: String): Int = counts[path]?.get() ?: 0
 
+        fun gateAfterRequest(path: String): String {
+            val gate = "/__resolve_gate/${gates.size}"
+            gates[gate] = requestsStarted.computeIfAbsent(path) { CountDownLatch(1) }
+            return gate
+        }
+
         private fun serve(socket: Socket) {
             socket.use { client ->
                 client.soTimeout = 5_000
                 val reader = BufferedReader(InputStreamReader(client.getInputStream(), StandardCharsets.US_ASCII))
                 val path = reader.readLine()?.split(' ')?.getOrNull(1)?.substringBefore('?') ?: return
                 while (!reader.readLine().isNullOrEmpty()) { /* 消费请求头 */ }
-                counts.computeIfAbsent(path) { AtomicInteger() }.incrementAndGet()
-                val response = responses[path] ?: HttpResponse(404, byteArrayOf())
+                val gate = gates[path]
+                if (gate != null) {
+                    // 超时只关闭连接，绝不能让未发生音频请求的备源胜出；关闭服务器会中断等待。
+                    if (!gate.await(8, TimeUnit.SECONDS)) return
+                } else if (path in responses) {
+                    counts.computeIfAbsent(path) { AtomicInteger() }.incrementAndGet()
+                    requestsStarted[path]?.countDown()
+                }
+                // 门控不进入音频请求计数，也不返回任何音频数据。
+                val response = if (gate != null) HttpResponse(200, byteArrayOf()) else
+                    responses[path] ?: HttpResponse(404, byteArrayOf())
                 val reason = if (response.status == 200) "OK" else if (response.status == 403) "Forbidden" else "Not Found"
                 val output = client.getOutputStream()
                 output.write(("HTTP/1.1 ${response.status} $reason\r\n" +
@@ -458,9 +484,10 @@ class DownloadTransferInstrumentedTest {
         override fun close() {
             running.set(0)
             server.close()
+            acceptThread.join(1_000)
+            clients.forEach { it.close() }
             executor.shutdownNow()
             executor.awaitTermination(1, TimeUnit.SECONDS)
-            acceptThread.join(1_000)
         }
     }
 
