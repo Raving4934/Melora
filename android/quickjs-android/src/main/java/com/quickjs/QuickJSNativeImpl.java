@@ -47,6 +47,9 @@ class QuickJSNativeImpl implements QuickJSNative {
     public native JSObject _initNewJSObject(long contextPtr);
 
     @Override
+    public native JSObject _newJobScope(long contextPtr);
+
+    @Override
     public native JSArray _initNewJSArray(long contextPtr);
 
     @Override

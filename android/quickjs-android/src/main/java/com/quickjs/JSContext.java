@@ -161,6 +161,14 @@ public class JSContext extends JSObject implements Closeable {
         return (JSObject) executeScript(JSValue.TYPE.JS_OBJECT, source, fileName);
     }
 
+    /** 原生 Promise/await 和宿主计时器共用的串行请求作用域。 */
+    public JSObject newJobScope() {
+        checkReleased();
+        JSObject scope = getNative()._newJobScope(contextPtr);
+        QuickJS.checkException(this);
+        return scope;
+    }
+
     public boolean isReleased() {
         if (getQuickJS().isReleased()) {
             return true;

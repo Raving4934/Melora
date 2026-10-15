@@ -433,6 +433,10 @@ struct JSContext {
     JSValue throw_type_error;
     JSValue eval_obj;
 
+    /* 0 is initialization/unscoped work. A context has at most one live request.
+       Numeric generations do not retain JS objects or add GC ownership edges. */
+    uint64_t job_scope, active_job_scope, last_job_scope, active_job_id;
+
     JSValue global_obj; /* global object */
     JSValue global_var_obj; /* contains the global let/const definitions */
 
@@ -810,6 +814,7 @@ typedef struct JSJobEntry {
     struct list_head link;
     JSContext *ctx;
     JSJobFunc *job_func;
+    uint64_t scope;
     int argc;
     JSValue argv[0];
 } JSJobEntry;
@@ -1803,8 +1808,8 @@ void JS_SetSharedArrayBufferFunctions(JSRuntime *rt,
 }
 
 /* return 0 if OK, < 0 if exception */
-int JS_EnqueueJob(JSContext *ctx, JSJobFunc *job_func,
-                  int argc, JSValueConst *argv)
+static int js_enqueue_job(JSContext *ctx, JSJobFunc *job_func,
+                          int argc, JSValueConst *argv, uint64_t scope)
 {
     JSRuntime *rt = ctx->rt;
     JSJobEntry *e;
@@ -1815,12 +1820,88 @@ int JS_EnqueueJob(JSContext *ctx, JSJobFunc *job_func,
         return -1;
     e->ctx = ctx;
     e->job_func = job_func;
+    e->scope = scope;
     e->argc = argc;
     for(i = 0; i < argc; i++) {
         e->argv[i] = JS_DupValue(ctx, argv[i]);
     }
     list_add_tail(&e->link, &rt->job_list);
     return 0;
+}
+
+int JS_EnqueueJob(JSContext *ctx, JSJobFunc *job_func,
+                  int argc, JSValueConst *argv)
+{
+    return js_enqueue_job(ctx, job_func, argc, argv, ctx->job_scope);
+}
+
+/* Opt-in embedding extension. Unscoped contexts keep standard QuickJS behavior.
+   Capture at reaction registration, NOT promise resolution: an initialization
+   promise may settle during a later request, but its awaiters keep their owner. */
+static JSValue js_job_scope_string(JSContext *ctx, uint64_t scope)
+{
+    char buf[32];
+    if (!scope)
+        return JS_NewString(ctx, "");
+    snprintf(buf, sizeof(buf), "%" PRIu64, scope);
+    return JS_NewString(ctx, buf);
+}
+
+static JSValue js_job_scope(JSContext *ctx, JSValueConst this_val,
+                            int argc, JSValueConst *argv, int magic)
+{
+    const char *text, *p;
+    uint64_t scope = 0;
+    JSValue previous;
+    if (magic == 0) /* current */
+        return js_job_scope_string(ctx, ctx->job_scope ? ctx->active_job_id : 0);
+    text = JS_ToCString(ctx, argc ? argv[0] : JS_UNDEFINED);
+    if (!text)
+        return JS_EXCEPTION;
+    for (p = text; *p; p++) {
+        if (*p < '0' || *p > '9' || scope > (UINT64_MAX - (*p - '0')) / 10) {
+            JS_FreeCString(ctx, text);
+            return JS_ThrowTypeError(ctx, "invalid job scope");
+        }
+        scope = scope * 10 + (*p - '0');
+    }
+    JS_FreeCString(ctx, text);
+    if (magic == 1) { /* generation follows execution, not host token allocation */
+        if (ctx->active_job_scope || !scope || ctx->last_job_scope == UINT64_MAX)
+            return JS_ThrowTypeError(ctx, "job scope is active or invalid");
+        ctx->active_job_id = scope;
+        ctx->job_scope = ctx->active_job_scope = ++ctx->last_job_scope;
+    } else if (magic == 2) { /* stale cleanup must not retire the next request */
+        if (scope && scope == ctx->active_job_id)
+            ctx->job_scope = ctx->active_job_scope = ctx->active_job_id = 0;
+    } else { /* enter: timers temporarily restore their registration scope */
+        if (scope && scope != ctx->active_job_id)
+            return JS_ThrowTypeError(ctx, "job scope has ended");
+        previous = js_job_scope_string(ctx, ctx->job_scope ? ctx->active_job_id : 0);
+        if (JS_IsException(previous))
+            return previous;
+        ctx->job_scope = scope ? ctx->active_job_scope : 0;
+        return previous;
+    }
+    return JS_UNDEFINED;
+}
+
+JSValue JS_NewJobScope(JSContext *ctx)
+{
+    const char *names[] = { "current", "begin", "end", "enter" };
+    JSValue obj = JS_NewObject(ctx);
+    int i;
+    if (JS_IsException(obj))
+        return obj;
+    for (i = 0; i < 4; i++) {
+        JSValue func = JS_NewCFunctionMagic(ctx, js_job_scope, names[i],
+                                            i ? 1 : 0, JS_CFUNC_generic_magic, i);
+        if (JS_IsException(func) || JS_DefinePropertyValueStr(ctx, obj, names[i], func, 0) < 0) {
+            JS_FreeValue(ctx, obj);
+            return JS_EXCEPTION;
+        }
+    }
+    return obj;
 }
 
 BOOL JS_IsJobPending(JSRuntime *rt)
@@ -1846,7 +1927,13 @@ int JS_ExecutePendingJob(JSRuntime *rt, JSContext **pctx)
     e = list_entry(rt->job_list.next, JSJobEntry, link);
     list_del(&e->link);
     ctx = e->ctx;
-    res = e->job_func(e->ctx, e->argc, (JSValueConst *)e->argv);
+    res = JS_UNDEFINED;
+    if (!e->scope || e->scope == ctx->active_job_scope) {
+        uint64_t previous = ctx->job_scope;
+        ctx->job_scope = e->scope;
+        res = e->job_func(ctx, e->argc, (JSValueConst *)e->argv);
+        ctx->job_scope = previous;
+    }
     for(i = 0; i < e->argc; i++)
         JS_FreeValue(ctx, e->argv[i]);
     if (JS_IsException(res))
@@ -46253,6 +46340,7 @@ typedef enum JSPromiseStateEnum {
 
 typedef struct JSPromiseData {
     JSPromiseStateEnum promise_state;
+    uint64_t scope; /* adoption belongs to the target promise, not its resolver */
     /* 0=fulfill, 1=reject, list of JSPromiseReactionData.link */
     struct list_head promise_reactions[2];
     BOOL is_handled; /* Note: only useful to debug */
@@ -46271,6 +46359,7 @@ typedef struct JSPromiseFunctionData {
 
 typedef struct JSPromiseReactionData {
     struct list_head link; /* not used in promise_reaction_job */
+    uint64_t scope;
     JSValue resolving_funcs[2];
     JSValue handler;
 } JSPromiseReactionData;
@@ -46367,7 +46456,7 @@ static void fulfill_or_reject_promise(JSContext *ctx, JSValueConst promise,
         args[2] = rd->handler;
         args[3] = JS_NewBool(ctx, is_reject);
         args[4] = value;
-        JS_EnqueueJob(ctx, promise_reaction_job, 5, args);
+        js_enqueue_job(ctx, promise_reaction_job, 5, args, rd->scope);
         list_del(&rd->link);
         promise_reaction_data_free(ctx->rt, rd);
     }
@@ -46527,7 +46616,8 @@ static JSValue js_promise_resolve_function_call(JSContext *ctx,
         args[0] = s->promise;
         args[1] = resolution;
         args[2] = then;
-        JS_EnqueueJob(ctx, js_promise_resolve_thenable_job, 3, args);
+        JSPromiseData *promise = JS_GetOpaque(s->promise, JS_CLASS_PROMISE);
+        js_enqueue_job(ctx, js_promise_resolve_thenable_job, 3, args, promise->scope);
         JS_FreeValue(ctx, then);
     }
     return JS_UNDEFINED;
@@ -46592,6 +46682,7 @@ static JSValue js_promise_constructor(JSContext *ctx, JSValueConst new_target,
     if (!s)
         goto fail;
     s->promise_state = JS_PROMISE_PENDING;
+    s->scope = ctx->job_scope;
     s->is_handled = FALSE;
     for(i = 0; i < 2; i++)
         init_list_head(&s->promise_reactions[i]);
@@ -47080,6 +47171,7 @@ static __exception int perform_promise_then(JSContext *ctx,
         if (!JS_IsFunction(ctx, handler))
             handler = JS_UNDEFINED;
         rd->handler = JS_DupValue(ctx, handler);
+        rd->scope = ctx->job_scope;
         rd_array[i] = rd;
     }
 
@@ -47102,7 +47194,7 @@ static __exception int perform_promise_then(JSContext *ctx,
         args[2] = rd->handler;
         args[3] = JS_NewBool(ctx, i);
         args[4] = s->promise_result;
-        JS_EnqueueJob(ctx, promise_reaction_job, 5, args);
+        js_enqueue_job(ctx, promise_reaction_job, 5, args, rd->scope);
         for(i = 0; i < 2; i++)
             promise_reaction_data_free(ctx->rt, rd_array[i]);
     }

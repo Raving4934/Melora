@@ -1,4 +1,4 @@
-"""直接编译实际 JNI/QuickJS，故障注入验证 UTF 资源；无需 Gradle 或设备。
+"""直接编译实际 JNI/QuickJS，故障注入验证 UTF 资源及原生异步任务归属；无需 Gradle 或设备。
 
 运行：python3 android/quickjs-android/tests/test_jni_utf_resources.py
 依赖：Linux、GCC/G++、JDK（提供 jni.h）。构建产物自动清理。
@@ -23,6 +23,14 @@ CASES = (
     "executeScript:1", "executeScript:2", "stringValue:1", "loader:1", "normalize:1",
     "loaderNew:1", "normalizeNew:1", "normalizeNew:2",
     "loaderCallback", "normalizeCallback", "loaderNull", "normalizeNull",
+)
+
+SCOPE_CASES = (
+    "timers", "initializationTimers", "pendingThen", "queuedJobs", "pendingAwait",
+    "pendingCatchFinally", "initializationAwait", "liveRequest", "staleCleanup",
+    "nestedAwait", "thenableAwait", "asyncGenerator", "identities",
+    "restoreAfterException", "manyReusesAndGc", "closeWithPendingJobs",
+    "reversedTokenOrder", "initializationAdoption", "retiredAdoption",
 )
 
 
@@ -62,6 +70,21 @@ def resource_case(case):
 
 for _case in CASES:
     setattr(JniUtfResourcesTest, "test_" + _case.replace(":", "_failure_"), resource_case(_case))
+
+
+def scope_case(case):
+    def test(self):
+        run = subprocess.run([
+            str(self.binary), "jobScope", case,
+            str(ROOT.parent / "app/src/main/assets/lx-shim.js"),
+            str(ROOT / "tests/job_scope.js"),
+        ], text=True, capture_output=True, timeout=15)
+        self.assertEqual(run.returncode, 0, f"{case}: {run.stdout}{run.stderr}")
+    return test
+
+
+for _case in SCOPE_CASES:
+    setattr(JniUtfResourcesTest, "test_scope_" + _case, scope_case(_case))
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

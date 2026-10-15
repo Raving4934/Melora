@@ -25,6 +25,8 @@ public interface QuickJSNative {
 
     JSObject _initNewJSObject(long contextPtr);
 
+    JSObject _newJobScope(long contextPtr);
+
     JSArray _initNewJSArray(long contextPtr);
 
     JSFunction _initNewJSFunction(long contextPtr, int javaCallerId, boolean voidMethod);

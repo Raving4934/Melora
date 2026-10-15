@@ -7,36 +7,22 @@
   const handlers = Object.create(null)
   let invokeResult = undefined
   let invokeGeneration = 0
-  let requestScope = null
-  let currentScope = null
+  const scopes = native.scope
+  let requestScope = ''
 
   const inScope = (scope, callback, args) => {
-    if (scope && !scope.active) return
-    const previous = currentScope
-    currentScope = scope
+    if (scope && scope !== requestScope) return
+    const previous = scopes.enter(scope)
     try {
       return callback(...args)
     } finally {
-      currentScope = previous
+      scopes.enter(previous)
     }
   }
 
-  // Promise 回调与定时器一样继承注册时的所有者，不能借用下一次请求的宿主 budget。
-  const promiseThen = Promise.prototype.then
-  Promise.prototype.then = function (onFulfilled, onRejected) {
-    const scope = currentScope
-    const bind = (callback) => typeof callback === 'function'
-      ? (value) => inScope(scope, callback, [value])
-      : callback
-    return promiseThen.call(this, bind(onFulfilled), bind(onRejected))
-  }
-
-  // 内置 SDK 直接使用 __lxNative.http，也必须经过同一个作用域校验。
+  // 原生 Promise/await、计时器与内置 SDK 的 HTTP 共用同一个所有者。
   const nativeHttp = native.http
-  native.http = (payload) => {
-    if (currentScope && !currentScope.active) throw new Error('脚本请求已结束')
-    return nativeHttp.call(native, payload, currentScope ? currentScope.id : '')
-  }
+  native.http = (payload) => nativeHttp.call(native, payload, scopes.current())
 
   // 控制台与定时器：QuickJS 无宿主事件循环，定时器由 Kotlin 泵每轮调用 __lxTick 触发。
   if (typeof globalThis.console === 'undefined') {
@@ -62,9 +48,7 @@
   let timerSeq = 0
   const addTimer = (handler, timeout, args, repeat) => {
     const id = ++timerSeq
-    if (!currentScope || currentScope.active) {
-      timers.set(id, { id, at: Date.now() + (Number(timeout) || 0), handler, args, repeat, scope: currentScope })
-    }
+    timers.set(id, { id, at: Date.now() + (Number(timeout) || 0), handler, args, repeat, scope: scopes.current() })
     return id
   }
   globalThis.setTimeout = (handler, timeout, ...args) => {
@@ -79,19 +63,18 @@
 
   globalThis.__lxBeginRequest = (id) => {
     if (requestScope) throw new Error('脚本请求尚未结束')
-    requestScope = { id, active: true }
-    currentScope = requestScope
+    scopes.begin(id)
+    requestScope = id
   }
 
   globalThis.__lxEndRequest = (id) => {
     const scope = requestScope
-    if (!scope || scope.id !== id) return
-    scope.active = false
+    if (!scope || scope !== id) return
+    scopes.end(id)
     for (const [timerId, timer] of timers) {
       if (timer.scope === scope) timers.delete(timerId)
     }
-    requestScope = null
-    if (currentScope === scope) currentScope = null
+    requestScope = ''
     ++invokeGeneration
     invokeResult = undefined
   }

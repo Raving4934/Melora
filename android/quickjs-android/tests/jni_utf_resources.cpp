@@ -6,6 +6,8 @@
 #include <cstring>
 #include <map>
 #include <set>
+#include <fstream>
+#include <sstream>
 
 static void require(bool condition, const char *message) {
     if (!condition) {
@@ -149,8 +151,45 @@ static void freeWrapper(JSContext *ctx, jobject object) {
     delete wrapper;
 }
 
+// 同一真实 JNI/QuickJS host harness 也承载原生任务归属回归。
+static JSValue drainJobs(JSContext *ctx, JSValueConst, int, JSValueConst *) {
+    JSContext *owner = nullptr;
+    for (int i = 0; i < 1000; ++i) {
+        int result = JS_ExecutePendingJob(JS_GetRuntime(ctx), &owner);
+        if (result < 0) return JS_EXCEPTION;
+        if (result == 0) return JS_UNDEFINED;
+    }
+    return JS_ThrowInternalError(ctx, "test microtask queue did not settle");
+}
+
+static JSValue collectGarbage(JSContext *ctx, JSValueConst, int, JSValueConst *) {
+    JS_RunGC(JS_GetRuntime(ctx));
+    return JS_UNDEFINED;
+}
+
+static void evalChecked(JSContext *ctx, const std::string &source, const char *file) {
+    JSValue result = JS_Eval(ctx, source.data(), source.size(), file, JS_EVAL_TYPE_GLOBAL);
+    if (JS_IsException(result)) {
+        JSValue error = JS_GetException(ctx);
+        const char *message = JS_ToCString(ctx, error);
+        std::fprintf(stderr, "%s: %s\n", file, message ? message : "JS exception");
+        JS_FreeCString(ctx, message);
+        JS_FreeValue(ctx, error);
+        require(false, "job scope regression failed");
+    }
+    JS_FreeValue(ctx, result);
+}
+
+static void evalFile(JSContext *ctx, const char *file) {
+    std::ifstream input(file);
+    require(input.good(), "test source missing");
+    std::ostringstream source;
+    source << input.rdbuf();
+    evalChecked(ctx, source.str(), file);
+}
+
 int main(int argc, char **argv) {
-    require(argc == 2, "expected case name");
+    require(argc == 2 || argc == 5, "expected case name");
     std::string name = argv[1];
     const auto colon = name.find(':');
     if (colon != std::string::npos) {
@@ -198,7 +237,32 @@ int main(int argc, char **argv) {
     bool wrapped = false;
     const bool failure = failUtf || failNew || failCallback || nullCallback || invalidModule;
 
-    if (name == "get") {
+    if (name == "jobScope") {
+        require(argc == 5, "jobScope requires case, shim and test paths");
+        returned = Java_com_quickjs_QuickJSNativeImpl__1newJobScope(env, nullptr, ptr);
+        wrapped = true;
+        require(returned != nullptr, "native job scope missing");
+        JSValue global = JS_GetGlobalObject(ctx);
+        JSValue native = JS_NewObject(ctx);
+        JS_SetPropertyStr(ctx, native, "scope", JS_DupValue(ctx, static_cast<JavaValue *>(returned)->value));
+        JS_SetPropertyStr(ctx, global, "__lxNative", native);
+        JS_SetPropertyStr(ctx, global, "drain", JS_NewCFunction(ctx, drainJobs, "drain", 0));
+        JS_SetPropertyStr(ctx, global, "gc", JS_NewCFunction(ctx, collectGarbage, "gc", 0));
+        JS_SetPropertyStr(ctx, global, "testCase", JS_NewString(ctx, argv[2]));
+        JS_FreeValue(ctx, global);
+        evalChecked(ctx, R"JS(
+            let clock = 0;
+            const calls = [];
+            Date.now = () => clock;
+            __lxNative.http = (payload, scope) => {
+                calls.push(Object.assign(JSON.parse(payload), {scope}));
+                return JSON.stringify({statusCode:200, raw:''});
+            };
+            __lxNative.log = () => {};
+        )JS", "fixture.js");
+        evalFile(ctx, argv[3]);
+        evalFile(ctx, argv[4]);
+    } else if (name == "get") {
         returned = Java_com_quickjs_QuickJSNativeImpl__1get(env, nullptr, ptr, TYPE_NULL, &object, &key);
     } else if (name == "getValue") {
         returned = Java_com_quickjs_QuickJSNativeImpl__1getValue(env, nullptr, ptr, &object, &key);

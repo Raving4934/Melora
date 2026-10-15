@@ -164,6 +164,11 @@ class EventQueue implements QuickJSNative {
     }
 
     @Override
+    public JSObject _newJobScope(long contextPtr) {
+        return post(() -> quickJSNative._newJobScope(contextPtr));
+    }
+
+    @Override
     public JSObject _initNewJSObject(long contextPtr) {
         return post(() -> quickJSNative._initNewJSObject(contextPtr));
     }

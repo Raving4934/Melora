@@ -31,6 +31,7 @@ class LxScriptEngine(private val context: Context) : Closeable {
             jsContext = runtime.createContext()
             val shim = context.assets.open("lx-shim.js").use { it.readBytes().decodeToString() }
             val native = JSObject(jsContext)
+            native.set("scope", jsContext.newJobScope())
             native.registerJavaMethod(JavaCallback { _, args ->
                 host.http(args.getString(0), args.getString(1))
             }, "http")

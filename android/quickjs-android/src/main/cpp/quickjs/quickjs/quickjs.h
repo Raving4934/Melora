@@ -868,6 +868,12 @@ JSAtom JS_GetModuleName(JSContext *ctx, JSModuleDef *m);
 
 /* JS Job support */
 
+/* Opt-in serial request scopes: current/begin/end/enter take decimal string IDs.
+   IDs identify host requests; an internal generation follows execution order.
+   Empty string denotes initialization. Retired scope jobs (including native
+   await reactions) are discarded before executing JS. */
+JSValue JS_NewJobScope(JSContext *ctx);
+
 typedef JSValue JSJobFunc(JSContext *ctx, int argc, JSValueConst *argv);
 int JS_EnqueueJob(JSContext *ctx, JSJobFunc *job_func, int argc, JSValueConst *argv);
 

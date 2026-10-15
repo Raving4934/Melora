@@ -463,6 +463,12 @@ Java_com_quickjs_QuickJSNativeImpl__1getGlobalObject(JNIEnv *env, jclass clazz, 
 
 extern "C"
 JNIEXPORT jobject JNICALL
+Java_com_quickjs_QuickJSNativeImpl__1newJobScope(JNIEnv *env, jclass clazz, jlong context_ptr) {
+    auto *ctx = reinterpret_cast<JSContext *>(context_ptr);
+    return TO_JAVA_OBJECT(env, ctx, JS_NewJobScope(ctx));
+}
+extern "C"
+JNIEXPORT jobject JNICALL
 Java_com_quickjs_QuickJSNativeImpl__1initNewJSObject(JNIEnv *env, jclass clazz, jlong context_ptr) {
     auto *ctx = reinterpret_cast<JSContext *>(context_ptr);
     JSValue jsValue = JS_NewObject(ctx);
