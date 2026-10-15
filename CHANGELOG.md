@@ -2,6 +2,40 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-16
+
+### 安卓客户端
+
+【新增设置】
+- 新增启动页恢复开关，关闭后默认进入本地歌曲。
+- 音频缓存支持 1–10G 调节，每 0.5G 一档，滑动时提供振动反馈。
+
+【播放与听书】
+- 修复部分设备后台、熄屏播放卡顿，以及睡眠定时提前截断歌曲尾声的问题。
+- 修复拖动进度时切歌造成错误跳转、取消迷你播放器滑动仍触发切歌的问题。
+- 修复歌单翻页异常，以及听书新增章节无法继续加载的问题。
+
+【稳定性改进】
+- 扫描时保留临时离线存储的已有条目；标签补全保留原有封面和歌词。
+- 完善备份恢复失败后的处理，避免旧恢复记录影响后续保存的数据。
+- 修复音源更新不生效，以及在线歌单、歌词缓存异常。
+
+### 提交追溯（不进入应用内日志）
+
+本次仅更新 Android 客户端，版本号 0.2.0 / versionCode 20，沿用正式签名。Web / NAS、FPK 与 Docker 版本不变。
+完整提交区间：[android-v0.1.10...android-v0.2.0][Android 0.2.0]。
+
+- 启动页与缓存设置：[`0bca591`](https://github.com/Raving4934/Melora/commit/0bca59155bed2f200ab71f4c21d943b46ae8c837)。
+- 后台、熄屏音频调度：[`9f13bf7`](https://github.com/Raving4934/Melora/commit/9f13bf790df73644ef8235fb8dd040bfcc821587)。
+- 扫描、标签写入、恢复、缓存清理、歌单分页、听书续播与播放手势：[`d27abaf`](https://github.com/Raving4934/Melora/commit/d27abaf7f7361cfb837378eaf08ac303ee256ad2)。
+- QuickJS 异步请求隔离与音源更新、退役：[`3dea1a5`](https://github.com/Raving4934/Melora/commit/3dea1a531cf1ed055d5c00a708bbd5f451bbf7c0)、[`1818a04`](https://github.com/Raving4934/Melora/commit/1818a047931fe06fa4eb7f3e7e72246d6f21d039)。
+- 离线媒体保护与文件版本合并：[`ee9ffd5`](https://github.com/Raving4934/Melora/commit/ee9ffd596cff220904240b8be1180e37eaa31f44)。
+- 恢复标记与事务日志清理：[`93efe2b`](https://github.com/Raving4934/Melora/commit/93efe2bb9fb72ff7317dc413ff1728064c51d4ff)。
+- 在线 SDK 缓存与睡眠定时：[`1104598`](https://github.com/Raving4934/Melora/commit/110459814fb475bbbaa6ae4d80b5d6350f244dd7)、[`229551a`](https://github.com/Raving4934/Melora/commit/229551a1d0a8ecc070d2a24a92978f2cf0e1953b)。
+- 设备网络前置、APK 安装诊断、动画测试前提与发布恢复：[`09e61ca`](https://github.com/Raving4934/Melora/commit/09e61cae109114886520949a686cc2cda3e97b84)、[`37826b0`](https://github.com/Raving4934/Melora/commit/37826b05a9ffb5bf09a8460ee6c300bc5dd1182b)、[`4efc598`](https://github.com/Raving4934/Melora/commit/4efc59826872a16f0ca06f71c928267a71d3d5f6)、[`94b5bb3`](https://github.com/Raving4934/Melora/commit/94b5bb3ac23e6dca36d177c19ed719e7534cfc7f)。
+
+- CI 镜像下载断线的有限重试与诊断保留：[`8aaccfd`](https://github.com/Raving4934/Melora/commit/8aaccfd4cee922286d8903bc9225a8e45623bca3)。
+
 ## [0.1.10] - 2026-10-11
 
 ### 安卓客户端
@@ -443,10 +477,12 @@
 
 **Docker 镜像：** `ghcr.io/raving4934/melora:0.1.0`（支持 `linux/amd64`、`linux/arm64`）。
 
-[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.10...HEAD
+[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.0...HEAD
+[0.2.0]: https://github.com/Raving4934/Melora/compare/android-v0.1.10...android-v0.2.0
+[Android 0.2.0]: https://github.com/Raving4934/Melora/compare/android-v0.1.10...android-v0.2.0
 [0.1.10]: https://github.com/Raving4934/Melora/compare/android-v0.1.9...android-v0.1.10
 [Android 0.1.10]: https://github.com/Raving4934/Melora/compare/android-v0.1.9...android-v0.1.10
-[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.1.9...HEAD
+[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.0...HEAD
 [Web Unreleased]: https://github.com/Raving4934/Melora/compare/v0.1.1...HEAD
 [0.1.9]: https://github.com/Raving4934/Melora/compare/android-v0.1.8...android-v0.1.9
 [Android 0.1.9]: https://github.com/Raving4934/Melora/compare/android-v0.1.8...android-v0.1.9

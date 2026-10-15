@@ -6,7 +6,8 @@ usage() {
 Usage:
   export-changelog-section.sh --version VERSION --section "HEADING" --output PATH [--changelog PATH]
 
-Extract one level-3 release-note section from CHANGELOG.md without mixing product channels.
+Extract only the body of one level-3 release-note section from CHANGELOG.md.
+Keep the body formatting; omit channel headings and generated export metadata.
 The section heading is supplied without the leading "### ".
 HELP
 }
@@ -80,14 +81,22 @@ if awk -v version="[${VERSION}]" -v section="### ${SECTION}" '
   in_release && $0 == section {
     in_section = 1
     found_section = 1
-    print
     next
   }
   in_release && in_section && (substr($0, 1, 4) == "### " || substr($0, 1, 3) == "## ") {
     in_section = 0
   }
   in_release && in_section {
+    if ($0 ~ /^[[:space:]]*$/) {
+      if (wrote_body) blank_lines++
+      next
+    }
+    while (blank_lines > 0) {
+      print ""
+      blank_lines--
+    }
     print
+    wrote_body = 1
   }
   END {
     if (!found_release) exit 2
@@ -105,10 +114,5 @@ else
 fi
 
 [[ -s "$TMP_OUTPUT" ]] || fail "section '${SECTION}' is empty."
-{
-  printf '# Melora %s release notes\n\n' "$VERSION"
-  printf '> Exported from `CHANGELOG.md` section `### %s`.\n\n' "$SECTION"
-  cat "$TMP_OUTPUT"
-} > "$OUTPUT"
-rm -f -- "$TMP_OUTPUT"
+mv -f -- "$TMP_OUTPUT" "$OUTPUT"
 trap - EXIT
