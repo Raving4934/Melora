@@ -304,8 +304,25 @@ jobs:
               raise SystemExit(f"Required Android SDK package not found: {sys.argv[2]}")
           PYSDK
           (set +o pipefail; yes | sdkmanager --licenses > "$DEVICE_LOG_DIR/sdk-licenses.log" 2>&1)
-          sdkmanager --channel=0 'platforms;android-37.0' 'ndk;28.2.13676358' 'cmake;3.22.1' 'emulator' "$image" \
-            2>&1 | tee "$DEVICE_LOG_DIR/sdk-install.log"
+          for attempt in 1 2 3; do
+            install_log="$DEVICE_LOG_DIR/sdk-install-attempt-${attempt}.log"
+            if sdkmanager --channel=0 'platforms;android-37.0' 'ndk;28.2.13676358' 'cmake;3.22.1' 'emulator' "$image" \
+              2>&1 | tee "$install_log"; then
+              break
+            else
+              install_status=("${PIPESTATUS[@]}")
+            fi
+            # 日志写入失败与 SDK 配置错误立即失败；仅重试可识别的瞬时网络故障。
+            if (( install_status[1] != 0 )); then exit "${install_status[1]}"; fi
+            if (( attempt == 3 )) ||
+              grep -Eiq 'licenses?.*(not accepted|not been accepted)|no space left on device|not enough (free )?(disk )?space|insufficient (disk )?space|permission denied|failed to find package|unknown package|package.*not found' "$install_log" ||
+              ! grep -Eiq 'peer disconnected|connection reset|connection timed out|read timed out|SocketTimeoutException|temporary failure in name resolution|HTTP (Error |response code: )?(408|429|500|502|503|504)([^0-9]|$)' "$install_log"; then
+              exit "${install_status[0]}"
+            fi
+            delay=$((attempt * 5))
+            echo "::warning::Android SDK install attempt $attempt/3 failed (exit ${install_status[0]}); retrying in ${delay}s."
+            sleep "$delay"
+          done
           test -e /dev/kvm
           sudo chmod 666 /dev/kvm
           # 每个 job 从空目录创建可写 AVD；不恢复 AVD 缓存或既有数据盘。

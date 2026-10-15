@@ -722,6 +722,142 @@ class DeviceWorkflowTest(unittest.TestCase):
         self.assertEqual(result.returncode, 7)
         self.assertNotIn("Required Android SDK package not found", result.stderr)
 
+    def run_sdk_install(
+        self, attempts: list[tuple[int, str]], api: str = "35", *, license_exit: int = 0,
+    ) -> tuple[subprocess.CompletedProcess[str], list[list[str]], list[str], dict[str, str]]:
+        script = shell_script(step(self.workflow, "准备设备 SDK 与全新 AVD"))
+        # 执行实际预检、许可和安装逻辑，在 KVM / AVD 操作之前停止。
+        boundary = "\ntest -e /dev/kvm\n"
+        self.assertIn(boundary, script)
+        script = script.split(boundary, 1)[0]
+        with tempfile.TemporaryDirectory(prefix="melora sdk install ") as directory:
+            root = Path(directory)
+            sdkmanager = root / "sdkmanager"
+            sdkmanager.write_text(dedent("""\
+                #!/usr/bin/env python3
+                import json
+                import os
+                from pathlib import Path
+                import sys
+
+                if sys.argv[1:] == ["--list", "--channel=0"]:
+                    for api in ("26", "35", "37.0"):
+                        print(f"system-images;android-{api};google_apis;x86_64 | 9 | official image")
+                elif sys.argv[1:] == ["--licenses"]:
+                    print("Checking SDK licenses")
+                    sys.exit(int(os.environ["SDK_LICENSE_EXIT"]))
+                else:
+                    calls = Path(os.environ["DEVICE_LOG_DIR"]) / "sdkmanager-calls.jsonl"
+                    with calls.open("a") as output:
+                        output.write(json.dumps(sys.argv[1:]) + "\\n")
+                    attempt = len(calls.read_text().splitlines())
+                    status, message = json.loads(os.environ["SDK_INSTALL_RESULTS"])[attempt - 1]
+                    print(f"SDK install attempt {attempt}", flush=True)
+                    print(message, file=sys.stderr)
+                    sys.exit(status)
+                """))
+            sdkmanager.chmod(0o755)
+            sleep = root / "sleep"
+            sleep.write_text('#!/bin/bash\nprintf \'%s\\n\' "$@" >> "$DEVICE_LOG_DIR/sleep-calls.log"\n')
+            sleep.chmod(0o755)
+            result = subprocess.run(
+                ["bash", "-euc", script], cwd=root, capture_output=True, text=True, timeout=10,
+                env={**os.environ, "PATH": directory + os.pathsep + os.environ["PATH"],
+                     "DEVICE_LOG_DIR": directory, "API_LEVEL": api,
+                     "SDK_INSTALL_RESULTS": json.dumps(attempts), "SDK_LICENSE_EXIT": str(license_exit)},
+            )
+            calls = root / "sdkmanager-calls.jsonl"
+            sleeps = root / "sleep-calls.log"
+            return (
+                result,
+                [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else [],
+                sleeps.read_text().splitlines() if sleeps.exists() else [],
+                {path.name: path.read_text() for path in root.glob("sdk-*.log")},
+            )
+
+    def test_sdk_install_succeeds_first_time_without_retry(self) -> None:
+        result, calls, sleeps, logs = self.run_sdk_install([(0, "SDK installed")])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(sleeps, [])
+        self.assertEqual(set(logs), {"sdk-packages.log", "sdk-licenses.log", "sdk-install-attempt-1.log"})
+        self.assertEqual(logs["sdk-install-attempt-1.log"], "SDK install attempt 1\nSDK installed\n")
+
+    def test_sdk_install_retries_identified_network_errors_then_succeeds(self) -> None:
+        for message in (
+            "Failed to download package archive for system-images/android-35/google_apis/x86_64: "
+            "Failed to read HTTP response: Peer disconnected",
+            "java.net.SocketException: Connection reset",
+            "Connection timed out",
+            "java.net.SocketTimeoutException: Read timed out",
+            "Temporary failure in name resolution",
+            "HTTP Error 429: Too Many Requests",
+            "Server returned HTTP response code: 503",
+        ):
+            with self.subTest(message=message):
+                result, calls, sleeps, logs = self.run_sdk_install([(7, message), (0, "SDK installed")])
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(len(calls), 2)
+                self.assertEqual(sleeps, ["5"])
+                self.assertEqual(logs["sdk-install-attempt-1.log"], f"SDK install attempt 1\n{message}\n")
+                self.assertEqual(logs["sdk-install-attempt-2.log"], "SDK install attempt 2\nSDK installed\n")
+                self.assertNotIn("sdk-install-attempt-3.log", logs)
+
+    def test_sdk_install_exhausts_three_attempts_and_preserves_last_failure(self) -> None:
+        attempts = [(7, "Peer disconnected"), (23, "Connection reset"), (42, "Read timed out")]
+        result, calls, sleeps, logs = self.run_sdk_install(attempts)
+        self.assertEqual(result.returncode, 42, result.stdout + result.stderr)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(sleeps, ["5", "10"])
+        self.assertEqual(len(logs), 5)
+        for index, (_, message) in enumerate(attempts, 1):
+            self.assertEqual(logs[f"sdk-install-attempt-{index}.log"],
+                             f"SDK install attempt {index}\n{message}\n")
+
+    def test_sdk_install_does_not_retry_permanent_or_unclassified_errors(self) -> None:
+        for message in (
+            "License for package Android SDK Platform 37.0 not accepted.",
+            "Some SDK licenses have not been accepted.",
+            "No space left on device", "Not enough free disk space", "Insufficient disk space",
+            "Permission denied", "Failed to find package 'unknown'", "Unknown package: missing",
+            "Package missing not found", "Malformed repository XML", "Download failed",
+            "Server returned HTTP response code: 403", "HTTP 5030",
+        ):
+            with self.subTest(message=message):
+                result, calls, sleeps, logs = self.run_sdk_install([(19, message), (0, "SDK installed")])
+                self.assertEqual(result.returncode, 19, result.stdout + result.stderr)
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(sleeps, [])
+                self.assertNotIn("sdk-install-attempt-2.log", logs)
+
+    def test_sdk_install_permanent_errors_override_network_messages(self) -> None:
+        for message in ("SDK licenses have not been accepted", "No space left on device",
+                        "Failed to find package 'missing'", "Permission denied"):
+            with self.subTest(message=message):
+                result, calls, sleeps, _ = self.run_sdk_install([(21, message + "\nPeer disconnected")])
+                self.assertEqual(result.returncode, 21, result.stdout + result.stderr)
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(sleeps, [])
+
+    def test_sdk_install_license_failure_stops_before_install(self) -> None:
+        result, calls, sleeps, logs = self.run_sdk_install([(0, "SDK installed")], license_exit=14)
+        self.assertEqual(result.returncode, 14, result.stdout + result.stderr)
+        self.assertEqual(calls, [])
+        self.assertEqual(sleeps, [])
+        self.assertEqual(set(logs), {"sdk-packages.log", "sdk-licenses.log"})
+
+    def test_sdk_install_keeps_official_arguments_identical_across_attempts(self) -> None:
+        for api, image_api in (("26", "26"), ("35", "35"), ("37", "37.0")):
+            with self.subTest(api=api):
+                result, calls, sleeps, _ = self.run_sdk_install(
+                    [(1, "Peer disconnected"), (2, "Connection reset"), (0, "SDK installed")], api,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                expected = ["--channel=0", "platforms;android-37.0", "ndk;28.2.13676358",
+                            "cmake;3.22.1", "emulator", f"system-images;android-{image_api};google_apis;x86_64"]
+                self.assertEqual(calls, [expected] * 3)
+                self.assertEqual(sleeps, ["5", "10"])
+
     def test_device_gate_is_ordered_bounded_and_has_no_test_selection(self) -> None:
         names = (
             "准备设备 SDK 与全新 AVD", "构建设备测试 APK", "启动并校验独立模拟器",
