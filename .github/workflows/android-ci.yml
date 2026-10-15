@@ -178,6 +178,7 @@ jobs:
           python3 -B scripts/release/test_verify_android_apk.py
           python3 -B scripts/release/test_licenses.py
           python3 -B scripts/release/test_export_changelog_section.py
+          python3 -B scripts/release/test_prepare_android_ui.py
           python3 -B scripts/release/test_github_api.py
           python3 -B scripts/release/test_publish_android_release.py
           python3 -B scripts/release/test_release_workflows.py
@@ -363,7 +364,7 @@ jobs:
           test "$(adb -s "$ANDROID_SERIAL" shell getprop ro.product.cpu.abi | tr -d '\r')" = x86_64
           adb devices | tee "$DEVICE_LOG_DIR/devices.log"
           test "$(adb devices | awk 'NR > 1 && NF {print $1}')" = "$ANDROID_SERIAL"
-          adb -s "$ANDROID_SERIAL" shell input keyevent 82
+          # boot_completed 不代表 Launcher 已绘制/取得焦点，不能在这里注入解锁按键。
           # 编辑弹窗回归必须覆盖真实IME，即使AVD声明了硬件键盘也要允许软键盘显示。
           adb -s "$ANDROID_SERIAL" shell settings put secure show_ime_with_hard_keyboard 1
           # 动画回归需要真实时间比例，不能用关闭系统动画掩盖中断/回弹问题。
@@ -425,6 +426,11 @@ jobs:
           subprocess.run(adb + ["shell", "svc", "wifi", "enable"], check=True)
           await_network(ready_network, "Verified active unmetered Internet network")
           PYNETWORK
+      - name: 验证模拟器桌面窗口可交互
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          python3 -B scripts/release/prepare_android_ui.py 2>&1 | tee "$DEVICE_LOG_DIR/ui-ready.log"
       - name: 安装测试目标并预置 overlay 权限
         working-directory: android
         run: |
@@ -495,6 +501,10 @@ jobs:
           timeout 10 adb server-status > "$DEVICE_LOG_DIR/adb-server-final.log" 2>&1 || true
           timeout 10 adb devices -l > "$DEVICE_LOG_DIR/devices-final.log" 2>&1 || true
           if [[ -s "$DEVICE_LOG_DIR/emulator.pid" ]]; then
+            timeout 10 adb -s "$ANDROID_SERIAL" shell dumpsys window -a > "$DEVICE_LOG_DIR/window-final.log" 2>&1 || true
+            timeout 10 adb -s "$ANDROID_SERIAL" shell dumpsys input > "$DEVICE_LOG_DIR/input-final.log" 2>&1 || true
+            timeout 10 adb -s "$ANDROID_SERIAL" shell dumpsys activity activities > "$DEVICE_LOG_DIR/activities-final.log" 2>&1 || true
+            timeout 10 adb -s "$ANDROID_SERIAL" exec-out screencap -p > "$DEVICE_LOG_DIR/screen-final.png" 2>/dev/null || true
             timeout 15 adb -s "$ANDROID_SERIAL" shell getprop > "$DEVICE_LOG_DIR/device-properties.log" 2>&1 || true
             timeout 15 adb -s "$ANDROID_SERIAL" logcat -d -v threadtime -t 2000 > "$DEVICE_LOG_DIR/logcat-final.log" 2>&1 || true
             timeout 10 adb -s "$ANDROID_SERIAL" emu kill > "$DEVICE_LOG_DIR/emulator-stop.log" 2>&1 || true

@@ -940,6 +940,22 @@ class DeviceWorkflowTest(unittest.TestCase):
         self.assertIn('ADB_TRACE=transport,auth adb start-server', boot)
         self.assertLess(boot.index('adb start-server'), boot.index('nohup "$ANDROID_HOME/emulator/emulator"'))
 
+    def test_device_ui_is_ready_before_installing_or_running_app_tests(self) -> None:
+        ready = step(self.workflow, "验证模拟器桌面窗口可交互")
+        self.assertIn("timeout-minutes: 3", ready)
+        self.assertIn("set -euo pipefail", ready)
+        self.assertIn('python3 -B scripts/release/prepare_android_ui.py', ready)
+        self.assertIn('tee "$DEVICE_LOG_DIR/ui-ready.log"', ready)
+        self.assertNotIn("|| true", ready)
+        self.assertNotIn("if: always()", ready)
+        self.assertNotIn("input keyevent", self.job)
+        self.assertLess(self.job.index("准备并验证非计费测试网络"),
+                        self.job.index("验证模拟器桌面窗口可交互"))
+        self.assertLess(self.job.index("验证模拟器桌面窗口可交互"),
+                        self.job.index("安装测试目标并预置 overlay 权限"))
+        self.assertIn("python3 -B scripts/release/test_prepare_android_ui.py",
+                      job(self.workflow, "verify"))
+
     def test_result_check_diagnostics_and_pid_cleanup_always_run(self) -> None:
         for name in ("校验 Android 设备 JUnit 结果", "收集设备诊断并清理模拟器", "上传设备回归诊断"):
             self.assertIn("        if: always()\n", step(self.workflow, name))
@@ -951,7 +967,8 @@ class DeviceWorkflowTest(unittest.TestCase):
                          'kill "$pid"', 'kill -KILL "$pid"', 'rm -rf "$ANDROID_AVD_HOME"'):
             self.assertIn(required, cleanup)
         for required in ('adb-server.log', 'adb-server-final.log', 'devices-final.log',
-                         'host-state.log', 'host-kernel.log', 'logcat -d -v threadtime -t 2000'):
+                         'host-state.log', 'host-kernel.log', 'logcat -d -v threadtime -t 2000',
+                         'window-final.log', 'input-final.log', 'activities-final.log', 'screen-final.png'):
             self.assertIn(required, cleanup)
         upload = step(self.workflow, "上传设备回归诊断")
         artifact_name = re.search(r"(?m)^          name: (.+)$", upload)
