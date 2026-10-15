@@ -245,6 +245,34 @@ class LocalMediaTest {
     }
 
     @Test
+    fun scannedNewFileVersionReplacesConcurrentOldVersionEnrichment() {
+        val original = localSong(id = "replaced-during-scan", modifiedAt = 10, sizeBytes = 100,
+            coverUri = "file:///old.jpg", infoFilled = true, bitDepth = 24)
+        LocalMediaStore.replaceAll(listOf(original))
+        val baseline = LocalMediaStore.snapshot()
+        LocalMediaStore.updateMetadata(original, original.copy(sampleRate = 96_000, artist = "旧版本补全"))
+        val replacement = original.copy(title = "新文件", artist = "新歌手", modifiedAt = 20,
+            sizeBytes = 120, sampleRate = 44_100, bitDepth = -1, coverUri = null, infoFilled = false)
+
+        LocalMediaStore.commitScanned(baseline, listOf(replacement))
+
+        assertEquals(replacement, LocalMediaStore.find(original.id))
+    }
+
+    @Test
+    fun currentNewFileVersionStillWinsOverAnOlderScannedVersion() {
+        val original = localSong(id = "current-new-version", modifiedAt = 10, sizeBytes = 100)
+        LocalMediaStore.replaceAll(listOf(original))
+        val baseline = LocalMediaStore.snapshot()
+        val replacement = original.copy(title = "较新文件", modifiedAt = 20, sizeBytes = 120)
+        LocalMediaStore.replaceAll(listOf(replacement))
+
+        LocalMediaStore.commitScanned(baseline, listOf(original.copy(artist = "旧扫描")))
+
+        assertEquals(replacement, LocalMediaStore.find(original.id))
+    }
+
+    @Test
     fun sameStampConcurrentMetadataWinsOverScannedSnapshot() {
         val baselineSong = localSong(
             id = "same-stamp",

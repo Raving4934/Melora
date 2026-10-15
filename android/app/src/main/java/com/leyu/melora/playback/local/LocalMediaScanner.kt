@@ -6,11 +6,14 @@ import android.database.Cursor
 import android.database.CursorWrapper
 import android.net.Uri
 import android.os.CancellationSignal
+import android.os.Environment
+import android.os.storage.StorageManager
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import androidx.core.net.toUri
 import androidx.documentfile.provider.DocumentFile
 import com.leyu.melora.playback.MeloraSettings
+import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -59,9 +62,22 @@ object LocalMediaScanner {
                     var failedSources = 0
 
                     if (useMediaStore) {
+                        val readableBefore = readableMediaStoreFolders(appContext, baseline)
                         val mediaStore = scanSource { scanMediaStore(appContext) }
                         if (mediaStore.successful) {
                             successful += mediaStore.songs
+                            val observedIds = mediaStore.songs.mapTo(hashSetOf(), LocalSong::id)
+                            val readableAfter = readableMediaStoreFolders(appContext, baseline)
+                            // external 是多卷聚合：成功游标缺席不代表离线卷文件已删除。
+                            // 两端都可读的卷才允许缺失清理；保留条目不再走短/小音频过滤。
+                            val unavailable = baselineSongs(baseline) { song ->
+                                isMediaStoreSong(song) && song.id !in observedIds &&
+                                    (song.folder !in readableBefore || song.folder !in readableAfter)
+                            }
+                            if (unavailable.isNotEmpty()) {
+                                failedSources++
+                                failed += unavailable
+                            }
                         } else {
                             failedSources++
                             failed += baselineSongs(baseline, ::isMediaStoreSong)
@@ -166,6 +182,17 @@ object LocalMediaScanner {
     private fun isMediaStoreSong(song: LocalSong): Boolean =
         song.id.startsWith("ms_") ||
             song.uri.startsWith(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI.toString())
+
+    private fun readableMediaStoreFolders(context: Context, baseline: List<LocalSong>): Set<String> {
+        val storage = context.getSystemService(StorageManager::class.java) ?: return emptySet()
+        return baseline.asSequence().filter(::isMediaStoreSong).map(LocalSong::folder)
+            .filter(String::isNotBlank).distinct().filter { folder ->
+                runCatching {
+                    storage.getStorageVolume(File(folder))?.state in
+                        setOf(Environment.MEDIA_MOUNTED, Environment.MEDIA_MOUNTED_READ_ONLY)
+                }.getOrDefault(false)
+            }.toSet()
+    }
 
     private fun isInTree(songUri: String, treeUri: String): Boolean {
         val song = songUri.toUri()
@@ -374,7 +401,7 @@ internal fun preserveLocalEnrichment(scanned: LocalSong, previous: LocalSong?): 
     )
 }
 
-/** baseline 未变化时沿用已有补全；baseline 之后的当前索引更新始终优先。 */
+/** 新物理版本替换旧版本补全；同版本并发字段修改及已提交的新物理版本优先。 */
 internal fun mergeScannedSong(
     scanned: LocalSong,
     baseline: LocalSong?,
@@ -382,6 +409,7 @@ internal fun mergeScannedSong(
 ): LocalSong {
     if (current == null) return preserveLocalEnrichment(scanned, baseline)
     if (baseline == null) return current
+    if (baseline.sameFileVersion(current) && !baseline.sameFileVersion(scanned)) return scanned
     if (current == baseline) return preserveLocalEnrichment(scanned, baseline)
     // 当前条目已经被并发更新；即使 stamp 相同，也不能让扫描值复写 artist/cover 的删除。
     return current

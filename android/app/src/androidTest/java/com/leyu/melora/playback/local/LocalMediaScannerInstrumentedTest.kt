@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.content.pm.ProviderInfo
 import android.net.Uri
 import android.provider.DocumentsContract
+import android.os.Environment
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
@@ -92,6 +93,75 @@ class LocalMediaScannerInstrumentedTest {
             field(PlaybackController, "controller").set(PlaybackController, previousController)
         }
         if (::context.isInitialized) context.cleanup()
+    }
+
+    @Test
+    fun successfulMediaQueryRetainsUnavailableVolumeButPrunesMissingMountedSongs() = runBlocking {
+        val primary = mediaSong(1)
+        val deleted = mediaSong(2)
+        val offline = mediaSong(3).copy(folder = "/storage/MELORA-OFFLINE/Music")
+        seed(listOf(primary, deleted, offline))
+        listOf(primary, deleted, offline).forEach { UserLibrary.markPlayed(it.toOnlineSong()) }
+        context.useMediaStore(listOf(1L), primary.folder)
+
+        val result = LocalMediaScanner.scan(context)
+
+        assertEquals(1, result.failedSources)
+        assertEquals(setOf(primary.id, offline.id), LocalMediaStore.songs.value.map { it.id }.toSet())
+        assertEquals(offline, LocalMediaStore.find(offline.id))
+        assertEquals("scanned-1", LocalMediaStore.find(primary.id)?.title)
+        assertMediaReferences(setOf(primary.id, offline.id))
+    }
+
+    @Test
+    fun completedEmptyMountedMediaVolumeStillPrunesItsLibraryReferences() = runBlocking {
+        val primary = mediaSong(1)
+        seed(listOf(primary))
+        UserLibrary.markPlayed(primary.toOnlineSong())
+        context.useMediaStore(emptyList(), primary.folder)
+
+        val result = LocalMediaScanner.scan(context)
+
+        assertEquals(0, result.failedSources)
+        assertMediaReferences(emptySet())
+    }
+
+    @Test
+    fun mediaVolumeBecomingUnavailableDuringQueryRetainsItsOldReferences() = runBlocking {
+        assertMediaVolumeTransition(availableBefore = true)
+    }
+
+    @Test
+    fun mediaVolumeReturningDuringQueryDoesNotMakeAPartialResultAuthoritative() = runBlocking {
+        assertMediaVolumeTransition(availableBefore = false)
+    }
+
+    private suspend fun assertMediaVolumeTransition(availableBefore: Boolean) {
+        val primary = mediaSong(1)
+        seed(listOf(primary))
+        UserLibrary.markPlayed(primary.toOnlineSong())
+        context.useMediaStore(emptyList(), primary.folder)
+        context.storageAvailable = availableBefore
+        context.mediaProvider.onQuery = Runnable { context.storageAvailable = !availableBefore }
+
+        val result = LocalMediaScanner.scan(context)
+
+        assertEquals(1, result.failedSources)
+        assertMediaReferences(setOf(primary.id))
+    }
+
+    private fun mediaSong(id: Long) = song("unused", "unused/$id").copy(
+        id = "ms_$id", uri = "content://media/external/audio/media/$id",
+        folder = Environment.getExternalStorageDirectory().absolutePath + "/Melora-scan-fixture",
+    )
+
+    private fun assertMediaReferences(expected: Set<String>) {
+        assertPersistedSongs(expected)
+        assertEquals(expected, LocalMediaStore.songs.value.map { it.id }.toSet())
+        UserLibrary.reloadAfterRestore()
+        assertEquals(expected, UserLibrary.favorites.value.map { it.songmid }.toSet())
+        assertEquals(expected, UserLibrary.playlists.value.single().songs.map { it.songmid }.toSet())
+        assertEquals(expected, UserLibrary.recents.value.map { it.songmid }.toSet())
     }
 
     @Test
@@ -225,7 +295,19 @@ class LocalMediaScannerInstrumentedTest {
                 writePermission = "android.permission.MANAGE_DOCUMENTS"
             })
         }
-        private val resolver = ContentResolver.wrap(provider)
+        val mediaProvider = MediaStoreScanProvider().apply {
+            attachInfo(this@ScanContext, ProviderInfo().apply { authority = "media" })
+        }
+        private var resolver = ContentResolver.wrap(provider)
+        var storageAvailable = true
+        fun useMediaStore(ids: List<Long>, folder: String) {
+            mediaProvider.setSongs(ids.toLongArray(), folder)
+            resolver = ContentResolver.wrap(mediaProvider)
+            MeloraSettings.localUseMediaStore.value = true
+            MeloraSettings.localFolders.value = emptyList()
+        }
+        override fun getSystemService(name: String): Any? =
+            if (name == Context.STORAGE_SERVICE && !storageAvailable) null else super.getSystemService(name)
         override fun getApplicationContext(): Context = this
         override fun getContentResolver(): ContentResolver = resolver
         override fun getFilesDir(): File = File(root, "files").apply { mkdirs() }
