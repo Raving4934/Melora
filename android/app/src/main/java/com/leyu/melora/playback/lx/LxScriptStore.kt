@@ -29,6 +29,9 @@ class LxScriptStore(context: Context) {
         const val PREFS = "lx-sources"
         private const val ORIGIN_PREFIX = "origin:"
         private val enabledStateLock = BackupStateLock.monitor
+        // revision只用于本进程常驻引擎失效；随内容写入推进，不改变备份/偏好格式。
+        private val contentRevisions = mutableMapOf<File, Long>()
+        private var nextRevision = 0L
 
         private fun originKey(id: String) = "$ORIGIN_PREFIX$id"
     }
@@ -44,7 +47,24 @@ class LxScriptStore(context: Context) {
         prefs.all.any { (id, value) -> value == true && id.endsWith(".js") && dir.resolve(id).isFile }
     }
 
-    fun code(id: String): String? = synchronized(enabledStateLock) { dir.resolve(id).takeIf { it.isFile }?.readText() }
+    fun code(id: String): String? = content(id)?.first
+
+    /** 查询不读脚本正文；删除后重导入也不能复用旧revision。 */
+    internal fun revision(id: String): Long? = synchronized(enabledStateLock) {
+        dir.resolve(id).takeIf { it.isFile }?.let(::revisionOf)
+    }
+
+    /** 加载代码与其revision必须取自同一次存储快照。 */
+    internal fun content(id: String): Pair<String, Long>? = synchronized(enabledStateLock) {
+        dir.resolve(id).takeIf { it.isFile }?.let { it.readText() to revisionOf(it) }
+    }
+
+    private fun revisionOf(file: File): Long =
+        contentRevisions.getOrPut(file.absoluteFile) { ++nextRevision }
+
+    private fun contentChanged(file: File) {
+        contentRevisions[file.absoluteFile] = ++nextRevision
+    }
 
     fun import(name: String, code: String, originUrl: String? = null, expectedCode: String? = null): LxScript =
         BackupStateLock.write {
@@ -56,7 +76,10 @@ class LxScriptStore(context: Context) {
                 prefs.getString(originKey(file.name), null) == normalizedOriginUrl)) {
                 "音源在更新期间已更改或删除，请重新检查后重试"
             }
-            if (currentCode != code) writeTextAtomically(file, code)
+            if (currentCode != code) {
+                writeTextAtomically(file, code)
+                contentChanged(file)
+            }
             prefs.edit {
                 if (!prefs.contains(file.name)) putBoolean(file.name, false)
                 if (normalizedOriginUrl == null) remove(originKey(file.name)) else putString(originKey(file.name), normalizedOriginUrl)
@@ -78,6 +101,7 @@ class LxScriptStore(context: Context) {
 
     fun remove(id: String) = BackupStateLock.write {
         dir.resolve(id).delete()
+        if (!dir.resolve(id).exists()) contentRevisions.remove(dir.resolve(id).absoluteFile)
         dir.resolve("$id.bak").delete()
         dir.resolve("$id.tmp").delete()
         prefs.edit {
@@ -143,6 +167,7 @@ class LxScriptStore(context: Context) {
             val file = File(dir, script.fileName)
             if (!file.isFile || file.length() != script.code.toByteArray(Charsets.UTF_8).size.toLong() || file.readText() != script.code) {
                 writeTextAtomically(file, script.code)
+                contentChanged(file)
                 changed += script.fileName
             }
             installed += script.fileName

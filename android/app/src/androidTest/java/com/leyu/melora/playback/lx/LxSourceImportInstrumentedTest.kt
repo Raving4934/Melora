@@ -72,6 +72,23 @@ class LxSourceImportInstrumentedTest {
     }
 
     @Test
+    fun sameVersionImportsPublishContentRevisionsAcrossStoreInstances() = runBlocking<Unit> {
+        val original = "// @version 1\nconst value = 'old';"
+        val updated = "// @version 1\nconst value = 'new';"
+        importer().importLocal(sourceInput(original), "revision.js")
+        val first = requireNotNull(store.revision("revision.js"))
+        val other = LxScriptStore(fixtureContext)
+        assertEquals(first, other.revision("revision.js"))
+        store.setEnabled("revision.js", true)
+        importer().importLocal(sourceInput(original), "revision.js")
+        assertEquals(first, other.revision("revision.js"))
+        importer().importLocal(sourceInput(updated), "revision.js")
+        val next = requireNotNull(other.revision("revision.js"))
+        assertTrue("same-version content overwrite must invalidate old engines", next > first)
+        assertEquals(updated to next, other.content("revision.js"))
+    }
+
+    @Test
     fun importsScriptsThatThrowOrDoNotInitializeWithoutExecutingThem() = runBlocking<Unit> {
         val scripts = listOf(
             "throw new Error('initialization must not run during import');" to "throws.js",
@@ -293,7 +310,7 @@ class LxSourceImportInstrumentedTest {
                 socket.use {
                     it.soTimeout = 2_000
                     val reader = it.getInputStream().bufferedReader()
-                    while (!reader.readLine().isNullOrEmpty()) Unit
+                    while (!reader.readLine().isNullOrEmpty()) { /* 消费完整请求头。 */ }
                     val bytes = body.get().toByteArray(Charsets.UTF_8)
                     requestArrived.countDown()
                     if (holdResponse) responseReleased.await()

@@ -8,6 +8,7 @@ import com.leyu.melora.playback.lx.LxScriptStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.awaitAll
@@ -47,10 +48,13 @@ object LxScriptPool {
         var script: LxScript,
         val engine: LxScriptEngine,
         val sources: Map<String, PlatformSupport>,
+        val revision: Long,
         val lock: Mutex = Mutex(),
-    )
+    ) {
+        @Volatile var retired = false
+    }
 
-    private data class LoadFailure(val version: String, val retryAt: Long)
+    private data class LoadFailure(val revision: Long?, val retryAt: Long)
 
     data class PlatformSupport(
         val name: String,
@@ -142,7 +146,7 @@ object LxScriptPool {
         script: LxScript,
         initTimeoutMs: Long = 15_000L,
     ): Pair<String, Entry>? {
-        val code = sourceStore.code(script.id) ?: return null
+        val (code, revision) = sourceStore.content(script.id) ?: return null
         val engine = LxScriptEngine(context.applicationContext)
         return try {
             val inited = engine.initialize(code, script.id, initTimeoutMs)
@@ -169,7 +173,7 @@ object LxScriptPool {
                 Log.w(TAG, "脚本「${script.id}」初始化未完成或未声明音源，已跳过")
                 null
             } else {
-                script.id to Entry(script, engine, supports)
+                script.id to Entry(script, engine, supports, revision)
             }
         } catch (cancelled: CancellationException) {
             engine.close()
@@ -191,16 +195,23 @@ object LxScriptPool {
     ): List<Pair<String, Entry>> = coroutineScope {
         scripts.map { script ->
             async(Dispatchers.IO) {
-                loadEntry(context, sourceStore, script, initTimeoutMs)?.also { (id, entry) ->
+                loadEntry(context, sourceStore, script, initTimeoutMs)?.let { (id, entry) ->
                     try {
-                        withContext(dispatcher) {
-                            entries[id] = entry
-                            readyListeners.toList().forEach { it(entry) }
-                            onReady(entry)
+                        val published = withContext(dispatcher) {
+                            if (sourceStore.revision(id) != entry.revision) {
+                                entry.engine.close()
+                                false
+                            } else {
+                                entries[id] = entry
+                                readyListeners.toList().forEach { it(entry) }
+                                onReady(entry)
+                                true
+                            }
                         }
+                        if (published) id to entry else null
                     } catch (cancelled: CancellationException) {
                         // 已发布实例由池持有；尚未发布的新实例不能泄漏JNI运行时。
-                        withContext(kotlinx.coroutines.NonCancellable + dispatcher) {
+                        withContext(NonCancellable + dispatcher) {
                             if (entries[id] !== entry) entry.engine.close()
                         }
                         throw cancelled
@@ -248,10 +259,13 @@ object LxScriptPool {
 
     /** 已由 scriptsFor 选出的脚本只补齐自身，避免 race/resolve 再次触发整池扫描与加载。 */
     private suspend fun ensureScriptsLoaded(context: Context, scriptIds: Set<String>) {
-        if (scriptIds.isEmpty() || scriptIds.all(entries::containsKey)) return
+        val sourceStore = store(context)
+        fun current() = scriptIds.all { id ->
+            entries[id]?.let { it.revision == sourceStore.revision(id) } == true
+        }
+        if (scriptIds.isEmpty() || current()) return
         loadMutex.withLock {
-            if (scriptIds.all(entries::containsKey)) return@withLock
-            val sourceStore = store(context)
+            if (current()) return@withLock
             reconcileLocked(
                 context = context,
                 sourceStore = sourceStore,
@@ -274,12 +288,12 @@ object LxScriptPool {
     }
 
     // 等待在途请求结束再关闭引擎，避免刷新时把正在解析的 QuickJS 运行时强行关掉。
-    private suspend fun closeEntries(snapshot: Collection<Entry>) {
+    private suspend fun closeEntries(snapshot: Collection<Entry>) = withContext(NonCancellable) {
+        // 已脱离entries后，清理所有权不能随页面/竞速调用方的取消丢失。
+        snapshot.forEach { it.retired = true }
         snapshot.forEach { entry ->
             try {
                 entry.lock.withLock { entry.engine.close() }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
             } catch (error: Throwable) {
                 Log.w(TAG, "关闭脚本「${entry.script.id}」失败：${error.message ?: error.javaClass.simpleName}")
             } finally {
@@ -312,11 +326,11 @@ object LxScriptPool {
         onReady: (Entry) -> Unit = {},
     ) {
         val installed = scripts.associateBy(LxScript::id)
-        val versionChanged = entries.values.mapNotNullTo(linkedSetOf()) { entry ->
-            entry.script.id.takeIf { installed[it]?.version != entry.script.version }
+        val contentChanged = entries.values.mapNotNullTo(linkedSetOf()) { entry ->
+            entry.script.id.takeIf { sourceStore.revision(it) != entry.revision }
         }
         val retireIds = (entries.keys - installed.keys) +
-            changedScriptIds.intersect(installed.keys) + versionChanged
+            changedScriptIds.intersect(installed.keys) + contentChanged
         retireIds.forEach { id ->
             loadFailures.remove(id)
             scriptMetrics.remove(id)
@@ -327,8 +341,9 @@ object LxScriptPool {
         val now = System.currentTimeMillis()
         val targets = targetScriptIds.mapNotNull(installed::get).filter { script ->
             val failure = loadFailures[script.id]
-            script.id !in entries && (failure == null || failure.version != script.version || failure.retryAt <= now)
+            script.id !in entries && (failure == null || failure.revision != sourceStore.revision(script.id) || failure.retryAt <= now)
         }
+        val attemptedRevisions = targets.associate { it.id to sourceStore.revision(it.id) }
         targetScriptIds.mapNotNull(entries::get).forEach { entry ->
             installed[entry.script.id]?.let { entry.script = it }
             onReady(entry)
@@ -339,10 +354,9 @@ object LxScriptPool {
             if (script.id in loadedIds || failureRetryDelayMs <= 0L) {
                 loadFailures.remove(script.id)
             } else {
-                loadFailures[script.id] = LoadFailure(script.version, System.currentTimeMillis() + failureRetryDelayMs)
+                loadFailures[script.id] = LoadFailure(attemptedRevisions[script.id], System.currentTimeMillis() + failureRetryDelayMs)
             }
         }
-        loaded.forEach { (id, entry) -> entries[id] = entry }
 
         // 初始化期间用户可能再次切换开关，以当前持久化状态为准。
         syncMetadata(sourceStore.list())
@@ -430,7 +444,10 @@ object LxScriptPool {
         info: JSONObject,
         timeoutMs: Long,
     ): Any = entry.engine.withCancellation { token ->
-        entry.lock.withLock { entry.engine.request(token, source, action, info, timeoutMs) }
+        entry.lock.withLock {
+            check(!entry.retired) { "音源已更新，请重新解析" }
+            entry.engine.request(token, source, action, info, timeoutMs)
+        }
     }
 
     suspend fun resolve(
@@ -471,11 +488,13 @@ object LxScriptPool {
                 coroutineScope {
                     val requestsScope = this
                     withContext(dispatcher) {
-                        val installed = scriptsInScope(store(context).list(), scope)
+                        val sourceStore = store(context)
+                        val installed = scriptsInScope(sourceStore.list(), scope)
                         val available = installed.filterNot { isBlocked(it.id) }.ifEmpty { installed }
                         val eligible = available.mapTo(hashSetOf()) { it.id }
                         fun ready(entry: Entry) {
                             if (entry.script.id !in eligible) return
+                            if (entry.retired || sourceStore.revision(entry.script.id) != entry.revision) return
                             val support = entry.sources[source] ?: return
                             if ("musicUrl" !in support.actions) return
                             val spec = request(entry.script, support) ?: return
@@ -506,7 +525,7 @@ object LxScriptPool {
                         readyListeners.add(listener)
                         try {
                             available.forEach { script ->
-                                entries[script.id]?.takeIf { it.script.version == script.version }?.let(listener)
+                                entries[script.id]?.let(listener)
                             }
                             ensureLoaded(context, scope, initTimeoutMs = timeoutMs, onReady = listener)
                         } finally { readyListeners.remove(listener) }
