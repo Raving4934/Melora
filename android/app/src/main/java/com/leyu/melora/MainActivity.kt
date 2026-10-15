@@ -30,9 +30,11 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.leyu.melora.playback.BackupRestoreTransaction
+import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.local.LocalTagFiller
 import com.leyu.melora.playback.lx.LxInspector
 import com.leyu.melora.playback.lx.LxScriptStore
+import com.leyu.melora.startup.resolveStartupTab
 import com.leyu.melora.ui.MeloraApp
 import com.leyu.melora.ui.common.SongListStateProvider
 import com.leyu.melora.ui.common.LocalResetRootBack
@@ -101,8 +103,12 @@ class MainActivity : ComponentActivity() {
         app.restoreFailure?.let { showStartupRecovery(it) }
         lifecycleScope.launch {
             app.awaitStartup()
-            val initialTab = intent?.getStringExtra("tab")?.toIntOrNull()
-                ?: com.leyu.melora.playback.MeloraSettings.lastTab.value
+            val initialTab = resolveStartupTab(
+                explicitTab = intent?.getStringExtra("tab")?.toIntOrNull(),
+                lastTab = MeloraSettings.lastTab.value,
+                restoreLastPage = MeloraSettings.restoreLastPage.value,
+                hasSavedInstanceState = savedInstanceState != null,
+            )
             setContent {
                 MeloraTheme {
                     // 全局关闭系统"整屏拉伸"（橡皮筋）：纵向/横向滚动都到边即停，手感统一

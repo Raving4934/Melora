@@ -41,7 +41,9 @@ object MeloraSettings {
 
     // --- 基本设置 ---
     val autoPlayOnStart = MutableStateFlow(false)
-    // 上次停留的主页 Tab：启动时恢复（0 搜索 / 1 排行榜 / 2 发现 / 3 歌单 / 4 听书 / 5 本地歌曲 / 6 我的 / 7 设置）
+    // 仅控制新启动的默认页；关闭不影响页面重建或当前导航。
+    val restoreLastPage = MutableStateFlow(true)
+    // 上次停留的主页 Tab：开启恢复时用于新启动（0 搜索 / 1 排行榜 / 2 发现 / 3 歌单 / 4 听书 / 5 本地歌曲 / 6 我的 / 7 设置）
     val lastTab = MutableStateFlow(5)
     val showExitButton = MutableStateFlow(true)
     val themeMode = MutableStateFlow(ThemeMode.Auto)
@@ -117,6 +119,7 @@ object MeloraSettings {
 
     private fun load() {
         autoPlayOnStart.value = prefs.getBoolean(KEY_AUTO_PLAY, false)
+        restoreLastPage.value = prefs.getBoolean(KEY_RESTORE_LAST_PAGE, true)
         lastTab.value = prefs.getInt(KEY_LAST_TAB, 5)
         showExitButton.value = prefs.getBoolean(KEY_SHOW_EXIT, true)
         themeMode.value = loadThemeMode(prefs)
@@ -191,6 +194,7 @@ object MeloraSettings {
     }
 
     fun updateAutoPlay(value: Boolean) = synchronized(BackupStateLock.monitor) { autoPlayOnStart.value = value; persist { putBoolean(KEY_AUTO_PLAY, value) } }
+    fun updateRestoreLastPage(value: Boolean) = synchronized(BackupStateLock.monitor) { restoreLastPage.value = value; persist { putBoolean(KEY_RESTORE_LAST_PAGE, value) } }
     fun updateLastTab(value: Int) = synchronized(BackupStateLock.monitor) { lastTab.value = value; persist { putInt(KEY_LAST_TAB, value) } }
     fun updateShowExit(value: Boolean) = synchronized(BackupStateLock.monitor) { showExitButton.value = value; persist { putBoolean(KEY_SHOW_EXIT, value) } }
     fun updateThemeMode(value: ThemeMode) = synchronized(BackupStateLock.monitor) { themeMode.value = value; persist { putString(THEME_MODE_PREFERENCE, value.storageValue) } }
@@ -293,6 +297,7 @@ object MeloraSettings {
 
     const val DEFAULT_DOWNLOAD_PATH = "/storage/emulated/0/Music/Melora"
     internal const val KEY_AUTO_PLAY = "basic.autoPlayOnStart"
+    internal const val KEY_RESTORE_LAST_PAGE = "basic.restoreLastPage"
     internal const val KEY_LAST_TAB = "basic.lastTab"
     internal const val KEY_SHOW_EXIT = "basic.showExitButton"
     internal const val KEY_HIDE_STATUS_BAR = "basic.hideStatusBar"

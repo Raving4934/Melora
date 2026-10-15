@@ -59,7 +59,6 @@ import com.leyu.melora.ui.common.ChromeScaffold
 import com.leyu.melora.ui.common.chromeContentPadding
 import com.leyu.melora.BuildConfig
 import com.leyu.melora.ui.theme.MeloraAppearance
-import java.util.Locale
 
 internal val SettingsTextMain: Color get() = MeloraAppearance.textMain
 internal val SettingsTextSub: Color get() = MeloraAppearance.textSub
@@ -443,6 +442,3 @@ internal fun SettingSliderRow(
         )
     }
 }
-
-internal fun formatCacheSize(mb: Int): String =
-    if (mb >= 1024) String.format(Locale.ROOT, "%.1f GB", mb / 1024f) else "$mb MB"

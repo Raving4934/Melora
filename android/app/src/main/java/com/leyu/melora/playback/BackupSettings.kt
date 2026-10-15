@@ -24,6 +24,7 @@ internal object BackupSettings {
 
     private val fields = listOf(
         field("autoPlayOnStart", MeloraSettings.KEY_AUTO_PLAY, MeloraSettings.autoPlayOnStart, ::backupBoolean),
+        field("restoreLastPage", MeloraSettings.KEY_RESTORE_LAST_PAGE, MeloraSettings.restoreLastPage, ::backupBoolean),
         field("lastTab", MeloraSettings.KEY_LAST_TAB, MeloraSettings.lastTab, { backupNumber("lastTab", it).toInt() }),
         field("showExitButton", MeloraSettings.KEY_SHOW_EXIT, MeloraSettings.showExitButton, ::backupBoolean),
         field("themeMode", THEME_MODE_PREFERENCE, MeloraSettings.themeMode, { ThemeMode.restore(it as? String, null, MeloraSettings.themeMode.value) }, ThemeMode::storageValue),

@@ -83,6 +83,7 @@ internal fun BasicSettingsSubPage(onBack: () -> Unit) {
     val blurTopBar by MeloraSettings.blurTopBar.collectAsStateWithLifecycle()
     val showSongCovers by MeloraSettings.showSongCovers.collectAsStateWithLifecycle()
     val showExitButton by MeloraSettings.showExitButton.collectAsStateWithLifecycle()
+    val restoreLastPage by MeloraSettings.restoreLastPage.collectAsStateWithLifecycle()
     val pullToRefresh by MeloraSettings.pullToRefresh.collectAsStateWithLifecycle()
     val playerThemeMode by MeloraSettings.playerThemeMode.collectAsStateWithLifecycle()
     val keepScreenAwake by MeloraSettings.keepScreenAwake.collectAsStateWithLifecycle()
@@ -128,6 +129,11 @@ internal fun BasicSettingsSubPage(onBack: () -> Unit) {
 
                 SwitchItem("显示单曲封面", "在歌曲列表中加载单曲封面", showSongCovers) {
                     MeloraSettings.updateShowSongCovers(it)
+                }
+                SettingsDivider(Modifier.padding(horizontal = 14.dp))
+
+                SwitchItem("启动时恢复上次页面", "关闭后，重新启动进入本地音乐", restoreLastPage) {
+                    MeloraSettings.updateRestoreLastPage(it)
                 }
                 SettingsDivider(Modifier.padding(horizontal = 14.dp))
 
@@ -400,18 +406,12 @@ internal fun PlaybackSettingsSubPage(onBack: () -> Unit) {
                     color = SettingsTextSub,
                     modifier = Modifier.padding(top = 2.dp, bottom = 14.dp),
                 )
-                SettingSliderRow(
-                    title = "最大缓存大小",
-                    valueText = formatCacheSize(maxCacheMb),
-                    value = maxCacheMb.toFloat(),
-                    range = 256f..4096f,
-                    steps = 14,
-                    onValueChangeFinished = AudioCacheStore::trimNow,
-                ) {
-                    MeloraSettings.updateMaxCacheMb(it.toInt())
+                AudioCacheSizeSetting(maxCacheMb = maxCacheMb) {
+                    MeloraSettings.updateMaxCacheMb(it)
+                    AudioCacheStore.trimNow()
                 }
                 Text(
-                    "当前音频缓存占用 ${formatCacheSize((audioCacheBytes / 1024 / 1024).toInt())}",
+                    "当前音频缓存占用 ${formatCacheBytes(audioCacheBytes)}",
                     fontSize = 11.sp,
                     color = SettingsTextSub,
                     modifier = Modifier.padding(top = 10.dp),
