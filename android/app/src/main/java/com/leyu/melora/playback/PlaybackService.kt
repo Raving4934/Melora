@@ -73,6 +73,7 @@ class PlaybackService : MediaSessionService() {
             .setHandleAudioBecomingNoisy(true)
             .build()
         player.followAudioFocusSettings(serviceScope)
+        PlaybackController.sleepTimer.attach(player)
         player.applyPlayMode(MeloraSettings.musicPlayMode.value)
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .setAudioOffloadPreferences(
@@ -257,6 +258,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun releaseSession() {
+        PlaybackController.sleepTimer.attach(null)
         playbackProgress?.close()
         playbackProgress = null
         mediaSession?.run {

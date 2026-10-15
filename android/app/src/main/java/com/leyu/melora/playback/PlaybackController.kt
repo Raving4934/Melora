@@ -132,11 +132,10 @@ object PlaybackController {
     // 队列持久化指纹：避免同一队列反复写盘
     private data class SavedQueueSelection(val fingerprint: String, val uid: String, val index: Int)
     private var lastSavedQueue: SavedQueueSelection? = null
-    private var sleepJob: Job? = null
+    internal val sleepTimer = PlaybackSleepTimer(scope)
     // 当前队列来源标识（卡片播放按钮据此显示播放/暂停）
     private var currentQueueId: String? = null
-    private val _sleepRemaining = MutableStateFlow<Int?>(null)
-    val sleepRemaining: StateFlow<Int?> = _sleepRemaining.asStateFlow()
+    val sleepRemaining: StateFlow<Int?> = sleepTimer.remaining
 
     fun init(context: Context) {
         if (controllerFuture != null) return
@@ -1184,6 +1183,7 @@ object PlaybackController {
 
     /** 主动清空才删除持久化队列；不能与通知退出共用删除路径。 */
     fun clearQueue() {
+        cancelSleepTimer()
         localQueueCheck?.cancel()
         localQueueCheck = null
         interruptRecovery()
@@ -1221,6 +1221,7 @@ object PlaybackController {
     }
 
     private fun releaseController() {
+        cancelSleepTimer()
         val previousController = controller
         val previousFuture = controllerFuture
         controller = null
@@ -1250,42 +1251,11 @@ object PlaybackController {
 
     /** 睡眠定时：倒计时结束后暂停播放；可选等待当前曲目播完。 */
     fun setSleepTimer(minutes: Int, extendToFinishTrack: Boolean) {
-        cancelSleepTimer()
-        sleepJob = scope.launch {
-            var remaining = minutes * 60
-            while (remaining > 0) {
-                _sleepRemaining.value = remaining
-                delay(1_000)
-                remaining--
-            }
-            _sleepRemaining.value = null
-            val player = controller
-            if (extendToFinishTrack && player != null && player.isPlaying) {
-                val startUid = _state.value.current?.uid
-                while (true) {
-                    delay(500)
-                    val snapshot = _state.value
-                    if (!snapshot.playing) break
-                    if (snapshot.current?.uid != startUid) {
-                        player.pause()
-                        break
-                    }
-                    if (snapshot.durationMs > 0 && snapshot.positionMs >= snapshot.durationMs - 1_500) {
-                        player.pause()
-                        break
-                    }
-                }
-            } else {
-                player?.pause()
-            }
-            sleepJob = null
-        }
+        sleepTimer.start(minutes, extendToFinishTrack)
     }
 
     fun cancelSleepTimer() {
-        sleepJob?.cancel()
-        sleepJob = null
-        _sleepRemaining.value = null
+        sleepTimer.cancel()
     }
 
     /** 供下载/歌单等外围操作向全局提示通道投递消息。 */

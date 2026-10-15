@@ -202,6 +202,54 @@ class PlaybackExitInstrumentedTest {
         }
     }
 
+    @Test fun notificationExitCancelsSleepTimerBeforeAnotherSessionStarts() {
+        main {
+            PlaybackController.setSleepTimer(5, extendToFinishTrack = false)
+            assertNotNull(PlaybackController.sleepRemaining.value)
+        }
+        exitFromNotification()
+        main { assertNull("退出不能把旧定时任务留给下一次播放", PlaybackController.sleepRemaining.value) }
+    }
+
+    @Test fun sleepTimerWaitsForTheActualEndAndRemainsCancellable() {
+        main { controller().seekTo(58_000); controller().play() }
+        await { controller().isPlaying && controller().currentPosition >= 58_000L }
+        main { PlaybackController.setSleepTimer(0, extendToFinishTrack = true) }
+        Thread.sleep(700)
+        main {
+            assertTrue("等待播完不能提前截掉曲尾", controller().playWhenReady)
+            assertEquals("等待曲尾期间开关应保持开启并可取消", 0, PlaybackController.sleepRemaining.value)
+        }
+        await { !controller().playWhenReady }
+        main {
+            assertTrue("应完整播放到60秒末尾", controller().currentPosition >= 59_900L)
+            assertNull(PlaybackController.sleepRemaining.value)
+        }
+    }
+
+    @Test fun sleepTimerIgnoresNotificationMetadataAndStopsBeforeRepeating() {
+        main { controller().repeatMode = Player.REPEAT_MODE_ONE; controller().play() }
+        await { controller().isPlaying }
+        main {
+            PlaybackController.setSleepTimer(0, extendToFinishTrack = true)
+            // 使用服务绑定的真实 ExoPlayer，不能用不产生 Media3 回调的代理证明此契约。
+            val timer = PlaybackController.sleepTimer
+            val player = timer.javaClass.getDeclaredField("player").apply { isAccessible = true }
+                .get(timer) as Player
+            syncNotificationMetadata(player, null, lyricsEnabled = false, coverEnabled = false)
+            syncNotificationMetadata(player, null, lyricsEnabled = true, coverEnabled = false)
+            assertEquals(0, PlaybackController.sleepRemaining.value)
+            assertTrue(player.playWhenReady)
+            player.seekTo(58_000)
+        }
+        await { !controller().playWhenReady }
+        main {
+            assertEquals("单曲循环不能绕过定时停止", 1, controller().currentMediaItemIndex)
+            assertTrue("应播完而非提前暂停或重播", controller().currentPosition >= 59_900L)
+            assertNull(PlaybackController.sleepRemaining.value)
+        }
+    }
+
     private fun exitFromNotification() {
         val result = main { controller().sendCustomCommand(SessionCommand("com.leyu.melora.action.EXIT", Bundle.EMPTY), Bundle.EMPTY) }
         assertEquals("退出命令必须完成，不能靠Media3的30秒解绑超时", SessionResult.RESULT_SUCCESS,

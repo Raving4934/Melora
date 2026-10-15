@@ -1694,7 +1694,9 @@ private fun TimerSettingsBottomSheet(
                     )
                     Spacer(Modifier.height(3.dp))
                     Text(
-                        text = if (sleepTimerEnabled) {
+                        text = if (sleepRemaining == 0) {
+                            "播完当前歌曲后停止"
+                        } else if (sleepTimerEnabled) {
                             val minutes = sleepRemaining?.div(60) ?: 0
                             val seconds = sleepRemaining?.rem(60) ?: 0
                             "定时中 · 剩余 %d 分 %d 秒后停止".format(minutes, seconds)
@@ -1764,7 +1766,9 @@ private fun TimerSettingsBottomSheet(
                         Text("睡眠定时", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MeloraAppearance.textMain)
                         Spacer(Modifier.height(2.dp))
                         Text(
-                            if (sleepTimerEnabled) {
+                            if (sleepRemaining == 0) {
+                                "播完当前歌曲后停止"
+                            } else if (sleepTimerEnabled) {
                                 val minutes = sleepRemaining?.div(60) ?: 0
                                 val seconds = sleepRemaining?.rem(60) ?: 0
                                 "剩余 %d 分 %d 秒后自动停止播放".format(minutes, seconds)
