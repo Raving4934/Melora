@@ -67,7 +67,7 @@ fun responsiveGridColumns(
     availableWidth: Dp,
     minCardWidth: Dp = 180.dp,
     horizontalSpacing: Dp = 12.dp,
-): Int = ((availableWidth + horizontalSpacing) / (minCardWidth + horizontalSpacing)).toInt().coerceIn(2, 6)
+): Int = ((availableWidth + horizontalSpacing) / (minCardWidth + horizontalSpacing)).toInt().coerceAtLeast(2)
 
 /** 歌单/专辑双列网格卡（全幅封面版）：封面铺满整卡，标题/作者叠在底部渐变上。 */
 @Composable

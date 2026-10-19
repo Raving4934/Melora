@@ -32,6 +32,7 @@ import com.leyu.melora.ui.audiobook.BookAuthorPage
 import com.leyu.melora.ui.common.PageBackHandler as BackHandler
 import com.leyu.melora.ui.common.DetailPageHost
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.rememberMeloraBottomSheetState
 import com.leyu.melora.playback.AudioSpecification
 
 import org.json.JSONObject
@@ -156,7 +157,6 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.LocalTextStyle
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.key
@@ -1630,7 +1630,7 @@ private fun TimerSettingsBottomSheet(
     onSpeedChange: (Float) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true)
     var timerMinutes by remember { mutableFloatStateOf(30f) }
     var extendToFinishTrack by remember { mutableStateOf(true) }
     val sleepRemaining by PlaybackController.sleepRemaining.collectAsStateWithLifecycle()
@@ -1878,7 +1878,7 @@ private fun AudioEffectsBottomSheet(
     onToggle: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true)
     val selectedPreset = AudioEffects.preset(current)
     val effectState by AudioEffects.state.collectAsStateWithLifecycle()
     val playerState by PlaybackController.state.collectAsStateWithLifecycle()

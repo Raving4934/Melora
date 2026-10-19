@@ -1,5 +1,6 @@
 package com.leyu.melora.ui.player
 
+import com.leyu.melora.ui.common.MeloraAlertDialog
 import com.leyu.melora.ui.theme.SystemBarsVisibility
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
@@ -33,7 +34,6 @@ import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Repeat
 import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material.icons.rounded.Shuffle
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -374,7 +374,7 @@ fun QueuePageContent(
 
     // 清空播放队列二次确认弹窗
     if (showClearConfirm) {
-        AlertDialog(
+        MeloraAlertDialog(
             onDismissRequest = { showClearConfirm = false },
             title = {
                 SystemBarsVisibility()

@@ -11,12 +11,15 @@ import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SheetState
+import androidx.compose.material3.SheetValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -27,12 +30,49 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import com.leyu.melora.ui.theme.SystemBarsVisibility
 import kotlinx.coroutines.launch
+
+/** 保留同一个状态与档位，手势阈值和业务确认回调始终读取最新值。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun rememberMeloraBottomSheetState(
+    skipPartiallyExpanded: Boolean = false,
+    confirmValueChange: (SheetValue) -> Boolean = { true },
+): SheetState {
+    val density by rememberUpdatedState(LocalDensity.current)
+    val confirm by rememberUpdatedState(confirmValueChange)
+    // 与 Material3 1.4 的默认阈值一致；lambda 不捕获首次创建时的 Density。
+    val positionalThreshold = { with(density) { 56.dp.toPx() } }
+    val velocityThreshold = { with(density) { 125.dp.toPx() } }
+    val confirmChange: (SheetValue) -> Boolean = { confirm(it) }
+    return rememberSaveable(
+        skipPartiallyExpanded,
+        saver = SheetState.Saver(
+            skipPartiallyExpanded = skipPartiallyExpanded,
+            positionalThreshold = positionalThreshold,
+            velocityThreshold = velocityThreshold,
+            confirmValueChange = confirmChange,
+            skipHiddenState = false,
+        ),
+    ) {
+        SheetState(
+            skipPartiallyExpanded = skipPartiallyExpanded,
+            positionalThreshold = positionalThreshold,
+            velocityThreshold = velocityThreshold,
+            confirmValueChange = confirmChange,
+        )
+    }
+}
 
 /** 内容滚动到下边界后，不能将剩余上抛速度交给抽屉的弹簧动画。下拉关闭仍由抽屉处理。 */
 internal object SheetBoundaryFlingConnection : NestedScrollConnection {
@@ -77,51 +117,72 @@ internal fun MeloraBottomSheet(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     if (!LocalPageActive.current) return
+    // 窗口沿用系统 Density，避免应用缩放触发 Material 重建窗口及其 Composition。
+    val contentDensity = LocalDensity.current
+    val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val systemDensity = context.resources.displayMetrics.density
+    val windowDensity = remember(systemDensity, configuration.fontScale) { Density(context) }
+    val windowScale = contentDensity.density / windowDensity.density
+    val windowShape = remember(shape, contentDensity) {
+        object : Shape {
+            override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density) =
+                shape.createOutline(size, layoutDirection, contentDensity)
+        }
+    }
     var viewport by remember { mutableStateOf(IntSize.Zero) }
-    ModalBottomSheet(
-        // 外层位于 Material3 的位移和 Surface 裁剪之前，遮罩不会随面板移动。
-        modifier = Modifier
-            .layout { measurable, constraints ->
-                val sheet = measurable.measure(constraints)
-                viewport = IntSize(constraints.maxWidth, constraints.maxHeight)
-                layout(sheet.width, sheet.height) { sheet.place(0, 0) }
-            }
-            .drawBehind {
-                if (scrimColor == Color.Unspecified || size.height == 0f) return@drawBehind
-                val height = viewport.height.toFloat()
-                val visibleHeight = if (sheetState.hasPartiallyExpandedState) {
-                    height / 2f
-                } else {
-                    size.height.coerceAtMost(height)
+    CompositionLocalProvider(LocalDensity provides windowDensity) {
+        ModalBottomSheet(
+            // 外层位于 Material3 的位移和 Surface 裁剪之前，遮罩不会随面板移动。
+            modifier = Modifier
+                .layout { measurable, constraints ->
+                    val sheet = measurable.measure(constraints)
+                    viewport = IntSize(constraints.maxWidth, constraints.maxHeight)
+                    layout(sheet.width, sheet.height) { sheet.place(0, 0) }
                 }
-                val progress = ((height - sheetState.requireOffset()) / visibleHeight)
-                    .coerceIn(0f, 1f)
-                drawRect(
-                    color = scrimColor,
-                    alpha = progress,
-                    topLeft = Offset((size.width - viewport.width) / 2f, 0f),
-                    size = Size(viewport.width.toFloat(), height),
-                )
+                .drawBehind {
+                    if (scrimColor == Color.Unspecified || size.height == 0f) return@drawBehind
+                    val height = viewport.height.toFloat()
+                    val visibleHeight = if (sheetState.hasPartiallyExpandedState) {
+                        height / 2f
+                    } else {
+                        size.height.coerceAtMost(height)
+                    }
+                    val progress = ((height - sheetState.requireOffset()) / visibleHeight)
+                        .coerceIn(0f, 1f)
+                    drawRect(
+                        color = scrimColor,
+                        alpha = progress,
+                        topLeft = Offset((size.width - viewport.width) / 2f, 0f),
+                        size = Size(viewport.width.toFloat(), height),
+                    )
+                },
+            onDismissRequest = onDismissRequest,
+            sheetState = sheetState,
+            sheetMaxWidth = BottomSheetDefaults.SheetMaxWidth * windowScale,
+            containerColor = containerColor,
+            // 保留原生遮罩的点击/无障碍关闭；可视遮罩只由上方物理位移驱动。
+            scrimColor = if (scrimColor == Color.Unspecified) Color.Unspecified else Color.Transparent,
+            tonalElevation = tonalElevation,
+            shape = windowShape,
+            dragHandle = dragHandle?.let { handle ->
+                { CompositionLocalProvider(LocalDensity provides contentDensity, content = handle) }
             },
-        onDismissRequest = onDismissRequest,
-        sheetState = sheetState,
-        containerColor = containerColor,
-        // 保留原生遮罩的点击/无障碍关闭；可视遮罩只由上方物理位移驱动。
-        scrimColor = if (scrimColor == Color.Unspecified) Color.Unspecified else Color.Transparent,
-        tonalElevation = tonalElevation,
-        shape = shape,
-        dragHandle = dragHandle,
-    ) {
-        SystemBarsVisibility()
-        CompositionLocalProvider(LocalOverscrollFactory provides null) {
-            Column(
-                Modifier.fillMaxWidth()
-                    .nestedScroll(SheetBoundaryFlingConnection)
-                    // 静态菜单也通过嵌套滚动交接手势，避免直接拖拽将越界速度注入抽屉。
-                    // 实际滚动距离仍由子列表消费，这里不增加第二份滚动位置。
-                    .scrollable(rememberScrollableState { 0f }, Orientation.Vertical),
-                content = content,
-            )
+        ) {
+            SystemBarsVisibility()
+            CompositionLocalProvider(
+                LocalOverscrollFactory provides null,
+                LocalDensity provides contentDensity,
+            ) {
+                Column(
+                    Modifier.fillMaxWidth()
+                        .nestedScroll(SheetBoundaryFlingConnection)
+                        // 静态菜单也通过嵌套滚动交接手势，避免直接拖拽将越界速度注入抽屉。
+                        // 实际滚动距离仍由子列表消费，这里不增加第二份滚动位置。
+                        .scrollable(rememberScrollableState { 0f }, Orientation.Vertical),
+                    content = content,
+                )
+            }
         }
     }
 }

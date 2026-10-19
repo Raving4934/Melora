@@ -55,7 +55,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.State
@@ -485,7 +484,7 @@ fun SongMoreSheet(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true)
     val closeSheet = rememberSheetDismiss(sheetState)
     val favoriteUids by UserLibrary.favoriteUids.collectAsStateWithLifecycle()
     val isFavorite = song.uid in favoriteUids
@@ -817,7 +816,7 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
     if (songs.isEmpty()) return
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val sheetState = rememberModalBottomSheetState()
+    val sheetState = rememberMeloraBottomSheetState()
     val closeSheet = rememberSheetDismiss(sheetState)
     var newName by remember { mutableStateOf("") }
     var adding by remember { mutableStateOf(false) }

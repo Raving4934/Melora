@@ -53,6 +53,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -67,6 +68,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -173,15 +175,23 @@ private val genreTagColors = listOf(
     Color(0xFF059669), Color(0xFF7C3AED), Color(0xFFDB2777),
     Color(0xFF2563EB), Color(0xFFD97706), Color(0xFF4B5563),
 )
+private const val FEATURED_BOARD_MIN_CARD_WIDTH_DP = 320f
+private const val FEATURED_BOARD_SPACING_DP = 16f
 private const val GENRE_BOARD_MIN_CARD_WIDTH_DP = 132f
 private const val GENRE_BOARD_SPACING_DP = 8f
+
+internal fun leaderboardFeaturedColumnCount(availableWidthDp: Float): Int =
+    ((availableWidthDp.coerceAtLeast(0f) + FEATURED_BOARD_SPACING_DP) /
+        (FEATURED_BOARD_MIN_CARD_WIDTH_DP + FEATURED_BOARD_SPACING_DP))
+        .toInt()
+        .coerceIn(1, 3)
 
 internal fun leaderboardGenreColumnCount(availableWidthDp: Float): Int {
     val minCardWidth = GENRE_BOARD_MIN_CARD_WIDTH_DP
     val spacing = GENRE_BOARD_SPACING_DP
     return ((availableWidthDp.coerceAtLeast(0f) + spacing) / (minCardWidth + spacing))
         .toInt()
-        .coerceIn(3, 6)
+        .coerceAtLeast(3)
 }
 
 @Composable
@@ -311,8 +321,27 @@ fun LeaderboardScreen(
                         .padding(horizontal = 16.dp),
                 ) {
                     // 直接使用扣除侧栏与页面内边距后的内容约束，不用整窗宽度推测列数。
+                    val featuredColumns = leaderboardFeaturedColumnCount(maxWidth.value)
                     val genreColumns = leaderboardGenreColumnCount(maxWidth.value)
-                    val genreCardWidth = ((maxWidth - GENRE_BOARD_SPACING_DP.dp * (genreColumns - 1)) / genreColumns).coerceAtLeast(0.dp)
+                    val featuredBoards = boards.take(3)
+                    val featuredRows = featuredBoards.chunked(featuredColumns)
+                    val featuredRowKey = { row: List<BoardItem> ->
+                        "featured:${platform.id}:${row.joinToString("|") { it.bangid }}"
+                    }
+                    var previousFeaturedColumns by remember(platform.id) { mutableIntStateOf(featuredColumns) }
+                    if (previousFeaturedColumns != featuredColumns) {
+                        // 用旧布局实际可见行的榜单定位新行，避免整行 key 改变后沿用旧索引跳到垂类标题。
+                        val firstIndex = listState.firstVisibleItemIndex
+                        val firstKey = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == firstIndex }?.key
+                        val anchorBoardId = featuredBoards.chunked(previousFeaturedColumns)
+                            .firstOrNull { featuredRowKey(it) == firstKey }?.first()?.bangid
+                        val anchorRow = featuredRows.indexOfFirst { row -> row.any { it.bangid == anchorBoardId } }
+                        val anchorOffset = listState.firstVisibleItemScrollOffset
+                        SideEffect {
+                            if (anchorRow >= 0) listState.requestScrollToItem(anchorRow + 1, anchorOffset)
+                            previousFeaturedColumns = featuredColumns
+                        }
+                    }
                     SkeletonCrossfade(
                         visible = loading,
                         modifier = Modifier.fillMaxSize(),
@@ -320,6 +349,7 @@ fun LeaderboardScreen(
                             SkeletonLeaderboard(
                                 modifier = Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current),
                                 genreColumns = genreColumns,
+                                featuredColumns = featuredColumns,
                             )
                         },
                     ) {
@@ -334,7 +364,9 @@ fun LeaderboardScreen(
                             ) {
                                 item {
                                     Row(
-                                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                            .testTag("leaderboard-official-header")
+                                            .padding(top = 4.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
                                         Icon(
@@ -349,34 +381,51 @@ fun LeaderboardScreen(
                                             fontSize = 17.sp,
                                             fontWeight = FontWeight.Medium,
                                             color = TextMain,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
                                         )
                                         Spacer(Modifier.width(8.dp))
                                         Text(
                                             text = "官方榜单 · 每日更新",
                                             fontSize = 11.sp,
                                             color = TextMuted,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
                                             modifier = Modifier.padding(top = 2.dp),
                                         )
                                     }
                                 }
 
                                 // 主打三大榜（含实时 Top 3 直读）
-                                items(boards.take(3), key = { "${platform.id}:${it.bangid}" }) { board ->
-                                    val position = boards.take(3).indexOf(board)
-                                    BoardPeekCard(
-                                        platform = platform.id,
-                                        board = board,
-                                        gradient = peakGradients[position % peakGradients.size],
-                                        badgeColor = peakBadges[position % peakBadges.size],
-                                        onOpen = { selectedBoard = board },
-                                    )
+                                items(
+                                    items = featuredRows,
+                                    key = featuredRowKey,
+                                ) { rowItems ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(FEATURED_BOARD_SPACING_DP.dp),
+                                    ) {
+                                        rowItems.forEach { board ->
+                                            val position = boards.indexOf(board)
+                                            key(board.bangid) {
+                                                BoardPeekCard(
+                                                    platform = platform.id,
+                                                    board = board,
+                                                    gradient = peakGradients[position % peakGradients.size],
+                                                    badgeColor = peakBadges[position % peakBadges.size],
+                                                    onOpen = { selectedBoard = board },
+                                                    modifier = Modifier.weight(1f),
+                                                )
+                                            }
+                                        }
+                                        repeat(featuredColumns - rowItems.size) { Spacer(Modifier.weight(1f)) }
+                                    }
                                 }
 
                                 if (boards.size > 3) {
                                     item {
-                                        Spacer(Modifier.height(4.dp))
                                         Row(
-                                            modifier = Modifier.fillMaxWidth(),
+                                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                                             verticalAlignment = Alignment.CenterVertically,
                                         ) {
                                             Icon(
@@ -399,17 +448,21 @@ fun LeaderboardScreen(
                                         items = boards.drop(3).chunked(genreColumns),
                                         key = { rowItems -> rowItems.joinToString("|") { it.id } },
                                     ) { rowItems ->
-                                        Row(horizontalArrangement = Arrangement.spacedBy(GENRE_BOARD_SPACING_DP.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(GENRE_BOARD_SPACING_DP.dp),
+                                        ) {
                                             rowItems.forEach { board ->
                                                 val tagColor = genreTagColors[(boards.indexOf(board)) % genreTagColors.size]
                                                 GenreBoardCard(
                                                     platform = platform.id,
                                                     board = board,
                                                     tagColor = tagColor,
-                                                    modifier = Modifier.width(genreCardWidth),
+                                                    modifier = Modifier.weight(1f),
                                                     onClick = { selectedBoard = board },
                                                 )
                                             }
+                                            repeat(genreColumns - rowItems.size) { Spacer(Modifier.weight(1f)) }
                                         }
                                     }
                                 }
@@ -620,6 +673,7 @@ private fun BoardPeekCard(
     gradient: Brush,
     badgeColor: Color,
     onOpen: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     // 预览只读取三首快照；详情与播放使用另一条完整分页快照。
@@ -644,7 +698,7 @@ private fun BoardPeekCard(
         color = CardWhite,
         shadowElevation = 0.dp,
         border = MeloraAppearance.cardBorder,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
     ) {
         Row(
             modifier = Modifier
@@ -787,6 +841,8 @@ private fun BoardPeekCard(
                                     text = "榜单数据暂不可用，点击重试",
                                     fontSize = 12.sp,
                                     color = BrandBlue,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.fillMaxWidth(),
                                 )
                             }

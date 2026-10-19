@@ -1,6 +1,7 @@
 package com.leyu.melora.ui.playlist
 
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.rememberMeloraBottomSheetState
 import com.leyu.melora.ui.common.rememberSheetDismiss
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -30,7 +31,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -210,7 +210,7 @@ private fun PlaylistCategorySheet(onDismiss: () -> Unit) {
     val platformId by MeloraSettings.playlistPlatform.collectAsStateWithLifecycle()
     val platform = playlistPlatforms.firstOrNull { it.id == platformId } ?: playlistPlatforms.first()
     val selectedTagId by MeloraSettings.playlistTagId.collectAsStateWithLifecycle()
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true)
     val closeSheet = rememberSheetDismiss(sheetState)
     var tagInfo by remember(platformId) {
         mutableStateOf(OnlineCache.get<TagInfo>("playlistTags.$platformId", TAG_CACHE_TTL) ?: TagInfo(emptyList(), emptyList()))

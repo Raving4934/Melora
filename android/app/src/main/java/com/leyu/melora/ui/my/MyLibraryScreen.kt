@@ -1,6 +1,7 @@
 package com.leyu.melora.ui.my
 
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.rememberMeloraBottomSheetState
 import com.leyu.melora.ui.common.bookAlbumOf
 import com.leyu.melora.playback.bookId
 import com.leyu.melora.playback.canonicalBookId
@@ -96,7 +97,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -1933,7 +1933,7 @@ private fun DownloadRecordSheet(
     onAddToPlaylist: () -> Unit,
 ) {
     val context = LocalContext.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true)
     val closeSheet = rememberSheetDismiss(sheetState)
     val favoriteUids by UserLibrary.favoriteUids.collectAsStateWithLifecycle()
     val song = record.song
@@ -2172,7 +2172,7 @@ internal fun PlaylistEditSheet(
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true)
     val closeSheet = rememberSheetDismiss(sheetState)
     val focusRequester = remember { FocusRequester() }
     var textValue by remember(initialName) {
@@ -2332,7 +2332,7 @@ internal fun PlaylistMoreSheet(
     onDelete: () -> Unit,
     onUpdate: (() -> Unit)? = null,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true)
     val closeSheet = rememberSheetDismiss(sheetState)
     MeloraBottomSheet(
         onDismissRequest = onDismiss,
@@ -2468,7 +2468,7 @@ private fun PlaylistDeleteConfirmSheet(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true)
     val closeSheet = rememberSheetDismiss(sheetState)
     MeloraBottomSheet(
         onDismissRequest = onDismiss,

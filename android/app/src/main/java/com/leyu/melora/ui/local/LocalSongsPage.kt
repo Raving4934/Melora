@@ -1,5 +1,6 @@
 package com.leyu.melora.ui.local
 
+import com.leyu.melora.ui.common.MeloraAlertDialog
 import android.app.Activity
 import android.Manifest
 import android.content.pm.PackageManager
@@ -47,7 +48,6 @@ import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SortByAlpha
 import androidx.compose.material.icons.rounded.ViewList
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -345,7 +345,7 @@ internal fun LocalSongsPage(
     }
 
     pendingDelete?.let { targets ->
-        AlertDialog(
+        MeloraAlertDialog(
             onDismissRequest = { if (!deleting) pendingDelete = null },
             title = { Text("永久删除", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = TextMain) },
             text = { Text("将从设备中删除 ${targets.size} 个音频文件，且无法恢复。", fontSize = 13.sp, color = TextSub) },

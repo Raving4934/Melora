@@ -15,7 +15,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +36,7 @@ import com.leyu.melora.playback.PlayerCoverStyle
 import com.leyu.melora.playback.UiTrack
 import com.leyu.melora.playback.ThemeMode
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.rememberMeloraBottomSheetState
 import com.leyu.melora.ui.common.rememberSheetDismiss
 import kotlinx.coroutines.delay
 
@@ -59,7 +59,7 @@ internal fun PlayerCoverPicker(
     var focused by remember { mutableIntStateOf(selected.ordinal) }
     var width by remember { mutableIntStateOf(1) }
     LaunchedEffect(selected) { focused = selected.ordinal }
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true)
     val closeSheet = rememberSheetDismiss(sheetState)
     val focus: (Float) -> Unit = { x ->
         val index = ((x / width) * PlayerCoverStyle.entries.size).toInt().coerceIn(0, PlayerCoverStyle.entries.lastIndex)

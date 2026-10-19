@@ -41,6 +41,7 @@ import com.leyu.melora.ui.common.LocalResetRootBack
 import com.leyu.melora.ui.common.RootBackCallback
 import com.leyu.melora.ui.common.shouldResetRootBackOnKeyEvent
 import com.leyu.melora.ui.theme.MeloraTheme
+import com.leyu.melora.ui.theme.AdaptiveDisplay
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -117,14 +118,16 @@ class MainActivity : ComponentActivity() {
                 hasSavedInstanceState = savedInstanceState != null,
             )
             setContent {
-                MeloraTheme {
-                    // 全局关闭系统"整屏拉伸"（橡皮筋）：纵向/横向滚动都到边即停，手感统一
-                    androidx.compose.runtime.CompositionLocalProvider(
-                        androidx.compose.foundation.LocalOverscrollFactory provides null,
-                        LocalResetRootBack provides ::resetRootBackConfirmation,
-                    ) {
-                        SongListStateProvider {
-                            MeloraApp(initialTab = initialTab)
+                AdaptiveDisplay {
+                    MeloraTheme {
+                        // 全局关闭系统"整屏拉伸"（橡皮筋）：纵向/横向滚动都到边即停，手感统一
+                        androidx.compose.runtime.CompositionLocalProvider(
+                            androidx.compose.foundation.LocalOverscrollFactory provides null,
+                            LocalResetRootBack provides ::resetRootBackConfirmation,
+                        ) {
+                            SongListStateProvider {
+                                MeloraApp(initialTab = initialTab)
+                            }
                         }
                     }
                 }

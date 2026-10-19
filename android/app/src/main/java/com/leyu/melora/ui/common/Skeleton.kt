@@ -268,7 +268,12 @@ fun SkeletonPreviewRows(modifier: Modifier = Modifier, rows: Int = 3) {
 
 /** 排行榜主页骨架：镜像官方榜标题、三张无标题主榜卡与自适应垂类方卡。 */
 @Composable
-fun SkeletonLeaderboard(modifier: Modifier = Modifier, genreColumns: Int = 3) {
+fun SkeletonLeaderboard(
+    modifier: Modifier = Modifier,
+    genreColumns: Int = 3,
+    featuredColumns: Int = 1,
+) {
+    val columns = featuredColumns.coerceIn(1, 3)
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -285,46 +290,64 @@ fun SkeletonLeaderboard(modifier: Modifier = Modifier, genreColumns: Int = 3) {
             ShimmerTextLine(
                 placeholder = "平台官方榜",
                 fontSize = 17.sp,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.Medium,
                 shimmerHeight = 17.dp,
                 modifier = Modifier.width(96.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            ShimmerTextLine(
+                placeholder = "官方榜单 · 每日更新",
+                fontSize = 11.sp,
+                shimmerHeight = 11.dp,
+                modifier = Modifier.padding(top = 2.dp).weight(1f),
             )
         }
 
         Spacer(Modifier.height(16.dp))
 
-        repeat(3) {
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = CardWhite,
+        repeat((3 + columns - 1) / columns) { row ->
+            Row(
                 modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                Row(
-                    modifier = Modifier
-                        .padding(12.dp)
-                        .height(108.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .width(128.dp)
-                            .height(108.dp),
-                    ) {
-                        ShimmerBox(
-                            modifier = Modifier
-                                .size(80.dp)
-                                .align(Alignment.CenterEnd),
-                            cornerRadius = 40.dp,
-                        )
-                        ShimmerBox(
-                            modifier = Modifier
-                                .size(88.dp)
-                                .align(Alignment.CenterStart),
-                            cornerRadius = 16.dp,
-                        )
+                repeat(columns) { column ->
+                    if (row * columns + column < 3) {
+                        Surface(
+                            shape = RoundedCornerShape(20.dp),
+                            color = CardWhite,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .padding(12.dp)
+                                    .height(108.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .width(128.dp)
+                                        .height(108.dp),
+                                ) {
+                                    ShimmerBox(
+                                        modifier = Modifier
+                                            .size(80.dp)
+                                            .align(Alignment.CenterEnd),
+                                        cornerRadius = 40.dp,
+                                    )
+                                    ShimmerBox(
+                                        modifier = Modifier
+                                            .size(88.dp)
+                                            .align(Alignment.CenterStart),
+                                        cornerRadius = 16.dp,
+                                    )
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                SkeletonPreviewRows(modifier = Modifier.weight(1f))
+                            }
+                        }
+                    } else {
+                        Spacer(Modifier.weight(1f))
                     }
-                    Spacer(Modifier.width(12.dp))
-                    SkeletonPreviewRows(modifier = Modifier.weight(1f))
                 }
             }
             Spacer(Modifier.height(16.dp))
@@ -337,7 +360,7 @@ fun SkeletonLeaderboard(modifier: Modifier = Modifier, genreColumns: Int = 3) {
             ShimmerTextLine(
                 placeholder = "更多垂类榜单",
                 fontSize = 17.sp,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.Medium,
                 shimmerHeight = 17.dp,
                 modifier = Modifier.width(110.dp),
             )
@@ -349,7 +372,7 @@ fun SkeletonLeaderboard(modifier: Modifier = Modifier, genreColumns: Int = 3) {
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            repeat(genreColumns.coerceIn(3, 6)) { SkeletonGenreCard(Modifier.weight(1f)) }
+            repeat(genreColumns.coerceAtLeast(3)) { SkeletonGenreCard(Modifier.weight(1f)) }
         }
     }
 }

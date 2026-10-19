@@ -51,6 +51,7 @@ import com.leyu.melora.playback.sdk.PlaylistImportResult
 import com.leyu.melora.playback.sdk.PlaylistImporter
 import com.leyu.melora.ui.common.BrandBlue
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.rememberMeloraBottomSheetState
 import com.leyu.melora.ui.common.rememberSheetDismiss
 import com.leyu.melora.ui.common.SongArtwork
 import com.leyu.melora.ui.common.TextMain
@@ -108,7 +109,7 @@ internal fun PlaylistImportSheet(
         }
     }
     val busy = loading || saving
-    val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true,
+    val sheet = rememberMeloraBottomSheetState(skipPartiallyExpanded = true,
         confirmValueChange = { !saving && updateController?.state?.value?.saving != true })
     val closeSheet = rememberSheetDismiss(sheet)
     val dismiss = { if (!saving) { job?.cancel(); closeSheet(onDismiss) } }

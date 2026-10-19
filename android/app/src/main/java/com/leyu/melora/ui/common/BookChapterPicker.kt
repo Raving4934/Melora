@@ -58,7 +58,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -281,7 +280,7 @@ internal fun BookChapterPicker(
     loadSearchPage: suspend (Int) -> KwBookApi.BookChapters,
     onSelectChapter: (BookChapterMatch) -> Unit,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true)
     val closeSheet = rememberSheetDismiss(sheetState)
     var query by rememberSaveable { mutableStateOf("") }
     val input = remember(query) { parseBookChapterQuery(query) }

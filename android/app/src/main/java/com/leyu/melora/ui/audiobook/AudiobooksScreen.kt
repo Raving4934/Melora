@@ -1,6 +1,7 @@
 package com.leyu.melora.ui.audiobook
 
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.rememberMeloraBottomSheetState
 import com.leyu.melora.ui.common.rememberSheetDismiss
 import com.leyu.melora.ui.common.PageBackHandler as BackHandler
 import androidx.compose.foundation.background
@@ -378,7 +379,7 @@ private fun RankPage(tab: KwBookApi.BookRankTab, onBack: () -> Unit, onOpen: (On
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun RankCategorySheet(tab: KwBookApi.BookRankTab, selectedTag: String, onSelect: (Int) -> Unit, onDismiss: () -> Unit) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true)
     val closeSheet = rememberSheetDismiss(sheetState)
     MeloraBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = MeloraAppearance.canvas, tonalElevation = 0.dp) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 20.dp, bottom = 28.dp)) {

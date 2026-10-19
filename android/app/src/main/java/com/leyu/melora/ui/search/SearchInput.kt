@@ -30,10 +30,13 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
@@ -70,6 +73,8 @@ internal fun SearchInputSection(
     onPlatformMenuExpandedChange: (Boolean) -> Unit,
     onPlatformChange: (PlatformSource) -> Unit,
 ) {
+    val contentDensity = LocalDensity.current
+    val windowScale = contentDensity.density / LocalContext.current.resources.displayMetrics.density
     Column(modifier = Modifier.fillMaxWidth()) {
         // --- 1. 跑道型一体化搜索胶囊 ---
         Surface(
@@ -126,44 +131,46 @@ internal fun SearchInputSection(
                     DropdownMenu(
                         expanded = platformMenuExpanded,
                         onDismissRequest = { onPlatformMenuExpandedChange(false) },
-                        shape = RoundedCornerShape(18.dp),
+                        shape = RoundedCornerShape(18.dp * windowScale),
                         modifier = Modifier.background(CardWhite),
                     ) {
-                        PlatformSource.values().forEach { platform ->
-                            DropdownMenuItem(
-                                text = {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(8.dp)
-                                                .clip(CircleShape)
-                                                .background(platform.color),
-                                        )
-                                        Spacer(Modifier.width(10.dp))
-                                        Text(
-                                            text = sourceAliasDisplayMusic(platform.id, platform.label),
-                                            fontSize = 14.sp,
-                                            fontWeight = if (selectedPlatform == platform) FontWeight.Bold else FontWeight.Normal,
-                                            color = if (selectedPlatform == platform) BrandBlue else TextMain,
-                                        )
-                                        if (selectedPlatform == platform) {
-                                            Spacer(Modifier.weight(1f))
-                                            Icon(
-                                                Icons.Outlined.Check,
-                                                contentDescription = null,
-                                                tint = BrandBlue,
-                                                modifier = Modifier.size(16.dp),
+                        CompositionLocalProvider(LocalDensity provides contentDensity) {
+                            PlatformSource.values().forEach { platform ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(8.dp)
+                                                    .clip(CircleShape)
+                                                    .background(platform.color),
                                             )
+                                            Spacer(Modifier.width(10.dp))
+                                            Text(
+                                                text = sourceAliasDisplayMusic(platform.id, platform.label),
+                                                fontSize = 14.sp,
+                                                fontWeight = if (selectedPlatform == platform) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (selectedPlatform == platform) BrandBlue else TextMain,
+                                            )
+                                            if (selectedPlatform == platform) {
+                                                Spacer(Modifier.weight(1f))
+                                                Icon(
+                                                    Icons.Outlined.Check,
+                                                    contentDescription = null,
+                                                    tint = BrandBlue,
+                                                    modifier = Modifier.size(16.dp),
+                                                )
+                                            }
                                         }
-                                    }
-                                },
-                                onClick = {
-                                    onPlatformChange(platform)
-                                },
-                            )
+                                    },
+                                    onClick = {
+                                        onPlatformChange(platform)
+                                    },
+                                )
+                            }
                         }
                     }
                 }

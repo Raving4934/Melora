@@ -23,9 +23,18 @@ class ResponsiveGridLayoutTest {
         assertEquals(3, responsiveGridColumns(560.dp, horizontalSpacing = 10.dp))
     }
 
-    @Test fun expandedContentRespectsCardWidthAndColumnCap() {
+    @Test fun expandedContentKeepsTargetCardWidthWithoutASixColumnCap() {
         assertEquals(4, responsiveGridColumns(904.dp))
-        assertEquals(6, responsiveGridColumns(1600.dp))
+        assertEquals(6, responsiveGridColumns(1331.dp))
+        assertEquals(7, responsiveGridColumns(1332.dp))
+        assertEquals(8, responsiveGridColumns(1600.dp))
+        assertEquals(16, responsiveGridColumns(3072.dp))
         assertEquals(3, responsiveGridColumns(744.dp, minCardWidth = 240.dp))
+    }
+
+    @Test fun expandedContentUsesTheRequestedCardWidthAndSpacing() {
+        assertEquals(6, responsiveGridColumns(1515.dp, minCardWidth = 208.dp, horizontalSpacing = 10.dp))
+        assertEquals(7, responsiveGridColumns(1516.dp, minCardWidth = 208.dp, horizontalSpacing = 10.dp))
+        assertEquals(8, responsiveGridColumns(1720.dp, minCardWidth = 200.dp, horizontalSpacing = 12.dp))
     }
 }

@@ -1,6 +1,7 @@
 package com.leyu.melora.ui.settings
 
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.rememberMeloraBottomSheetState
 import com.leyu.melora.ui.common.rememberSheetDismiss
 import android.net.Uri
 import android.widget.Toast
@@ -64,7 +65,6 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -610,7 +610,7 @@ private fun SourceModalSheet(
     subtitle: String,
     content: @Composable ColumnScope.(closeSheet: (() -> Unit) -> Unit) -> Unit,
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true)
     val closeSheet = rememberSheetDismiss(sheetState)
     MeloraBottomSheet(
         onDismissRequest = onDismiss,
@@ -1000,7 +1000,7 @@ private fun SourceRow(
     }
 
     if (sheetOpen) {
-        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true)
         val closeSheet = rememberSheetDismiss(sheetState)
         val actionBusy = actionStatus?.busy == true
         val metrics = LxScriptPool.metrics(script.id)
