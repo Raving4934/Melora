@@ -461,26 +461,24 @@ class ReleaseWorkflowTest(unittest.TestCase):
     def test_device_network_preflight_is_real_and_precedes_tests(self) -> None:
         setup = step(self.android, "准备并验证非计费测试网络")
         script = shell_script(setup)
-        self.assertIn('adb -s "$ANDROID_SERIAL" shell svc data disable', script)
-        self.assertLess(script.index("svc wifi disable"), script.index("Previous default network disconnected"))
-        self.assertLess(script.index("Previous default network disconnected"), script.index('["shell", "svc", "wifi", "enable"]'))
-        self.assertLess(script.index('["shell", "svc", "wifi", "enable"]'), script.index("await_network(ready_network"))
+        self.assertIn("python3 -B scripts/release/prepare_android_network.py", script)
+        self.assertIn('tee "$DEVICE_LOG_DIR/network-ready.log"', script)
         self.assertLess(self.android.index("name: 准备并验证非计费测试网络"),
                         self.android.index("name: 安装测试目标并预置 overlay 权限"))
-        self.assertIn("time.monotonic() + 120", script)
-        self.assertIn("raise SystemExit", script)
-        self.assertIn("connectivity-before-tests.log", script)
-        self.assertNotIn("captive_portal_mode", script)
+        self.assertIn("python3 -B scripts/release/test_prepare_android_network.py", self.android)
+        source = (ROOT / "scripts/release/prepare_android_network.py").read_text()
+        self.assertIn("connectivity-before-tests.log", source)
+        self.assertNotIn("captive_portal_mode", source)
         self.assertNotIn("|| true", script)
-        self.assertNotIn("assumeTrue", script)
-        self.assertIn('os.environ["ANDROID_SERIAL"]', script)
+        self.assertNotIn("assumeTrue", source)
+        self.assertIn('os.environ["ANDROID_SERIAL"]', source)
+        self.assertIn('prepare_android_network.py --host-dns', self.android)
+        self.assertIn('-dns-server "$dns_servers"', self.android)
+        self.assertIn('netsim_${stream}.log', self.android)
+        self.assertIn('host-dns.log', self.android)
 
     def test_network_preflight_requires_capabilities_of_the_active_network(self) -> None:
-        script = shell_script(step(self.android, "准备并验证非计费测试网络"))
-        source = script.split('import os\n', 1)[1].split('log_dir = ', 1)[0]
-        namespace: dict = {}
-        exec(compile(source, "network-preflight", "exec"), namespace)
-        ready = namespace["ready_network"]
+        from prepare_android_network import ready_network as ready
         def network(identifier: int, capabilities: str) -> str:
             return (f"  NetworkAgentInfo{{network{{{identifier}}} ni{{WIFI CONNECTED}} "
                     f"nc{{[ Transports: WIFI Capabilities: {capabilities} ]}}}}")

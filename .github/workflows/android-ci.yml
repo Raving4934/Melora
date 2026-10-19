@@ -179,6 +179,7 @@ jobs:
           python3 -B scripts/release/test_licenses.py
           python3 -B scripts/release/test_export_changelog_section.py
           python3 -B scripts/release/test_prepare_android_ui.py
+          python3 -B scripts/release/test_prepare_android_network.py
           python3 -B scripts/release/test_github_api.py
           python3 -B scripts/release/test_publish_android_release.py
           python3 -B scripts/release/test_release_workflows.py
@@ -349,9 +350,11 @@ jobs:
           adb server-status > "$DEVICE_LOG_DIR/adb-server-status.log"
           # 保留真实 GLES 渲染与动画，改走 ANGLE，避开已复现的直接 SwiftShader GLES
           # ColorBuffer/纹理绑定异常；不能通过关闭 GPU 或跳过沉浸测试掩盖设备失联。
+          dns_servers="$(python3 -B scripts/release/prepare_android_network.py --host-dns)"
+          printf '%s\n' "$dns_servers" | tee "$DEVICE_LOG_DIR/emulator-dns.log"
           nohup "$ANDROID_HOME/emulator/emulator" -avd melora-ci -port 5554 \
             -no-window -no-audio -no-boot-anim -no-snapshot -gpu swangle \
-            -accel on -cores 2 -memory 2048 > "$DEVICE_LOG_DIR/emulator.log" 2>&1 &
+            -accel on -cores 2 -memory 2048 -dns-server "$dns_servers" > "$DEVICE_LOG_DIR/emulator.log" 2>&1 &
           echo $! > "$DEVICE_LOG_DIR/emulator.pid"
           timeout 360 bash -c '
             set -euo pipefail
@@ -374,58 +377,10 @@ jobs:
           nohup adb -s "$ANDROID_SERIAL" logcat -v threadtime > "$DEVICE_LOG_DIR/logcat.log" 2>&1 &
           echo $! > "$DEVICE_LOG_DIR/logcat.pid"
       - name: 准备并验证非计费测试网络
+        timeout-minutes: 5
         run: |
           set -euo pipefail
-          # 仅操作本 job 的独立 AVD：禁止 Wi-Fi 验证失败后切到计费移动网络。
-          # 重建启动时的 Wi-Fi 链路；不伪造 VALIDATED、不关闭联网检测，也不跳过测试。
-          adb -s "$ANDROID_SERIAL" shell svc data disable
-          adb -s "$ANDROID_SERIAL" shell svc wifi disable
-          python3 -B - <<'PYNETWORK' 2>&1 | tee "$DEVICE_LOG_DIR/network-ready.log"
-          from pathlib import Path
-          import os
-          import re
-          import subprocess
-          import time
-
-          def ready_network(snapshot):
-              active = re.search(r"(?m)^Active default network: (\d+)\s*$", snapshot)
-              if not active:
-                  return None
-              # 只读当前 NetworkAgentInfo，不能误用另一个网络或历史日志中的能力。
-              if "Current Networks:\n" not in snapshot:
-                  return None
-              current = snapshot.split("Current Networks:\n", 1)[1]
-              for line in current.splitlines():
-                  if line and not line.startswith(" "):
-                      break
-                  if "NetworkAgentInfo{" not in line or f"network{{{active[1]}}}" not in line:
-                      continue
-                  caps = re.search(r"nc\{\[.*?Capabilities: ([A-Z_&|]+)", line)
-                  if caps and {"INTERNET", "NOT_METERED", "VALIDATED"} <= set(re.split(r"[&|]", caps[1])):
-                      return line.strip()
-              return None
-
-          log_dir = Path(os.environ["DEVICE_LOG_DIR"])
-          adb = ["adb", "-s", os.environ["ANDROID_SERIAL"]]
-
-          def await_network(predicate, label):
-              deadline = time.monotonic() + 120
-              while True:
-                  snapshot = subprocess.check_output(adb + ["shell", "dumpsys", "connectivity"], text=True, timeout=15)
-                  (log_dir / "connectivity-before-tests.log").write_text(snapshot)
-                  if predicate(snapshot):
-                      print(label)
-                      return
-                  if time.monotonic() >= deadline:
-                      print(snapshot)
-                      raise SystemExit("Emulator network prerequisite failed: " + label)
-                  time.sleep(1)
-
-          # svc 是异步操作：先等旧默认链路真正退出，避免把将断开的旧连接当成已就绪。
-          await_network(lambda snapshot: re.search(r"(?m)^Active default network: none\s*$", snapshot), "Previous default network disconnected")
-          subprocess.run(adb + ["shell", "svc", "wifi", "enable"], check=True)
-          await_network(ready_network, "Verified active unmetered Internet network")
-          PYNETWORK
+          python3 -B scripts/release/prepare_android_network.py 2>&1 | tee "$DEVICE_LOG_DIR/network-ready.log"
       - name: 验证模拟器桌面窗口可交互
         timeout-minutes: 3
         run: |
@@ -496,6 +451,13 @@ jobs:
           { date -u; free -m; df -h "$RUNNER_TEMP"; ps -eo pid,ppid,stat,rss,args --sort=-rss | head -40; } \
             > "$DEVICE_LOG_DIR/host-state.log" 2>&1 || true
           sudo dmesg --ctime | tail -200 > "$DEVICE_LOG_DIR/host-kernel.log" 2>&1 || true
+          # DNS 失败必须同时保留宿主机解析配置和 Wi-Fi/netsim 后端日志。
+          { cat /etc/resolv.conf; cat /run/systemd/resolve/resolv.conf; resolvectl status; } \
+            > "$DEVICE_LOG_DIR/host-dns.log" 2>&1 || true
+          for stream in stdout stderr; do
+            netsim_log="${TMPDIR:-/tmp}/android-$(id -un)/netsimd/netsim_${stream}.log"
+            if [[ -f "$netsim_log" ]]; then cp "$netsim_log" "$DEVICE_LOG_DIR/"; fi
+          done
           adb_log="${TMPDIR:-/tmp}/adb.$(id -u).log"
           if [[ -f "$adb_log" ]]; then cp "$adb_log" "$DEVICE_LOG_DIR/adb-server.log"; fi
           timeout 10 adb server-status > "$DEVICE_LOG_DIR/adb-server-final.log" 2>&1 || true
