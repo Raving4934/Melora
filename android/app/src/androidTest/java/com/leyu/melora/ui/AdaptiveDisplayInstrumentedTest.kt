@@ -18,6 +18,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -262,7 +263,7 @@ class AdaptiveDisplayInstrumentedTest {
         var expectedPaneTitle = ""
         compose.setContent {
             DisplayHost {
-                val paneTitle = LocalContext.current.getString(android.R.string.dialog_alert_title)
+                val paneTitle = stringResource(android.R.string.dialog_alert_title)
                 SideEffect { expectedPaneTitle = paneTitle }
                 MeloraAlertDialog(
                     onDismissRequest = {}, title = {}, confirmButton = {}, dismissButton = {},
