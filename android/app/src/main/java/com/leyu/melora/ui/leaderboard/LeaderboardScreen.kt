@@ -330,14 +330,14 @@ fun LeaderboardScreen(
                     }
                     var previousFeaturedColumns by remember(platform.id) { mutableIntStateOf(featuredColumns) }
                     if (previousFeaturedColumns != featuredColumns) {
-                        // 用旧布局实际可见行的榜单定位新行，避免整行 key 改变后沿用旧索引跳到垂类标题。
-                        val firstIndex = listState.firstVisibleItemIndex
-                        val firstKey = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == firstIndex }?.key
-                        val anchorBoardId = featuredBoards.chunked(previousFeaturedColumns)
-                            .firstOrNull { featuredRowKey(it) == firstKey }?.first()?.bangid
-                        val anchorRow = featuredRows.indexOfFirst { row -> row.any { it.bangid == anchorBoardId } }
-                        val anchorOffset = listState.firstVisibleItemScrollOffset
                         SideEffect {
+                            // 仅在列数切换时读取旧布局锚点，避免组合订阅高频滚动状态。
+                            val firstIndex = listState.firstVisibleItemIndex
+                            val firstKey = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == firstIndex }?.key
+                            val anchorBoardId = featuredBoards.chunked(previousFeaturedColumns)
+                                .firstOrNull { featuredRowKey(it) == firstKey }?.first()?.bangid
+                            val anchorRow = featuredRows.indexOfFirst { row -> row.any { it.bangid == anchorBoardId } }
+                            val anchorOffset = listState.firstVisibleItemScrollOffset
                             if (anchorRow >= 0) listState.requestScrollToItem(anchorRow + 1, anchorOffset)
                             previousFeaturedColumns = featuredColumns
                         }

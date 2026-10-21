@@ -35,10 +35,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -74,7 +74,7 @@ internal fun SearchInputSection(
     onPlatformChange: (PlatformSource) -> Unit,
 ) {
     val contentDensity = LocalDensity.current
-    val windowScale = contentDensity.density / LocalContext.current.resources.displayMetrics.density
+    val windowScale = contentDensity.density / LocalResources.current.displayMetrics.density
     Column(modifier = Modifier.fillMaxWidth()) {
         // --- 1. 跑道型一体化搜索胶囊 ---
         Surface(

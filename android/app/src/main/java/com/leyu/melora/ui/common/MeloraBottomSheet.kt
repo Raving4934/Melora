@@ -33,6 +33,7 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.Dp
@@ -121,7 +122,7 @@ internal fun MeloraBottomSheet(
     val contentDensity = LocalDensity.current
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
-    val systemDensity = context.resources.displayMetrics.density
+    val systemDensity = LocalResources.current.displayMetrics.density
     val windowDensity = remember(systemDensity, configuration.fontScale) { Density(context) }
     val windowScale = contentDensity.density / windowDensity.density
     val windowShape = remember(shape, contentDensity) {
