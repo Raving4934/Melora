@@ -15,7 +15,7 @@ require(meloraDebugAbi == null || meloraDebugAbi == "x86_64") {
 android {
     namespace = "com.leyu.melora"
     compileSdk = 37
-    ndkVersion = "28.2.13676358"
+    ndkVersion = "30.0.16248370"
 
     defaultConfig {
         applicationId = "com.leyu.melora"
@@ -73,6 +73,7 @@ android {
 
     externalNativeBuild {
         cmake {
+            version = "4.1.2"
             path = file("src/main/cpp/CMakeLists.txt")
         }
     }
@@ -111,6 +112,12 @@ dependencies {
     implementation(libs.androidx.media3.datasource.okhttp)
     implementation(project(":quickjs-android"))
     implementation(libs.okhttp)
+    implementation(libs.kotlinx.coroutines.android)
+    implementation(platform(libs.kotlinx.serialization.bom))
+    constraints {
+        // OkHttp/Coil 的共享 I/O 依赖统一到已核验的稳定补丁，不引入第二套实现。
+        implementation(libs.okio)
+    }
     implementation(libs.haze.blur)
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)

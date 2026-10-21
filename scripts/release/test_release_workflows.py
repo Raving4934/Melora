@@ -227,7 +227,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertIn("artifact-ids: ${{ needs.prepare.outputs.artifact-id || needs.release-build.outputs.artifact-id }}", release)
         self.assertIn("run-id: ${{ needs.prepare.outputs.reuse_run || github.run_id }}", release)
         self.assertIn("github-token: ${{ github.token }}", release)
-        self.assertIn("actions/download-artifact@v4.3.0", release)
+        self.assertIn("actions/download-artifact@v8.0.2", release)
         self.assertNotIn("actions/download-artifact", build)
 
         publisher = step(self.android, RELEASE_STEPS[-1])
@@ -331,7 +331,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
                 self.assertIn("cache-dependency-path:", body)
                 self.assertIn("CI_GRADLE_JVM_ARGS: -Xmx4G", body)
                 self.assertIn("--build-cache", body)
-                self.assertIn("cmake;3.22.1", body)
+                self.assertIn("cmake;4.1.2", body)
         self.assertIn("cache: npm", job(self.android, "verify"))
 
     def test_public_asset_naming_and_diagnostic_mapping_are_separate(self) -> None:
@@ -361,7 +361,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
     def test_verify_and_release_build_failure_diagnostics_are_separate_and_retry_safe(self) -> None:
         verify = step(self.android, "保留失败的单元测试与 Debug lint 诊断")
         self.assertIn("if: failure()", verify)
-        self.assertIn("actions/upload-artifact@v4.6.2", verify)
+        self.assertIn("actions/upload-artifact@v7.0.2", verify)
         self.assertIn("android-verify-failure-${{ github.run_id }}-${{ github.run_attempt }}", verify)
         for path in (
             "android/app/build/test-results/testDebugUnitTest/",
@@ -373,7 +373,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
 
         release_lint = step(self.android, "保留失败的 Release lint 诊断")
         self.assertIn("if: failure()", release_lint)
-        self.assertIn("actions/upload-artifact@v4.6.2", release_lint)
+        self.assertIn("actions/upload-artifact@v7.0.2", release_lint)
         self.assertIn("android-release-lint-failure-${{ github.run_id }}-${{ github.run_attempt }}", release_lint)
         self.assertIn("android/app/build/reports/lint-results-release.*", release_lint)
         self.assertNotIn("testDebugUnitTest", release_lint)
@@ -851,8 +851,8 @@ class DeviceWorkflowTest(unittest.TestCase):
                     [(1, "Peer disconnected"), (2, "Connection reset"), (0, "SDK installed")], api,
                 )
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                expected = ["--channel=0", "platforms;android-37.0", "ndk;28.2.13676358",
-                            "cmake;3.22.1", "emulator", f"system-images;android-{image_api};google_apis;x86_64"]
+                expected = ["--channel=0", "platforms;android-37.0", "ndk;30.0.16248370",
+                            "cmake;4.1.2", "emulator", f"system-images;android-{image_api};google_apis;x86_64"]
                 self.assertEqual(calls, [expected] * 3)
                 self.assertEqual(sleeps, ["5", "10"])
 

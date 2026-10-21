@@ -45,10 +45,10 @@ class JniUtfResourcesTest(unittest.TestCase):
         build = Path(cls.build.name)
         jdk = Path(os.environ.get("JAVA_HOME") or Path(shutil.which("javac")).resolve().parents[1])
         quickjs = ROOT / "src/main/cpp/quickjs"
-        defines = ["-D_GNU_SOURCE", "-DCONFIG_BIGNUM",
+        defines = ["-D_GNU_SOURCE",
                    f'-DCONFIG_VERSION="{(quickjs / "quickjs/VERSION").read_text().strip()}"']
         objects = []
-        for name in ("quickjs", "cutils", "libregexp", "libunicode", "libbf"):
+        for name in ("quickjs", "cutils", "libregexp", "libunicode", "dtoa"):
             target = build / f"{name}.o"
             subprocess.run(["gcc", "-std=gnu11", "-O0", "-g", *defines, "-c",
                             str(quickjs / f"quickjs/{name}.c"), "-o", str(target)], check=True)

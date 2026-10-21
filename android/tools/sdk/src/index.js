@@ -1,5 +1,5 @@
 // 乐屿 SDK 工具兼容层：导出集合。
-import he from 'he'
+import * as he from 'he'
 import { Buffer } from 'buffer'
 
 const native = globalThis.__lxNative

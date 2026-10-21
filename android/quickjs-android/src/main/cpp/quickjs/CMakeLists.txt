@@ -1,26 +1,29 @@
 cmake_minimum_required(VERSION 3.10.2)
-project(quickjs CXX)
-include_directories(quickjs)
-set(SOURCE_DIR
-        quickjs/cutils.c
-        quickjs/libbf.c
-        quickjs/libregexp.c
-        quickjs/libunicode.c
-        quickjs/quickjs.c
-        )
+project(quickjs C)
 
-file(STRINGS "quickjs/VERSION" CONFIG_VERSION)
-add_definitions(-DCONFIG_VERSION="${CONFIG_VERSION}")
-add_definitions(-DCONFIG_BIGNUM)
-add_definitions(-D_GNU_SOURCE)
-add_definitions(-DCONFIG_CC="gcc")
-add_definitions(-DCONFIG_PREFIX="/usr/local")
+set(ENGINE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/quickjs")
+file(STRINGS "${ENGINE_DIR}/VERSION" CONFIG_VERSION LIMIT_COUNT 1)
+
 add_library(
         ${PROJECT_NAME}
         SHARED
-        ${SOURCE_DIR}
+        "${ENGINE_DIR}/quickjs.c"
+        "${ENGINE_DIR}/cutils.c"
+        "${ENGINE_DIR}/libregexp.c"
+        "${ENGINE_DIR}/libunicode.c"
+        "${ENGINE_DIR}/dtoa.c"
 )
-target_include_directories(${PROJECT_NAME} PUBLIC .)
 
+target_include_directories(${PROJECT_NAME} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_definitions(
+        ${PROJECT_NAME}
+        PRIVATE
+        "_GNU_SOURCE"
+        "CONFIG_VERSION=\"${CONFIG_VERSION}\""
+)
+set_target_properties(${PROJECT_NAME} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(${PROJECT_NAME} PRIVATE m)
 
-target_link_options(${PROJECT_NAME} PRIVATE "-Wl,-z,max-page-size=16384")
+if(ANDROID)
+    target_link_options(${PROJECT_NAME} PRIVATE "-Wl,-z,max-page-size=16384")
+endif()

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM node:22-bookworm-slim AS web
+FROM node:26.12.1-bookworm-slim AS web
 WORKDIR /src
 COPY package.json package-lock.json ./
 COPY apps/web/package.json apps/web/
@@ -9,7 +9,7 @@ COPY apps/web apps/web
 COPY scripts/project-version.mjs scripts/compress-web.mjs scripts/
 RUN npm run build:web
 
-FROM golang:1.26.9-bookworm AS server
+FROM golang:1.27.3-bookworm AS server
 WORKDIR /build
 COPY apps/server/go.mod apps/server/go.sum ./
 RUN go mod download
@@ -18,7 +18,7 @@ COPY package.json /version-package.json
 RUN VERSION=$(sed -nE 's/^[[:space:]]*"version":[[:space:]]*"([^"]+)".*/\1/p' /version-package.json | head -n1) && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X melora/internal/version.Value=${VERSION:-dev}" -o /out/melora ./cmd/melora
 
-FROM alpine:3.22
+FROM alpine:3.24.2
 LABEL org.opencontainers.image.source="https://github.com/Raving4934/Melora" \
       org.opencontainers.image.description="Melora self-hosted music web application"
 RUN apk add --no-cache ca-certificates tzdata && adduser -D -u 10001 melora

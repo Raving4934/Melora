@@ -97,7 +97,7 @@ static jlong JNICALL getLong(JNIEnv *, jobject object, jfieldID field) {
 
 static jint JNICALL getInt(JNIEnv *, jobject object, jfieldID) {
     checkedJni();
-    return static_cast<JavaValue *>(object)->value.u.int32;
+    return static_cast<jint>(static_cast<JavaValue *>(object)->value.u.uint64);
 }
 
 static jdouble JNICALL getDouble(JNIEnv *, jobject object, jfieldID) {

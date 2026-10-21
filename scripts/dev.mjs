@@ -15,7 +15,7 @@ const build = spawnSync('go', ['build', '-ldflags', versionLdflag, '-o', binary,
   stdio: 'inherit',
 })
 if (build.error) {
-  console.error(`无法执行 go：${build.error.message}。请安装 Go 1.25+ 并确保 go 在 PATH 中。`)
+  console.error(`无法执行 go：${build.error.message}。请安装 Go 1.27.3 并确保 go 在 PATH 中。`)
   process.exit(127)
 }
 if (build.status !== 0) {

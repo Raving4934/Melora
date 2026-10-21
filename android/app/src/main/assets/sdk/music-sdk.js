@@ -5,8 +5,13 @@
   var __getOwnPropNames = Object.getOwnPropertyNames;
   var __getProtoOf = Object.getPrototypeOf;
   var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
   var __commonJS = (cb, mod) => function __require() {
-    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+    try {
+      return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+    } catch (e) {
+      throw mod = 0, e;
+    }
   };
   var __copyProps = (to, from, except, desc) => {
     if (from && typeof from === "object" || typeof from === "function") {
@@ -24,6 +29,7 @@
     isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
     mod
   ));
+  var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 
   // node_modules/base64-js/index.js
   var require_base64_js = __commonJS({
@@ -1801,4553 +1807,6 @@
     }
   });
 
-  // node_modules/he/he.js
-  var require_he = __commonJS({
-    "node_modules/he/he.js"(exports, module) {
-      (function(root) {
-        var freeExports = typeof exports == "object" && exports;
-        var freeModule = typeof module == "object" && module && module.exports == freeExports && module;
-        var freeGlobal = typeof global == "object" && global;
-        if (freeGlobal.global === freeGlobal || freeGlobal.window === freeGlobal) {
-          root = freeGlobal;
-        }
-        var regexAstralSymbols = /[\uD800-\uDBFF][\uDC00-\uDFFF]/g;
-        var regexAsciiWhitelist = /[\x01-\x7F]/g;
-        var regexBmpWhitelist = /[\x01-\t\x0B\f\x0E-\x1F\x7F\x81\x8D\x8F\x90\x9D\xA0-\uFFFF]/g;
-        var regexEncodeNonAscii = /<\u20D2|=\u20E5|>\u20D2|\u205F\u200A|\u219D\u0338|\u2202\u0338|\u2220\u20D2|\u2229\uFE00|\u222A\uFE00|\u223C\u20D2|\u223D\u0331|\u223E\u0333|\u2242\u0338|\u224B\u0338|\u224D\u20D2|\u224E\u0338|\u224F\u0338|\u2250\u0338|\u2261\u20E5|\u2264\u20D2|\u2265\u20D2|\u2266\u0338|\u2267\u0338|\u2268\uFE00|\u2269\uFE00|\u226A\u0338|\u226A\u20D2|\u226B\u0338|\u226B\u20D2|\u227F\u0338|\u2282\u20D2|\u2283\u20D2|\u228A\uFE00|\u228B\uFE00|\u228F\u0338|\u2290\u0338|\u2293\uFE00|\u2294\uFE00|\u22B4\u20D2|\u22B5\u20D2|\u22D8\u0338|\u22D9\u0338|\u22DA\uFE00|\u22DB\uFE00|\u22F5\u0338|\u22F9\u0338|\u2933\u0338|\u29CF\u0338|\u29D0\u0338|\u2A6D\u0338|\u2A70\u0338|\u2A7D\u0338|\u2A7E\u0338|\u2AA1\u0338|\u2AA2\u0338|\u2AAC\uFE00|\u2AAD\uFE00|\u2AAF\u0338|\u2AB0\u0338|\u2AC5\u0338|\u2AC6\u0338|\u2ACB\uFE00|\u2ACC\uFE00|\u2AFD\u20E5|[\xA0-\u0113\u0116-\u0122\u0124-\u012B\u012E-\u014D\u0150-\u017E\u0192\u01B5\u01F5\u0237\u02C6\u02C7\u02D8-\u02DD\u0311\u0391-\u03A1\u03A3-\u03A9\u03B1-\u03C9\u03D1\u03D2\u03D5\u03D6\u03DC\u03DD\u03F0\u03F1\u03F5\u03F6\u0401-\u040C\u040E-\u044F\u0451-\u045C\u045E\u045F\u2002-\u2005\u2007-\u2010\u2013-\u2016\u2018-\u201A\u201C-\u201E\u2020-\u2022\u2025\u2026\u2030-\u2035\u2039\u203A\u203E\u2041\u2043\u2044\u204F\u2057\u205F-\u2063\u20AC\u20DB\u20DC\u2102\u2105\u210A-\u2113\u2115-\u211E\u2122\u2124\u2127-\u2129\u212C\u212D\u212F-\u2131\u2133-\u2138\u2145-\u2148\u2153-\u215E\u2190-\u219B\u219D-\u21A7\u21A9-\u21AE\u21B0-\u21B3\u21B5-\u21B7\u21BA-\u21DB\u21DD\u21E4\u21E5\u21F5\u21FD-\u2205\u2207-\u2209\u220B\u220C\u220F-\u2214\u2216-\u2218\u221A\u221D-\u2238\u223A-\u2257\u2259\u225A\u225C\u225F-\u2262\u2264-\u228B\u228D-\u229B\u229D-\u22A5\u22A7-\u22B0\u22B2-\u22BB\u22BD-\u22DB\u22DE-\u22E3\u22E6-\u22F7\u22F9-\u22FE\u2305\u2306\u2308-\u2310\u2312\u2313\u2315\u2316\u231C-\u231F\u2322\u2323\u232D\u232E\u2336\u233D\u233F\u237C\u23B0\u23B1\u23B4-\u23B6\u23DC-\u23DF\u23E2\u23E7\u2423\u24C8\u2500\u2502\u250C\u2510\u2514\u2518\u251C\u2524\u252C\u2534\u253C\u2550-\u256C\u2580\u2584\u2588\u2591-\u2593\u25A1\u25AA\u25AB\u25AD\u25AE\u25B1\u25B3-\u25B5\u25B8\u25B9\u25BD-\u25BF\u25C2\u25C3\u25CA\u25CB\u25EC\u25EF\u25F8-\u25FC\u2605\u2606\u260E\u2640\u2642\u2660\u2663\u2665\u2666\u266A\u266D-\u266F\u2713\u2717\u2720\u2736\u2758\u2772\u2773\u27C8\u27C9\u27E6-\u27ED\u27F5-\u27FA\u27FC\u27FF\u2902-\u2905\u290C-\u2913\u2916\u2919-\u2920\u2923-\u292A\u2933\u2935-\u2939\u293C\u293D\u2945\u2948-\u294B\u294E-\u2976\u2978\u2979\u297B-\u297F\u2985\u2986\u298B-\u2996\u299A\u299C\u299D\u29A4-\u29B7\u29B9\u29BB\u29BC\u29BE-\u29C5\u29C9\u29CD-\u29D0\u29DC-\u29DE\u29E3-\u29E5\u29EB\u29F4\u29F6\u2A00-\u2A02\u2A04\u2A06\u2A0C\u2A0D\u2A10-\u2A17\u2A22-\u2A27\u2A29\u2A2A\u2A2D-\u2A31\u2A33-\u2A3C\u2A3F\u2A40\u2A42-\u2A4D\u2A50\u2A53-\u2A58\u2A5A-\u2A5D\u2A5F\u2A66\u2A6A\u2A6D-\u2A75\u2A77-\u2A9A\u2A9D-\u2AA2\u2AA4-\u2AB0\u2AB3-\u2AC8\u2ACB\u2ACC\u2ACF-\u2ADB\u2AE4\u2AE6-\u2AE9\u2AEB-\u2AF3\u2AFD\uFB00-\uFB04]|\uD835[\uDC9C\uDC9E\uDC9F\uDCA2\uDCA5\uDCA6\uDCA9-\uDCAC\uDCAE-\uDCB9\uDCBB\uDCBD-\uDCC3\uDCC5-\uDCCF\uDD04\uDD05\uDD07-\uDD0A\uDD0D-\uDD14\uDD16-\uDD1C\uDD1E-\uDD39\uDD3B-\uDD3E\uDD40-\uDD44\uDD46\uDD4A-\uDD50\uDD52-\uDD6B]/g;
-        var encodeMap = { "­": "shy", "‌": "zwnj", "‍": "zwj", "‎": "lrm", "⁣": "ic", "⁢": "it", "⁡": "af", "‏": "rlm", "​": "ZeroWidthSpace", "⁠": "NoBreak", "̑": "DownBreve", "⃛": "tdot", "⃜": "DotDot", "	": "Tab", "\n": "NewLine", " ": "puncsp", " ": "MediumSpace", " ": "thinsp", " ": "hairsp", " ": "emsp13", " ": "ensp", " ": "emsp14", " ": "emsp", " ": "numsp", " ": "nbsp", "  ": "ThickSpace", "‾": "oline", "_": "lowbar", "‐": "dash", "–": "ndash", "—": "mdash", "―": "horbar", ",": "comma", ";": "semi", "⁏": "bsemi", ":": "colon", "⩴": "Colone", "!": "excl", "¡": "iexcl", "?": "quest", "¿": "iquest", ".": "period", "‥": "nldr", "…": "mldr", "·": "middot", "'": "apos", "‘": "lsquo", "’": "rsquo", "‚": "sbquo", "‹": "lsaquo", "›": "rsaquo", '"': "quot", "“": "ldquo", "”": "rdquo", "„": "bdquo", "«": "laquo", "»": "raquo", "(": "lpar", ")": "rpar", "[": "lsqb", "]": "rsqb", "{": "lcub", "}": "rcub", "⌈": "lceil", "⌉": "rceil", "⌊": "lfloor", "⌋": "rfloor", "⦅": "lopar", "⦆": "ropar", "⦋": "lbrke", "⦌": "rbrke", "⦍": "lbrkslu", "⦎": "rbrksld", "⦏": "lbrksld", "⦐": "rbrkslu", "⦑": "langd", "⦒": "rangd", "⦓": "lparlt", "⦔": "rpargt", "⦕": "gtlPar", "⦖": "ltrPar", "⟦": "lobrk", "⟧": "robrk", "⟨": "lang", "⟩": "rang", "⟪": "Lang", "⟫": "Rang", "⟬": "loang", "⟭": "roang", "❲": "lbbrk", "❳": "rbbrk", "‖": "Vert", "§": "sect", "¶": "para", "@": "commat", "*": "ast", "/": "sol", "undefined": null, "&": "amp", "#": "num", "%": "percnt", "‰": "permil", "‱": "pertenk", "†": "dagger", "‡": "Dagger", "•": "bull", "⁃": "hybull", "′": "prime", "″": "Prime", "‴": "tprime", "⁗": "qprime", "‵": "bprime", "⁁": "caret", "`": "grave", "´": "acute", "˜": "tilde", "^": "Hat", "¯": "macr", "˘": "breve", "˙": "dot", "¨": "die", "˚": "ring", "˝": "dblac", "¸": "cedil", "˛": "ogon", "ˆ": "circ", "ˇ": "caron", "°": "deg", "©": "copy", "®": "reg", "℗": "copysr", "℘": "wp", "℞": "rx", "℧": "mho", "℩": "iiota", "←": "larr", "↚": "nlarr", "→": "rarr", "↛": "nrarr", "↑": "uarr", "↓": "darr", "↔": "harr", "↮": "nharr", "↕": "varr", "↖": "nwarr", "↗": "nearr", "↘": "searr", "↙": "swarr", "↝": "rarrw", "↝̸": "nrarrw", "↞": "Larr", "↟": "Uarr", "↠": "Rarr", "↡": "Darr", "↢": "larrtl", "↣": "rarrtl", "↤": "mapstoleft", "↥": "mapstoup", "↦": "map", "↧": "mapstodown", "↩": "larrhk", "↪": "rarrhk", "↫": "larrlp", "↬": "rarrlp", "↭": "harrw", "↰": "lsh", "↱": "rsh", "↲": "ldsh", "↳": "rdsh", "↵": "crarr", "↶": "cularr", "↷": "curarr", "↺": "olarr", "↻": "orarr", "↼": "lharu", "↽": "lhard", "↾": "uharr", "↿": "uharl", "⇀": "rharu", "⇁": "rhard", "⇂": "dharr", "⇃": "dharl", "⇄": "rlarr", "⇅": "udarr", "⇆": "lrarr", "⇇": "llarr", "⇈": "uuarr", "⇉": "rrarr", "⇊": "ddarr", "⇋": "lrhar", "⇌": "rlhar", "⇐": "lArr", "⇍": "nlArr", "⇑": "uArr", "⇒": "rArr", "⇏": "nrArr", "⇓": "dArr", "⇔": "iff", "⇎": "nhArr", "⇕": "vArr", "⇖": "nwArr", "⇗": "neArr", "⇘": "seArr", "⇙": "swArr", "⇚": "lAarr", "⇛": "rAarr", "⇝": "zigrarr", "⇤": "larrb", "⇥": "rarrb", "⇵": "duarr", "⇽": "loarr", "⇾": "roarr", "⇿": "hoarr", "∀": "forall", "∁": "comp", "∂": "part", "∂̸": "npart", "∃": "exist", "∄": "nexist", "∅": "empty", "∇": "Del", "∈": "in", "∉": "notin", "∋": "ni", "∌": "notni", "϶": "bepsi", "∏": "prod", "∐": "coprod", "∑": "sum", "+": "plus", "±": "pm", "÷": "div", "×": "times", "<": "lt", "≮": "nlt", "<⃒": "nvlt", "=": "equals", "≠": "ne", "=⃥": "bne", "⩵": "Equal", ">": "gt", "≯": "ngt", ">⃒": "nvgt", "¬": "not", "|": "vert", "¦": "brvbar", "−": "minus", "∓": "mp", "∔": "plusdo", "⁄": "frasl", "∖": "setmn", "∗": "lowast", "∘": "compfn", "√": "Sqrt", "∝": "prop", "∞": "infin", "∟": "angrt", "∠": "ang", "∠⃒": "nang", "∡": "angmsd", "∢": "angsph", "∣": "mid", "∤": "nmid", "∥": "par", "∦": "npar", "∧": "and", "∨": "or", "∩": "cap", "∩︀": "caps", "∪": "cup", "∪︀": "cups", "∫": "int", "∬": "Int", "∭": "tint", "⨌": "qint", "∮": "oint", "∯": "Conint", "∰": "Cconint", "∱": "cwint", "∲": "cwconint", "∳": "awconint", "∴": "there4", "∵": "becaus", "∶": "ratio", "∷": "Colon", "∸": "minusd", "∺": "mDDot", "∻": "homtht", "∼": "sim", "≁": "nsim", "∼⃒": "nvsim", "∽": "bsim", "∽̱": "race", "∾": "ac", "∾̳": "acE", "∿": "acd", "≀": "wr", "≂": "esim", "≂̸": "nesim", "≃": "sime", "≄": "nsime", "≅": "cong", "≇": "ncong", "≆": "simne", "≈": "ap", "≉": "nap", "≊": "ape", "≋": "apid", "≋̸": "napid", "≌": "bcong", "≍": "CupCap", "≭": "NotCupCap", "≍⃒": "nvap", "≎": "bump", "≎̸": "nbump", "≏": "bumpe", "≏̸": "nbumpe", "≐": "doteq", "≐̸": "nedot", "≑": "eDot", "≒": "efDot", "≓": "erDot", "≔": "colone", "≕": "ecolon", "≖": "ecir", "≗": "cire", "≙": "wedgeq", "≚": "veeeq", "≜": "trie", "≟": "equest", "≡": "equiv", "≢": "nequiv", "≡⃥": "bnequiv", "≤": "le", "≰": "nle", "≤⃒": "nvle", "≥": "ge", "≱": "nge", "≥⃒": "nvge", "≦": "lE", "≦̸": "nlE", "≧": "gE", "≧̸": "ngE", "≨︀": "lvnE", "≨": "lnE", "≩": "gnE", "≩︀": "gvnE", "≪": "ll", "≪̸": "nLtv", "≪⃒": "nLt", "≫": "gg", "≫̸": "nGtv", "≫⃒": "nGt", "≬": "twixt", "≲": "lsim", "≴": "nlsim", "≳": "gsim", "≵": "ngsim", "≶": "lg", "≸": "ntlg", "≷": "gl", "≹": "ntgl", "≺": "pr", "⊀": "npr", "≻": "sc", "⊁": "nsc", "≼": "prcue", "⋠": "nprcue", "≽": "sccue", "⋡": "nsccue", "≾": "prsim", "≿": "scsim", "≿̸": "NotSucceedsTilde", "⊂": "sub", "⊄": "nsub", "⊂⃒": "vnsub", "⊃": "sup", "⊅": "nsup", "⊃⃒": "vnsup", "⊆": "sube", "⊈": "nsube", "⊇": "supe", "⊉": "nsupe", "⊊︀": "vsubne", "⊊": "subne", "⊋︀": "vsupne", "⊋": "supne", "⊍": "cupdot", "⊎": "uplus", "⊏": "sqsub", "⊏̸": "NotSquareSubset", "⊐": "sqsup", "⊐̸": "NotSquareSuperset", "⊑": "sqsube", "⋢": "nsqsube", "⊒": "sqsupe", "⋣": "nsqsupe", "⊓": "sqcap", "⊓︀": "sqcaps", "⊔": "sqcup", "⊔︀": "sqcups", "⊕": "oplus", "⊖": "ominus", "⊗": "otimes", "⊘": "osol", "⊙": "odot", "⊚": "ocir", "⊛": "oast", "⊝": "odash", "⊞": "plusb", "⊟": "minusb", "⊠": "timesb", "⊡": "sdotb", "⊢": "vdash", "⊬": "nvdash", "⊣": "dashv", "⊤": "top", "⊥": "bot", "⊧": "models", "⊨": "vDash", "⊭": "nvDash", "⊩": "Vdash", "⊮": "nVdash", "⊪": "Vvdash", "⊫": "VDash", "⊯": "nVDash", "⊰": "prurel", "⊲": "vltri", "⋪": "nltri", "⊳": "vrtri", "⋫": "nrtri", "⊴": "ltrie", "⋬": "nltrie", "⊴⃒": "nvltrie", "⊵": "rtrie", "⋭": "nrtrie", "⊵⃒": "nvrtrie", "⊶": "origof", "⊷": "imof", "⊸": "mumap", "⊹": "hercon", "⊺": "intcal", "⊻": "veebar", "⊽": "barvee", "⊾": "angrtvb", "⊿": "lrtri", "⋀": "Wedge", "⋁": "Vee", "⋂": "xcap", "⋃": "xcup", "⋄": "diam", "⋅": "sdot", "⋆": "Star", "⋇": "divonx", "⋈": "bowtie", "⋉": "ltimes", "⋊": "rtimes", "⋋": "lthree", "⋌": "rthree", "⋍": "bsime", "⋎": "cuvee", "⋏": "cuwed", "⋐": "Sub", "⋑": "Sup", "⋒": "Cap", "⋓": "Cup", "⋔": "fork", "⋕": "epar", "⋖": "ltdot", "⋗": "gtdot", "⋘": "Ll", "⋘̸": "nLl", "⋙": "Gg", "⋙̸": "nGg", "⋚︀": "lesg", "⋚": "leg", "⋛": "gel", "⋛︀": "gesl", "⋞": "cuepr", "⋟": "cuesc", "⋦": "lnsim", "⋧": "gnsim", "⋨": "prnsim", "⋩": "scnsim", "⋮": "vellip", "⋯": "ctdot", "⋰": "utdot", "⋱": "dtdot", "⋲": "disin", "⋳": "isinsv", "⋴": "isins", "⋵": "isindot", "⋵̸": "notindot", "⋶": "notinvc", "⋷": "notinvb", "⋹": "isinE", "⋹̸": "notinE", "⋺": "nisd", "⋻": "xnis", "⋼": "nis", "⋽": "notnivc", "⋾": "notnivb", "⌅": "barwed", "⌆": "Barwed", "⌌": "drcrop", "⌍": "dlcrop", "⌎": "urcrop", "⌏": "ulcrop", "⌐": "bnot", "⌒": "profline", "⌓": "profsurf", "⌕": "telrec", "⌖": "target", "⌜": "ulcorn", "⌝": "urcorn", "⌞": "dlcorn", "⌟": "drcorn", "⌢": "frown", "⌣": "smile", "⌭": "cylcty", "⌮": "profalar", "⌶": "topbot", "⌽": "ovbar", "⌿": "solbar", "⍼": "angzarr", "⎰": "lmoust", "⎱": "rmoust", "⎴": "tbrk", "⎵": "bbrk", "⎶": "bbrktbrk", "⏜": "OverParenthesis", "⏝": "UnderParenthesis", "⏞": "OverBrace", "⏟": "UnderBrace", "⏢": "trpezium", "⏧": "elinters", "␣": "blank", "─": "boxh", "│": "boxv", "┌": "boxdr", "┐": "boxdl", "└": "boxur", "┘": "boxul", "├": "boxvr", "┤": "boxvl", "┬": "boxhd", "┴": "boxhu", "┼": "boxvh", "═": "boxH", "║": "boxV", "╒": "boxdR", "╓": "boxDr", "╔": "boxDR", "╕": "boxdL", "╖": "boxDl", "╗": "boxDL", "╘": "boxuR", "╙": "boxUr", "╚": "boxUR", "╛": "boxuL", "╜": "boxUl", "╝": "boxUL", "╞": "boxvR", "╟": "boxVr", "╠": "boxVR", "╡": "boxvL", "╢": "boxVl", "╣": "boxVL", "╤": "boxHd", "╥": "boxhD", "╦": "boxHD", "╧": "boxHu", "╨": "boxhU", "╩": "boxHU", "╪": "boxvH", "╫": "boxVh", "╬": "boxVH", "▀": "uhblk", "▄": "lhblk", "█": "block", "░": "blk14", "▒": "blk12", "▓": "blk34", "□": "squ", "▪": "squf", "▫": "EmptyVerySmallSquare", "▭": "rect", "▮": "marker", "▱": "fltns", "△": "xutri", "▴": "utrif", "▵": "utri", "▸": "rtrif", "▹": "rtri", "▽": "xdtri", "▾": "dtrif", "▿": "dtri", "◂": "ltrif", "◃": "ltri", "◊": "loz", "○": "cir", "◬": "tridot", "◯": "xcirc", "◸": "ultri", "◹": "urtri", "◺": "lltri", "◻": "EmptySmallSquare", "◼": "FilledSmallSquare", "★": "starf", "☆": "star", "☎": "phone", "♀": "female", "♂": "male", "♠": "spades", "♣": "clubs", "♥": "hearts", "♦": "diams", "♪": "sung", "✓": "check", "✗": "cross", "✠": "malt", "✶": "sext", "❘": "VerticalSeparator", "⟈": "bsolhsub", "⟉": "suphsol", "⟵": "xlarr", "⟶": "xrarr", "⟷": "xharr", "⟸": "xlArr", "⟹": "xrArr", "⟺": "xhArr", "⟼": "xmap", "⟿": "dzigrarr", "⤂": "nvlArr", "⤃": "nvrArr", "⤄": "nvHarr", "⤅": "Map", "⤌": "lbarr", "⤍": "rbarr", "⤎": "lBarr", "⤏": "rBarr", "⤐": "RBarr", "⤑": "DDotrahd", "⤒": "UpArrowBar", "⤓": "DownArrowBar", "⤖": "Rarrtl", "⤙": "latail", "⤚": "ratail", "⤛": "lAtail", "⤜": "rAtail", "⤝": "larrfs", "⤞": "rarrfs", "⤟": "larrbfs", "⤠": "rarrbfs", "⤣": "nwarhk", "⤤": "nearhk", "⤥": "searhk", "⤦": "swarhk", "⤧": "nwnear", "⤨": "toea", "⤩": "tosa", "⤪": "swnwar", "⤳": "rarrc", "⤳̸": "nrarrc", "⤵": "cudarrr", "⤶": "ldca", "⤷": "rdca", "⤸": "cudarrl", "⤹": "larrpl", "⤼": "curarrm", "⤽": "cularrp", "⥅": "rarrpl", "⥈": "harrcir", "⥉": "Uarrocir", "⥊": "lurdshar", "⥋": "ldrushar", "⥎": "LeftRightVector", "⥏": "RightUpDownVector", "⥐": "DownLeftRightVector", "⥑": "LeftUpDownVector", "⥒": "LeftVectorBar", "⥓": "RightVectorBar", "⥔": "RightUpVectorBar", "⥕": "RightDownVectorBar", "⥖": "DownLeftVectorBar", "⥗": "DownRightVectorBar", "⥘": "LeftUpVectorBar", "⥙": "LeftDownVectorBar", "⥚": "LeftTeeVector", "⥛": "RightTeeVector", "⥜": "RightUpTeeVector", "⥝": "RightDownTeeVector", "⥞": "DownLeftTeeVector", "⥟": "DownRightTeeVector", "⥠": "LeftUpTeeVector", "⥡": "LeftDownTeeVector", "⥢": "lHar", "⥣": "uHar", "⥤": "rHar", "⥥": "dHar", "⥦": "luruhar", "⥧": "ldrdhar", "⥨": "ruluhar", "⥩": "rdldhar", "⥪": "lharul", "⥫": "llhard", "⥬": "rharul", "⥭": "lrhard", "⥮": "udhar", "⥯": "duhar", "⥰": "RoundImplies", "⥱": "erarr", "⥲": "simrarr", "⥳": "larrsim", "⥴": "rarrsim", "⥵": "rarrap", "⥶": "ltlarr", "⥸": "gtrarr", "⥹": "subrarr", "⥻": "suplarr", "⥼": "lfisht", "⥽": "rfisht", "⥾": "ufisht", "⥿": "dfisht", "⦚": "vzigzag", "⦜": "vangrt", "⦝": "angrtvbd", "⦤": "ange", "⦥": "range", "⦦": "dwangle", "⦧": "uwangle", "⦨": "angmsdaa", "⦩": "angmsdab", "⦪": "angmsdac", "⦫": "angmsdad", "⦬": "angmsdae", "⦭": "angmsdaf", "⦮": "angmsdag", "⦯": "angmsdah", "⦰": "bemptyv", "⦱": "demptyv", "⦲": "cemptyv", "⦳": "raemptyv", "⦴": "laemptyv", "⦵": "ohbar", "⦶": "omid", "⦷": "opar", "⦹": "operp", "⦻": "olcross", "⦼": "odsold", "⦾": "olcir", "⦿": "ofcir", "⧀": "olt", "⧁": "ogt", "⧂": "cirscir", "⧃": "cirE", "⧄": "solb", "⧅": "bsolb", "⧉": "boxbox", "⧍": "trisb", "⧎": "rtriltri", "⧏": "LeftTriangleBar", "⧏̸": "NotLeftTriangleBar", "⧐": "RightTriangleBar", "⧐̸": "NotRightTriangleBar", "⧜": "iinfin", "⧝": "infintie", "⧞": "nvinfin", "⧣": "eparsl", "⧤": "smeparsl", "⧥": "eqvparsl", "⧫": "lozf", "⧴": "RuleDelayed", "⧶": "dsol", "⨀": "xodot", "⨁": "xoplus", "⨂": "xotime", "⨄": "xuplus", "⨆": "xsqcup", "⨍": "fpartint", "⨐": "cirfnint", "⨑": "awint", "⨒": "rppolint", "⨓": "scpolint", "⨔": "npolint", "⨕": "pointint", "⨖": "quatint", "⨗": "intlarhk", "⨢": "pluscir", "⨣": "plusacir", "⨤": "simplus", "⨥": "plusdu", "⨦": "plussim", "⨧": "plustwo", "⨩": "mcomma", "⨪": "minusdu", "⨭": "loplus", "⨮": "roplus", "⨯": "Cross", "⨰": "timesd", "⨱": "timesbar", "⨳": "smashp", "⨴": "lotimes", "⨵": "rotimes", "⨶": "otimesas", "⨷": "Otimes", "⨸": "odiv", "⨹": "triplus", "⨺": "triminus", "⨻": "tritime", "⨼": "iprod", "⨿": "amalg", "⩀": "capdot", "⩂": "ncup", "⩃": "ncap", "⩄": "capand", "⩅": "cupor", "⩆": "cupcap", "⩇": "capcup", "⩈": "cupbrcap", "⩉": "capbrcup", "⩊": "cupcup", "⩋": "capcap", "⩌": "ccups", "⩍": "ccaps", "⩐": "ccupssm", "⩓": "And", "⩔": "Or", "⩕": "andand", "⩖": "oror", "⩗": "orslope", "⩘": "andslope", "⩚": "andv", "⩛": "orv", "⩜": "andd", "⩝": "ord", "⩟": "wedbar", "⩦": "sdote", "⩪": "simdot", "⩭": "congdot", "⩭̸": "ncongdot", "⩮": "easter", "⩯": "apacir", "⩰": "apE", "⩰̸": "napE", "⩱": "eplus", "⩲": "pluse", "⩳": "Esim", "⩷": "eDDot", "⩸": "equivDD", "⩹": "ltcir", "⩺": "gtcir", "⩻": "ltquest", "⩼": "gtquest", "⩽": "les", "⩽̸": "nles", "⩾": "ges", "⩾̸": "nges", "⩿": "lesdot", "⪀": "gesdot", "⪁": "lesdoto", "⪂": "gesdoto", "⪃": "lesdotor", "⪄": "gesdotol", "⪅": "lap", "⪆": "gap", "⪇": "lne", "⪈": "gne", "⪉": "lnap", "⪊": "gnap", "⪋": "lEg", "⪌": "gEl", "⪍": "lsime", "⪎": "gsime", "⪏": "lsimg", "⪐": "gsiml", "⪑": "lgE", "⪒": "glE", "⪓": "lesges", "⪔": "gesles", "⪕": "els", "⪖": "egs", "⪗": "elsdot", "⪘": "egsdot", "⪙": "el", "⪚": "eg", "⪝": "siml", "⪞": "simg", "⪟": "simlE", "⪠": "simgE", "⪡": "LessLess", "⪡̸": "NotNestedLessLess", "⪢": "GreaterGreater", "⪢̸": "NotNestedGreaterGreater", "⪤": "glj", "⪥": "gla", "⪦": "ltcc", "⪧": "gtcc", "⪨": "lescc", "⪩": "gescc", "⪪": "smt", "⪫": "lat", "⪬": "smte", "⪬︀": "smtes", "⪭": "late", "⪭︀": "lates", "⪮": "bumpE", "⪯": "pre", "⪯̸": "npre", "⪰": "sce", "⪰̸": "nsce", "⪳": "prE", "⪴": "scE", "⪵": "prnE", "⪶": "scnE", "⪷": "prap", "⪸": "scap", "⪹": "prnap", "⪺": "scnap", "⪻": "Pr", "⪼": "Sc", "⪽": "subdot", "⪾": "supdot", "⪿": "subplus", "⫀": "supplus", "⫁": "submult", "⫂": "supmult", "⫃": "subedot", "⫄": "supedot", "⫅": "subE", "⫅̸": "nsubE", "⫆": "supE", "⫆̸": "nsupE", "⫇": "subsim", "⫈": "supsim", "⫋︀": "vsubnE", "⫋": "subnE", "⫌︀": "vsupnE", "⫌": "supnE", "⫏": "csub", "⫐": "csup", "⫑": "csube", "⫒": "csupe", "⫓": "subsup", "⫔": "supsub", "⫕": "subsub", "⫖": "supsup", "⫗": "suphsub", "⫘": "supdsub", "⫙": "forkv", "⫚": "topfork", "⫛": "mlcp", "⫤": "Dashv", "⫦": "Vdashl", "⫧": "Barv", "⫨": "vBar", "⫩": "vBarv", "⫫": "Vbar", "⫬": "Not", "⫭": "bNot", "⫮": "rnmid", "⫯": "cirmid", "⫰": "midcir", "⫱": "topcir", "⫲": "nhpar", "⫳": "parsim", "⫽": "parsl", "⫽⃥": "nparsl", "♭": "flat", "♮": "natur", "♯": "sharp", "¤": "curren", "¢": "cent", "$": "dollar", "£": "pound", "¥": "yen", "€": "euro", "¹": "sup1", "½": "half", "⅓": "frac13", "¼": "frac14", "⅕": "frac15", "⅙": "frac16", "⅛": "frac18", "²": "sup2", "⅔": "frac23", "⅖": "frac25", "³": "sup3", "¾": "frac34", "⅗": "frac35", "⅜": "frac38", "⅘": "frac45", "⅚": "frac56", "⅝": "frac58", "⅞": "frac78", "𝒶": "ascr", "𝕒": "aopf", "𝔞": "afr", "𝔸": "Aopf", "𝔄": "Afr", "𝒜": "Ascr", "ª": "ordf", "á": "aacute", "Á": "Aacute", "à": "agrave", "À": "Agrave", "ă": "abreve", "Ă": "Abreve", "â": "acirc", "Â": "Acirc", "å": "aring", "Å": "angst", "ä": "auml", "Ä": "Auml", "ã": "atilde", "Ã": "Atilde", "ą": "aogon", "Ą": "Aogon", "ā": "amacr", "Ā": "Amacr", "æ": "aelig", "Æ": "AElig", "𝒷": "bscr", "𝕓": "bopf", "𝔟": "bfr", "𝔹": "Bopf", "ℬ": "Bscr", "𝔅": "Bfr", "𝔠": "cfr", "𝒸": "cscr", "𝕔": "copf", "ℭ": "Cfr", "𝒞": "Cscr", "ℂ": "Copf", "ć": "cacute", "Ć": "Cacute", "ĉ": "ccirc", "Ĉ": "Ccirc", "č": "ccaron", "Č": "Ccaron", "ċ": "cdot", "Ċ": "Cdot", "ç": "ccedil", "Ç": "Ccedil", "℅": "incare", "𝔡": "dfr", "ⅆ": "dd", "𝕕": "dopf", "𝒹": "dscr", "𝒟": "Dscr", "𝔇": "Dfr", "ⅅ": "DD", "𝔻": "Dopf", "ď": "dcaron", "Ď": "Dcaron", "đ": "dstrok", "Đ": "Dstrok", "ð": "eth", "Ð": "ETH", "ⅇ": "ee", "ℯ": "escr", "𝔢": "efr", "𝕖": "eopf", "ℰ": "Escr", "𝔈": "Efr", "𝔼": "Eopf", "é": "eacute", "É": "Eacute", "è": "egrave", "È": "Egrave", "ê": "ecirc", "Ê": "Ecirc", "ě": "ecaron", "Ě": "Ecaron", "ë": "euml", "Ë": "Euml", "ė": "edot", "Ė": "Edot", "ę": "eogon", "Ę": "Eogon", "ē": "emacr", "Ē": "Emacr", "𝔣": "ffr", "𝕗": "fopf", "𝒻": "fscr", "𝔉": "Ffr", "𝔽": "Fopf", "ℱ": "Fscr", "ﬀ": "fflig", "ﬃ": "ffilig", "ﬄ": "ffllig", "ﬁ": "filig", "fj": "fjlig", "ﬂ": "fllig", "ƒ": "fnof", "ℊ": "gscr", "𝕘": "gopf", "𝔤": "gfr", "𝒢": "Gscr", "𝔾": "Gopf", "𝔊": "Gfr", "ǵ": "gacute", "ğ": "gbreve", "Ğ": "Gbreve", "ĝ": "gcirc", "Ĝ": "Gcirc", "ġ": "gdot", "Ġ": "Gdot", "Ģ": "Gcedil", "𝔥": "hfr", "ℎ": "planckh", "𝒽": "hscr", "𝕙": "hopf", "ℋ": "Hscr", "ℌ": "Hfr", "ℍ": "Hopf", "ĥ": "hcirc", "Ĥ": "Hcirc", "ℏ": "hbar", "ħ": "hstrok", "Ħ": "Hstrok", "𝕚": "iopf", "𝔦": "ifr", "𝒾": "iscr", "ⅈ": "ii", "𝕀": "Iopf", "ℐ": "Iscr", "ℑ": "Im", "í": "iacute", "Í": "Iacute", "ì": "igrave", "Ì": "Igrave", "î": "icirc", "Î": "Icirc", "ï": "iuml", "Ï": "Iuml", "ĩ": "itilde", "Ĩ": "Itilde", "İ": "Idot", "į": "iogon", "Į": "Iogon", "ī": "imacr", "Ī": "Imacr", "ĳ": "ijlig", "Ĳ": "IJlig", "ı": "imath", "𝒿": "jscr", "𝕛": "jopf", "𝔧": "jfr", "𝒥": "Jscr", "𝔍": "Jfr", "𝕁": "Jopf", "ĵ": "jcirc", "Ĵ": "Jcirc", "ȷ": "jmath", "𝕜": "kopf", "𝓀": "kscr", "𝔨": "kfr", "𝒦": "Kscr", "𝕂": "Kopf", "𝔎": "Kfr", "ķ": "kcedil", "Ķ": "Kcedil", "𝔩": "lfr", "𝓁": "lscr", "ℓ": "ell", "𝕝": "lopf", "ℒ": "Lscr", "𝔏": "Lfr", "𝕃": "Lopf", "ĺ": "lacute", "Ĺ": "Lacute", "ľ": "lcaron", "Ľ": "Lcaron", "ļ": "lcedil", "Ļ": "Lcedil", "ł": "lstrok", "Ł": "Lstrok", "ŀ": "lmidot", "Ŀ": "Lmidot", "𝔪": "mfr", "𝕞": "mopf", "𝓂": "mscr", "𝔐": "Mfr", "𝕄": "Mopf", "ℳ": "Mscr", "𝔫": "nfr", "𝕟": "nopf", "𝓃": "nscr", "ℕ": "Nopf", "𝒩": "Nscr", "𝔑": "Nfr", "ń": "nacute", "Ń": "Nacute", "ň": "ncaron", "Ň": "Ncaron", "ñ": "ntilde", "Ñ": "Ntilde", "ņ": "ncedil", "Ņ": "Ncedil", "№": "numero", "ŋ": "eng", "Ŋ": "ENG", "𝕠": "oopf", "𝔬": "ofr", "ℴ": "oscr", "𝒪": "Oscr", "𝔒": "Ofr", "𝕆": "Oopf", "º": "ordm", "ó": "oacute", "Ó": "Oacute", "ò": "ograve", "Ò": "Ograve", "ô": "ocirc", "Ô": "Ocirc", "ö": "ouml", "Ö": "Ouml", "ő": "odblac", "Ő": "Odblac", "õ": "otilde", "Õ": "Otilde", "ø": "oslash", "Ø": "Oslash", "ō": "omacr", "Ō": "Omacr", "œ": "oelig", "Œ": "OElig", "𝔭": "pfr", "𝓅": "pscr", "𝕡": "popf", "ℙ": "Popf", "𝔓": "Pfr", "𝒫": "Pscr", "𝕢": "qopf", "𝔮": "qfr", "𝓆": "qscr", "𝒬": "Qscr", "𝔔": "Qfr", "ℚ": "Qopf", "ĸ": "kgreen", "𝔯": "rfr", "𝕣": "ropf", "𝓇": "rscr", "ℛ": "Rscr", "ℜ": "Re", "ℝ": "Ropf", "ŕ": "racute", "Ŕ": "Racute", "ř": "rcaron", "Ř": "Rcaron", "ŗ": "rcedil", "Ŗ": "Rcedil", "𝕤": "sopf", "𝓈": "sscr", "𝔰": "sfr", "𝕊": "Sopf", "𝔖": "Sfr", "𝒮": "Sscr", "Ⓢ": "oS", "ś": "sacute", "Ś": "Sacute", "ŝ": "scirc", "Ŝ": "Scirc", "š": "scaron", "Š": "Scaron", "ş": "scedil", "Ş": "Scedil", "ß": "szlig", "𝔱": "tfr", "𝓉": "tscr", "𝕥": "topf", "𝒯": "Tscr", "𝔗": "Tfr", "𝕋": "Topf", "ť": "tcaron", "Ť": "Tcaron", "ţ": "tcedil", "Ţ": "Tcedil", "™": "trade", "ŧ": "tstrok", "Ŧ": "Tstrok", "𝓊": "uscr", "𝕦": "uopf", "𝔲": "ufr", "𝕌": "Uopf", "𝔘": "Ufr", "𝒰": "Uscr", "ú": "uacute", "Ú": "Uacute", "ù": "ugrave", "Ù": "Ugrave", "ŭ": "ubreve", "Ŭ": "Ubreve", "û": "ucirc", "Û": "Ucirc", "ů": "uring", "Ů": "Uring", "ü": "uuml", "Ü": "Uuml", "ű": "udblac", "Ű": "Udblac", "ũ": "utilde", "Ũ": "Utilde", "ų": "uogon", "Ų": "Uogon", "ū": "umacr", "Ū": "Umacr", "𝔳": "vfr", "𝕧": "vopf", "𝓋": "vscr", "𝔙": "Vfr", "𝕍": "Vopf", "𝒱": "Vscr", "𝕨": "wopf", "𝓌": "wscr", "𝔴": "wfr", "𝒲": "Wscr", "𝕎": "Wopf", "𝔚": "Wfr", "ŵ": "wcirc", "Ŵ": "Wcirc", "𝔵": "xfr", "𝓍": "xscr", "𝕩": "xopf", "𝕏": "Xopf", "𝔛": "Xfr", "𝒳": "Xscr", "𝔶": "yfr", "𝓎": "yscr", "𝕪": "yopf", "𝒴": "Yscr", "𝔜": "Yfr", "𝕐": "Yopf", "ý": "yacute", "Ý": "Yacute", "ŷ": "ycirc", "Ŷ": "Ycirc", "ÿ": "yuml", "Ÿ": "Yuml", "𝓏": "zscr", "𝔷": "zfr", "𝕫": "zopf", "ℨ": "Zfr", "ℤ": "Zopf", "𝒵": "Zscr", "ź": "zacute", "Ź": "Zacute", "ž": "zcaron", "Ž": "Zcaron", "ż": "zdot", "Ż": "Zdot", "Ƶ": "imped", "þ": "thorn", "Þ": "THORN", "ŉ": "napos", "α": "alpha", "Α": "Alpha", "β": "beta", "Β": "Beta", "γ": "gamma", "Γ": "Gamma", "δ": "delta", "Δ": "Delta", "ε": "epsi", "ϵ": "epsiv", "Ε": "Epsilon", "ϝ": "gammad", "Ϝ": "Gammad", "ζ": "zeta", "Ζ": "Zeta", "η": "eta", "Η": "Eta", "θ": "theta", "ϑ": "thetav", "Θ": "Theta", "ι": "iota", "Ι": "Iota", "κ": "kappa", "ϰ": "kappav", "Κ": "Kappa", "λ": "lambda", "Λ": "Lambda", "μ": "mu", "µ": "micro", "Μ": "Mu", "ν": "nu", "Ν": "Nu", "ξ": "xi", "Ξ": "Xi", "ο": "omicron", "Ο": "Omicron", "π": "pi", "ϖ": "piv", "Π": "Pi", "ρ": "rho", "ϱ": "rhov", "Ρ": "Rho", "σ": "sigma", "Σ": "Sigma", "ς": "sigmaf", "τ": "tau", "Τ": "Tau", "υ": "upsi", "Υ": "Upsilon", "ϒ": "Upsi", "φ": "phi", "ϕ": "phiv", "Φ": "Phi", "χ": "chi", "Χ": "Chi", "ψ": "psi", "Ψ": "Psi", "ω": "omega", "Ω": "ohm", "а": "acy", "А": "Acy", "б": "bcy", "Б": "Bcy", "в": "vcy", "В": "Vcy", "г": "gcy", "Г": "Gcy", "ѓ": "gjcy", "Ѓ": "GJcy", "д": "dcy", "Д": "Dcy", "ђ": "djcy", "Ђ": "DJcy", "е": "iecy", "Е": "IEcy", "ё": "iocy", "Ё": "IOcy", "є": "jukcy", "Є": "Jukcy", "ж": "zhcy", "Ж": "ZHcy", "з": "zcy", "З": "Zcy", "ѕ": "dscy", "Ѕ": "DScy", "и": "icy", "И": "Icy", "і": "iukcy", "І": "Iukcy", "ї": "yicy", "Ї": "YIcy", "й": "jcy", "Й": "Jcy", "ј": "jsercy", "Ј": "Jsercy", "к": "kcy", "К": "Kcy", "ќ": "kjcy", "Ќ": "KJcy", "л": "lcy", "Л": "Lcy", "љ": "ljcy", "Љ": "LJcy", "м": "mcy", "М": "Mcy", "н": "ncy", "Н": "Ncy", "њ": "njcy", "Њ": "NJcy", "о": "ocy", "О": "Ocy", "п": "pcy", "П": "Pcy", "р": "rcy", "Р": "Rcy", "с": "scy", "С": "Scy", "т": "tcy", "Т": "Tcy", "ћ": "tshcy", "Ћ": "TSHcy", "у": "ucy", "У": "Ucy", "ў": "ubrcy", "Ў": "Ubrcy", "ф": "fcy", "Ф": "Fcy", "х": "khcy", "Х": "KHcy", "ц": "tscy", "Ц": "TScy", "ч": "chcy", "Ч": "CHcy", "џ": "dzcy", "Џ": "DZcy", "ш": "shcy", "Ш": "SHcy", "щ": "shchcy", "Щ": "SHCHcy", "ъ": "hardcy", "Ъ": "HARDcy", "ы": "ycy", "Ы": "Ycy", "ь": "softcy", "Ь": "SOFTcy", "э": "ecy", "Э": "Ecy", "ю": "yucy", "Ю": "YUcy", "я": "yacy", "Я": "YAcy", "ℵ": "aleph", "ℶ": "beth", "ℷ": "gimel", "ℸ": "daleth" };
-        var regexEscape = /["&'<>`]/g;
-        var escapeMap = {
-          '"': "&quot;",
-          "&": "&amp;",
-          "'": "&#x27;",
-          "<": "&lt;",
-          // See https://mathiasbynens.be/notes/ambiguous-ampersands: in HTML, the
-          // following is not strictly necessary unless it’s part of a tag or an
-          // unquoted attribute value. We’re only escaping it to support those
-          // situations, and for XML support.
-          ">": "&gt;",
-          // In Internet Explorer ≤ 8, the backtick character can be used
-          // to break out of (un)quoted attribute values or HTML comments.
-          // See http://html5sec.org/#102, http://html5sec.org/#108, and
-          // http://html5sec.org/#133.
-          "`": "&#x60;"
-        };
-        var regexInvalidEntity = /&#(?:[xX][^a-fA-F0-9]|[^0-9xX])/;
-        var regexInvalidRawCodePoint = /[\0-\x08\x0B\x0E-\x1F\x7F-\x9F\uFDD0-\uFDEF\uFFFE\uFFFF]|[\uD83F\uD87F\uD8BF\uD8FF\uD93F\uD97F\uD9BF\uD9FF\uDA3F\uDA7F\uDABF\uDAFF\uDB3F\uDB7F\uDBBF\uDBFF][\uDFFE\uDFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:[^\uD800-\uDBFF]|^)[\uDC00-\uDFFF]/;
-        var regexDecode = /&(CounterClockwiseContourIntegral|DoubleLongLeftRightArrow|ClockwiseContourIntegral|NotNestedGreaterGreater|NotSquareSupersetEqual|DiacriticalDoubleAcute|NotRightTriangleEqual|NotSucceedsSlantEqual|NotPrecedesSlantEqual|CloseCurlyDoubleQuote|NegativeVeryThinSpace|DoubleContourIntegral|FilledVerySmallSquare|CapitalDifferentialD|OpenCurlyDoubleQuote|EmptyVerySmallSquare|NestedGreaterGreater|DoubleLongRightArrow|NotLeftTriangleEqual|NotGreaterSlantEqual|ReverseUpEquilibrium|DoubleLeftRightArrow|NotSquareSubsetEqual|NotDoubleVerticalBar|RightArrowLeftArrow|NotGreaterFullEqual|NotRightTriangleBar|SquareSupersetEqual|DownLeftRightVector|DoubleLongLeftArrow|leftrightsquigarrow|LeftArrowRightArrow|NegativeMediumSpace|blacktriangleright|RightDownVectorBar|PrecedesSlantEqual|RightDoubleBracket|SucceedsSlantEqual|NotLeftTriangleBar|RightTriangleEqual|SquareIntersection|RightDownTeeVector|ReverseEquilibrium|NegativeThickSpace|longleftrightarrow|Longleftrightarrow|LongLeftRightArrow|DownRightTeeVector|DownRightVectorBar|GreaterSlantEqual|SquareSubsetEqual|LeftDownVectorBar|LeftDoubleBracket|VerticalSeparator|rightleftharpoons|NotGreaterGreater|NotSquareSuperset|blacktriangleleft|blacktriangledown|NegativeThinSpace|LeftDownTeeVector|NotLessSlantEqual|leftrightharpoons|DoubleUpDownArrow|DoubleVerticalBar|LeftTriangleEqual|FilledSmallSquare|twoheadrightarrow|NotNestedLessLess|DownLeftTeeVector|DownLeftVectorBar|RightAngleBracket|NotTildeFullEqual|NotReverseElement|RightUpDownVector|DiacriticalTilde|NotSucceedsTilde|circlearrowright|NotPrecedesEqual|rightharpoondown|DoubleRightArrow|NotSucceedsEqual|NonBreakingSpace|NotRightTriangle|LessEqualGreater|RightUpTeeVector|LeftAngleBracket|GreaterFullEqual|DownArrowUpArrow|RightUpVectorBar|twoheadleftarrow|GreaterEqualLess|downharpoonright|RightTriangleBar|ntrianglerighteq|NotSupersetEqual|LeftUpDownVector|DiacriticalAcute|rightrightarrows|vartriangleright|UpArrowDownArrow|DiacriticalGrave|UnderParenthesis|EmptySmallSquare|LeftUpVectorBar|leftrightarrows|DownRightVector|downharpoonleft|trianglerighteq|ShortRightArrow|OverParenthesis|DoubleLeftArrow|DoubleDownArrow|NotSquareSubset|bigtriangledown|ntrianglelefteq|UpperRightArrow|curvearrowright|vartriangleleft|NotLeftTriangle|nleftrightarrow|LowerRightArrow|NotHumpDownHump|NotGreaterTilde|rightthreetimes|LeftUpTeeVector|NotGreaterEqual|straightepsilon|LeftTriangleBar|rightsquigarrow|ContourIntegral|rightleftarrows|CloseCurlyQuote|RightDownVector|LeftRightVector|nLeftrightarrow|leftharpoondown|circlearrowleft|SquareSuperset|OpenCurlyQuote|hookrightarrow|HorizontalLine|DiacriticalDot|NotLessGreater|ntriangleright|DoubleRightTee|InvisibleComma|InvisibleTimes|LowerLeftArrow|DownLeftVector|NotSubsetEqual|curvearrowleft|trianglelefteq|NotVerticalBar|TildeFullEqual|downdownarrows|NotGreaterLess|RightTeeVector|ZeroWidthSpace|looparrowright|LongRightArrow|doublebarwedge|ShortLeftArrow|ShortDownArrow|RightVectorBar|GreaterGreater|ReverseElement|rightharpoonup|LessSlantEqual|leftthreetimes|upharpoonright|rightarrowtail|LeftDownVector|Longrightarrow|NestedLessLess|UpperLeftArrow|nshortparallel|leftleftarrows|leftrightarrow|Leftrightarrow|LeftRightArrow|longrightarrow|upharpoonleft|RightArrowBar|ApplyFunction|LeftTeeVector|leftarrowtail|NotEqualTilde|varsubsetneqq|varsupsetneqq|RightTeeArrow|SucceedsEqual|SucceedsTilde|LeftVectorBar|SupersetEqual|hookleftarrow|DifferentialD|VerticalTilde|VeryThinSpace|blacktriangle|bigtriangleup|LessFullEqual|divideontimes|leftharpoonup|UpEquilibrium|ntriangleleft|RightTriangle|measuredangle|shortparallel|longleftarrow|Longleftarrow|LongLeftArrow|DoubleLeftTee|Poincareplane|PrecedesEqual|triangleright|DoubleUpArrow|RightUpVector|fallingdotseq|looparrowleft|PrecedesTilde|NotTildeEqual|NotTildeTilde|smallsetminus|Proportional|triangleleft|triangledown|UnderBracket|NotHumpEqual|exponentiale|ExponentialE|NotLessTilde|HilbertSpace|RightCeiling|blacklozenge|varsupsetneq|HumpDownHump|GreaterEqual|VerticalLine|LeftTeeArrow|NotLessEqual|DownTeeArrow|LeftTriangle|varsubsetneq|Intersection|NotCongruent|DownArrowBar|LeftUpVector|LeftArrowBar|risingdotseq|GreaterTilde|RoundImplies|SquareSubset|ShortUpArrow|NotSuperset|quaternions|precnapprox|backepsilon|preccurlyeq|OverBracket|blacksquare|MediumSpace|VerticalBar|circledcirc|circleddash|CircleMinus|CircleTimes|LessGreater|curlyeqprec|curlyeqsucc|diamondsuit|UpDownArrow|Updownarrow|RuleDelayed|Rrightarrow|updownarrow|RightVector|nRightarrow|nrightarrow|eqslantless|LeftCeiling|Equilibrium|SmallCircle|expectation|NotSucceeds|thickapprox|GreaterLess|SquareUnion|NotPrecedes|NotLessLess|straightphi|succnapprox|succcurlyeq|SubsetEqual|sqsupseteq|Proportion|Laplacetrf|ImaginaryI|supsetneqq|NotGreater|gtreqqless|NotElement|ThickSpace|TildeEqual|TildeTilde|Fouriertrf|rmoustache|EqualTilde|eqslantgtr|UnderBrace|LeftVector|UpArrowBar|nLeftarrow|nsubseteqq|subsetneqq|nsupseteqq|nleftarrow|succapprox|lessapprox|UpTeeArrow|upuparrows|curlywedge|lesseqqgtr|varepsilon|varnothing|RightFloor|complement|CirclePlus|sqsubseteq|Lleftarrow|circledast|RightArrow|Rightarrow|rightarrow|lmoustache|Bernoullis|precapprox|mapstoleft|mapstodown|longmapsto|dotsquare|downarrow|DoubleDot|nsubseteq|supsetneq|leftarrow|nsupseteq|subsetneq|ThinSpace|ngeqslant|subseteqq|HumpEqual|NotSubset|triangleq|NotCupCap|lesseqgtr|heartsuit|TripleDot|Leftarrow|Coproduct|Congruent|varpropto|complexes|gvertneqq|LeftArrow|LessTilde|supseteqq|MinusPlus|CircleDot|nleqslant|NotExists|gtreqless|nparallel|UnionPlus|LeftFloor|checkmark|CenterDot|centerdot|Mellintrf|gtrapprox|bigotimes|OverBrace|spadesuit|therefore|pitchfork|rationals|PlusMinus|Backslash|Therefore|DownBreve|backsimeq|backprime|DownArrow|nshortmid|Downarrow|lvertneqq|eqvparsl|imagline|imagpart|infintie|integers|Integral|intercal|LessLess|Uarrocir|intlarhk|sqsupset|angmsdaf|sqsubset|llcorner|vartheta|cupbrcap|lnapprox|Superset|SuchThat|succnsim|succneqq|angmsdag|biguplus|curlyvee|trpezium|Succeeds|NotTilde|bigwedge|angmsdah|angrtvbd|triminus|cwconint|fpartint|lrcorner|smeparsl|subseteq|urcorner|lurdshar|laemptyv|DDotrahd|approxeq|ldrushar|awconint|mapstoup|backcong|shortmid|triangle|geqslant|gesdotol|timesbar|circledR|circledS|setminus|multimap|naturals|scpolint|ncongdot|RightTee|boxminus|gnapprox|boxtimes|andslope|thicksim|angmsdaa|varsigma|cirfnint|rtriltri|angmsdab|rppolint|angmsdac|barwedge|drbkarow|clubsuit|thetasym|bsolhsub|capbrcup|dzigrarr|doteqdot|DotEqual|dotminus|UnderBar|NotEqual|realpart|otimesas|ulcorner|hksearow|hkswarow|parallel|PartialD|elinters|emptyset|plusacir|bbrktbrk|angmsdad|pointint|bigoplus|angmsdae|Precedes|bigsqcup|varkappa|notindot|supseteq|precneqq|precnsim|profalar|profline|profsurf|leqslant|lesdotor|raemptyv|subplus|notnivb|notnivc|subrarr|zigrarr|vzigzag|submult|subedot|Element|between|cirscir|larrbfs|larrsim|lotimes|lbrksld|lbrkslu|lozenge|ldrdhar|dbkarow|bigcirc|epsilon|simrarr|simplus|ltquest|Epsilon|luruhar|gtquest|maltese|npolint|eqcolon|npreceq|bigodot|ddagger|gtrless|bnequiv|harrcir|ddotseq|equivDD|backsim|demptyv|nsqsube|nsqsupe|Upsilon|nsubset|upsilon|minusdu|nsucceq|swarrow|nsupset|coloneq|searrow|boxplus|napprox|natural|asympeq|alefsym|congdot|nearrow|bigstar|diamond|supplus|tritime|LeftTee|nvinfin|triplus|NewLine|nvltrie|nvrtrie|nwarrow|nexists|Diamond|ruluhar|Implies|supmult|angzarr|suplarr|suphsub|questeq|because|digamma|Because|olcross|bemptyv|omicron|Omicron|rotimes|NoBreak|intprod|angrtvb|orderof|uwangle|suphsol|lesdoto|orslope|DownTee|realine|cudarrl|rdldhar|OverBar|supedot|lessdot|supdsub|topfork|succsim|rbrkslu|rbrksld|pertenk|cudarrr|isindot|planckh|lessgtr|pluscir|gesdoto|plussim|plustwo|lesssim|cularrp|rarrsim|Cayleys|notinva|notinvb|notinvc|UpArrow|Uparrow|uparrow|NotLess|dwangle|precsim|Product|curarrm|Cconint|dotplus|rarrbfs|ccupssm|Cedilla|cemptyv|notniva|quatint|frac35|frac38|frac45|frac56|frac58|frac78|tridot|xoplus|gacute|gammad|Gammad|lfisht|lfloor|bigcup|sqsupe|gbreve|Gbreve|lharul|sqsube|sqcups|Gcedil|apacir|llhard|lmidot|Lmidot|lmoust|andand|sqcaps|approx|Abreve|spades|circeq|tprime|divide|topcir|Assign|topbot|gesdot|divonx|xuplus|timesd|gesles|atilde|solbar|SOFTcy|loplus|timesb|lowast|lowbar|dlcorn|dlcrop|softcy|dollar|lparlt|thksim|lrhard|Atilde|lsaquo|smashp|bigvee|thinsp|wreath|bkarow|lsquor|lstrok|Lstrok|lthree|ltimes|ltlarr|DotDot|simdot|ltrPar|weierp|xsqcup|angmsd|sigmav|sigmaf|zeetrf|Zcaron|zcaron|mapsto|vsupne|thetav|cirmid|marker|mcomma|Zacute|vsubnE|there4|gtlPar|vsubne|bottom|gtrarr|SHCHcy|shchcy|midast|midcir|middot|minusb|minusd|gtrdot|bowtie|sfrown|mnplus|models|colone|seswar|Colone|mstpos|searhk|gtrsim|nacute|Nacute|boxbox|telrec|hairsp|Tcedil|nbumpe|scnsim|ncaron|Ncaron|ncedil|Ncedil|hamilt|Scedil|nearhk|hardcy|HARDcy|tcedil|Tcaron|commat|nequiv|nesear|tcaron|target|hearts|nexist|varrho|scedil|Scaron|scaron|hellip|Sacute|sacute|hercon|swnwar|compfn|rtimes|rthree|rsquor|rsaquo|zacute|wedgeq|homtht|barvee|barwed|Barwed|rpargt|horbar|conint|swarhk|roplus|nltrie|hslash|hstrok|Hstrok|rmoust|Conint|bprime|hybull|hyphen|iacute|Iacute|supsup|supsub|supsim|varphi|coprod|brvbar|agrave|Supset|supset|igrave|Igrave|notinE|Agrave|iiiint|iinfin|copysr|wedbar|Verbar|vangrt|becaus|incare|verbar|inodot|bullet|drcorn|intcal|drcrop|cularr|vellip|Utilde|bumpeq|cupcap|dstrok|Dstrok|CupCap|cupcup|cupdot|eacute|Eacute|supdot|iquest|easter|ecaron|Ecaron|ecolon|isinsv|utilde|itilde|Itilde|curarr|succeq|Bumpeq|cacute|ulcrop|nparsl|Cacute|nprcue|egrave|Egrave|nrarrc|nrarrw|subsup|subsub|nrtrie|jsercy|nsccue|Jsercy|kappav|kcedil|Kcedil|subsim|ulcorn|nsimeq|egsdot|veebar|kgreen|capand|elsdot|Subset|subset|curren|aacute|lacute|Lacute|emptyv|ntilde|Ntilde|lagran|lambda|Lambda|capcap|Ugrave|langle|subdot|emsp13|numero|emsp14|nvdash|nvDash|nVdash|nVDash|ugrave|ufisht|nvHarr|larrfs|nvlArr|larrhk|larrlp|larrpl|nvrArr|Udblac|nwarhk|larrtl|nwnear|oacute|Oacute|latail|lAtail|sstarf|lbrace|odblac|Odblac|lbrack|udblac|odsold|eparsl|lcaron|Lcaron|ograve|Ograve|lcedil|Lcedil|Aacute|ssmile|ssetmn|squarf|ldquor|capcup|ominus|cylcty|rharul|eqcirc|dagger|rfloor|rfisht|Dagger|daleth|equals|origof|capdot|equest|dcaron|Dcaron|rdquor|oslash|Oslash|otilde|Otilde|otimes|Otimes|urcrop|Ubreve|ubreve|Yacute|Uacute|uacute|Rcedil|rcedil|urcorn|parsim|Rcaron|Vdashl|rcaron|Tstrok|percnt|period|permil|Exists|yacute|rbrack|rbrace|phmmat|ccaron|Ccaron|planck|ccedil|plankv|tstrok|female|plusdo|plusdu|ffilig|plusmn|ffllig|Ccedil|rAtail|dfisht|bernou|ratail|Rarrtl|rarrtl|angsph|rarrpl|rarrlp|rarrhk|xwedge|xotime|forall|ForAll|Vvdash|vsupnE|preceq|bigcap|frac12|frac13|frac14|primes|rarrfs|prnsim|frac15|Square|frac16|square|lesdot|frac18|frac23|propto|prurel|rarrap|rangle|puncsp|frac25|Racute|qprime|racute|lesges|frac34|abreve|AElig|eqsim|utdot|setmn|urtri|Equal|Uring|seArr|uring|searr|dashv|Dashv|mumap|nabla|iogon|Iogon|sdote|sdotb|scsim|napid|napos|equiv|natur|Acirc|dblac|erarr|nbump|iprod|erDot|ucirc|awint|esdot|angrt|ncong|isinE|scnap|Scirc|scirc|ndash|isins|Ubrcy|nearr|neArr|isinv|nedot|ubrcy|acute|Ycirc|iukcy|Iukcy|xutri|nesim|caret|jcirc|Jcirc|caron|twixt|ddarr|sccue|exist|jmath|sbquo|ngeqq|angst|ccaps|lceil|ngsim|UpTee|delta|Delta|rtrif|nharr|nhArr|nhpar|rtrie|jukcy|Jukcy|kappa|rsquo|Kappa|nlarr|nlArr|TSHcy|rrarr|aogon|Aogon|fflig|xrarr|tshcy|ccirc|nleqq|filig|upsih|nless|dharl|nlsim|fjlig|ropar|nltri|dharr|robrk|roarr|fllig|fltns|roang|rnmid|subnE|subne|lAarr|trisb|Ccirc|acirc|ccups|blank|VDash|forkv|Vdash|langd|cedil|blk12|blk14|laquo|strns|diams|notin|vDash|larrb|blk34|block|disin|uplus|vdash|vBarv|aelig|starf|Wedge|check|xrArr|lates|lbarr|lBarr|notni|lbbrk|bcong|frasl|lbrke|frown|vrtri|vprop|vnsup|gamma|Gamma|wedge|xodot|bdquo|srarr|doteq|ldquo|boxdl|boxdL|gcirc|Gcirc|boxDl|boxDL|boxdr|boxdR|boxDr|TRADE|trade|rlhar|boxDR|vnsub|npart|vltri|rlarr|boxhd|boxhD|nprec|gescc|nrarr|nrArr|boxHd|boxHD|boxhu|boxhU|nrtri|boxHu|clubs|boxHU|times|colon|Colon|gimel|xlArr|Tilde|nsime|tilde|nsmid|nspar|THORN|thorn|xlarr|nsube|nsubE|thkap|xhArr|comma|nsucc|boxul|boxuL|nsupe|nsupE|gneqq|gnsim|boxUl|boxUL|grave|boxur|boxuR|boxUr|boxUR|lescc|angle|bepsi|boxvh|varpi|boxvH|numsp|Theta|gsime|gsiml|theta|boxVh|boxVH|boxvl|gtcir|gtdot|boxvL|boxVl|boxVL|crarr|cross|Cross|nvsim|boxvr|nwarr|nwArr|sqsup|dtdot|Uogon|lhard|lharu|dtrif|ocirc|Ocirc|lhblk|duarr|odash|sqsub|Hacek|sqcup|llarr|duhar|oelig|OElig|ofcir|boxvR|uogon|lltri|boxVr|csube|uuarr|ohbar|csupe|ctdot|olarr|olcir|harrw|oline|sqcap|omacr|Omacr|omega|Omega|boxVR|aleph|lneqq|lnsim|loang|loarr|rharu|lobrk|hcirc|operp|oplus|rhard|Hcirc|orarr|Union|order|ecirc|Ecirc|cuepr|szlig|cuesc|breve|reals|eDDot|Breve|hoarr|lopar|utrif|rdquo|Umacr|umacr|efDot|swArr|ultri|alpha|rceil|ovbar|swarr|Wcirc|wcirc|smtes|smile|bsemi|lrarr|aring|parsl|lrhar|bsime|uhblk|lrtri|cupor|Aring|uharr|uharl|slarr|rbrke|bsolb|lsime|rbbrk|RBarr|lsimg|phone|rBarr|rbarr|icirc|lsquo|Icirc|emacr|Emacr|ratio|simne|plusb|simlE|simgE|simeq|pluse|ltcir|ltdot|empty|xharr|xdtri|iexcl|Alpha|ltrie|rarrw|pound|ltrif|xcirc|bumpe|prcue|bumpE|asymp|amacr|cuvee|Sigma|sigma|iiint|udhar|iiota|ijlig|IJlig|supnE|imacr|Imacr|prime|Prime|image|prnap|eogon|Eogon|rarrc|mdash|mDDot|cuwed|imath|supne|imped|Amacr|udarr|prsim|micro|rarrb|cwint|raquo|infin|eplus|range|rangd|Ucirc|radic|minus|amalg|veeeq|rAarr|epsiv|ycirc|quest|sharp|quot|zwnj|Qscr|race|qscr|Qopf|qopf|qint|rang|Rang|Zscr|zscr|Zopf|zopf|rarr|rArr|Rarr|Pscr|pscr|prop|prod|prnE|prec|ZHcy|zhcy|prap|Zeta|zeta|Popf|popf|Zdot|plus|zdot|Yuml|yuml|phiv|YUcy|yucy|Yscr|yscr|perp|Yopf|yopf|part|para|YIcy|Ouml|rcub|yicy|YAcy|rdca|ouml|osol|Oscr|rdsh|yacy|real|oscr|xvee|andd|rect|andv|Xscr|oror|ordm|ordf|xscr|ange|aopf|Aopf|rHar|Xopf|opar|Oopf|xopf|xnis|rhov|oopf|omid|xmap|oint|apid|apos|ogon|ascr|Ascr|odot|odiv|xcup|xcap|ocir|oast|nvlt|nvle|nvgt|nvge|nvap|Wscr|wscr|auml|ntlg|ntgl|nsup|nsub|nsim|Nscr|nscr|nsce|Wopf|ring|npre|wopf|npar|Auml|Barv|bbrk|Nopf|nopf|nmid|nLtv|beta|ropf|Ropf|Beta|beth|nles|rpar|nleq|bnot|bNot|nldr|NJcy|rscr|Rscr|Vscr|vscr|rsqb|njcy|bopf|nisd|Bopf|rtri|Vopf|nGtv|ngtr|vopf|boxh|boxH|boxv|nges|ngeq|boxV|bscr|scap|Bscr|bsim|Vert|vert|bsol|bull|bump|caps|cdot|ncup|scnE|ncap|nbsp|napE|Cdot|cent|sdot|Vbar|nang|vBar|chcy|Mscr|mscr|sect|semi|CHcy|Mopf|mopf|sext|circ|cire|mldr|mlcp|cirE|comp|shcy|SHcy|vArr|varr|cong|copf|Copf|copy|COPY|malt|male|macr|lvnE|cscr|ltri|sime|ltcc|simg|Cscr|siml|csub|Uuml|lsqb|lsim|uuml|csup|Lscr|lscr|utri|smid|lpar|cups|smte|lozf|darr|Lopf|Uscr|solb|lopf|sopf|Sopf|lneq|uscr|spar|dArr|lnap|Darr|dash|Sqrt|LJcy|ljcy|lHar|dHar|Upsi|upsi|diam|lesg|djcy|DJcy|leqq|dopf|Dopf|dscr|Dscr|dscy|ldsh|ldca|squf|DScy|sscr|Sscr|dsol|lcub|late|star|Star|Uopf|Larr|lArr|larr|uopf|dtri|dzcy|sube|subE|Lang|lang|Kscr|kscr|Kopf|kopf|KJcy|kjcy|KHcy|khcy|DZcy|ecir|edot|eDot|Jscr|jscr|succ|Jopf|jopf|Edot|uHar|emsp|ensp|Iuml|iuml|eopf|isin|Iscr|iscr|Eopf|epar|sung|epsi|escr|sup1|sup2|sup3|Iota|iota|supe|supE|Iopf|iopf|IOcy|iocy|Escr|esim|Esim|imof|Uarr|QUOT|uArr|uarr|euml|IEcy|iecy|Idot|Euml|euro|excl|Hscr|hscr|Hopf|hopf|TScy|tscy|Tscr|hbar|tscr|flat|tbrk|fnof|hArr|harr|half|fopf|Fopf|tdot|gvnE|fork|trie|gtcc|fscr|Fscr|gdot|gsim|Gscr|gscr|Gopf|gopf|gneq|Gdot|tosa|gnap|Topf|topf|geqq|toea|GJcy|gjcy|tint|gesl|mid|Sfr|ggg|top|ges|gla|glE|glj|geq|gne|gEl|gel|gnE|Gcy|gcy|gap|Tfr|tfr|Tcy|tcy|Hat|Tau|Ffr|tau|Tab|hfr|Hfr|ffr|Fcy|fcy|icy|Icy|iff|ETH|eth|ifr|Ifr|Eta|eta|int|Int|Sup|sup|ucy|Ucy|Sum|sum|jcy|ENG|ufr|Ufr|eng|Jcy|jfr|els|ell|egs|Efr|efr|Jfr|uml|kcy|Kcy|Ecy|ecy|kfr|Kfr|lap|Sub|sub|lat|lcy|Lcy|leg|Dot|dot|lEg|leq|les|squ|div|die|lfr|Lfr|lgE|Dfr|dfr|Del|deg|Dcy|dcy|lne|lnE|sol|loz|smt|Cup|lrm|cup|lsh|Lsh|sim|shy|map|Map|mcy|Mcy|mfr|Mfr|mho|gfr|Gfr|sfr|cir|Chi|chi|nap|Cfr|vcy|Vcy|cfr|Scy|scy|ncy|Ncy|vee|Vee|Cap|cap|nfr|scE|sce|Nfr|nge|ngE|nGg|vfr|Vfr|ngt|bot|nGt|nis|niv|Rsh|rsh|nle|nlE|bne|Bfr|bfr|nLl|nlt|nLt|Bcy|bcy|not|Not|rlm|wfr|Wfr|npr|nsc|num|ocy|ast|Ocy|ofr|xfr|Xfr|Ofr|ogt|ohm|apE|olt|Rho|ape|rho|Rfr|rfr|ord|REG|ang|reg|orv|And|and|AMP|Rcy|amp|Afr|ycy|Ycy|yen|yfr|Yfr|rcy|par|pcy|Pcy|pfr|Pfr|phi|Phi|afr|Acy|acy|zcy|Zcy|piv|acE|acd|zfr|Zfr|pre|prE|psi|Psi|qfr|Qfr|zwj|Or|ge|Gg|gt|gg|el|oS|lt|Lt|LT|Re|lg|gl|eg|ne|Im|it|le|DD|wp|wr|nu|Nu|dd|lE|Sc|sc|pi|Pi|ee|af|ll|Ll|rx|gE|xi|pm|Xi|ic|pr|Pr|in|ni|mp|mu|ac|Mu|or|ap|Gt|GT|ii);|&(Aacute|Agrave|Atilde|Ccedil|Eacute|Egrave|Iacute|Igrave|Ntilde|Oacute|Ograve|Oslash|Otilde|Uacute|Ugrave|Yacute|aacute|agrave|atilde|brvbar|ccedil|curren|divide|eacute|egrave|frac12|frac14|frac34|iacute|igrave|iquest|middot|ntilde|oacute|ograve|oslash|otilde|plusmn|uacute|ugrave|yacute|AElig|Acirc|Aring|Ecirc|Icirc|Ocirc|THORN|Ucirc|acirc|acute|aelig|aring|cedil|ecirc|icirc|iexcl|laquo|micro|ocirc|pound|raquo|szlig|thorn|times|ucirc|Auml|COPY|Euml|Iuml|Ouml|QUOT|Uuml|auml|cent|copy|euml|iuml|macr|nbsp|ordf|ordm|ouml|para|quot|sect|sup1|sup2|sup3|uuml|yuml|AMP|ETH|REG|amp|deg|eth|not|reg|shy|uml|yen|GT|LT|gt|lt)(?!;)([=a-zA-Z0-9]?)|&#([0-9]+)(;?)|&#[xX]([a-fA-F0-9]+)(;?)|&([0-9a-zA-Z]+)/g;
-        var decodeMap = { "aacute": "á", "Aacute": "Á", "abreve": "ă", "Abreve": "Ă", "ac": "∾", "acd": "∿", "acE": "∾̳", "acirc": "â", "Acirc": "Â", "acute": "´", "acy": "а", "Acy": "А", "aelig": "æ", "AElig": "Æ", "af": "⁡", "afr": "𝔞", "Afr": "𝔄", "agrave": "à", "Agrave": "À", "alefsym": "ℵ", "aleph": "ℵ", "alpha": "α", "Alpha": "Α", "amacr": "ā", "Amacr": "Ā", "amalg": "⨿", "amp": "&", "AMP": "&", "and": "∧", "And": "⩓", "andand": "⩕", "andd": "⩜", "andslope": "⩘", "andv": "⩚", "ang": "∠", "ange": "⦤", "angle": "∠", "angmsd": "∡", "angmsdaa": "⦨", "angmsdab": "⦩", "angmsdac": "⦪", "angmsdad": "⦫", "angmsdae": "⦬", "angmsdaf": "⦭", "angmsdag": "⦮", "angmsdah": "⦯", "angrt": "∟", "angrtvb": "⊾", "angrtvbd": "⦝", "angsph": "∢", "angst": "Å", "angzarr": "⍼", "aogon": "ą", "Aogon": "Ą", "aopf": "𝕒", "Aopf": "𝔸", "ap": "≈", "apacir": "⩯", "ape": "≊", "apE": "⩰", "apid": "≋", "apos": "'", "ApplyFunction": "⁡", "approx": "≈", "approxeq": "≊", "aring": "å", "Aring": "Å", "ascr": "𝒶", "Ascr": "𝒜", "Assign": "≔", "ast": "*", "asymp": "≈", "asympeq": "≍", "atilde": "ã", "Atilde": "Ã", "auml": "ä", "Auml": "Ä", "awconint": "∳", "awint": "⨑", "backcong": "≌", "backepsilon": "϶", "backprime": "‵", "backsim": "∽", "backsimeq": "⋍", "Backslash": "∖", "Barv": "⫧", "barvee": "⊽", "barwed": "⌅", "Barwed": "⌆", "barwedge": "⌅", "bbrk": "⎵", "bbrktbrk": "⎶", "bcong": "≌", "bcy": "б", "Bcy": "Б", "bdquo": "„", "becaus": "∵", "because": "∵", "Because": "∵", "bemptyv": "⦰", "bepsi": "϶", "bernou": "ℬ", "Bernoullis": "ℬ", "beta": "β", "Beta": "Β", "beth": "ℶ", "between": "≬", "bfr": "𝔟", "Bfr": "𝔅", "bigcap": "⋂", "bigcirc": "◯", "bigcup": "⋃", "bigodot": "⨀", "bigoplus": "⨁", "bigotimes": "⨂", "bigsqcup": "⨆", "bigstar": "★", "bigtriangledown": "▽", "bigtriangleup": "△", "biguplus": "⨄", "bigvee": "⋁", "bigwedge": "⋀", "bkarow": "⤍", "blacklozenge": "⧫", "blacksquare": "▪", "blacktriangle": "▴", "blacktriangledown": "▾", "blacktriangleleft": "◂", "blacktriangleright": "▸", "blank": "␣", "blk12": "▒", "blk14": "░", "blk34": "▓", "block": "█", "bne": "=⃥", "bnequiv": "≡⃥", "bnot": "⌐", "bNot": "⫭", "bopf": "𝕓", "Bopf": "𝔹", "bot": "⊥", "bottom": "⊥", "bowtie": "⋈", "boxbox": "⧉", "boxdl": "┐", "boxdL": "╕", "boxDl": "╖", "boxDL": "╗", "boxdr": "┌", "boxdR": "╒", "boxDr": "╓", "boxDR": "╔", "boxh": "─", "boxH": "═", "boxhd": "┬", "boxhD": "╥", "boxHd": "╤", "boxHD": "╦", "boxhu": "┴", "boxhU": "╨", "boxHu": "╧", "boxHU": "╩", "boxminus": "⊟", "boxplus": "⊞", "boxtimes": "⊠", "boxul": "┘", "boxuL": "╛", "boxUl": "╜", "boxUL": "╝", "boxur": "└", "boxuR": "╘", "boxUr": "╙", "boxUR": "╚", "boxv": "│", "boxV": "║", "boxvh": "┼", "boxvH": "╪", "boxVh": "╫", "boxVH": "╬", "boxvl": "┤", "boxvL": "╡", "boxVl": "╢", "boxVL": "╣", "boxvr": "├", "boxvR": "╞", "boxVr": "╟", "boxVR": "╠", "bprime": "‵", "breve": "˘", "Breve": "˘", "brvbar": "¦", "bscr": "𝒷", "Bscr": "ℬ", "bsemi": "⁏", "bsim": "∽", "bsime": "⋍", "bsol": "\\", "bsolb": "⧅", "bsolhsub": "⟈", "bull": "•", "bullet": "•", "bump": "≎", "bumpe": "≏", "bumpE": "⪮", "bumpeq": "≏", "Bumpeq": "≎", "cacute": "ć", "Cacute": "Ć", "cap": "∩", "Cap": "⋒", "capand": "⩄", "capbrcup": "⩉", "capcap": "⩋", "capcup": "⩇", "capdot": "⩀", "CapitalDifferentialD": "ⅅ", "caps": "∩︀", "caret": "⁁", "caron": "ˇ", "Cayleys": "ℭ", "ccaps": "⩍", "ccaron": "č", "Ccaron": "Č", "ccedil": "ç", "Ccedil": "Ç", "ccirc": "ĉ", "Ccirc": "Ĉ", "Cconint": "∰", "ccups": "⩌", "ccupssm": "⩐", "cdot": "ċ", "Cdot": "Ċ", "cedil": "¸", "Cedilla": "¸", "cemptyv": "⦲", "cent": "¢", "centerdot": "·", "CenterDot": "·", "cfr": "𝔠", "Cfr": "ℭ", "chcy": "ч", "CHcy": "Ч", "check": "✓", "checkmark": "✓", "chi": "χ", "Chi": "Χ", "cir": "○", "circ": "ˆ", "circeq": "≗", "circlearrowleft": "↺", "circlearrowright": "↻", "circledast": "⊛", "circledcirc": "⊚", "circleddash": "⊝", "CircleDot": "⊙", "circledR": "®", "circledS": "Ⓢ", "CircleMinus": "⊖", "CirclePlus": "⊕", "CircleTimes": "⊗", "cire": "≗", "cirE": "⧃", "cirfnint": "⨐", "cirmid": "⫯", "cirscir": "⧂", "ClockwiseContourIntegral": "∲", "CloseCurlyDoubleQuote": "”", "CloseCurlyQuote": "’", "clubs": "♣", "clubsuit": "♣", "colon": ":", "Colon": "∷", "colone": "≔", "Colone": "⩴", "coloneq": "≔", "comma": ",", "commat": "@", "comp": "∁", "compfn": "∘", "complement": "∁", "complexes": "ℂ", "cong": "≅", "congdot": "⩭", "Congruent": "≡", "conint": "∮", "Conint": "∯", "ContourIntegral": "∮", "copf": "𝕔", "Copf": "ℂ", "coprod": "∐", "Coproduct": "∐", "copy": "©", "COPY": "©", "copysr": "℗", "CounterClockwiseContourIntegral": "∳", "crarr": "↵", "cross": "✗", "Cross": "⨯", "cscr": "𝒸", "Cscr": "𝒞", "csub": "⫏", "csube": "⫑", "csup": "⫐", "csupe": "⫒", "ctdot": "⋯", "cudarrl": "⤸", "cudarrr": "⤵", "cuepr": "⋞", "cuesc": "⋟", "cularr": "↶", "cularrp": "⤽", "cup": "∪", "Cup": "⋓", "cupbrcap": "⩈", "cupcap": "⩆", "CupCap": "≍", "cupcup": "⩊", "cupdot": "⊍", "cupor": "⩅", "cups": "∪︀", "curarr": "↷", "curarrm": "⤼", "curlyeqprec": "⋞", "curlyeqsucc": "⋟", "curlyvee": "⋎", "curlywedge": "⋏", "curren": "¤", "curvearrowleft": "↶", "curvearrowright": "↷", "cuvee": "⋎", "cuwed": "⋏", "cwconint": "∲", "cwint": "∱", "cylcty": "⌭", "dagger": "†", "Dagger": "‡", "daleth": "ℸ", "darr": "↓", "dArr": "⇓", "Darr": "↡", "dash": "‐", "dashv": "⊣", "Dashv": "⫤", "dbkarow": "⤏", "dblac": "˝", "dcaron": "ď", "Dcaron": "Ď", "dcy": "д", "Dcy": "Д", "dd": "ⅆ", "DD": "ⅅ", "ddagger": "‡", "ddarr": "⇊", "DDotrahd": "⤑", "ddotseq": "⩷", "deg": "°", "Del": "∇", "delta": "δ", "Delta": "Δ", "demptyv": "⦱", "dfisht": "⥿", "dfr": "𝔡", "Dfr": "𝔇", "dHar": "⥥", "dharl": "⇃", "dharr": "⇂", "DiacriticalAcute": "´", "DiacriticalDot": "˙", "DiacriticalDoubleAcute": "˝", "DiacriticalGrave": "`", "DiacriticalTilde": "˜", "diam": "⋄", "diamond": "⋄", "Diamond": "⋄", "diamondsuit": "♦", "diams": "♦", "die": "¨", "DifferentialD": "ⅆ", "digamma": "ϝ", "disin": "⋲", "div": "÷", "divide": "÷", "divideontimes": "⋇", "divonx": "⋇", "djcy": "ђ", "DJcy": "Ђ", "dlcorn": "⌞", "dlcrop": "⌍", "dollar": "$", "dopf": "𝕕", "Dopf": "𝔻", "dot": "˙", "Dot": "¨", "DotDot": "⃜", "doteq": "≐", "doteqdot": "≑", "DotEqual": "≐", "dotminus": "∸", "dotplus": "∔", "dotsquare": "⊡", "doublebarwedge": "⌆", "DoubleContourIntegral": "∯", "DoubleDot": "¨", "DoubleDownArrow": "⇓", "DoubleLeftArrow": "⇐", "DoubleLeftRightArrow": "⇔", "DoubleLeftTee": "⫤", "DoubleLongLeftArrow": "⟸", "DoubleLongLeftRightArrow": "⟺", "DoubleLongRightArrow": "⟹", "DoubleRightArrow": "⇒", "DoubleRightTee": "⊨", "DoubleUpArrow": "⇑", "DoubleUpDownArrow": "⇕", "DoubleVerticalBar": "∥", "downarrow": "↓", "Downarrow": "⇓", "DownArrow": "↓", "DownArrowBar": "⤓", "DownArrowUpArrow": "⇵", "DownBreve": "̑", "downdownarrows": "⇊", "downharpoonleft": "⇃", "downharpoonright": "⇂", "DownLeftRightVector": "⥐", "DownLeftTeeVector": "⥞", "DownLeftVector": "↽", "DownLeftVectorBar": "⥖", "DownRightTeeVector": "⥟", "DownRightVector": "⇁", "DownRightVectorBar": "⥗", "DownTee": "⊤", "DownTeeArrow": "↧", "drbkarow": "⤐", "drcorn": "⌟", "drcrop": "⌌", "dscr": "𝒹", "Dscr": "𝒟", "dscy": "ѕ", "DScy": "Ѕ", "dsol": "⧶", "dstrok": "đ", "Dstrok": "Đ", "dtdot": "⋱", "dtri": "▿", "dtrif": "▾", "duarr": "⇵", "duhar": "⥯", "dwangle": "⦦", "dzcy": "џ", "DZcy": "Џ", "dzigrarr": "⟿", "eacute": "é", "Eacute": "É", "easter": "⩮", "ecaron": "ě", "Ecaron": "Ě", "ecir": "≖", "ecirc": "ê", "Ecirc": "Ê", "ecolon": "≕", "ecy": "э", "Ecy": "Э", "eDDot": "⩷", "edot": "ė", "eDot": "≑", "Edot": "Ė", "ee": "ⅇ", "efDot": "≒", "efr": "𝔢", "Efr": "𝔈", "eg": "⪚", "egrave": "è", "Egrave": "È", "egs": "⪖", "egsdot": "⪘", "el": "⪙", "Element": "∈", "elinters": "⏧", "ell": "ℓ", "els": "⪕", "elsdot": "⪗", "emacr": "ē", "Emacr": "Ē", "empty": "∅", "emptyset": "∅", "EmptySmallSquare": "◻", "emptyv": "∅", "EmptyVerySmallSquare": "▫", "emsp": " ", "emsp13": " ", "emsp14": " ", "eng": "ŋ", "ENG": "Ŋ", "ensp": " ", "eogon": "ę", "Eogon": "Ę", "eopf": "𝕖", "Eopf": "𝔼", "epar": "⋕", "eparsl": "⧣", "eplus": "⩱", "epsi": "ε", "epsilon": "ε", "Epsilon": "Ε", "epsiv": "ϵ", "eqcirc": "≖", "eqcolon": "≕", "eqsim": "≂", "eqslantgtr": "⪖", "eqslantless": "⪕", "Equal": "⩵", "equals": "=", "EqualTilde": "≂", "equest": "≟", "Equilibrium": "⇌", "equiv": "≡", "equivDD": "⩸", "eqvparsl": "⧥", "erarr": "⥱", "erDot": "≓", "escr": "ℯ", "Escr": "ℰ", "esdot": "≐", "esim": "≂", "Esim": "⩳", "eta": "η", "Eta": "Η", "eth": "ð", "ETH": "Ð", "euml": "ë", "Euml": "Ë", "euro": "€", "excl": "!", "exist": "∃", "Exists": "∃", "expectation": "ℰ", "exponentiale": "ⅇ", "ExponentialE": "ⅇ", "fallingdotseq": "≒", "fcy": "ф", "Fcy": "Ф", "female": "♀", "ffilig": "ﬃ", "fflig": "ﬀ", "ffllig": "ﬄ", "ffr": "𝔣", "Ffr": "𝔉", "filig": "ﬁ", "FilledSmallSquare": "◼", "FilledVerySmallSquare": "▪", "fjlig": "fj", "flat": "♭", "fllig": "ﬂ", "fltns": "▱", "fnof": "ƒ", "fopf": "𝕗", "Fopf": "𝔽", "forall": "∀", "ForAll": "∀", "fork": "⋔", "forkv": "⫙", "Fouriertrf": "ℱ", "fpartint": "⨍", "frac12": "½", "frac13": "⅓", "frac14": "¼", "frac15": "⅕", "frac16": "⅙", "frac18": "⅛", "frac23": "⅔", "frac25": "⅖", "frac34": "¾", "frac35": "⅗", "frac38": "⅜", "frac45": "⅘", "frac56": "⅚", "frac58": "⅝", "frac78": "⅞", "frasl": "⁄", "frown": "⌢", "fscr": "𝒻", "Fscr": "ℱ", "gacute": "ǵ", "gamma": "γ", "Gamma": "Γ", "gammad": "ϝ", "Gammad": "Ϝ", "gap": "⪆", "gbreve": "ğ", "Gbreve": "Ğ", "Gcedil": "Ģ", "gcirc": "ĝ", "Gcirc": "Ĝ", "gcy": "г", "Gcy": "Г", "gdot": "ġ", "Gdot": "Ġ", "ge": "≥", "gE": "≧", "gel": "⋛", "gEl": "⪌", "geq": "≥", "geqq": "≧", "geqslant": "⩾", "ges": "⩾", "gescc": "⪩", "gesdot": "⪀", "gesdoto": "⪂", "gesdotol": "⪄", "gesl": "⋛︀", "gesles": "⪔", "gfr": "𝔤", "Gfr": "𝔊", "gg": "≫", "Gg": "⋙", "ggg": "⋙", "gimel": "ℷ", "gjcy": "ѓ", "GJcy": "Ѓ", "gl": "≷", "gla": "⪥", "glE": "⪒", "glj": "⪤", "gnap": "⪊", "gnapprox": "⪊", "gne": "⪈", "gnE": "≩", "gneq": "⪈", "gneqq": "≩", "gnsim": "⋧", "gopf": "𝕘", "Gopf": "𝔾", "grave": "`", "GreaterEqual": "≥", "GreaterEqualLess": "⋛", "GreaterFullEqual": "≧", "GreaterGreater": "⪢", "GreaterLess": "≷", "GreaterSlantEqual": "⩾", "GreaterTilde": "≳", "gscr": "ℊ", "Gscr": "𝒢", "gsim": "≳", "gsime": "⪎", "gsiml": "⪐", "gt": ">", "Gt": "≫", "GT": ">", "gtcc": "⪧", "gtcir": "⩺", "gtdot": "⋗", "gtlPar": "⦕", "gtquest": "⩼", "gtrapprox": "⪆", "gtrarr": "⥸", "gtrdot": "⋗", "gtreqless": "⋛", "gtreqqless": "⪌", "gtrless": "≷", "gtrsim": "≳", "gvertneqq": "≩︀", "gvnE": "≩︀", "Hacek": "ˇ", "hairsp": " ", "half": "½", "hamilt": "ℋ", "hardcy": "ъ", "HARDcy": "Ъ", "harr": "↔", "hArr": "⇔", "harrcir": "⥈", "harrw": "↭", "Hat": "^", "hbar": "ℏ", "hcirc": "ĥ", "Hcirc": "Ĥ", "hearts": "♥", "heartsuit": "♥", "hellip": "…", "hercon": "⊹", "hfr": "𝔥", "Hfr": "ℌ", "HilbertSpace": "ℋ", "hksearow": "⤥", "hkswarow": "⤦", "hoarr": "⇿", "homtht": "∻", "hookleftarrow": "↩", "hookrightarrow": "↪", "hopf": "𝕙", "Hopf": "ℍ", "horbar": "―", "HorizontalLine": "─", "hscr": "𝒽", "Hscr": "ℋ", "hslash": "ℏ", "hstrok": "ħ", "Hstrok": "Ħ", "HumpDownHump": "≎", "HumpEqual": "≏", "hybull": "⁃", "hyphen": "‐", "iacute": "í", "Iacute": "Í", "ic": "⁣", "icirc": "î", "Icirc": "Î", "icy": "и", "Icy": "И", "Idot": "İ", "iecy": "е", "IEcy": "Е", "iexcl": "¡", "iff": "⇔", "ifr": "𝔦", "Ifr": "ℑ", "igrave": "ì", "Igrave": "Ì", "ii": "ⅈ", "iiiint": "⨌", "iiint": "∭", "iinfin": "⧜", "iiota": "℩", "ijlig": "ĳ", "IJlig": "Ĳ", "Im": "ℑ", "imacr": "ī", "Imacr": "Ī", "image": "ℑ", "ImaginaryI": "ⅈ", "imagline": "ℐ", "imagpart": "ℑ", "imath": "ı", "imof": "⊷", "imped": "Ƶ", "Implies": "⇒", "in": "∈", "incare": "℅", "infin": "∞", "infintie": "⧝", "inodot": "ı", "int": "∫", "Int": "∬", "intcal": "⊺", "integers": "ℤ", "Integral": "∫", "intercal": "⊺", "Intersection": "⋂", "intlarhk": "⨗", "intprod": "⨼", "InvisibleComma": "⁣", "InvisibleTimes": "⁢", "iocy": "ё", "IOcy": "Ё", "iogon": "į", "Iogon": "Į", "iopf": "𝕚", "Iopf": "𝕀", "iota": "ι", "Iota": "Ι", "iprod": "⨼", "iquest": "¿", "iscr": "𝒾", "Iscr": "ℐ", "isin": "∈", "isindot": "⋵", "isinE": "⋹", "isins": "⋴", "isinsv": "⋳", "isinv": "∈", "it": "⁢", "itilde": "ĩ", "Itilde": "Ĩ", "iukcy": "і", "Iukcy": "І", "iuml": "ï", "Iuml": "Ï", "jcirc": "ĵ", "Jcirc": "Ĵ", "jcy": "й", "Jcy": "Й", "jfr": "𝔧", "Jfr": "𝔍", "jmath": "ȷ", "jopf": "𝕛", "Jopf": "𝕁", "jscr": "𝒿", "Jscr": "𝒥", "jsercy": "ј", "Jsercy": "Ј", "jukcy": "є", "Jukcy": "Є", "kappa": "κ", "Kappa": "Κ", "kappav": "ϰ", "kcedil": "ķ", "Kcedil": "Ķ", "kcy": "к", "Kcy": "К", "kfr": "𝔨", "Kfr": "𝔎", "kgreen": "ĸ", "khcy": "х", "KHcy": "Х", "kjcy": "ќ", "KJcy": "Ќ", "kopf": "𝕜", "Kopf": "𝕂", "kscr": "𝓀", "Kscr": "𝒦", "lAarr": "⇚", "lacute": "ĺ", "Lacute": "Ĺ", "laemptyv": "⦴", "lagran": "ℒ", "lambda": "λ", "Lambda": "Λ", "lang": "⟨", "Lang": "⟪", "langd": "⦑", "langle": "⟨", "lap": "⪅", "Laplacetrf": "ℒ", "laquo": "«", "larr": "←", "lArr": "⇐", "Larr": "↞", "larrb": "⇤", "larrbfs": "⤟", "larrfs": "⤝", "larrhk": "↩", "larrlp": "↫", "larrpl": "⤹", "larrsim": "⥳", "larrtl": "↢", "lat": "⪫", "latail": "⤙", "lAtail": "⤛", "late": "⪭", "lates": "⪭︀", "lbarr": "⤌", "lBarr": "⤎", "lbbrk": "❲", "lbrace": "{", "lbrack": "[", "lbrke": "⦋", "lbrksld": "⦏", "lbrkslu": "⦍", "lcaron": "ľ", "Lcaron": "Ľ", "lcedil": "ļ", "Lcedil": "Ļ", "lceil": "⌈", "lcub": "{", "lcy": "л", "Lcy": "Л", "ldca": "⤶", "ldquo": "“", "ldquor": "„", "ldrdhar": "⥧", "ldrushar": "⥋", "ldsh": "↲", "le": "≤", "lE": "≦", "LeftAngleBracket": "⟨", "leftarrow": "←", "Leftarrow": "⇐", "LeftArrow": "←", "LeftArrowBar": "⇤", "LeftArrowRightArrow": "⇆", "leftarrowtail": "↢", "LeftCeiling": "⌈", "LeftDoubleBracket": "⟦", "LeftDownTeeVector": "⥡", "LeftDownVector": "⇃", "LeftDownVectorBar": "⥙", "LeftFloor": "⌊", "leftharpoondown": "↽", "leftharpoonup": "↼", "leftleftarrows": "⇇", "leftrightarrow": "↔", "Leftrightarrow": "⇔", "LeftRightArrow": "↔", "leftrightarrows": "⇆", "leftrightharpoons": "⇋", "leftrightsquigarrow": "↭", "LeftRightVector": "⥎", "LeftTee": "⊣", "LeftTeeArrow": "↤", "LeftTeeVector": "⥚", "leftthreetimes": "⋋", "LeftTriangle": "⊲", "LeftTriangleBar": "⧏", "LeftTriangleEqual": "⊴", "LeftUpDownVector": "⥑", "LeftUpTeeVector": "⥠", "LeftUpVector": "↿", "LeftUpVectorBar": "⥘", "LeftVector": "↼", "LeftVectorBar": "⥒", "leg": "⋚", "lEg": "⪋", "leq": "≤", "leqq": "≦", "leqslant": "⩽", "les": "⩽", "lescc": "⪨", "lesdot": "⩿", "lesdoto": "⪁", "lesdotor": "⪃", "lesg": "⋚︀", "lesges": "⪓", "lessapprox": "⪅", "lessdot": "⋖", "lesseqgtr": "⋚", "lesseqqgtr": "⪋", "LessEqualGreater": "⋚", "LessFullEqual": "≦", "LessGreater": "≶", "lessgtr": "≶", "LessLess": "⪡", "lesssim": "≲", "LessSlantEqual": "⩽", "LessTilde": "≲", "lfisht": "⥼", "lfloor": "⌊", "lfr": "𝔩", "Lfr": "𝔏", "lg": "≶", "lgE": "⪑", "lHar": "⥢", "lhard": "↽", "lharu": "↼", "lharul": "⥪", "lhblk": "▄", "ljcy": "љ", "LJcy": "Љ", "ll": "≪", "Ll": "⋘", "llarr": "⇇", "llcorner": "⌞", "Lleftarrow": "⇚", "llhard": "⥫", "lltri": "◺", "lmidot": "ŀ", "Lmidot": "Ŀ", "lmoust": "⎰", "lmoustache": "⎰", "lnap": "⪉", "lnapprox": "⪉", "lne": "⪇", "lnE": "≨", "lneq": "⪇", "lneqq": "≨", "lnsim": "⋦", "loang": "⟬", "loarr": "⇽", "lobrk": "⟦", "longleftarrow": "⟵", "Longleftarrow": "⟸", "LongLeftArrow": "⟵", "longleftrightarrow": "⟷", "Longleftrightarrow": "⟺", "LongLeftRightArrow": "⟷", "longmapsto": "⟼", "longrightarrow": "⟶", "Longrightarrow": "⟹", "LongRightArrow": "⟶", "looparrowleft": "↫", "looparrowright": "↬", "lopar": "⦅", "lopf": "𝕝", "Lopf": "𝕃", "loplus": "⨭", "lotimes": "⨴", "lowast": "∗", "lowbar": "_", "LowerLeftArrow": "↙", "LowerRightArrow": "↘", "loz": "◊", "lozenge": "◊", "lozf": "⧫", "lpar": "(", "lparlt": "⦓", "lrarr": "⇆", "lrcorner": "⌟", "lrhar": "⇋", "lrhard": "⥭", "lrm": "‎", "lrtri": "⊿", "lsaquo": "‹", "lscr": "𝓁", "Lscr": "ℒ", "lsh": "↰", "Lsh": "↰", "lsim": "≲", "lsime": "⪍", "lsimg": "⪏", "lsqb": "[", "lsquo": "‘", "lsquor": "‚", "lstrok": "ł", "Lstrok": "Ł", "lt": "<", "Lt": "≪", "LT": "<", "ltcc": "⪦", "ltcir": "⩹", "ltdot": "⋖", "lthree": "⋋", "ltimes": "⋉", "ltlarr": "⥶", "ltquest": "⩻", "ltri": "◃", "ltrie": "⊴", "ltrif": "◂", "ltrPar": "⦖", "lurdshar": "⥊", "luruhar": "⥦", "lvertneqq": "≨︀", "lvnE": "≨︀", "macr": "¯", "male": "♂", "malt": "✠", "maltese": "✠", "map": "↦", "Map": "⤅", "mapsto": "↦", "mapstodown": "↧", "mapstoleft": "↤", "mapstoup": "↥", "marker": "▮", "mcomma": "⨩", "mcy": "м", "Mcy": "М", "mdash": "—", "mDDot": "∺", "measuredangle": "∡", "MediumSpace": " ", "Mellintrf": "ℳ", "mfr": "𝔪", "Mfr": "𝔐", "mho": "℧", "micro": "µ", "mid": "∣", "midast": "*", "midcir": "⫰", "middot": "·", "minus": "−", "minusb": "⊟", "minusd": "∸", "minusdu": "⨪", "MinusPlus": "∓", "mlcp": "⫛", "mldr": "…", "mnplus": "∓", "models": "⊧", "mopf": "𝕞", "Mopf": "𝕄", "mp": "∓", "mscr": "𝓂", "Mscr": "ℳ", "mstpos": "∾", "mu": "μ", "Mu": "Μ", "multimap": "⊸", "mumap": "⊸", "nabla": "∇", "nacute": "ń", "Nacute": "Ń", "nang": "∠⃒", "nap": "≉", "napE": "⩰̸", "napid": "≋̸", "napos": "ŉ", "napprox": "≉", "natur": "♮", "natural": "♮", "naturals": "ℕ", "nbsp": " ", "nbump": "≎̸", "nbumpe": "≏̸", "ncap": "⩃", "ncaron": "ň", "Ncaron": "Ň", "ncedil": "ņ", "Ncedil": "Ņ", "ncong": "≇", "ncongdot": "⩭̸", "ncup": "⩂", "ncy": "н", "Ncy": "Н", "ndash": "–", "ne": "≠", "nearhk": "⤤", "nearr": "↗", "neArr": "⇗", "nearrow": "↗", "nedot": "≐̸", "NegativeMediumSpace": "​", "NegativeThickSpace": "​", "NegativeThinSpace": "​", "NegativeVeryThinSpace": "​", "nequiv": "≢", "nesear": "⤨", "nesim": "≂̸", "NestedGreaterGreater": "≫", "NestedLessLess": "≪", "NewLine": "\n", "nexist": "∄", "nexists": "∄", "nfr": "𝔫", "Nfr": "𝔑", "nge": "≱", "ngE": "≧̸", "ngeq": "≱", "ngeqq": "≧̸", "ngeqslant": "⩾̸", "nges": "⩾̸", "nGg": "⋙̸", "ngsim": "≵", "ngt": "≯", "nGt": "≫⃒", "ngtr": "≯", "nGtv": "≫̸", "nharr": "↮", "nhArr": "⇎", "nhpar": "⫲", "ni": "∋", "nis": "⋼", "nisd": "⋺", "niv": "∋", "njcy": "њ", "NJcy": "Њ", "nlarr": "↚", "nlArr": "⇍", "nldr": "‥", "nle": "≰", "nlE": "≦̸", "nleftarrow": "↚", "nLeftarrow": "⇍", "nleftrightarrow": "↮", "nLeftrightarrow": "⇎", "nleq": "≰", "nleqq": "≦̸", "nleqslant": "⩽̸", "nles": "⩽̸", "nless": "≮", "nLl": "⋘̸", "nlsim": "≴", "nlt": "≮", "nLt": "≪⃒", "nltri": "⋪", "nltrie": "⋬", "nLtv": "≪̸", "nmid": "∤", "NoBreak": "⁠", "NonBreakingSpace": " ", "nopf": "𝕟", "Nopf": "ℕ", "not": "¬", "Not": "⫬", "NotCongruent": "≢", "NotCupCap": "≭", "NotDoubleVerticalBar": "∦", "NotElement": "∉", "NotEqual": "≠", "NotEqualTilde": "≂̸", "NotExists": "∄", "NotGreater": "≯", "NotGreaterEqual": "≱", "NotGreaterFullEqual": "≧̸", "NotGreaterGreater": "≫̸", "NotGreaterLess": "≹", "NotGreaterSlantEqual": "⩾̸", "NotGreaterTilde": "≵", "NotHumpDownHump": "≎̸", "NotHumpEqual": "≏̸", "notin": "∉", "notindot": "⋵̸", "notinE": "⋹̸", "notinva": "∉", "notinvb": "⋷", "notinvc": "⋶", "NotLeftTriangle": "⋪", "NotLeftTriangleBar": "⧏̸", "NotLeftTriangleEqual": "⋬", "NotLess": "≮", "NotLessEqual": "≰", "NotLessGreater": "≸", "NotLessLess": "≪̸", "NotLessSlantEqual": "⩽̸", "NotLessTilde": "≴", "NotNestedGreaterGreater": "⪢̸", "NotNestedLessLess": "⪡̸", "notni": "∌", "notniva": "∌", "notnivb": "⋾", "notnivc": "⋽", "NotPrecedes": "⊀", "NotPrecedesEqual": "⪯̸", "NotPrecedesSlantEqual": "⋠", "NotReverseElement": "∌", "NotRightTriangle": "⋫", "NotRightTriangleBar": "⧐̸", "NotRightTriangleEqual": "⋭", "NotSquareSubset": "⊏̸", "NotSquareSubsetEqual": "⋢", "NotSquareSuperset": "⊐̸", "NotSquareSupersetEqual": "⋣", "NotSubset": "⊂⃒", "NotSubsetEqual": "⊈", "NotSucceeds": "⊁", "NotSucceedsEqual": "⪰̸", "NotSucceedsSlantEqual": "⋡", "NotSucceedsTilde": "≿̸", "NotSuperset": "⊃⃒", "NotSupersetEqual": "⊉", "NotTilde": "≁", "NotTildeEqual": "≄", "NotTildeFullEqual": "≇", "NotTildeTilde": "≉", "NotVerticalBar": "∤", "npar": "∦", "nparallel": "∦", "nparsl": "⫽⃥", "npart": "∂̸", "npolint": "⨔", "npr": "⊀", "nprcue": "⋠", "npre": "⪯̸", "nprec": "⊀", "npreceq": "⪯̸", "nrarr": "↛", "nrArr": "⇏", "nrarrc": "⤳̸", "nrarrw": "↝̸", "nrightarrow": "↛", "nRightarrow": "⇏", "nrtri": "⋫", "nrtrie": "⋭", "nsc": "⊁", "nsccue": "⋡", "nsce": "⪰̸", "nscr": "𝓃", "Nscr": "𝒩", "nshortmid": "∤", "nshortparallel": "∦", "nsim": "≁", "nsime": "≄", "nsimeq": "≄", "nsmid": "∤", "nspar": "∦", "nsqsube": "⋢", "nsqsupe": "⋣", "nsub": "⊄", "nsube": "⊈", "nsubE": "⫅̸", "nsubset": "⊂⃒", "nsubseteq": "⊈", "nsubseteqq": "⫅̸", "nsucc": "⊁", "nsucceq": "⪰̸", "nsup": "⊅", "nsupe": "⊉", "nsupE": "⫆̸", "nsupset": "⊃⃒", "nsupseteq": "⊉", "nsupseteqq": "⫆̸", "ntgl": "≹", "ntilde": "ñ", "Ntilde": "Ñ", "ntlg": "≸", "ntriangleleft": "⋪", "ntrianglelefteq": "⋬", "ntriangleright": "⋫", "ntrianglerighteq": "⋭", "nu": "ν", "Nu": "Ν", "num": "#", "numero": "№", "numsp": " ", "nvap": "≍⃒", "nvdash": "⊬", "nvDash": "⊭", "nVdash": "⊮", "nVDash": "⊯", "nvge": "≥⃒", "nvgt": ">⃒", "nvHarr": "⤄", "nvinfin": "⧞", "nvlArr": "⤂", "nvle": "≤⃒", "nvlt": "<⃒", "nvltrie": "⊴⃒", "nvrArr": "⤃", "nvrtrie": "⊵⃒", "nvsim": "∼⃒", "nwarhk": "⤣", "nwarr": "↖", "nwArr": "⇖", "nwarrow": "↖", "nwnear": "⤧", "oacute": "ó", "Oacute": "Ó", "oast": "⊛", "ocir": "⊚", "ocirc": "ô", "Ocirc": "Ô", "ocy": "о", "Ocy": "О", "odash": "⊝", "odblac": "ő", "Odblac": "Ő", "odiv": "⨸", "odot": "⊙", "odsold": "⦼", "oelig": "œ", "OElig": "Œ", "ofcir": "⦿", "ofr": "𝔬", "Ofr": "𝔒", "ogon": "˛", "ograve": "ò", "Ograve": "Ò", "ogt": "⧁", "ohbar": "⦵", "ohm": "Ω", "oint": "∮", "olarr": "↺", "olcir": "⦾", "olcross": "⦻", "oline": "‾", "olt": "⧀", "omacr": "ō", "Omacr": "Ō", "omega": "ω", "Omega": "Ω", "omicron": "ο", "Omicron": "Ο", "omid": "⦶", "ominus": "⊖", "oopf": "𝕠", "Oopf": "𝕆", "opar": "⦷", "OpenCurlyDoubleQuote": "“", "OpenCurlyQuote": "‘", "operp": "⦹", "oplus": "⊕", "or": "∨", "Or": "⩔", "orarr": "↻", "ord": "⩝", "order": "ℴ", "orderof": "ℴ", "ordf": "ª", "ordm": "º", "origof": "⊶", "oror": "⩖", "orslope": "⩗", "orv": "⩛", "oS": "Ⓢ", "oscr": "ℴ", "Oscr": "𝒪", "oslash": "ø", "Oslash": "Ø", "osol": "⊘", "otilde": "õ", "Otilde": "Õ", "otimes": "⊗", "Otimes": "⨷", "otimesas": "⨶", "ouml": "ö", "Ouml": "Ö", "ovbar": "⌽", "OverBar": "‾", "OverBrace": "⏞", "OverBracket": "⎴", "OverParenthesis": "⏜", "par": "∥", "para": "¶", "parallel": "∥", "parsim": "⫳", "parsl": "⫽", "part": "∂", "PartialD": "∂", "pcy": "п", "Pcy": "П", "percnt": "%", "period": ".", "permil": "‰", "perp": "⊥", "pertenk": "‱", "pfr": "𝔭", "Pfr": "𝔓", "phi": "φ", "Phi": "Φ", "phiv": "ϕ", "phmmat": "ℳ", "phone": "☎", "pi": "π", "Pi": "Π", "pitchfork": "⋔", "piv": "ϖ", "planck": "ℏ", "planckh": "ℎ", "plankv": "ℏ", "plus": "+", "plusacir": "⨣", "plusb": "⊞", "pluscir": "⨢", "plusdo": "∔", "plusdu": "⨥", "pluse": "⩲", "PlusMinus": "±", "plusmn": "±", "plussim": "⨦", "plustwo": "⨧", "pm": "±", "Poincareplane": "ℌ", "pointint": "⨕", "popf": "𝕡", "Popf": "ℙ", "pound": "£", "pr": "≺", "Pr": "⪻", "prap": "⪷", "prcue": "≼", "pre": "⪯", "prE": "⪳", "prec": "≺", "precapprox": "⪷", "preccurlyeq": "≼", "Precedes": "≺", "PrecedesEqual": "⪯", "PrecedesSlantEqual": "≼", "PrecedesTilde": "≾", "preceq": "⪯", "precnapprox": "⪹", "precneqq": "⪵", "precnsim": "⋨", "precsim": "≾", "prime": "′", "Prime": "″", "primes": "ℙ", "prnap": "⪹", "prnE": "⪵", "prnsim": "⋨", "prod": "∏", "Product": "∏", "profalar": "⌮", "profline": "⌒", "profsurf": "⌓", "prop": "∝", "Proportion": "∷", "Proportional": "∝", "propto": "∝", "prsim": "≾", "prurel": "⊰", "pscr": "𝓅", "Pscr": "𝒫", "psi": "ψ", "Psi": "Ψ", "puncsp": " ", "qfr": "𝔮", "Qfr": "𝔔", "qint": "⨌", "qopf": "𝕢", "Qopf": "ℚ", "qprime": "⁗", "qscr": "𝓆", "Qscr": "𝒬", "quaternions": "ℍ", "quatint": "⨖", "quest": "?", "questeq": "≟", "quot": '"', "QUOT": '"', "rAarr": "⇛", "race": "∽̱", "racute": "ŕ", "Racute": "Ŕ", "radic": "√", "raemptyv": "⦳", "rang": "⟩", "Rang": "⟫", "rangd": "⦒", "range": "⦥", "rangle": "⟩", "raquo": "»", "rarr": "→", "rArr": "⇒", "Rarr": "↠", "rarrap": "⥵", "rarrb": "⇥", "rarrbfs": "⤠", "rarrc": "⤳", "rarrfs": "⤞", "rarrhk": "↪", "rarrlp": "↬", "rarrpl": "⥅", "rarrsim": "⥴", "rarrtl": "↣", "Rarrtl": "⤖", "rarrw": "↝", "ratail": "⤚", "rAtail": "⤜", "ratio": "∶", "rationals": "ℚ", "rbarr": "⤍", "rBarr": "⤏", "RBarr": "⤐", "rbbrk": "❳", "rbrace": "}", "rbrack": "]", "rbrke": "⦌", "rbrksld": "⦎", "rbrkslu": "⦐", "rcaron": "ř", "Rcaron": "Ř", "rcedil": "ŗ", "Rcedil": "Ŗ", "rceil": "⌉", "rcub": "}", "rcy": "р", "Rcy": "Р", "rdca": "⤷", "rdldhar": "⥩", "rdquo": "”", "rdquor": "”", "rdsh": "↳", "Re": "ℜ", "real": "ℜ", "realine": "ℛ", "realpart": "ℜ", "reals": "ℝ", "rect": "▭", "reg": "®", "REG": "®", "ReverseElement": "∋", "ReverseEquilibrium": "⇋", "ReverseUpEquilibrium": "⥯", "rfisht": "⥽", "rfloor": "⌋", "rfr": "𝔯", "Rfr": "ℜ", "rHar": "⥤", "rhard": "⇁", "rharu": "⇀", "rharul": "⥬", "rho": "ρ", "Rho": "Ρ", "rhov": "ϱ", "RightAngleBracket": "⟩", "rightarrow": "→", "Rightarrow": "⇒", "RightArrow": "→", "RightArrowBar": "⇥", "RightArrowLeftArrow": "⇄", "rightarrowtail": "↣", "RightCeiling": "⌉", "RightDoubleBracket": "⟧", "RightDownTeeVector": "⥝", "RightDownVector": "⇂", "RightDownVectorBar": "⥕", "RightFloor": "⌋", "rightharpoondown": "⇁", "rightharpoonup": "⇀", "rightleftarrows": "⇄", "rightleftharpoons": "⇌", "rightrightarrows": "⇉", "rightsquigarrow": "↝", "RightTee": "⊢", "RightTeeArrow": "↦", "RightTeeVector": "⥛", "rightthreetimes": "⋌", "RightTriangle": "⊳", "RightTriangleBar": "⧐", "RightTriangleEqual": "⊵", "RightUpDownVector": "⥏", "RightUpTeeVector": "⥜", "RightUpVector": "↾", "RightUpVectorBar": "⥔", "RightVector": "⇀", "RightVectorBar": "⥓", "ring": "˚", "risingdotseq": "≓", "rlarr": "⇄", "rlhar": "⇌", "rlm": "‏", "rmoust": "⎱", "rmoustache": "⎱", "rnmid": "⫮", "roang": "⟭", "roarr": "⇾", "robrk": "⟧", "ropar": "⦆", "ropf": "𝕣", "Ropf": "ℝ", "roplus": "⨮", "rotimes": "⨵", "RoundImplies": "⥰", "rpar": ")", "rpargt": "⦔", "rppolint": "⨒", "rrarr": "⇉", "Rrightarrow": "⇛", "rsaquo": "›", "rscr": "𝓇", "Rscr": "ℛ", "rsh": "↱", "Rsh": "↱", "rsqb": "]", "rsquo": "’", "rsquor": "’", "rthree": "⋌", "rtimes": "⋊", "rtri": "▹", "rtrie": "⊵", "rtrif": "▸", "rtriltri": "⧎", "RuleDelayed": "⧴", "ruluhar": "⥨", "rx": "℞", "sacute": "ś", "Sacute": "Ś", "sbquo": "‚", "sc": "≻", "Sc": "⪼", "scap": "⪸", "scaron": "š", "Scaron": "Š", "sccue": "≽", "sce": "⪰", "scE": "⪴", "scedil": "ş", "Scedil": "Ş", "scirc": "ŝ", "Scirc": "Ŝ", "scnap": "⪺", "scnE": "⪶", "scnsim": "⋩", "scpolint": "⨓", "scsim": "≿", "scy": "с", "Scy": "С", "sdot": "⋅", "sdotb": "⊡", "sdote": "⩦", "searhk": "⤥", "searr": "↘", "seArr": "⇘", "searrow": "↘", "sect": "§", "semi": ";", "seswar": "⤩", "setminus": "∖", "setmn": "∖", "sext": "✶", "sfr": "𝔰", "Sfr": "𝔖", "sfrown": "⌢", "sharp": "♯", "shchcy": "щ", "SHCHcy": "Щ", "shcy": "ш", "SHcy": "Ш", "ShortDownArrow": "↓", "ShortLeftArrow": "←", "shortmid": "∣", "shortparallel": "∥", "ShortRightArrow": "→", "ShortUpArrow": "↑", "shy": "­", "sigma": "σ", "Sigma": "Σ", "sigmaf": "ς", "sigmav": "ς", "sim": "∼", "simdot": "⩪", "sime": "≃", "simeq": "≃", "simg": "⪞", "simgE": "⪠", "siml": "⪝", "simlE": "⪟", "simne": "≆", "simplus": "⨤", "simrarr": "⥲", "slarr": "←", "SmallCircle": "∘", "smallsetminus": "∖", "smashp": "⨳", "smeparsl": "⧤", "smid": "∣", "smile": "⌣", "smt": "⪪", "smte": "⪬", "smtes": "⪬︀", "softcy": "ь", "SOFTcy": "Ь", "sol": "/", "solb": "⧄", "solbar": "⌿", "sopf": "𝕤", "Sopf": "𝕊", "spades": "♠", "spadesuit": "♠", "spar": "∥", "sqcap": "⊓", "sqcaps": "⊓︀", "sqcup": "⊔", "sqcups": "⊔︀", "Sqrt": "√", "sqsub": "⊏", "sqsube": "⊑", "sqsubset": "⊏", "sqsubseteq": "⊑", "sqsup": "⊐", "sqsupe": "⊒", "sqsupset": "⊐", "sqsupseteq": "⊒", "squ": "□", "square": "□", "Square": "□", "SquareIntersection": "⊓", "SquareSubset": "⊏", "SquareSubsetEqual": "⊑", "SquareSuperset": "⊐", "SquareSupersetEqual": "⊒", "SquareUnion": "⊔", "squarf": "▪", "squf": "▪", "srarr": "→", "sscr": "𝓈", "Sscr": "𝒮", "ssetmn": "∖", "ssmile": "⌣", "sstarf": "⋆", "star": "☆", "Star": "⋆", "starf": "★", "straightepsilon": "ϵ", "straightphi": "ϕ", "strns": "¯", "sub": "⊂", "Sub": "⋐", "subdot": "⪽", "sube": "⊆", "subE": "⫅", "subedot": "⫃", "submult": "⫁", "subne": "⊊", "subnE": "⫋", "subplus": "⪿", "subrarr": "⥹", "subset": "⊂", "Subset": "⋐", "subseteq": "⊆", "subseteqq": "⫅", "SubsetEqual": "⊆", "subsetneq": "⊊", "subsetneqq": "⫋", "subsim": "⫇", "subsub": "⫕", "subsup": "⫓", "succ": "≻", "succapprox": "⪸", "succcurlyeq": "≽", "Succeeds": "≻", "SucceedsEqual": "⪰", "SucceedsSlantEqual": "≽", "SucceedsTilde": "≿", "succeq": "⪰", "succnapprox": "⪺", "succneqq": "⪶", "succnsim": "⋩", "succsim": "≿", "SuchThat": "∋", "sum": "∑", "Sum": "∑", "sung": "♪", "sup": "⊃", "Sup": "⋑", "sup1": "¹", "sup2": "²", "sup3": "³", "supdot": "⪾", "supdsub": "⫘", "supe": "⊇", "supE": "⫆", "supedot": "⫄", "Superset": "⊃", "SupersetEqual": "⊇", "suphsol": "⟉", "suphsub": "⫗", "suplarr": "⥻", "supmult": "⫂", "supne": "⊋", "supnE": "⫌", "supplus": "⫀", "supset": "⊃", "Supset": "⋑", "supseteq": "⊇", "supseteqq": "⫆", "supsetneq": "⊋", "supsetneqq": "⫌", "supsim": "⫈", "supsub": "⫔", "supsup": "⫖", "swarhk": "⤦", "swarr": "↙", "swArr": "⇙", "swarrow": "↙", "swnwar": "⤪", "szlig": "ß", "Tab": "	", "target": "⌖", "tau": "τ", "Tau": "Τ", "tbrk": "⎴", "tcaron": "ť", "Tcaron": "Ť", "tcedil": "ţ", "Tcedil": "Ţ", "tcy": "т", "Tcy": "Т", "tdot": "⃛", "telrec": "⌕", "tfr": "𝔱", "Tfr": "𝔗", "there4": "∴", "therefore": "∴", "Therefore": "∴", "theta": "θ", "Theta": "Θ", "thetasym": "ϑ", "thetav": "ϑ", "thickapprox": "≈", "thicksim": "∼", "ThickSpace": "  ", "thinsp": " ", "ThinSpace": " ", "thkap": "≈", "thksim": "∼", "thorn": "þ", "THORN": "Þ", "tilde": "˜", "Tilde": "∼", "TildeEqual": "≃", "TildeFullEqual": "≅", "TildeTilde": "≈", "times": "×", "timesb": "⊠", "timesbar": "⨱", "timesd": "⨰", "tint": "∭", "toea": "⤨", "top": "⊤", "topbot": "⌶", "topcir": "⫱", "topf": "𝕥", "Topf": "𝕋", "topfork": "⫚", "tosa": "⤩", "tprime": "‴", "trade": "™", "TRADE": "™", "triangle": "▵", "triangledown": "▿", "triangleleft": "◃", "trianglelefteq": "⊴", "triangleq": "≜", "triangleright": "▹", "trianglerighteq": "⊵", "tridot": "◬", "trie": "≜", "triminus": "⨺", "TripleDot": "⃛", "triplus": "⨹", "trisb": "⧍", "tritime": "⨻", "trpezium": "⏢", "tscr": "𝓉", "Tscr": "𝒯", "tscy": "ц", "TScy": "Ц", "tshcy": "ћ", "TSHcy": "Ћ", "tstrok": "ŧ", "Tstrok": "Ŧ", "twixt": "≬", "twoheadleftarrow": "↞", "twoheadrightarrow": "↠", "uacute": "ú", "Uacute": "Ú", "uarr": "↑", "uArr": "⇑", "Uarr": "↟", "Uarrocir": "⥉", "ubrcy": "ў", "Ubrcy": "Ў", "ubreve": "ŭ", "Ubreve": "Ŭ", "ucirc": "û", "Ucirc": "Û", "ucy": "у", "Ucy": "У", "udarr": "⇅", "udblac": "ű", "Udblac": "Ű", "udhar": "⥮", "ufisht": "⥾", "ufr": "𝔲", "Ufr": "𝔘", "ugrave": "ù", "Ugrave": "Ù", "uHar": "⥣", "uharl": "↿", "uharr": "↾", "uhblk": "▀", "ulcorn": "⌜", "ulcorner": "⌜", "ulcrop": "⌏", "ultri": "◸", "umacr": "ū", "Umacr": "Ū", "uml": "¨", "UnderBar": "_", "UnderBrace": "⏟", "UnderBracket": "⎵", "UnderParenthesis": "⏝", "Union": "⋃", "UnionPlus": "⊎", "uogon": "ų", "Uogon": "Ų", "uopf": "𝕦", "Uopf": "𝕌", "uparrow": "↑", "Uparrow": "⇑", "UpArrow": "↑", "UpArrowBar": "⤒", "UpArrowDownArrow": "⇅", "updownarrow": "↕", "Updownarrow": "⇕", "UpDownArrow": "↕", "UpEquilibrium": "⥮", "upharpoonleft": "↿", "upharpoonright": "↾", "uplus": "⊎", "UpperLeftArrow": "↖", "UpperRightArrow": "↗", "upsi": "υ", "Upsi": "ϒ", "upsih": "ϒ", "upsilon": "υ", "Upsilon": "Υ", "UpTee": "⊥", "UpTeeArrow": "↥", "upuparrows": "⇈", "urcorn": "⌝", "urcorner": "⌝", "urcrop": "⌎", "uring": "ů", "Uring": "Ů", "urtri": "◹", "uscr": "𝓊", "Uscr": "𝒰", "utdot": "⋰", "utilde": "ũ", "Utilde": "Ũ", "utri": "▵", "utrif": "▴", "uuarr": "⇈", "uuml": "ü", "Uuml": "Ü", "uwangle": "⦧", "vangrt": "⦜", "varepsilon": "ϵ", "varkappa": "ϰ", "varnothing": "∅", "varphi": "ϕ", "varpi": "ϖ", "varpropto": "∝", "varr": "↕", "vArr": "⇕", "varrho": "ϱ", "varsigma": "ς", "varsubsetneq": "⊊︀", "varsubsetneqq": "⫋︀", "varsupsetneq": "⊋︀", "varsupsetneqq": "⫌︀", "vartheta": "ϑ", "vartriangleleft": "⊲", "vartriangleright": "⊳", "vBar": "⫨", "Vbar": "⫫", "vBarv": "⫩", "vcy": "в", "Vcy": "В", "vdash": "⊢", "vDash": "⊨", "Vdash": "⊩", "VDash": "⊫", "Vdashl": "⫦", "vee": "∨", "Vee": "⋁", "veebar": "⊻", "veeeq": "≚", "vellip": "⋮", "verbar": "|", "Verbar": "‖", "vert": "|", "Vert": "‖", "VerticalBar": "∣", "VerticalLine": "|", "VerticalSeparator": "❘", "VerticalTilde": "≀", "VeryThinSpace": " ", "vfr": "𝔳", "Vfr": "𝔙", "vltri": "⊲", "vnsub": "⊂⃒", "vnsup": "⊃⃒", "vopf": "𝕧", "Vopf": "𝕍", "vprop": "∝", "vrtri": "⊳", "vscr": "𝓋", "Vscr": "𝒱", "vsubne": "⊊︀", "vsubnE": "⫋︀", "vsupne": "⊋︀", "vsupnE": "⫌︀", "Vvdash": "⊪", "vzigzag": "⦚", "wcirc": "ŵ", "Wcirc": "Ŵ", "wedbar": "⩟", "wedge": "∧", "Wedge": "⋀", "wedgeq": "≙", "weierp": "℘", "wfr": "𝔴", "Wfr": "𝔚", "wopf": "𝕨", "Wopf": "𝕎", "wp": "℘", "wr": "≀", "wreath": "≀", "wscr": "𝓌", "Wscr": "𝒲", "xcap": "⋂", "xcirc": "◯", "xcup": "⋃", "xdtri": "▽", "xfr": "𝔵", "Xfr": "𝔛", "xharr": "⟷", "xhArr": "⟺", "xi": "ξ", "Xi": "Ξ", "xlarr": "⟵", "xlArr": "⟸", "xmap": "⟼", "xnis": "⋻", "xodot": "⨀", "xopf": "𝕩", "Xopf": "𝕏", "xoplus": "⨁", "xotime": "⨂", "xrarr": "⟶", "xrArr": "⟹", "xscr": "𝓍", "Xscr": "𝒳", "xsqcup": "⨆", "xuplus": "⨄", "xutri": "△", "xvee": "⋁", "xwedge": "⋀", "yacute": "ý", "Yacute": "Ý", "yacy": "я", "YAcy": "Я", "ycirc": "ŷ", "Ycirc": "Ŷ", "ycy": "ы", "Ycy": "Ы", "yen": "¥", "yfr": "𝔶", "Yfr": "𝔜", "yicy": "ї", "YIcy": "Ї", "yopf": "𝕪", "Yopf": "𝕐", "yscr": "𝓎", "Yscr": "𝒴", "yucy": "ю", "YUcy": "Ю", "yuml": "ÿ", "Yuml": "Ÿ", "zacute": "ź", "Zacute": "Ź", "zcaron": "ž", "Zcaron": "Ž", "zcy": "з", "Zcy": "З", "zdot": "ż", "Zdot": "Ż", "zeetrf": "ℨ", "ZeroWidthSpace": "​", "zeta": "ζ", "Zeta": "Ζ", "zfr": "𝔷", "Zfr": "ℨ", "zhcy": "ж", "ZHcy": "Ж", "zigrarr": "⇝", "zopf": "𝕫", "Zopf": "ℤ", "zscr": "𝓏", "Zscr": "𝒵", "zwj": "‍", "zwnj": "‌" };
-        var decodeMapLegacy = { "aacute": "á", "Aacute": "Á", "acirc": "â", "Acirc": "Â", "acute": "´", "aelig": "æ", "AElig": "Æ", "agrave": "à", "Agrave": "À", "amp": "&", "AMP": "&", "aring": "å", "Aring": "Å", "atilde": "ã", "Atilde": "Ã", "auml": "ä", "Auml": "Ä", "brvbar": "¦", "ccedil": "ç", "Ccedil": "Ç", "cedil": "¸", "cent": "¢", "copy": "©", "COPY": "©", "curren": "¤", "deg": "°", "divide": "÷", "eacute": "é", "Eacute": "É", "ecirc": "ê", "Ecirc": "Ê", "egrave": "è", "Egrave": "È", "eth": "ð", "ETH": "Ð", "euml": "ë", "Euml": "Ë", "frac12": "½", "frac14": "¼", "frac34": "¾", "gt": ">", "GT": ">", "iacute": "í", "Iacute": "Í", "icirc": "î", "Icirc": "Î", "iexcl": "¡", "igrave": "ì", "Igrave": "Ì", "iquest": "¿", "iuml": "ï", "Iuml": "Ï", "laquo": "«", "lt": "<", "LT": "<", "macr": "¯", "micro": "µ", "middot": "·", "nbsp": " ", "not": "¬", "ntilde": "ñ", "Ntilde": "Ñ", "oacute": "ó", "Oacute": "Ó", "ocirc": "ô", "Ocirc": "Ô", "ograve": "ò", "Ograve": "Ò", "ordf": "ª", "ordm": "º", "oslash": "ø", "Oslash": "Ø", "otilde": "õ", "Otilde": "Õ", "ouml": "ö", "Ouml": "Ö", "para": "¶", "plusmn": "±", "pound": "£", "quot": '"', "QUOT": '"', "raquo": "»", "reg": "®", "REG": "®", "sect": "§", "shy": "­", "sup1": "¹", "sup2": "²", "sup3": "³", "szlig": "ß", "thorn": "þ", "THORN": "Þ", "times": "×", "uacute": "ú", "Uacute": "Ú", "ucirc": "û", "Ucirc": "Û", "ugrave": "ù", "Ugrave": "Ù", "uml": "¨", "uuml": "ü", "Uuml": "Ü", "yacute": "ý", "Yacute": "Ý", "yen": "¥", "yuml": "ÿ" };
-        var decodeMapNumeric = { "0": "�", "128": "€", "130": "‚", "131": "ƒ", "132": "„", "133": "…", "134": "†", "135": "‡", "136": "ˆ", "137": "‰", "138": "Š", "139": "‹", "140": "Œ", "142": "Ž", "145": "‘", "146": "’", "147": "“", "148": "”", "149": "•", "150": "–", "151": "—", "152": "˜", "153": "™", "154": "š", "155": "›", "156": "œ", "158": "ž", "159": "Ÿ" };
-        var invalidReferenceCodePoints = [1, 2, 3, 4, 5, 6, 7, 8, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 64976, 64977, 64978, 64979, 64980, 64981, 64982, 64983, 64984, 64985, 64986, 64987, 64988, 64989, 64990, 64991, 64992, 64993, 64994, 64995, 64996, 64997, 64998, 64999, 65e3, 65001, 65002, 65003, 65004, 65005, 65006, 65007, 65534, 65535, 131070, 131071, 196606, 196607, 262142, 262143, 327678, 327679, 393214, 393215, 458750, 458751, 524286, 524287, 589822, 589823, 655358, 655359, 720894, 720895, 786430, 786431, 851966, 851967, 917502, 917503, 983038, 983039, 1048574, 1048575, 1114110, 1114111];
-        var stringFromCharCode = String.fromCharCode;
-        var object = {};
-        var hasOwnProperty = object.hasOwnProperty;
-        var has = function(object2, propertyName) {
-          return hasOwnProperty.call(object2, propertyName);
-        };
-        var contains = function(array, value) {
-          var index = -1;
-          var length = array.length;
-          while (++index < length) {
-            if (array[index] == value) {
-              return true;
-            }
-          }
-          return false;
-        };
-        var merge = function(options, defaults) {
-          if (!options) {
-            return defaults;
-          }
-          var result = {};
-          var key2;
-          for (key2 in defaults) {
-            result[key2] = has(options, key2) ? options[key2] : defaults[key2];
-          }
-          return result;
-        };
-        var codePointToSymbol = function(codePoint, strict) {
-          var output = "";
-          if (codePoint >= 55296 && codePoint <= 57343 || codePoint > 1114111) {
-            if (strict) {
-              parseError("character reference outside the permissible Unicode range");
-            }
-            return "�";
-          }
-          if (has(decodeMapNumeric, codePoint)) {
-            if (strict) {
-              parseError("disallowed character reference");
-            }
-            return decodeMapNumeric[codePoint];
-          }
-          if (strict && contains(invalidReferenceCodePoints, codePoint)) {
-            parseError("disallowed character reference");
-          }
-          if (codePoint > 65535) {
-            codePoint -= 65536;
-            output += stringFromCharCode(codePoint >>> 10 & 1023 | 55296);
-            codePoint = 56320 | codePoint & 1023;
-          }
-          output += stringFromCharCode(codePoint);
-          return output;
-        };
-        var hexEscape = function(codePoint) {
-          return "&#x" + codePoint.toString(16).toUpperCase() + ";";
-        };
-        var decEscape = function(codePoint) {
-          return "&#" + codePoint + ";";
-        };
-        var parseError = function(message) {
-          throw Error("Parse error: " + message);
-        };
-        var encode = function(string, options) {
-          options = merge(options, encode.options);
-          var strict = options.strict;
-          if (strict && regexInvalidRawCodePoint.test(string)) {
-            parseError("forbidden code point");
-          }
-          var encodeEverything = options.encodeEverything;
-          var useNamedReferences = options.useNamedReferences;
-          var allowUnsafeSymbols = options.allowUnsafeSymbols;
-          var escapeCodePoint = options.decimal ? decEscape : hexEscape;
-          var escapeBmpSymbol = function(symbol) {
-            return escapeCodePoint(symbol.charCodeAt(0));
-          };
-          if (encodeEverything) {
-            string = string.replace(regexAsciiWhitelist, function(symbol) {
-              if (useNamedReferences && has(encodeMap, symbol)) {
-                return "&" + encodeMap[symbol] + ";";
-              }
-              return escapeBmpSymbol(symbol);
-            });
-            if (useNamedReferences) {
-              string = string.replace(/&gt;\u20D2/g, "&nvgt;").replace(/&lt;\u20D2/g, "&nvlt;").replace(/&#x66;&#x6A;/g, "&fjlig;");
-            }
-            if (useNamedReferences) {
-              string = string.replace(regexEncodeNonAscii, function(string2) {
-                return "&" + encodeMap[string2] + ";";
-              });
-            }
-          } else if (useNamedReferences) {
-            if (!allowUnsafeSymbols) {
-              string = string.replace(regexEscape, function(string2) {
-                return "&" + encodeMap[string2] + ";";
-              });
-            }
-            string = string.replace(/&gt;\u20D2/g, "&nvgt;").replace(/&lt;\u20D2/g, "&nvlt;");
-            string = string.replace(regexEncodeNonAscii, function(string2) {
-              return "&" + encodeMap[string2] + ";";
-            });
-          } else if (!allowUnsafeSymbols) {
-            string = string.replace(regexEscape, escapeBmpSymbol);
-          }
-          return string.replace(regexAstralSymbols, function($0) {
-            var high = $0.charCodeAt(0);
-            var low = $0.charCodeAt(1);
-            var codePoint = (high - 55296) * 1024 + low - 56320 + 65536;
-            return escapeCodePoint(codePoint);
-          }).replace(regexBmpWhitelist, escapeBmpSymbol);
-        };
-        encode.options = {
-          "allowUnsafeSymbols": false,
-          "encodeEverything": false,
-          "strict": false,
-          "useNamedReferences": false,
-          "decimal": false
-        };
-        var decode = function(html, options) {
-          options = merge(options, decode.options);
-          var strict = options.strict;
-          if (strict && regexInvalidEntity.test(html)) {
-            parseError("malformed character reference");
-          }
-          return html.replace(regexDecode, function($0, $1, $2, $3, $4, $5, $6, $7, $8) {
-            var codePoint;
-            var semicolon;
-            var decDigits;
-            var hexDigits;
-            var reference;
-            var next;
-            if ($1) {
-              reference = $1;
-              return decodeMap[reference];
-            }
-            if ($2) {
-              reference = $2;
-              next = $3;
-              if (next && options.isAttributeValue) {
-                if (strict && next == "=") {
-                  parseError("`&` did not start a character reference");
-                }
-                return $0;
-              } else {
-                if (strict) {
-                  parseError(
-                    "named character reference was not terminated by a semicolon"
-                  );
-                }
-                return decodeMapLegacy[reference] + (next || "");
-              }
-            }
-            if ($4) {
-              decDigits = $4;
-              semicolon = $5;
-              if (strict && !semicolon) {
-                parseError("character reference was not terminated by a semicolon");
-              }
-              codePoint = parseInt(decDigits, 10);
-              return codePointToSymbol(codePoint, strict);
-            }
-            if ($6) {
-              hexDigits = $6;
-              semicolon = $7;
-              if (strict && !semicolon) {
-                parseError("character reference was not terminated by a semicolon");
-              }
-              codePoint = parseInt(hexDigits, 16);
-              return codePointToSymbol(codePoint, strict);
-            }
-            if (strict) {
-              parseError(
-                "named character reference was not terminated by a semicolon"
-              );
-            }
-            return $0;
-          });
-        };
-        decode.options = {
-          "isAttributeValue": false,
-          "strict": false
-        };
-        var escape2 = function(string) {
-          return string.replace(regexEscape, function($0) {
-            return escapeMap[$0];
-          });
-        };
-        var he2 = {
-          "version": "1.2.0",
-          "encode": encode,
-          "decode": decode,
-          "escape": escape2,
-          "unescape": decode
-        };
-        if (typeof define == "function" && typeof define.amd == "object" && define.amd) {
-          define(function() {
-            return he2;
-          });
-        } else if (freeExports && !freeExports.nodeType) {
-          if (freeModule) {
-            freeModule.exports = he2;
-          } else {
-            for (var key in he2) {
-              has(he2, key) && (freeExports[key] = he2[key]);
-            }
-          }
-        } else {
-          root.he = he2;
-        }
-      })(exports);
-    }
-  });
-
-  // node_modules/pako/lib/zlib/trees.js
-  var require_trees = __commonJS({
-    "node_modules/pako/lib/zlib/trees.js"(exports, module) {
-      "use strict";
-      var Z_FIXED2 = 4;
-      var Z_BINARY2 = 0;
-      var Z_TEXT2 = 1;
-      var Z_UNKNOWN2 = 2;
-      function zero2(buf) {
-        let len = buf.length;
-        while (--len >= 0) {
-          buf[len] = 0;
-        }
-      }
-      var STORED_BLOCK2 = 0;
-      var STATIC_TREES2 = 1;
-      var DYN_TREES2 = 2;
-      var MIN_MATCH2 = 3;
-      var MAX_MATCH2 = 258;
-      var LENGTH_CODES2 = 29;
-      var LITERALS2 = 256;
-      var L_CODES2 = LITERALS2 + 1 + LENGTH_CODES2;
-      var D_CODES2 = 30;
-      var BL_CODES2 = 19;
-      var HEAP_SIZE2 = 2 * L_CODES2 + 1;
-      var MAX_BITS2 = 15;
-      var Buf_size2 = 16;
-      var MAX_BL_BITS2 = 7;
-      var END_BLOCK2 = 256;
-      var REP_3_62 = 16;
-      var REPZ_3_102 = 17;
-      var REPZ_11_1382 = 18;
-      var extra_lbits2 = (
-        /* extra bits for each length code */
-        new Uint8Array([0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0])
-      );
-      var extra_dbits2 = (
-        /* extra bits for each distance code */
-        new Uint8Array([0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13])
-      );
-      var extra_blbits2 = (
-        /* extra bits for each bit length code */
-        new Uint8Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 3, 7])
-      );
-      var bl_order2 = new Uint8Array([16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]);
-      var DIST_CODE_LEN2 = 512;
-      var static_ltree2 = new Array((L_CODES2 + 2) * 2);
-      zero2(static_ltree2);
-      var static_dtree2 = new Array(D_CODES2 * 2);
-      zero2(static_dtree2);
-      var _dist_code2 = new Array(DIST_CODE_LEN2);
-      zero2(_dist_code2);
-      var _length_code2 = new Array(MAX_MATCH2 - MIN_MATCH2 + 1);
-      zero2(_length_code2);
-      var base_length2 = new Array(LENGTH_CODES2);
-      zero2(base_length2);
-      var base_dist2 = new Array(D_CODES2);
-      zero2(base_dist2);
-      function StaticTreeDesc2(static_tree, extra_bits, extra_base, elems, max_length) {
-        this.static_tree = static_tree;
-        this.extra_bits = extra_bits;
-        this.extra_base = extra_base;
-        this.elems = elems;
-        this.max_length = max_length;
-        this.has_stree = static_tree && static_tree.length;
-      }
-      var static_l_desc2;
-      var static_d_desc2;
-      var static_bl_desc2;
-      function TreeDesc2(dyn_tree, stat_desc) {
-        this.dyn_tree = dyn_tree;
-        this.max_code = 0;
-        this.stat_desc = stat_desc;
-      }
-      var d_code2 = (dist) => {
-        return dist < 256 ? _dist_code2[dist] : _dist_code2[256 + (dist >>> 7)];
-      };
-      var put_short2 = (s, w) => {
-        s.pending_buf[s.pending++] = w & 255;
-        s.pending_buf[s.pending++] = w >>> 8 & 255;
-      };
-      var send_bits2 = (s, value, length) => {
-        if (s.bi_valid > Buf_size2 - length) {
-          s.bi_buf |= value << s.bi_valid & 65535;
-          put_short2(s, s.bi_buf);
-          s.bi_buf = value >> Buf_size2 - s.bi_valid;
-          s.bi_valid += length - Buf_size2;
-        } else {
-          s.bi_buf |= value << s.bi_valid & 65535;
-          s.bi_valid += length;
-        }
-      };
-      var send_code2 = (s, c, tree) => {
-        send_bits2(
-          s,
-          tree[c * 2],
-          tree[c * 2 + 1]
-          /*.Len*/
-        );
-      };
-      var bi_reverse2 = (code, len) => {
-        let res = 0;
-        do {
-          res |= code & 1;
-          code >>>= 1;
-          res <<= 1;
-        } while (--len > 0);
-        return res >>> 1;
-      };
-      var bi_flush2 = (s) => {
-        if (s.bi_valid === 16) {
-          put_short2(s, s.bi_buf);
-          s.bi_buf = 0;
-          s.bi_valid = 0;
-        } else if (s.bi_valid >= 8) {
-          s.pending_buf[s.pending++] = s.bi_buf & 255;
-          s.bi_buf >>= 8;
-          s.bi_valid -= 8;
-        }
-      };
-      var gen_bitlen2 = (s, desc) => {
-        const tree = desc.dyn_tree;
-        const max_code = desc.max_code;
-        const stree = desc.stat_desc.static_tree;
-        const has_stree = desc.stat_desc.has_stree;
-        const extra = desc.stat_desc.extra_bits;
-        const base = desc.stat_desc.extra_base;
-        const max_length = desc.stat_desc.max_length;
-        let h;
-        let n, m;
-        let bits;
-        let xbits;
-        let f;
-        let overflow = 0;
-        for (bits = 0; bits <= MAX_BITS2; bits++) {
-          s.bl_count[bits] = 0;
-        }
-        tree[s.heap[s.heap_max] * 2 + 1] = 0;
-        for (h = s.heap_max + 1; h < HEAP_SIZE2; h++) {
-          n = s.heap[h];
-          bits = tree[tree[n * 2 + 1] * 2 + 1] + 1;
-          if (bits > max_length) {
-            bits = max_length;
-            overflow++;
-          }
-          tree[n * 2 + 1] = bits;
-          if (n > max_code) {
-            continue;
-          }
-          s.bl_count[bits]++;
-          xbits = 0;
-          if (n >= base) {
-            xbits = extra[n - base];
-          }
-          f = tree[n * 2];
-          s.opt_len += f * (bits + xbits);
-          if (has_stree) {
-            s.static_len += f * (stree[n * 2 + 1] + xbits);
-          }
-        }
-        if (overflow === 0) {
-          return;
-        }
-        do {
-          bits = max_length - 1;
-          while (s.bl_count[bits] === 0) {
-            bits--;
-          }
-          s.bl_count[bits]--;
-          s.bl_count[bits + 1] += 2;
-          s.bl_count[max_length]--;
-          overflow -= 2;
-        } while (overflow > 0);
-        for (bits = max_length; bits !== 0; bits--) {
-          n = s.bl_count[bits];
-          while (n !== 0) {
-            m = s.heap[--h];
-            if (m > max_code) {
-              continue;
-            }
-            if (tree[m * 2 + 1] !== bits) {
-              s.opt_len += (bits - tree[m * 2 + 1]) * tree[m * 2];
-              tree[m * 2 + 1] = bits;
-            }
-            n--;
-          }
-        }
-      };
-      var gen_codes2 = (tree, max_code, bl_count) => {
-        const next_code = new Array(MAX_BITS2 + 1);
-        let code = 0;
-        let bits;
-        let n;
-        for (bits = 1; bits <= MAX_BITS2; bits++) {
-          code = code + bl_count[bits - 1] << 1;
-          next_code[bits] = code;
-        }
-        for (n = 0; n <= max_code; n++) {
-          let len = tree[n * 2 + 1];
-          if (len === 0) {
-            continue;
-          }
-          tree[n * 2] = bi_reverse2(next_code[len]++, len);
-        }
-      };
-      var tr_static_init2 = () => {
-        let n;
-        let bits;
-        let length;
-        let code;
-        let dist;
-        const bl_count = new Array(MAX_BITS2 + 1);
-        length = 0;
-        for (code = 0; code < LENGTH_CODES2 - 1; code++) {
-          base_length2[code] = length;
-          for (n = 0; n < 1 << extra_lbits2[code]; n++) {
-            _length_code2[length++] = code;
-          }
-        }
-        _length_code2[length - 1] = code;
-        dist = 0;
-        for (code = 0; code < 16; code++) {
-          base_dist2[code] = dist;
-          for (n = 0; n < 1 << extra_dbits2[code]; n++) {
-            _dist_code2[dist++] = code;
-          }
-        }
-        dist >>= 7;
-        for (; code < D_CODES2; code++) {
-          base_dist2[code] = dist << 7;
-          for (n = 0; n < 1 << extra_dbits2[code] - 7; n++) {
-            _dist_code2[256 + dist++] = code;
-          }
-        }
-        for (bits = 0; bits <= MAX_BITS2; bits++) {
-          bl_count[bits] = 0;
-        }
-        n = 0;
-        while (n <= 143) {
-          static_ltree2[n * 2 + 1] = 8;
-          n++;
-          bl_count[8]++;
-        }
-        while (n <= 255) {
-          static_ltree2[n * 2 + 1] = 9;
-          n++;
-          bl_count[9]++;
-        }
-        while (n <= 279) {
-          static_ltree2[n * 2 + 1] = 7;
-          n++;
-          bl_count[7]++;
-        }
-        while (n <= 287) {
-          static_ltree2[n * 2 + 1] = 8;
-          n++;
-          bl_count[8]++;
-        }
-        gen_codes2(static_ltree2, L_CODES2 + 1, bl_count);
-        for (n = 0; n < D_CODES2; n++) {
-          static_dtree2[n * 2 + 1] = 5;
-          static_dtree2[n * 2] = bi_reverse2(n, 5);
-        }
-        static_l_desc2 = new StaticTreeDesc2(static_ltree2, extra_lbits2, LITERALS2 + 1, L_CODES2, MAX_BITS2);
-        static_d_desc2 = new StaticTreeDesc2(static_dtree2, extra_dbits2, 0, D_CODES2, MAX_BITS2);
-        static_bl_desc2 = new StaticTreeDesc2(new Array(0), extra_blbits2, 0, BL_CODES2, MAX_BL_BITS2);
-      };
-      var init_block2 = (s) => {
-        let n;
-        for (n = 0; n < L_CODES2; n++) {
-          s.dyn_ltree[n * 2] = 0;
-        }
-        for (n = 0; n < D_CODES2; n++) {
-          s.dyn_dtree[n * 2] = 0;
-        }
-        for (n = 0; n < BL_CODES2; n++) {
-          s.bl_tree[n * 2] = 0;
-        }
-        s.dyn_ltree[END_BLOCK2 * 2] = 1;
-        s.opt_len = s.static_len = 0;
-        s.sym_next = s.matches = 0;
-      };
-      var bi_windup2 = (s) => {
-        if (s.bi_valid > 8) {
-          put_short2(s, s.bi_buf);
-        } else if (s.bi_valid > 0) {
-          s.pending_buf[s.pending++] = s.bi_buf;
-        }
-        s.bi_buf = 0;
-        s.bi_valid = 0;
-      };
-      var smaller2 = (tree, n, m, depth) => {
-        const _n2 = n * 2;
-        const _m2 = m * 2;
-        return tree[_n2] < tree[_m2] || tree[_n2] === tree[_m2] && depth[n] <= depth[m];
-      };
-      var pqdownheap2 = (s, tree, k) => {
-        const v = s.heap[k];
-        let j = k << 1;
-        while (j <= s.heap_len) {
-          if (j < s.heap_len && smaller2(tree, s.heap[j + 1], s.heap[j], s.depth)) {
-            j++;
-          }
-          if (smaller2(tree, v, s.heap[j], s.depth)) {
-            break;
-          }
-          s.heap[k] = s.heap[j];
-          k = j;
-          j <<= 1;
-        }
-        s.heap[k] = v;
-      };
-      var compress_block2 = (s, ltree, dtree) => {
-        let dist;
-        let lc;
-        let sx = 0;
-        let code;
-        let extra;
-        if (s.sym_next !== 0) {
-          do {
-            dist = s.pending_buf[s.sym_buf + sx++] & 255;
-            dist += (s.pending_buf[s.sym_buf + sx++] & 255) << 8;
-            lc = s.pending_buf[s.sym_buf + sx++];
-            if (dist === 0) {
-              send_code2(s, lc, ltree);
-            } else {
-              code = _length_code2[lc];
-              send_code2(s, code + LITERALS2 + 1, ltree);
-              extra = extra_lbits2[code];
-              if (extra !== 0) {
-                lc -= base_length2[code];
-                send_bits2(s, lc, extra);
-              }
-              dist--;
-              code = d_code2(dist);
-              send_code2(s, code, dtree);
-              extra = extra_dbits2[code];
-              if (extra !== 0) {
-                dist -= base_dist2[code];
-                send_bits2(s, dist, extra);
-              }
-            }
-          } while (sx < s.sym_next);
-        }
-        send_code2(s, END_BLOCK2, ltree);
-      };
-      var build_tree2 = (s, desc) => {
-        const tree = desc.dyn_tree;
-        const stree = desc.stat_desc.static_tree;
-        const has_stree = desc.stat_desc.has_stree;
-        const elems = desc.stat_desc.elems;
-        let n, m;
-        let max_code = -1;
-        let node;
-        s.heap_len = 0;
-        s.heap_max = HEAP_SIZE2;
-        for (n = 0; n < elems; n++) {
-          if (tree[n * 2] !== 0) {
-            s.heap[++s.heap_len] = max_code = n;
-            s.depth[n] = 0;
-          } else {
-            tree[n * 2 + 1] = 0;
-          }
-        }
-        while (s.heap_len < 2) {
-          node = s.heap[++s.heap_len] = max_code < 2 ? ++max_code : 0;
-          tree[node * 2] = 1;
-          s.depth[node] = 0;
-          s.opt_len--;
-          if (has_stree) {
-            s.static_len -= stree[node * 2 + 1];
-          }
-        }
-        desc.max_code = max_code;
-        for (n = s.heap_len >> 1; n >= 1; n--) {
-          pqdownheap2(s, tree, n);
-        }
-        node = elems;
-        do {
-          n = s.heap[
-            1
-            /*SMALLEST*/
-          ];
-          s.heap[
-            1
-            /*SMALLEST*/
-          ] = s.heap[s.heap_len--];
-          pqdownheap2(
-            s,
-            tree,
-            1
-            /*SMALLEST*/
-          );
-          m = s.heap[
-            1
-            /*SMALLEST*/
-          ];
-          s.heap[--s.heap_max] = n;
-          s.heap[--s.heap_max] = m;
-          tree[node * 2] = tree[n * 2] + tree[m * 2];
-          s.depth[node] = (s.depth[n] >= s.depth[m] ? s.depth[n] : s.depth[m]) + 1;
-          tree[n * 2 + 1] = tree[m * 2 + 1] = node;
-          s.heap[
-            1
-            /*SMALLEST*/
-          ] = node++;
-          pqdownheap2(
-            s,
-            tree,
-            1
-            /*SMALLEST*/
-          );
-        } while (s.heap_len >= 2);
-        s.heap[--s.heap_max] = s.heap[
-          1
-          /*SMALLEST*/
-        ];
-        gen_bitlen2(s, desc);
-        gen_codes2(tree, max_code, s.bl_count);
-      };
-      var scan_tree2 = (s, tree, max_code) => {
-        let n;
-        let prevlen = -1;
-        let curlen;
-        let nextlen = tree[0 * 2 + 1];
-        let count = 0;
-        let max_count = 7;
-        let min_count = 4;
-        if (nextlen === 0) {
-          max_count = 138;
-          min_count = 3;
-        }
-        tree[(max_code + 1) * 2 + 1] = 65535;
-        for (n = 0; n <= max_code; n++) {
-          curlen = nextlen;
-          nextlen = tree[(n + 1) * 2 + 1];
-          if (++count < max_count && curlen === nextlen) {
-            continue;
-          } else if (count < min_count) {
-            s.bl_tree[curlen * 2] += count;
-          } else if (curlen !== 0) {
-            if (curlen !== prevlen) {
-              s.bl_tree[curlen * 2]++;
-            }
-            s.bl_tree[REP_3_62 * 2]++;
-          } else if (count <= 10) {
-            s.bl_tree[REPZ_3_102 * 2]++;
-          } else {
-            s.bl_tree[REPZ_11_1382 * 2]++;
-          }
-          count = 0;
-          prevlen = curlen;
-          if (nextlen === 0) {
-            max_count = 138;
-            min_count = 3;
-          } else if (curlen === nextlen) {
-            max_count = 6;
-            min_count = 3;
-          } else {
-            max_count = 7;
-            min_count = 4;
-          }
-        }
-      };
-      var send_tree2 = (s, tree, max_code) => {
-        let n;
-        let prevlen = -1;
-        let curlen;
-        let nextlen = tree[0 * 2 + 1];
-        let count = 0;
-        let max_count = 7;
-        let min_count = 4;
-        if (nextlen === 0) {
-          max_count = 138;
-          min_count = 3;
-        }
-        for (n = 0; n <= max_code; n++) {
-          curlen = nextlen;
-          nextlen = tree[(n + 1) * 2 + 1];
-          if (++count < max_count && curlen === nextlen) {
-            continue;
-          } else if (count < min_count) {
-            do {
-              send_code2(s, curlen, s.bl_tree);
-            } while (--count !== 0);
-          } else if (curlen !== 0) {
-            if (curlen !== prevlen) {
-              send_code2(s, curlen, s.bl_tree);
-              count--;
-            }
-            send_code2(s, REP_3_62, s.bl_tree);
-            send_bits2(s, count - 3, 2);
-          } else if (count <= 10) {
-            send_code2(s, REPZ_3_102, s.bl_tree);
-            send_bits2(s, count - 3, 3);
-          } else {
-            send_code2(s, REPZ_11_1382, s.bl_tree);
-            send_bits2(s, count - 11, 7);
-          }
-          count = 0;
-          prevlen = curlen;
-          if (nextlen === 0) {
-            max_count = 138;
-            min_count = 3;
-          } else if (curlen === nextlen) {
-            max_count = 6;
-            min_count = 3;
-          } else {
-            max_count = 7;
-            min_count = 4;
-          }
-        }
-      };
-      var build_bl_tree2 = (s) => {
-        let max_blindex;
-        scan_tree2(s, s.dyn_ltree, s.l_desc.max_code);
-        scan_tree2(s, s.dyn_dtree, s.d_desc.max_code);
-        build_tree2(s, s.bl_desc);
-        for (max_blindex = BL_CODES2 - 1; max_blindex >= 3; max_blindex--) {
-          if (s.bl_tree[bl_order2[max_blindex] * 2 + 1] !== 0) {
-            break;
-          }
-        }
-        s.opt_len += 3 * (max_blindex + 1) + 5 + 5 + 4;
-        return max_blindex;
-      };
-      var send_all_trees2 = (s, lcodes, dcodes, blcodes) => {
-        let rank2;
-        send_bits2(s, lcodes - 257, 5);
-        send_bits2(s, dcodes - 1, 5);
-        send_bits2(s, blcodes - 4, 4);
-        for (rank2 = 0; rank2 < blcodes; rank2++) {
-          send_bits2(s, s.bl_tree[bl_order2[rank2] * 2 + 1], 3);
-        }
-        send_tree2(s, s.dyn_ltree, lcodes - 1);
-        send_tree2(s, s.dyn_dtree, dcodes - 1);
-      };
-      var detect_data_type2 = (s) => {
-        let block_mask = 4093624447;
-        let n;
-        for (n = 0; n <= 31; n++, block_mask >>>= 1) {
-          if (block_mask & 1 && s.dyn_ltree[n * 2] !== 0) {
-            return Z_BINARY2;
-          }
-        }
-        if (s.dyn_ltree[9 * 2] !== 0 || s.dyn_ltree[10 * 2] !== 0 || s.dyn_ltree[13 * 2] !== 0) {
-          return Z_TEXT2;
-        }
-        for (n = 32; n < LITERALS2; n++) {
-          if (s.dyn_ltree[n * 2] !== 0) {
-            return Z_TEXT2;
-          }
-        }
-        return Z_BINARY2;
-      };
-      var static_init_done2 = false;
-      var _tr_init2 = (s) => {
-        if (!static_init_done2) {
-          tr_static_init2();
-          static_init_done2 = true;
-        }
-        s.l_desc = new TreeDesc2(s.dyn_ltree, static_l_desc2);
-        s.d_desc = new TreeDesc2(s.dyn_dtree, static_d_desc2);
-        s.bl_desc = new TreeDesc2(s.bl_tree, static_bl_desc2);
-        s.bi_buf = 0;
-        s.bi_valid = 0;
-        init_block2(s);
-      };
-      var _tr_stored_block2 = (s, buf, stored_len, last) => {
-        send_bits2(s, (STORED_BLOCK2 << 1) + (last ? 1 : 0), 3);
-        bi_windup2(s);
-        put_short2(s, stored_len);
-        put_short2(s, ~stored_len);
-        if (stored_len) {
-          s.pending_buf.set(s.window.subarray(buf, buf + stored_len), s.pending);
-        }
-        s.pending += stored_len;
-      };
-      var _tr_align2 = (s) => {
-        send_bits2(s, STATIC_TREES2 << 1, 3);
-        send_code2(s, END_BLOCK2, static_ltree2);
-        bi_flush2(s);
-      };
-      var _tr_flush_block2 = (s, buf, stored_len, last) => {
-        let opt_lenb, static_lenb;
-        let max_blindex = 0;
-        if (s.level > 0) {
-          if (s.strm.data_type === Z_UNKNOWN2) {
-            s.strm.data_type = detect_data_type2(s);
-          }
-          build_tree2(s, s.l_desc);
-          build_tree2(s, s.d_desc);
-          max_blindex = build_bl_tree2(s);
-          opt_lenb = s.opt_len + 3 + 7 >>> 3;
-          static_lenb = s.static_len + 3 + 7 >>> 3;
-          if (static_lenb <= opt_lenb) {
-            opt_lenb = static_lenb;
-          }
-        } else {
-          opt_lenb = static_lenb = stored_len + 5;
-        }
-        if (stored_len + 4 <= opt_lenb && buf !== -1) {
-          _tr_stored_block2(s, buf, stored_len, last);
-        } else if (s.strategy === Z_FIXED2 || static_lenb === opt_lenb) {
-          send_bits2(s, (STATIC_TREES2 << 1) + (last ? 1 : 0), 3);
-          compress_block2(s, static_ltree2, static_dtree2);
-        } else {
-          send_bits2(s, (DYN_TREES2 << 1) + (last ? 1 : 0), 3);
-          send_all_trees2(s, s.l_desc.max_code + 1, s.d_desc.max_code + 1, max_blindex + 1);
-          compress_block2(s, s.dyn_ltree, s.dyn_dtree);
-        }
-        init_block2(s);
-        if (last) {
-          bi_windup2(s);
-        }
-      };
-      var _tr_tally2 = (s, dist, lc) => {
-        s.pending_buf[s.sym_buf + s.sym_next++] = dist;
-        s.pending_buf[s.sym_buf + s.sym_next++] = dist >> 8;
-        s.pending_buf[s.sym_buf + s.sym_next++] = lc;
-        if (dist === 0) {
-          s.dyn_ltree[lc * 2]++;
-        } else {
-          s.matches++;
-          dist--;
-          s.dyn_ltree[(_length_code2[lc] + LITERALS2 + 1) * 2]++;
-          s.dyn_dtree[d_code2(dist) * 2]++;
-        }
-        return s.sym_next === s.sym_end;
-      };
-      module.exports._tr_init = _tr_init2;
-      module.exports._tr_stored_block = _tr_stored_block2;
-      module.exports._tr_flush_block = _tr_flush_block2;
-      module.exports._tr_tally = _tr_tally2;
-      module.exports._tr_align = _tr_align2;
-    }
-  });
-
-  // node_modules/pako/lib/zlib/adler32.js
-  var require_adler32 = __commonJS({
-    "node_modules/pako/lib/zlib/adler32.js"(exports, module) {
-      "use strict";
-      var adler322 = (adler, buf, len, pos) => {
-        let s1 = adler & 65535 | 0, s2 = adler >>> 16 & 65535 | 0, n = 0;
-        while (len !== 0) {
-          n = len > 2e3 ? 2e3 : len;
-          len -= n;
-          do {
-            s1 = s1 + buf[pos++] | 0;
-            s2 = s2 + s1 | 0;
-          } while (--n);
-          s1 %= 65521;
-          s2 %= 65521;
-        }
-        return s1 | s2 << 16 | 0;
-      };
-      module.exports = adler322;
-    }
-  });
-
-  // node_modules/pako/lib/zlib/crc32.js
-  var require_crc32 = __commonJS({
-    "node_modules/pako/lib/zlib/crc32.js"(exports, module) {
-      "use strict";
-      var makeTable2 = () => {
-        let c, table = [];
-        for (var n = 0; n < 256; n++) {
-          c = n;
-          for (var k = 0; k < 8; k++) {
-            c = c & 1 ? 3988292384 ^ c >>> 1 : c >>> 1;
-          }
-          table[n] = c;
-        }
-        return table;
-      };
-      var crcTable2 = new Uint32Array(makeTable2());
-      var crc322 = (crc, buf, len, pos) => {
-        const t = crcTable2;
-        const end = pos + len;
-        crc ^= -1;
-        for (let i = pos; i < end; i++) {
-          crc = crc >>> 8 ^ t[(crc ^ buf[i]) & 255];
-        }
-        return crc ^ -1;
-      };
-      module.exports = crc322;
-    }
-  });
-
-  // node_modules/pako/lib/zlib/messages.js
-  var require_messages = __commonJS({
-    "node_modules/pako/lib/zlib/messages.js"(exports, module) {
-      "use strict";
-      module.exports = {
-        2: "need dictionary",
-        /* Z_NEED_DICT       2  */
-        1: "stream end",
-        /* Z_STREAM_END      1  */
-        0: "",
-        /* Z_OK              0  */
-        "-1": "file error",
-        /* Z_ERRNO         (-1) */
-        "-2": "stream error",
-        /* Z_STREAM_ERROR  (-2) */
-        "-3": "data error",
-        /* Z_DATA_ERROR    (-3) */
-        "-4": "insufficient memory",
-        /* Z_MEM_ERROR     (-4) */
-        "-5": "buffer error",
-        /* Z_BUF_ERROR     (-5) */
-        "-6": "incompatible version"
-        /* Z_VERSION_ERROR (-6) */
-      };
-    }
-  });
-
-  // node_modules/pako/lib/zlib/constants.js
-  var require_constants = __commonJS({
-    "node_modules/pako/lib/zlib/constants.js"(exports, module) {
-      "use strict";
-      module.exports = {
-        /* Allowed flush values; see deflate() and inflate() below for details */
-        Z_NO_FLUSH: 0,
-        Z_PARTIAL_FLUSH: 1,
-        Z_SYNC_FLUSH: 2,
-        Z_FULL_FLUSH: 3,
-        Z_FINISH: 4,
-        Z_BLOCK: 5,
-        Z_TREES: 6,
-        /* Return codes for the compression/decompression functions. Negative values
-        * are errors, positive values are used for special but normal events.
-        */
-        Z_OK: 0,
-        Z_STREAM_END: 1,
-        Z_NEED_DICT: 2,
-        Z_ERRNO: -1,
-        Z_STREAM_ERROR: -2,
-        Z_DATA_ERROR: -3,
-        Z_MEM_ERROR: -4,
-        Z_BUF_ERROR: -5,
-        //Z_VERSION_ERROR: -6,
-        /* compression levels */
-        Z_NO_COMPRESSION: 0,
-        Z_BEST_SPEED: 1,
-        Z_BEST_COMPRESSION: 9,
-        Z_DEFAULT_COMPRESSION: -1,
-        Z_FILTERED: 1,
-        Z_HUFFMAN_ONLY: 2,
-        Z_RLE: 3,
-        Z_FIXED: 4,
-        Z_DEFAULT_STRATEGY: 0,
-        /* Possible values of the data_type field (though see inflate()) */
-        Z_BINARY: 0,
-        Z_TEXT: 1,
-        //Z_ASCII:                1, // = Z_TEXT (deprecated)
-        Z_UNKNOWN: 2,
-        /* The deflate compression method */
-        Z_DEFLATED: 8
-        //Z_NULL:                 null // Use -1 or null inline, depending on var type
-      };
-    }
-  });
-
-  // node_modules/pako/lib/zlib/deflate.js
-  var require_deflate = __commonJS({
-    "node_modules/pako/lib/zlib/deflate.js"(exports, module) {
-      "use strict";
-      var { _tr_init: _tr_init2, _tr_stored_block: _tr_stored_block2, _tr_flush_block: _tr_flush_block2, _tr_tally: _tr_tally2, _tr_align: _tr_align2 } = require_trees();
-      var adler322 = require_adler32();
-      var crc322 = require_crc32();
-      var msg = require_messages();
-      var {
-        Z_NO_FLUSH: Z_NO_FLUSH2,
-        Z_PARTIAL_FLUSH: Z_PARTIAL_FLUSH2,
-        Z_FULL_FLUSH: Z_FULL_FLUSH2,
-        Z_FINISH: Z_FINISH2,
-        Z_BLOCK: Z_BLOCK2,
-        Z_OK: Z_OK2,
-        Z_STREAM_END: Z_STREAM_END2,
-        Z_STREAM_ERROR: Z_STREAM_ERROR2,
-        Z_DATA_ERROR: Z_DATA_ERROR2,
-        Z_BUF_ERROR: Z_BUF_ERROR2,
-        Z_DEFAULT_COMPRESSION: Z_DEFAULT_COMPRESSION2,
-        Z_FILTERED: Z_FILTERED2,
-        Z_HUFFMAN_ONLY: Z_HUFFMAN_ONLY2,
-        Z_RLE: Z_RLE2,
-        Z_FIXED: Z_FIXED2,
-        Z_DEFAULT_STRATEGY: Z_DEFAULT_STRATEGY2,
-        Z_UNKNOWN: Z_UNKNOWN2,
-        Z_DEFLATED: Z_DEFLATED2
-      } = require_constants();
-      var MAX_MEM_LEVEL2 = 9;
-      var MAX_WBITS2 = 15;
-      var DEF_MEM_LEVEL2 = 8;
-      var LENGTH_CODES2 = 29;
-      var LITERALS2 = 256;
-      var L_CODES2 = LITERALS2 + 1 + LENGTH_CODES2;
-      var D_CODES2 = 30;
-      var BL_CODES2 = 19;
-      var HEAP_SIZE2 = 2 * L_CODES2 + 1;
-      var MAX_BITS2 = 15;
-      var MIN_MATCH2 = 3;
-      var MAX_MATCH2 = 258;
-      var MIN_LOOKAHEAD2 = MAX_MATCH2 + MIN_MATCH2 + 1;
-      var PRESET_DICT2 = 32;
-      var INIT_STATE2 = 42;
-      var GZIP_STATE2 = 57;
-      var EXTRA_STATE2 = 69;
-      var NAME_STATE2 = 73;
-      var COMMENT_STATE2 = 91;
-      var HCRC_STATE2 = 103;
-      var BUSY_STATE2 = 113;
-      var FINISH_STATE2 = 666;
-      var BS_NEED_MORE2 = 1;
-      var BS_BLOCK_DONE2 = 2;
-      var BS_FINISH_STARTED2 = 3;
-      var BS_FINISH_DONE2 = 4;
-      var OS_CODE2 = 3;
-      var err2 = (strm, errorCode) => {
-        strm.msg = msg[errorCode];
-        return errorCode;
-      };
-      var rank2 = (f) => {
-        return f * 2 - (f > 4 ? 9 : 0);
-      };
-      var zero2 = (buf) => {
-        let len = buf.length;
-        while (--len >= 0) {
-          buf[len] = 0;
-        }
-      };
-      var slide_hash2 = (s) => {
-        let n, m;
-        let p;
-        let wsize = s.w_size;
-        n = s.hash_size;
-        p = n;
-        do {
-          m = s.head[--p];
-          s.head[p] = m >= wsize ? m - wsize : 0;
-        } while (--n);
-        n = wsize;
-        p = n;
-        do {
-          m = s.prev[--p];
-          s.prev[p] = m >= wsize ? m - wsize : 0;
-        } while (--n);
-      };
-      var HASH2 = (s, prev, data) => (prev << s.hash_shift ^ data) & s.hash_mask;
-      var INSERT_STRING2 = (s, str) => {
-        let h;
-        if (s.legacy_hash) {
-          h = s.ins_h = HASH2(s, s.ins_h, s.window[str + MIN_MATCH2 - 1]);
-        } else {
-          const w = s.window;
-          const value = w[str] | w[str + 1] << 8 | w[str + 2] << 16 | w[str + 3] << 24;
-          h = s.ins_h = Math.imul(value, 66521) + 66521 >>> 16 & s.hash_mask;
-        }
-        const hash_head = s.prev[str & s.w_mask] = s.head[h];
-        s.head[h] = str;
-        return hash_head;
-      };
-      var flush_pending2 = (strm) => {
-        const s = strm.state;
-        let len = s.pending;
-        if (len > strm.avail_out) {
-          len = strm.avail_out;
-        }
-        if (len === 0) {
-          return;
-        }
-        strm.output.set(s.pending_buf.subarray(s.pending_out, s.pending_out + len), strm.next_out);
-        strm.next_out += len;
-        s.pending_out += len;
-        strm.total_out += len;
-        strm.avail_out -= len;
-        s.pending -= len;
-        if (s.pending === 0) {
-          s.pending_out = 0;
-        }
-      };
-      var flush_block_only2 = (s, last) => {
-        _tr_flush_block2(s, s.block_start >= 0 ? s.block_start : -1, s.strstart - s.block_start, last);
-        s.block_start = s.strstart;
-        flush_pending2(s.strm);
-      };
-      var put_byte2 = (s, b) => {
-        s.pending_buf[s.pending++] = b;
-      };
-      var putShortMSB2 = (s, b) => {
-        s.pending_buf[s.pending++] = b >>> 8 & 255;
-        s.pending_buf[s.pending++] = b & 255;
-      };
-      var read_buf2 = (strm, buf, start, size) => {
-        let len = strm.avail_in;
-        if (len > size) {
-          len = size;
-        }
-        if (len === 0) {
-          return 0;
-        }
-        strm.avail_in -= len;
-        buf.set(strm.input.subarray(strm.next_in, strm.next_in + len), start);
-        if (strm.state.wrap === 1) {
-          strm.adler = adler322(strm.adler, buf, len, start);
-        } else if (strm.state.wrap === 2) {
-          strm.adler = crc322(strm.adler, buf, len, start);
-        }
-        strm.next_in += len;
-        strm.total_in += len;
-        return len;
-      };
-      var longest_match2 = (s, cur_match) => {
-        let chain_length = s.max_chain_length;
-        let scan = s.strstart;
-        let match;
-        let len;
-        let best_len = s.prev_length;
-        let nice_match = s.nice_match;
-        const limit = s.strstart > s.w_size - MIN_LOOKAHEAD2 ? s.strstart - (s.w_size - MIN_LOOKAHEAD2) : 0;
-        const _win = s.window;
-        const wmask = s.w_mask;
-        const prev = s.prev;
-        const strend = s.strstart + MAX_MATCH2;
-        let scan_end1 = _win[scan + best_len - 1];
-        let scan_end = _win[scan + best_len];
-        if (s.prev_length >= s.good_match) {
-          chain_length >>= 2;
-        }
-        if (nice_match > s.lookahead) {
-          nice_match = s.lookahead;
-        }
-        do {
-          match = cur_match;
-          if (_win[match + best_len] !== scan_end || _win[match + best_len - 1] !== scan_end1 || _win[match] !== _win[scan] || _win[++match] !== _win[scan + 1]) {
-            continue;
-          }
-          scan += 2;
-          match++;
-          do {
-          } while (_win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && scan < strend);
-          len = MAX_MATCH2 - (strend - scan);
-          scan = strend - MAX_MATCH2;
-          if (len > best_len) {
-            s.match_start = cur_match;
-            best_len = len;
-            if (len >= nice_match) {
-              break;
-            }
-            scan_end1 = _win[scan + best_len - 1];
-            scan_end = _win[scan + best_len];
-          }
-        } while ((cur_match = prev[cur_match & wmask]) > limit && --chain_length !== 0);
-        if (best_len <= s.lookahead) {
-          return best_len;
-        }
-        return s.lookahead;
-      };
-      var fill_window2 = (s) => {
-        const _w_size = s.w_size;
-        let n, more, str;
-        do {
-          more = s.window_size - s.lookahead - s.strstart;
-          if (s.strstart >= _w_size + (_w_size - MIN_LOOKAHEAD2)) {
-            s.window.set(s.window.subarray(_w_size, _w_size + _w_size - more), 0);
-            s.match_start -= _w_size;
-            s.strstart -= _w_size;
-            s.block_start -= _w_size;
-            if (s.insert > s.strstart) {
-              s.insert = s.strstart;
-            }
-            slide_hash2(s);
-            more += _w_size;
-          }
-          if (s.strm.avail_in === 0) {
-            break;
-          }
-          n = read_buf2(s.strm, s.window, s.strstart + s.lookahead, more);
-          s.lookahead += n;
-          if (!s.legacy_hash) {
-            if (s.lookahead + s.insert > MIN_MATCH2) {
-              str = s.strstart - s.insert;
-              while (s.insert) {
-                INSERT_STRING2(s, str);
-                str++;
-                s.insert--;
-                if (s.lookahead + s.insert <= MIN_MATCH2) {
-                  break;
-                }
-              }
-            }
-          } else if (s.lookahead + s.insert >= MIN_MATCH2) {
-            str = s.strstart - s.insert;
-            s.ins_h = s.window[str];
-            s.ins_h = HASH2(s, s.ins_h, s.window[str + 1]);
-            while (s.insert) {
-              INSERT_STRING2(s, str);
-              str++;
-              s.insert--;
-              if (s.lookahead + s.insert < MIN_MATCH2) {
-                break;
-              }
-            }
-          }
-        } while (s.lookahead < MIN_LOOKAHEAD2 && s.strm.avail_in !== 0);
-      };
-      var deflate_stored2 = (s, flush) => {
-        let min_block = s.pending_buf_size - 5 > s.w_size ? s.w_size : s.pending_buf_size - 5;
-        let len, left, have, last = 0;
-        let used = s.strm.avail_in;
-        do {
-          len = 65535;
-          have = s.bi_valid + 42 >> 3;
-          if (s.strm.avail_out < have) {
-            break;
-          }
-          have = s.strm.avail_out - have;
-          left = s.strstart - s.block_start;
-          if (len > left + s.strm.avail_in) {
-            len = left + s.strm.avail_in;
-          }
-          if (len > have) {
-            len = have;
-          }
-          if (len < min_block && (len === 0 && flush !== Z_FINISH2 || flush === Z_NO_FLUSH2 || len !== left + s.strm.avail_in)) {
-            break;
-          }
-          last = flush === Z_FINISH2 && len === left + s.strm.avail_in ? 1 : 0;
-          _tr_stored_block2(s, 0, 0, last);
-          s.pending_buf[s.pending - 4] = len;
-          s.pending_buf[s.pending - 3] = len >> 8;
-          s.pending_buf[s.pending - 2] = ~len;
-          s.pending_buf[s.pending - 1] = ~len >> 8;
-          flush_pending2(s.strm);
-          if (left) {
-            if (left > len) {
-              left = len;
-            }
-            s.strm.output.set(s.window.subarray(s.block_start, s.block_start + left), s.strm.next_out);
-            s.strm.next_out += left;
-            s.strm.avail_out -= left;
-            s.strm.total_out += left;
-            s.block_start += left;
-            len -= left;
-          }
-          if (len) {
-            read_buf2(s.strm, s.strm.output, s.strm.next_out, len);
-            s.strm.next_out += len;
-            s.strm.avail_out -= len;
-            s.strm.total_out += len;
-          }
-        } while (last === 0);
-        used -= s.strm.avail_in;
-        if (used) {
-          if (used >= s.w_size) {
-            s.matches = 2;
-            s.window.set(s.strm.input.subarray(s.strm.next_in - s.w_size, s.strm.next_in), 0);
-            s.strstart = s.w_size;
-            s.insert = s.strstart;
-          } else {
-            if (s.window_size - s.strstart <= used) {
-              s.strstart -= s.w_size;
-              s.window.set(s.window.subarray(s.w_size, s.w_size + s.strstart), 0);
-              if (s.matches < 2) {
-                s.matches++;
-              }
-              if (s.insert > s.strstart) {
-                s.insert = s.strstart;
-              }
-            }
-            s.window.set(s.strm.input.subarray(s.strm.next_in - used, s.strm.next_in), s.strstart);
-            s.strstart += used;
-            s.insert += used > s.w_size - s.insert ? s.w_size - s.insert : used;
-          }
-          s.block_start = s.strstart;
-        }
-        if (s.high_water < s.strstart) {
-          s.high_water = s.strstart;
-        }
-        if (last) {
-          return BS_FINISH_DONE2;
-        }
-        if (flush !== Z_NO_FLUSH2 && flush !== Z_FINISH2 && s.strm.avail_in === 0 && s.strstart === s.block_start) {
-          return BS_BLOCK_DONE2;
-        }
-        have = s.window_size - s.strstart;
-        if (s.strm.avail_in > have && s.block_start >= s.w_size) {
-          s.block_start -= s.w_size;
-          s.strstart -= s.w_size;
-          s.window.set(s.window.subarray(s.w_size, s.w_size + s.strstart), 0);
-          if (s.matches < 2) {
-            s.matches++;
-          }
-          have += s.w_size;
-          if (s.insert > s.strstart) {
-            s.insert = s.strstart;
-          }
-        }
-        if (have > s.strm.avail_in) {
-          have = s.strm.avail_in;
-        }
-        if (have) {
-          read_buf2(s.strm, s.window, s.strstart, have);
-          s.strstart += have;
-          s.insert += have > s.w_size - s.insert ? s.w_size - s.insert : have;
-        }
-        if (s.high_water < s.strstart) {
-          s.high_water = s.strstart;
-        }
-        have = s.bi_valid + 42 >> 3;
-        have = s.pending_buf_size - have > 65535 ? 65535 : s.pending_buf_size - have;
-        min_block = have > s.w_size ? s.w_size : have;
-        left = s.strstart - s.block_start;
-        if (left >= min_block || (left || flush === Z_FINISH2) && flush !== Z_NO_FLUSH2 && s.strm.avail_in === 0 && left <= have) {
-          len = left > have ? have : left;
-          last = flush === Z_FINISH2 && s.strm.avail_in === 0 && len === left ? 1 : 0;
-          _tr_stored_block2(s, s.block_start, len, last);
-          s.block_start += len;
-          flush_pending2(s.strm);
-        }
-        return last ? BS_FINISH_STARTED2 : BS_NEED_MORE2;
-      };
-      var deflate_fast2 = (s, flush) => {
-        let hash_head;
-        let bflush;
-        for (; ; ) {
-          if (s.lookahead < MIN_LOOKAHEAD2) {
-            fill_window2(s);
-            if (s.lookahead < MIN_LOOKAHEAD2 && flush === Z_NO_FLUSH2) {
-              return BS_NEED_MORE2;
-            }
-            if (s.lookahead === 0) {
-              break;
-            }
-          }
-          hash_head = 0;
-          if (s.lookahead >= MIN_MATCH2) {
-            hash_head = INSERT_STRING2(s, s.strstart);
-          }
-          if (hash_head !== 0 && s.strstart - hash_head <= s.w_size - MIN_LOOKAHEAD2) {
-            s.match_length = longest_match2(s, hash_head);
-          }
-          if (s.match_length >= MIN_MATCH2) {
-            bflush = _tr_tally2(s, s.strstart - s.match_start, s.match_length - MIN_MATCH2);
-            s.lookahead -= s.match_length;
-            if (s.match_length <= s.max_lazy_match && s.lookahead >= MIN_MATCH2) {
-              s.match_length--;
-              do {
-                s.strstart++;
-                hash_head = INSERT_STRING2(s, s.strstart);
-              } while (--s.match_length !== 0);
-              s.strstart++;
-            } else {
-              s.strstart += s.match_length;
-              s.match_length = 0;
-              if (s.legacy_hash) {
-                s.ins_h = s.window[s.strstart];
-                s.ins_h = HASH2(s, s.ins_h, s.window[s.strstart + 1]);
-              }
-            }
-          } else {
-            bflush = _tr_tally2(s, 0, s.window[s.strstart]);
-            s.lookahead--;
-            s.strstart++;
-          }
-          if (bflush) {
-            flush_block_only2(s, false);
-            if (s.strm.avail_out === 0) {
-              return BS_NEED_MORE2;
-            }
-          }
-        }
-        s.insert = s.strstart < MIN_MATCH2 - 1 ? s.strstart : MIN_MATCH2 - 1;
-        if (flush === Z_FINISH2) {
-          flush_block_only2(s, true);
-          if (s.strm.avail_out === 0) {
-            return BS_FINISH_STARTED2;
-          }
-          return BS_FINISH_DONE2;
-        }
-        if (s.sym_next) {
-          flush_block_only2(s, false);
-          if (s.strm.avail_out === 0) {
-            return BS_NEED_MORE2;
-          }
-        }
-        return BS_BLOCK_DONE2;
-      };
-      var deflate_slow2 = (s, flush) => {
-        let hash_head;
-        let bflush;
-        let max_insert;
-        for (; ; ) {
-          if (s.lookahead < MIN_LOOKAHEAD2) {
-            fill_window2(s);
-            if (s.lookahead < MIN_LOOKAHEAD2 && flush === Z_NO_FLUSH2) {
-              return BS_NEED_MORE2;
-            }
-            if (s.lookahead === 0) {
-              break;
-            }
-          }
-          hash_head = 0;
-          if (s.lookahead >= MIN_MATCH2) {
-            hash_head = INSERT_STRING2(s, s.strstart);
-          }
-          s.prev_length = s.match_length;
-          s.prev_match = s.match_start;
-          s.match_length = MIN_MATCH2 - 1;
-          if (hash_head !== 0 && s.prev_length < s.max_lazy_match && s.strstart - hash_head <= s.w_size - MIN_LOOKAHEAD2) {
-            s.match_length = longest_match2(s, hash_head);
-            if (s.match_length <= 5 && (s.strategy === Z_FILTERED2 || s.match_length === MIN_MATCH2 && s.strstart - s.match_start > 4096)) {
-              s.match_length = MIN_MATCH2 - 1;
-            }
-          }
-          if (s.prev_length >= MIN_MATCH2 && s.match_length <= s.prev_length) {
-            max_insert = s.strstart + s.lookahead - MIN_MATCH2;
-            bflush = _tr_tally2(s, s.strstart - 1 - s.prev_match, s.prev_length - MIN_MATCH2);
-            s.lookahead -= s.prev_length - 1;
-            s.prev_length -= 2;
-            do {
-              if (++s.strstart <= max_insert) {
-                hash_head = INSERT_STRING2(s, s.strstart);
-              }
-            } while (--s.prev_length !== 0);
-            s.match_available = 0;
-            s.match_length = MIN_MATCH2 - 1;
-            s.strstart++;
-            if (bflush) {
-              flush_block_only2(s, false);
-              if (s.strm.avail_out === 0) {
-                return BS_NEED_MORE2;
-              }
-            }
-          } else if (s.match_available) {
-            bflush = _tr_tally2(s, 0, s.window[s.strstart - 1]);
-            if (bflush) {
-              flush_block_only2(s, false);
-            }
-            s.strstart++;
-            s.lookahead--;
-            if (s.strm.avail_out === 0) {
-              return BS_NEED_MORE2;
-            }
-          } else {
-            s.match_available = 1;
-            s.strstart++;
-            s.lookahead--;
-          }
-        }
-        if (s.match_available) {
-          bflush = _tr_tally2(s, 0, s.window[s.strstart - 1]);
-          s.match_available = 0;
-        }
-        s.insert = s.strstart < MIN_MATCH2 - 1 ? s.strstart : MIN_MATCH2 - 1;
-        if (flush === Z_FINISH2) {
-          flush_block_only2(s, true);
-          if (s.strm.avail_out === 0) {
-            return BS_FINISH_STARTED2;
-          }
-          return BS_FINISH_DONE2;
-        }
-        if (s.sym_next) {
-          flush_block_only2(s, false);
-          if (s.strm.avail_out === 0) {
-            return BS_NEED_MORE2;
-          }
-        }
-        return BS_BLOCK_DONE2;
-      };
-      var deflate_rle2 = (s, flush) => {
-        let bflush;
-        let prev;
-        let scan, strend;
-        const _win = s.window;
-        for (; ; ) {
-          if (s.lookahead <= MAX_MATCH2) {
-            fill_window2(s);
-            if (s.lookahead <= MAX_MATCH2 && flush === Z_NO_FLUSH2) {
-              return BS_NEED_MORE2;
-            }
-            if (s.lookahead === 0) {
-              break;
-            }
-          }
-          s.match_length = 0;
-          if (s.lookahead >= MIN_MATCH2 && s.strstart > 0) {
-            scan = s.strstart - 1;
-            prev = _win[scan];
-            if (prev === _win[++scan] && prev === _win[++scan] && prev === _win[++scan]) {
-              strend = s.strstart + MAX_MATCH2;
-              do {
-              } while (prev === _win[++scan] && prev === _win[++scan] && prev === _win[++scan] && prev === _win[++scan] && prev === _win[++scan] && prev === _win[++scan] && prev === _win[++scan] && prev === _win[++scan] && scan < strend);
-              s.match_length = MAX_MATCH2 - (strend - scan);
-              if (s.match_length > s.lookahead) {
-                s.match_length = s.lookahead;
-              }
-            }
-          }
-          if (s.match_length >= MIN_MATCH2) {
-            bflush = _tr_tally2(s, 1, s.match_length - MIN_MATCH2);
-            s.lookahead -= s.match_length;
-            s.strstart += s.match_length;
-            s.match_length = 0;
-          } else {
-            bflush = _tr_tally2(s, 0, s.window[s.strstart]);
-            s.lookahead--;
-            s.strstart++;
-          }
-          if (bflush) {
-            flush_block_only2(s, false);
-            if (s.strm.avail_out === 0) {
-              return BS_NEED_MORE2;
-            }
-          }
-        }
-        s.insert = 0;
-        if (flush === Z_FINISH2) {
-          flush_block_only2(s, true);
-          if (s.strm.avail_out === 0) {
-            return BS_FINISH_STARTED2;
-          }
-          return BS_FINISH_DONE2;
-        }
-        if (s.sym_next) {
-          flush_block_only2(s, false);
-          if (s.strm.avail_out === 0) {
-            return BS_NEED_MORE2;
-          }
-        }
-        return BS_BLOCK_DONE2;
-      };
-      var deflate_huff2 = (s, flush) => {
-        let bflush;
-        for (; ; ) {
-          if (s.lookahead === 0) {
-            fill_window2(s);
-            if (s.lookahead === 0) {
-              if (flush === Z_NO_FLUSH2) {
-                return BS_NEED_MORE2;
-              }
-              break;
-            }
-          }
-          s.match_length = 0;
-          bflush = _tr_tally2(s, 0, s.window[s.strstart]);
-          s.lookahead--;
-          s.strstart++;
-          if (bflush) {
-            flush_block_only2(s, false);
-            if (s.strm.avail_out === 0) {
-              return BS_NEED_MORE2;
-            }
-          }
-        }
-        s.insert = 0;
-        if (flush === Z_FINISH2) {
-          flush_block_only2(s, true);
-          if (s.strm.avail_out === 0) {
-            return BS_FINISH_STARTED2;
-          }
-          return BS_FINISH_DONE2;
-        }
-        if (s.sym_next) {
-          flush_block_only2(s, false);
-          if (s.strm.avail_out === 0) {
-            return BS_NEED_MORE2;
-          }
-        }
-        return BS_BLOCK_DONE2;
-      };
-      function Config2(good_length, max_lazy, nice_length, max_chain, func) {
-        this.good_length = good_length;
-        this.max_lazy = max_lazy;
-        this.nice_length = nice_length;
-        this.max_chain = max_chain;
-        this.func = func;
-      }
-      var configuration_table2 = [
-        /*      good lazy nice chain */
-        new Config2(0, 0, 0, 0, deflate_stored2),
-        /* 0 store only */
-        new Config2(4, 4, 8, 4, deflate_fast2),
-        /* 1 max speed, no lazy matches */
-        new Config2(4, 5, 16, 8, deflate_fast2),
-        /* 2 */
-        new Config2(4, 6, 32, 32, deflate_fast2),
-        /* 3 */
-        new Config2(4, 4, 16, 16, deflate_slow2),
-        /* 4 lazy matches */
-        new Config2(8, 16, 32, 32, deflate_slow2),
-        /* 5 */
-        new Config2(8, 16, 128, 128, deflate_slow2),
-        /* 6 */
-        new Config2(8, 32, 128, 256, deflate_slow2),
-        /* 7 */
-        new Config2(32, 128, 258, 1024, deflate_slow2),
-        /* 8 */
-        new Config2(32, 258, 258, 4096, deflate_slow2)
-        /* 9 max compression */
-      ];
-      var lm_init2 = (s) => {
-        s.window_size = 2 * s.w_size;
-        zero2(s.head);
-        s.max_lazy_match = configuration_table2[s.level].max_lazy;
-        s.good_match = configuration_table2[s.level].good_length;
-        s.nice_match = configuration_table2[s.level].nice_length;
-        s.max_chain_length = configuration_table2[s.level].max_chain;
-        s.strstart = 0;
-        s.block_start = 0;
-        s.lookahead = 0;
-        s.insert = 0;
-        s.match_length = s.prev_length = MIN_MATCH2 - 1;
-        s.match_available = 0;
-        s.ins_h = 0;
-      };
-      function DeflateState2() {
-        this.strm = null;
-        this.status = 0;
-        this.pending_buf = null;
-        this.pending_buf_size = 0;
-        this.pending_out = 0;
-        this.pending = 0;
-        this.wrap = 0;
-        this.gzhead = null;
-        this.gzindex = 0;
-        this.method = Z_DEFLATED2;
-        this.last_flush = -1;
-        this.w_size = 0;
-        this.w_bits = 0;
-        this.w_mask = 0;
-        this.window = null;
-        this.window_size = 0;
-        this.prev = null;
-        this.head = null;
-        this.ins_h = 0;
-        this.legacy_hash = 0;
-        this.hash_size = 0;
-        this.hash_bits = 0;
-        this.hash_mask = 0;
-        this.hash_shift = 0;
-        this.block_start = 0;
-        this.match_length = 0;
-        this.prev_match = 0;
-        this.match_available = 0;
-        this.strstart = 0;
-        this.match_start = 0;
-        this.lookahead = 0;
-        this.prev_length = 0;
-        this.max_chain_length = 0;
-        this.max_lazy_match = 0;
-        this.level = 0;
-        this.strategy = 0;
-        this.good_match = 0;
-        this.nice_match = 0;
-        this.dyn_ltree = new Uint16Array(HEAP_SIZE2 * 2);
-        this.dyn_dtree = new Uint16Array((2 * D_CODES2 + 1) * 2);
-        this.bl_tree = new Uint16Array((2 * BL_CODES2 + 1) * 2);
-        zero2(this.dyn_ltree);
-        zero2(this.dyn_dtree);
-        zero2(this.bl_tree);
-        this.l_desc = null;
-        this.d_desc = null;
-        this.bl_desc = null;
-        this.bl_count = new Uint16Array(MAX_BITS2 + 1);
-        this.heap = new Uint16Array(2 * L_CODES2 + 1);
-        zero2(this.heap);
-        this.heap_len = 0;
-        this.heap_max = 0;
-        this.depth = new Uint16Array(2 * L_CODES2 + 1);
-        zero2(this.depth);
-        this.sym_buf = 0;
-        this.lit_bufsize = 0;
-        this.sym_next = 0;
-        this.sym_end = 0;
-        this.opt_len = 0;
-        this.static_len = 0;
-        this.matches = 0;
-        this.insert = 0;
-        this.bi_buf = 0;
-        this.bi_valid = 0;
-      }
-      var deflateStateCheck2 = (strm) => {
-        if (!strm) {
-          return 1;
-        }
-        const s = strm.state;
-        if (!s || s.strm !== strm || s.status !== INIT_STATE2 && //#ifdef GZIP
-        s.status !== GZIP_STATE2 && //#endif
-        s.status !== EXTRA_STATE2 && s.status !== NAME_STATE2 && s.status !== COMMENT_STATE2 && s.status !== HCRC_STATE2 && s.status !== BUSY_STATE2 && s.status !== FINISH_STATE2) {
-          return 1;
-        }
-        return 0;
-      };
-      var deflateResetKeep2 = (strm) => {
-        if (deflateStateCheck2(strm)) {
-          return err2(strm, Z_STREAM_ERROR2);
-        }
-        strm.total_in = strm.total_out = 0;
-        strm.data_type = Z_UNKNOWN2;
-        const s = strm.state;
-        s.pending = 0;
-        s.pending_out = 0;
-        if (s.wrap < 0) {
-          s.wrap = -s.wrap;
-        }
-        s.status = //#ifdef GZIP
-        s.wrap === 2 ? GZIP_STATE2 : (
-          //#endif
-          s.wrap ? INIT_STATE2 : BUSY_STATE2
-        );
-        strm.adler = s.wrap === 2 ? 0 : 1;
-        s.last_flush = -2;
-        _tr_init2(s);
-        return Z_OK2;
-      };
-      var deflateReset2 = (strm) => {
-        const ret = deflateResetKeep2(strm);
-        if (ret === Z_OK2) {
-          lm_init2(strm.state);
-        }
-        return ret;
-      };
-      var deflateSetHeader2 = (strm, head) => {
-        if (deflateStateCheck2(strm) || strm.state.wrap !== 2) {
-          return Z_STREAM_ERROR2;
-        }
-        strm.state.gzhead = head;
-        return Z_OK2;
-      };
-      var deflateInit22 = (strm, level, method, windowBits, memLevel, strategy, legacyHash) => {
-        if (!strm) {
-          return Z_STREAM_ERROR2;
-        }
-        let wrap = 1;
-        if (level === Z_DEFAULT_COMPRESSION2) {
-          level = 6;
-        }
-        if (windowBits < 0) {
-          wrap = 0;
-          windowBits = -windowBits;
-        } else if (windowBits > 15) {
-          wrap = 2;
-          windowBits -= 16;
-        }
-        if (memLevel < 1 || memLevel > MAX_MEM_LEVEL2 || method !== Z_DEFLATED2 || windowBits < 8 || windowBits > 15 || level < 0 || level > 9 || strategy < 0 || strategy > Z_FIXED2 || windowBits === 8 && wrap !== 1) {
-          return err2(strm, Z_STREAM_ERROR2);
-        }
-        if (windowBits === 8) {
-          windowBits = 9;
-        }
-        const s = new DeflateState2();
-        strm.state = s;
-        s.strm = strm;
-        s.status = INIT_STATE2;
-        s.wrap = wrap;
-        s.gzhead = null;
-        s.w_bits = windowBits;
-        s.w_size = 1 << s.w_bits;
-        s.w_mask = s.w_size - 1;
-        s.legacy_hash = legacyHash ? 1 : 0;
-        s.hash_bits = memLevel + 7;
-        if (!s.legacy_hash && s.hash_bits < 15) {
-          s.hash_bits = 15;
-        }
-        s.hash_size = 1 << s.hash_bits;
-        s.hash_mask = s.hash_size - 1;
-        s.hash_shift = ~~((s.hash_bits + MIN_MATCH2 - 1) / MIN_MATCH2);
-        s.window = new Uint8Array(s.w_size * 2);
-        s.head = new Uint16Array(s.hash_size);
-        s.prev = new Uint16Array(s.w_size);
-        s.lit_bufsize = 1 << memLevel + 6;
-        s.pending_buf_size = s.lit_bufsize * 4;
-        s.pending_buf = new Uint8Array(s.pending_buf_size);
-        s.sym_buf = s.lit_bufsize;
-        s.sym_end = (s.lit_bufsize - 1) * 3;
-        s.level = level;
-        s.strategy = strategy;
-        s.method = method;
-        return deflateReset2(strm);
-      };
-      var deflateInit3 = (strm, level) => {
-        return deflateInit22(strm, level, Z_DEFLATED2, MAX_WBITS2, DEF_MEM_LEVEL2, Z_DEFAULT_STRATEGY2);
-      };
-      var deflate2 = (strm, flush) => {
-        if (deflateStateCheck2(strm) || flush > Z_BLOCK2 || flush < 0) {
-          return strm ? err2(strm, Z_STREAM_ERROR2) : Z_STREAM_ERROR2;
-        }
-        const s = strm.state;
-        if (!strm.output || strm.avail_in !== 0 && !strm.input || s.status === FINISH_STATE2 && flush !== Z_FINISH2) {
-          return err2(strm, strm.avail_out === 0 ? Z_BUF_ERROR2 : Z_STREAM_ERROR2);
-        }
-        const old_flush = s.last_flush;
-        s.last_flush = flush;
-        if (s.pending !== 0) {
-          flush_pending2(strm);
-          if (strm.avail_out === 0) {
-            s.last_flush = -1;
-            return Z_OK2;
-          }
-        } else if (strm.avail_in === 0 && rank2(flush) <= rank2(old_flush) && flush !== Z_FINISH2) {
-          return err2(strm, Z_BUF_ERROR2);
-        }
-        if (s.status === FINISH_STATE2 && strm.avail_in !== 0) {
-          return err2(strm, Z_BUF_ERROR2);
-        }
-        if (s.status === INIT_STATE2 && s.wrap === 0) {
-          s.status = BUSY_STATE2;
-        }
-        if (s.status === INIT_STATE2) {
-          let header = Z_DEFLATED2 + (s.w_bits - 8 << 4) << 8;
-          let level_flags = -1;
-          if (s.strategy >= Z_HUFFMAN_ONLY2 || s.level < 2) {
-            level_flags = 0;
-          } else if (s.level < 6) {
-            level_flags = 1;
-          } else if (s.level === 6) {
-            level_flags = 2;
-          } else {
-            level_flags = 3;
-          }
-          header |= level_flags << 6;
-          if (s.strstart !== 0) {
-            header |= PRESET_DICT2;
-          }
-          header += 31 - header % 31;
-          putShortMSB2(s, header);
-          if (s.strstart !== 0) {
-            putShortMSB2(s, strm.adler >>> 16);
-            putShortMSB2(s, strm.adler & 65535);
-          }
-          strm.adler = 1;
-          s.status = BUSY_STATE2;
-          flush_pending2(strm);
-          if (s.pending !== 0) {
-            s.last_flush = -1;
-            return Z_OK2;
-          }
-        }
-        if (s.status === GZIP_STATE2) {
-          strm.adler = 0;
-          put_byte2(s, 31);
-          put_byte2(s, 139);
-          put_byte2(s, 8);
-          if (!s.gzhead) {
-            put_byte2(s, 0);
-            put_byte2(s, 0);
-            put_byte2(s, 0);
-            put_byte2(s, 0);
-            put_byte2(s, 0);
-            put_byte2(s, s.level === 9 ? 2 : s.strategy >= Z_HUFFMAN_ONLY2 || s.level < 2 ? 4 : 0);
-            put_byte2(s, OS_CODE2);
-            s.status = BUSY_STATE2;
-            flush_pending2(strm);
-            if (s.pending !== 0) {
-              s.last_flush = -1;
-              return Z_OK2;
-            }
-          } else {
-            put_byte2(
-              s,
-              (s.gzhead.text ? 1 : 0) + (s.gzhead.hcrc ? 2 : 0) + (!s.gzhead.extra ? 0 : 4) + (!s.gzhead.name ? 0 : 8) + (!s.gzhead.comment ? 0 : 16)
-            );
-            put_byte2(s, s.gzhead.time & 255);
-            put_byte2(s, s.gzhead.time >> 8 & 255);
-            put_byte2(s, s.gzhead.time >> 16 & 255);
-            put_byte2(s, s.gzhead.time >> 24 & 255);
-            put_byte2(s, s.level === 9 ? 2 : s.strategy >= Z_HUFFMAN_ONLY2 || s.level < 2 ? 4 : 0);
-            put_byte2(s, s.gzhead.os & 255);
-            if (s.gzhead.extra && s.gzhead.extra.length) {
-              put_byte2(s, s.gzhead.extra.length & 255);
-              put_byte2(s, s.gzhead.extra.length >> 8 & 255);
-            }
-            if (s.gzhead.hcrc) {
-              strm.adler = crc322(strm.adler, s.pending_buf, s.pending, 0);
-            }
-            s.gzindex = 0;
-            s.status = EXTRA_STATE2;
-          }
-        }
-        if (s.status === EXTRA_STATE2) {
-          if (s.gzhead.extra) {
-            let beg = s.pending;
-            let left = (s.gzhead.extra.length & 65535) - s.gzindex;
-            while (s.pending + left > s.pending_buf_size) {
-              let copy = s.pending_buf_size - s.pending;
-              s.pending_buf.set(s.gzhead.extra.subarray(s.gzindex, s.gzindex + copy), s.pending);
-              s.pending = s.pending_buf_size;
-              if (s.gzhead.hcrc && s.pending > beg) {
-                strm.adler = crc322(strm.adler, s.pending_buf, s.pending - beg, beg);
-              }
-              s.gzindex += copy;
-              flush_pending2(strm);
-              if (s.pending !== 0) {
-                s.last_flush = -1;
-                return Z_OK2;
-              }
-              beg = 0;
-              left -= copy;
-            }
-            let gzhead_extra = new Uint8Array(s.gzhead.extra);
-            s.pending_buf.set(gzhead_extra.subarray(s.gzindex, s.gzindex + left), s.pending);
-            s.pending += left;
-            if (s.gzhead.hcrc && s.pending > beg) {
-              strm.adler = crc322(strm.adler, s.pending_buf, s.pending - beg, beg);
-            }
-            s.gzindex = 0;
-          }
-          s.status = NAME_STATE2;
-        }
-        if (s.status === NAME_STATE2) {
-          if (s.gzhead.name) {
-            let beg = s.pending;
-            let val;
-            do {
-              if (s.pending === s.pending_buf_size) {
-                if (s.gzhead.hcrc && s.pending > beg) {
-                  strm.adler = crc322(strm.adler, s.pending_buf, s.pending - beg, beg);
-                }
-                flush_pending2(strm);
-                if (s.pending !== 0) {
-                  s.last_flush = -1;
-                  return Z_OK2;
-                }
-                beg = 0;
-              }
-              if (s.gzindex < s.gzhead.name.length) {
-                val = s.gzhead.name.charCodeAt(s.gzindex++) & 255;
-              } else {
-                val = 0;
-              }
-              put_byte2(s, val);
-            } while (val !== 0);
-            if (s.gzhead.hcrc && s.pending > beg) {
-              strm.adler = crc322(strm.adler, s.pending_buf, s.pending - beg, beg);
-            }
-            s.gzindex = 0;
-          }
-          s.status = COMMENT_STATE2;
-        }
-        if (s.status === COMMENT_STATE2) {
-          if (s.gzhead.comment) {
-            let beg = s.pending;
-            let val;
-            do {
-              if (s.pending === s.pending_buf_size) {
-                if (s.gzhead.hcrc && s.pending > beg) {
-                  strm.adler = crc322(strm.adler, s.pending_buf, s.pending - beg, beg);
-                }
-                flush_pending2(strm);
-                if (s.pending !== 0) {
-                  s.last_flush = -1;
-                  return Z_OK2;
-                }
-                beg = 0;
-              }
-              if (s.gzindex < s.gzhead.comment.length) {
-                val = s.gzhead.comment.charCodeAt(s.gzindex++) & 255;
-              } else {
-                val = 0;
-              }
-              put_byte2(s, val);
-            } while (val !== 0);
-            if (s.gzhead.hcrc && s.pending > beg) {
-              strm.adler = crc322(strm.adler, s.pending_buf, s.pending - beg, beg);
-            }
-          }
-          s.status = HCRC_STATE2;
-        }
-        if (s.status === HCRC_STATE2) {
-          if (s.gzhead.hcrc) {
-            if (s.pending + 2 > s.pending_buf_size) {
-              flush_pending2(strm);
-              if (s.pending !== 0) {
-                s.last_flush = -1;
-                return Z_OK2;
-              }
-            }
-            put_byte2(s, strm.adler & 255);
-            put_byte2(s, strm.adler >> 8 & 255);
-            strm.adler = 0;
-          }
-          s.status = BUSY_STATE2;
-          flush_pending2(strm);
-          if (s.pending !== 0) {
-            s.last_flush = -1;
-            return Z_OK2;
-          }
-        }
-        if (strm.avail_in !== 0 || s.lookahead !== 0 || flush !== Z_NO_FLUSH2 && s.status !== FINISH_STATE2) {
-          let bstate = s.level === 0 ? deflate_stored2(s, flush) : s.strategy === Z_HUFFMAN_ONLY2 ? deflate_huff2(s, flush) : s.strategy === Z_RLE2 ? deflate_rle2(s, flush) : configuration_table2[s.level].func(s, flush);
-          if (bstate === BS_FINISH_STARTED2 || bstate === BS_FINISH_DONE2) {
-            s.status = FINISH_STATE2;
-          }
-          if (bstate === BS_NEED_MORE2 || bstate === BS_FINISH_STARTED2) {
-            if (strm.avail_out === 0) {
-              s.last_flush = -1;
-            }
-            return Z_OK2;
-          }
-          if (bstate === BS_BLOCK_DONE2) {
-            if (flush === Z_PARTIAL_FLUSH2) {
-              _tr_align2(s);
-            } else if (flush !== Z_BLOCK2) {
-              _tr_stored_block2(s, 0, 0, false);
-              if (flush === Z_FULL_FLUSH2) {
-                zero2(s.head);
-                if (s.lookahead === 0) {
-                  s.strstart = 0;
-                  s.block_start = 0;
-                  s.insert = 0;
-                }
-              }
-            }
-            flush_pending2(strm);
-            if (strm.avail_out === 0) {
-              s.last_flush = -1;
-              return Z_OK2;
-            }
-          }
-        }
-        if (flush !== Z_FINISH2) {
-          return Z_OK2;
-        }
-        if (s.wrap <= 0) {
-          return Z_STREAM_END2;
-        }
-        if (s.wrap === 2) {
-          put_byte2(s, strm.adler & 255);
-          put_byte2(s, strm.adler >> 8 & 255);
-          put_byte2(s, strm.adler >> 16 & 255);
-          put_byte2(s, strm.adler >> 24 & 255);
-          put_byte2(s, strm.total_in & 255);
-          put_byte2(s, strm.total_in >> 8 & 255);
-          put_byte2(s, strm.total_in >> 16 & 255);
-          put_byte2(s, strm.total_in >> 24 & 255);
-        } else {
-          putShortMSB2(s, strm.adler >>> 16);
-          putShortMSB2(s, strm.adler & 65535);
-        }
-        flush_pending2(strm);
-        if (s.wrap > 0) {
-          s.wrap = -s.wrap;
-        }
-        return s.pending !== 0 ? Z_OK2 : Z_STREAM_END2;
-      };
-      var deflateEnd2 = (strm) => {
-        if (deflateStateCheck2(strm)) {
-          return Z_STREAM_ERROR2;
-        }
-        const status = strm.state.status;
-        strm.state = null;
-        return status === BUSY_STATE2 ? err2(strm, Z_DATA_ERROR2) : Z_OK2;
-      };
-      var deflateSetDictionary2 = (strm, dictionary) => {
-        let dictLength = dictionary.length;
-        if (deflateStateCheck2(strm)) {
-          return Z_STREAM_ERROR2;
-        }
-        const s = strm.state;
-        const wrap = s.wrap;
-        if (wrap === 2 || wrap === 1 && s.status !== INIT_STATE2 || s.lookahead) {
-          return Z_STREAM_ERROR2;
-        }
-        if (wrap === 1) {
-          strm.adler = adler322(strm.adler, dictionary, dictLength, 0);
-        }
-        s.wrap = 0;
-        if (dictLength >= s.w_size) {
-          if (wrap === 0) {
-            zero2(s.head);
-            s.strstart = 0;
-            s.block_start = 0;
-            s.insert = 0;
-          }
-          let tmpDict = new Uint8Array(s.w_size);
-          tmpDict.set(dictionary.subarray(dictLength - s.w_size, dictLength), 0);
-          dictionary = tmpDict;
-          dictLength = s.w_size;
-        }
-        const avail = strm.avail_in;
-        const next = strm.next_in;
-        const input = strm.input;
-        strm.avail_in = dictLength;
-        strm.next_in = 0;
-        strm.input = dictionary;
-        fill_window2(s);
-        while (s.lookahead >= MIN_MATCH2) {
-          let str = s.strstart;
-          let n = s.lookahead - (MIN_MATCH2 - 1);
-          do {
-            INSERT_STRING2(s, str);
-            str++;
-          } while (--n);
-          s.strstart = str;
-          s.lookahead = MIN_MATCH2 - 1;
-          fill_window2(s);
-        }
-        s.strstart += s.lookahead;
-        s.block_start = s.strstart;
-        s.insert = s.lookahead;
-        s.lookahead = 0;
-        s.match_length = s.prev_length = MIN_MATCH2 - 1;
-        s.match_available = 0;
-        strm.next_in = next;
-        strm.input = input;
-        strm.avail_in = avail;
-        s.wrap = wrap;
-        return Z_OK2;
-      };
-      module.exports.deflateInit = deflateInit3;
-      module.exports.deflateInit2 = deflateInit22;
-      module.exports.deflateReset = deflateReset2;
-      module.exports.deflateResetKeep = deflateResetKeep2;
-      module.exports.deflateSetHeader = deflateSetHeader2;
-      module.exports.deflate = deflate2;
-      module.exports.deflateEnd = deflateEnd2;
-      module.exports.deflateSetDictionary = deflateSetDictionary2;
-      module.exports.deflateInfo = "pako deflate (from Nodeca project)";
-    }
-  });
-
-  // node_modules/pako/lib/utils/common.js
-  var require_common = __commonJS({
-    "node_modules/pako/lib/utils/common.js"(exports, module) {
-      "use strict";
-      var _has2 = (obj, key) => {
-        return Object.prototype.hasOwnProperty.call(obj, key);
-      };
-      module.exports.assign = function(obj) {
-        const sources = Array.prototype.slice.call(arguments, 1);
-        while (sources.length) {
-          const source = sources.shift();
-          if (!source) {
-            continue;
-          }
-          if (typeof source !== "object") {
-            throw new TypeError(source + "must be non-object");
-          }
-          for (const p in source) {
-            if (_has2(source, p)) {
-              obj[p] = source[p];
-            }
-          }
-        }
-        return obj;
-      };
-      module.exports.flattenChunks = (chunks) => {
-        let len = 0;
-        for (let i = 0, l = chunks.length; i < l; i++) {
-          len += chunks[i].length;
-        }
-        const result = new Uint8Array(len);
-        for (let i = 0, pos = 0, l = chunks.length; i < l; i++) {
-          let chunk = chunks[i];
-          result.set(chunk, pos);
-          pos += chunk.length;
-        }
-        return result;
-      };
-    }
-  });
-
-  // node_modules/pako/lib/utils/strings.js
-  var require_strings = __commonJS({
-    "node_modules/pako/lib/utils/strings.js"(exports, module) {
-      "use strict";
-      var STR_APPLY_UIA_OK2 = true;
-      try {
-        String.fromCharCode.apply(null, new Uint8Array(1));
-      } catch (__) {
-        STR_APPLY_UIA_OK2 = false;
-      }
-      var _utf8len2 = new Uint8Array(256);
-      for (let q = 0; q < 256; q++) {
-        _utf8len2[q] = q >= 252 ? 6 : q >= 248 ? 5 : q >= 240 ? 4 : q >= 224 ? 3 : q >= 192 ? 2 : 1;
-      }
-      _utf8len2[254] = _utf8len2[255] = 1;
-      module.exports.string2buf = (str) => {
-        if (typeof TextEncoder === "function" && TextEncoder.prototype.encode) {
-          return new TextEncoder().encode(str);
-        }
-        let buf, c, c2, m_pos, i, str_len = str.length, buf_len = 0;
-        for (m_pos = 0; m_pos < str_len; m_pos++) {
-          c = str.charCodeAt(m_pos);
-          if ((c & 64512) === 55296 && m_pos + 1 < str_len) {
-            c2 = str.charCodeAt(m_pos + 1);
-            if ((c2 & 64512) === 56320) {
-              c = 65536 + (c - 55296 << 10) + (c2 - 56320);
-              m_pos++;
-            }
-          }
-          buf_len += c < 128 ? 1 : c < 2048 ? 2 : c < 65536 ? 3 : 4;
-        }
-        buf = new Uint8Array(buf_len);
-        for (i = 0, m_pos = 0; i < buf_len; m_pos++) {
-          c = str.charCodeAt(m_pos);
-          if ((c & 64512) === 55296 && m_pos + 1 < str_len) {
-            c2 = str.charCodeAt(m_pos + 1);
-            if ((c2 & 64512) === 56320) {
-              c = 65536 + (c - 55296 << 10) + (c2 - 56320);
-              m_pos++;
-            }
-          }
-          if (c < 128) {
-            buf[i++] = c;
-          } else if (c < 2048) {
-            buf[i++] = 192 | c >>> 6;
-            buf[i++] = 128 | c & 63;
-          } else if (c < 65536) {
-            buf[i++] = 224 | c >>> 12;
-            buf[i++] = 128 | c >>> 6 & 63;
-            buf[i++] = 128 | c & 63;
-          } else {
-            buf[i++] = 240 | c >>> 18;
-            buf[i++] = 128 | c >>> 12 & 63;
-            buf[i++] = 128 | c >>> 6 & 63;
-            buf[i++] = 128 | c & 63;
-          }
-        }
-        return buf;
-      };
-      var buf2binstring2 = (buf, len) => {
-        if (len < 65534) {
-          if (buf.subarray && STR_APPLY_UIA_OK2) {
-            return String.fromCharCode.apply(null, buf.length === len ? buf : buf.subarray(0, len));
-          }
-        }
-        let result = "";
-        for (let i = 0; i < len; i++) {
-          result += String.fromCharCode(buf[i]);
-        }
-        return result;
-      };
-      module.exports.buf2string = (buf, max) => {
-        const len = max || buf.length;
-        if (typeof TextDecoder === "function" && TextDecoder.prototype.decode) {
-          return new TextDecoder().decode(buf.subarray(0, max));
-        }
-        let i, out;
-        const utf16buf = new Array(len * 2);
-        for (out = 0, i = 0; i < len; ) {
-          let c = buf[i++];
-          if (c < 128) {
-            utf16buf[out++] = c;
-            continue;
-          }
-          let c_len = _utf8len2[c];
-          if (c_len > 4) {
-            utf16buf[out++] = 65533;
-            i += c_len - 1;
-            continue;
-          }
-          c &= c_len === 2 ? 31 : c_len === 3 ? 15 : 7;
-          while (c_len > 1 && i < len) {
-            c = c << 6 | buf[i++] & 63;
-            c_len--;
-          }
-          if (c_len > 1) {
-            utf16buf[out++] = 65533;
-            continue;
-          }
-          if (c < 65536) {
-            utf16buf[out++] = c;
-          } else {
-            c -= 65536;
-            utf16buf[out++] = 55296 | c >> 10 & 1023;
-            utf16buf[out++] = 56320 | c & 1023;
-          }
-        }
-        return buf2binstring2(utf16buf, out);
-      };
-      module.exports.utf8border = (buf, max) => {
-        max = max || buf.length;
-        if (max > buf.length) {
-          max = buf.length;
-        }
-        let pos = max - 1;
-        while (pos >= 0 && (buf[pos] & 192) === 128) {
-          pos--;
-        }
-        if (pos < 0) {
-          return max;
-        }
-        if (pos === 0) {
-          return max;
-        }
-        return pos + _utf8len2[buf[pos]] > max ? pos : max;
-      };
-    }
-  });
-
-  // node_modules/pako/lib/zlib/zstream.js
-  var require_zstream = __commonJS({
-    "node_modules/pako/lib/zlib/zstream.js"(exports, module) {
-      "use strict";
-      function ZStream2() {
-        this.input = null;
-        this.next_in = 0;
-        this.avail_in = 0;
-        this.total_in = 0;
-        this.output = null;
-        this.next_out = 0;
-        this.avail_out = 0;
-        this.total_out = 0;
-        this.msg = "";
-        this.state = null;
-        this.data_type = 2;
-        this.adler = 0;
-      }
-      module.exports = ZStream2;
-    }
-  });
-
-  // node_modules/pako/lib/deflate.js
-  var require_deflate2 = __commonJS({
-    "node_modules/pako/lib/deflate.js"(exports, module) {
-      "use strict";
-      var zlib_deflate = require_deflate();
-      var utils = require_common();
-      var strings2 = require_strings();
-      var msg = require_messages();
-      var ZStream2 = require_zstream();
-      var toString2 = Object.prototype.toString;
-      var {
-        Z_NO_FLUSH: Z_NO_FLUSH2,
-        Z_SYNC_FLUSH: Z_SYNC_FLUSH2,
-        Z_FULL_FLUSH: Z_FULL_FLUSH2,
-        Z_FINISH: Z_FINISH2,
-        Z_OK: Z_OK2,
-        Z_STREAM_END: Z_STREAM_END2,
-        Z_DEFAULT_COMPRESSION: Z_DEFAULT_COMPRESSION2,
-        Z_DEFAULT_STRATEGY: Z_DEFAULT_STRATEGY2,
-        Z_DEFLATED: Z_DEFLATED2
-      } = require_constants();
-      var defaultOptions2 = {
-        level: Z_DEFAULT_COMPRESSION2,
-        method: Z_DEFLATED2,
-        chunkSize: 16384,
-        windowBits: 15,
-        memLevel: 8,
-        strategy: Z_DEFAULT_STRATEGY2,
-        legacyHash: true
-      };
-      function Deflate2(options) {
-        this.options = utils.assign({}, defaultOptions2, options || {});
-        let opt = this.options;
-        if (opt.raw && opt.windowBits > 0) {
-          opt.windowBits = -opt.windowBits;
-        } else if (opt.gzip && opt.windowBits > 0 && opt.windowBits < 16) {
-          opt.windowBits += 16;
-        }
-        this.err = 0;
-        this.msg = "";
-        this.ended = false;
-        this.chunks = [];
-        this.strm = new ZStream2();
-        this.strm.avail_out = 0;
-        let status = zlib_deflate.deflateInit2(
-          this.strm,
-          opt.level,
-          opt.method,
-          opt.windowBits,
-          opt.memLevel,
-          opt.strategy,
-          opt.legacyHash
-        );
-        if (status !== Z_OK2) {
-          throw new Error(msg[status]);
-        }
-        if (opt.header) {
-          zlib_deflate.deflateSetHeader(this.strm, opt.header);
-        }
-        if (opt.dictionary) {
-          let dict;
-          if (typeof opt.dictionary === "string") {
-            dict = strings2.string2buf(opt.dictionary);
-          } else if (toString2.call(opt.dictionary) === "[object ArrayBuffer]") {
-            dict = new Uint8Array(opt.dictionary);
-          } else {
-            dict = opt.dictionary;
-          }
-          status = zlib_deflate.deflateSetDictionary(this.strm, dict);
-          if (status !== Z_OK2) {
-            throw new Error(msg[status]);
-          }
-          this._dict_set = true;
-        }
-      }
-      Deflate2.prototype.push = function(data, flush_mode) {
-        const strm = this.strm;
-        const chunkSize = this.options.chunkSize;
-        let status, _flush_mode;
-        if (this.ended) {
-          return false;
-        }
-        if (flush_mode === ~~flush_mode) _flush_mode = flush_mode;
-        else _flush_mode = flush_mode === true ? Z_FINISH2 : Z_NO_FLUSH2;
-        if (typeof data === "string") {
-          strm.input = strings2.string2buf(data);
-        } else if (toString2.call(data) === "[object ArrayBuffer]") {
-          strm.input = new Uint8Array(data);
-        } else {
-          strm.input = data;
-        }
-        strm.next_in = 0;
-        strm.avail_in = strm.input.length;
-        for (; ; ) {
-          if (strm.avail_out === 0) {
-            strm.output = new Uint8Array(chunkSize);
-            strm.next_out = 0;
-            strm.avail_out = chunkSize;
-          }
-          if ((_flush_mode === Z_SYNC_FLUSH2 || _flush_mode === Z_FULL_FLUSH2) && strm.avail_out <= 6) {
-            this.onData(strm.output.subarray(0, strm.next_out));
-            strm.avail_out = 0;
-            continue;
-          }
-          status = zlib_deflate.deflate(strm, _flush_mode);
-          if (status === Z_STREAM_END2) {
-            if (strm.next_out > 0) {
-              this.onData(strm.output.subarray(0, strm.next_out));
-            }
-            status = zlib_deflate.deflateEnd(this.strm);
-            this.onEnd(status);
-            this.ended = true;
-            return status === Z_OK2;
-          }
-          if (strm.avail_out === 0) {
-            this.onData(strm.output);
-            continue;
-          }
-          if (_flush_mode > 0 && strm.next_out > 0) {
-            this.onData(strm.output.subarray(0, strm.next_out));
-            strm.avail_out = 0;
-            continue;
-          }
-          if (strm.avail_in === 0) break;
-        }
-        return true;
-      };
-      Deflate2.prototype.onData = function(chunk) {
-        this.chunks.push(chunk);
-      };
-      Deflate2.prototype.onEnd = function(status) {
-        if (status === Z_OK2) {
-          this.result = utils.flattenChunks(this.chunks);
-        }
-        this.chunks = [];
-        this.err = status;
-        this.msg = this.strm.msg;
-      };
-      function deflate2(input, options) {
-        const deflator = new Deflate2(options);
-        deflator.push(input, true);
-        if (deflator.err) {
-          throw deflator.msg || msg[deflator.err];
-        }
-        return deflator.result;
-      }
-      function deflateRaw2(input, options) {
-        options = options || {};
-        options.raw = true;
-        return deflate2(input, options);
-      }
-      function gzip2(input, options) {
-        options = options || {};
-        options.gzip = true;
-        return deflate2(input, options);
-      }
-      module.exports.Deflate = Deflate2;
-      module.exports.deflate = deflate2;
-      module.exports.deflateRaw = deflateRaw2;
-      module.exports.gzip = gzip2;
-      module.exports.constants = require_constants();
-    }
-  });
-
-  // node_modules/pako/lib/zlib/inffast.js
-  var require_inffast = __commonJS({
-    "node_modules/pako/lib/zlib/inffast.js"(exports, module) {
-      "use strict";
-      var BAD2 = 16209;
-      var TYPE2 = 16191;
-      module.exports = function inflate_fast2(strm, start) {
-        let _in;
-        let last;
-        let _out;
-        let beg;
-        let end;
-        let dmax;
-        let wsize;
-        let whave;
-        let wnext;
-        let s_window;
-        let hold;
-        let bits;
-        let lcode;
-        let dcode;
-        let lmask;
-        let dmask;
-        let here;
-        let op;
-        let len;
-        let dist;
-        let from;
-        let from_source;
-        let input, output;
-        const state = strm.state;
-        _in = strm.next_in;
-        input = strm.input;
-        last = _in + (strm.avail_in - 5);
-        _out = strm.next_out;
-        output = strm.output;
-        beg = _out - (start - strm.avail_out);
-        end = _out + (strm.avail_out - 257);
-        dmax = state.dmax;
-        wsize = state.wsize;
-        whave = state.whave;
-        wnext = state.wnext;
-        s_window = state.window;
-        hold = state.hold;
-        bits = state.bits;
-        lcode = state.lencode;
-        dcode = state.distcode;
-        lmask = (1 << state.lenbits) - 1;
-        dmask = (1 << state.distbits) - 1;
-        top:
-          do {
-            if (bits < 15) {
-              hold += input[_in++] << bits;
-              bits += 8;
-              hold += input[_in++] << bits;
-              bits += 8;
-            }
-            here = lcode[hold & lmask];
-            dolen:
-              for (; ; ) {
-                op = here >>> 24;
-                hold >>>= op;
-                bits -= op;
-                op = here >>> 16 & 255;
-                if (op === 0) {
-                  output[_out++] = here & 65535;
-                } else if (op & 16) {
-                  len = here & 65535;
-                  op &= 15;
-                  if (op) {
-                    if (bits < op) {
-                      hold += input[_in++] << bits;
-                      bits += 8;
-                    }
-                    len += hold & (1 << op) - 1;
-                    hold >>>= op;
-                    bits -= op;
-                  }
-                  if (bits < 15) {
-                    hold += input[_in++] << bits;
-                    bits += 8;
-                    hold += input[_in++] << bits;
-                    bits += 8;
-                  }
-                  here = dcode[hold & dmask];
-                  dodist:
-                    for (; ; ) {
-                      op = here >>> 24;
-                      hold >>>= op;
-                      bits -= op;
-                      op = here >>> 16 & 255;
-                      if (op & 16) {
-                        dist = here & 65535;
-                        op &= 15;
-                        if (bits < op) {
-                          hold += input[_in++] << bits;
-                          bits += 8;
-                          if (bits < op) {
-                            hold += input[_in++] << bits;
-                            bits += 8;
-                          }
-                        }
-                        dist += hold & (1 << op) - 1;
-                        if (dist > dmax) {
-                          strm.msg = "invalid distance too far back";
-                          state.mode = BAD2;
-                          break top;
-                        }
-                        hold >>>= op;
-                        bits -= op;
-                        op = _out - beg;
-                        if (dist > op) {
-                          op = dist - op;
-                          if (op > whave) {
-                            if (state.sane) {
-                              strm.msg = "invalid distance too far back";
-                              state.mode = BAD2;
-                              break top;
-                            }
-                          }
-                          from = 0;
-                          from_source = s_window;
-                          if (wnext === 0) {
-                            from += wsize - op;
-                            if (op < len) {
-                              len -= op;
-                              do {
-                                output[_out++] = s_window[from++];
-                              } while (--op);
-                              from = _out - dist;
-                              from_source = output;
-                            }
-                          } else if (wnext < op) {
-                            from += wsize + wnext - op;
-                            op -= wnext;
-                            if (op < len) {
-                              len -= op;
-                              do {
-                                output[_out++] = s_window[from++];
-                              } while (--op);
-                              from = 0;
-                              if (wnext < len) {
-                                op = wnext;
-                                len -= op;
-                                do {
-                                  output[_out++] = s_window[from++];
-                                } while (--op);
-                                from = _out - dist;
-                                from_source = output;
-                              }
-                            }
-                          } else {
-                            from += wnext - op;
-                            if (op < len) {
-                              len -= op;
-                              do {
-                                output[_out++] = s_window[from++];
-                              } while (--op);
-                              from = _out - dist;
-                              from_source = output;
-                            }
-                          }
-                          while (len > 2) {
-                            output[_out++] = from_source[from++];
-                            output[_out++] = from_source[from++];
-                            output[_out++] = from_source[from++];
-                            len -= 3;
-                          }
-                          if (len) {
-                            output[_out++] = from_source[from++];
-                            if (len > 1) {
-                              output[_out++] = from_source[from++];
-                            }
-                          }
-                        } else {
-                          from = _out - dist;
-                          do {
-                            output[_out++] = output[from++];
-                            output[_out++] = output[from++];
-                            output[_out++] = output[from++];
-                            len -= 3;
-                          } while (len > 2);
-                          if (len) {
-                            output[_out++] = output[from++];
-                            if (len > 1) {
-                              output[_out++] = output[from++];
-                            }
-                          }
-                        }
-                      } else if ((op & 64) === 0) {
-                        here = dcode[(here & 65535) + (hold & (1 << op) - 1)];
-                        continue dodist;
-                      } else {
-                        strm.msg = "invalid distance code";
-                        state.mode = BAD2;
-                        break top;
-                      }
-                      break;
-                    }
-                } else if ((op & 64) === 0) {
-                  here = lcode[(here & 65535) + (hold & (1 << op) - 1)];
-                  continue dolen;
-                } else if (op & 32) {
-                  state.mode = TYPE2;
-                  break top;
-                } else {
-                  strm.msg = "invalid literal/length code";
-                  state.mode = BAD2;
-                  break top;
-                }
-                break;
-              }
-          } while (_in < last && _out < end);
-        len = bits >> 3;
-        _in -= len;
-        bits -= len << 3;
-        hold &= (1 << bits) - 1;
-        strm.next_in = _in;
-        strm.next_out = _out;
-        strm.avail_in = _in < last ? 5 + (last - _in) : 5 - (_in - last);
-        strm.avail_out = _out < end ? 257 + (end - _out) : 257 - (_out - end);
-        state.hold = hold;
-        state.bits = bits;
-        return;
-      };
-    }
-  });
-
-  // node_modules/pako/lib/zlib/inftrees.js
-  var require_inftrees = __commonJS({
-    "node_modules/pako/lib/zlib/inftrees.js"(exports, module) {
-      "use strict";
-      var MAXBITS2 = 15;
-      var ENOUGH_LENS2 = 852;
-      var ENOUGH_DISTS2 = 592;
-      var CODES2 = 0;
-      var LENS2 = 1;
-      var DISTS2 = 2;
-      var lbase2 = new Uint16Array([
-        /* Length codes 257..285 base */
-        3,
-        4,
-        5,
-        6,
-        7,
-        8,
-        9,
-        10,
-        11,
-        13,
-        15,
-        17,
-        19,
-        23,
-        27,
-        31,
-        35,
-        43,
-        51,
-        59,
-        67,
-        83,
-        99,
-        115,
-        131,
-        163,
-        195,
-        227,
-        258,
-        0,
-        0
-      ]);
-      var lext2 = new Uint8Array([
-        /* Length codes 257..285 extra */
-        16,
-        16,
-        16,
-        16,
-        16,
-        16,
-        16,
-        16,
-        17,
-        17,
-        17,
-        17,
-        18,
-        18,
-        18,
-        18,
-        19,
-        19,
-        19,
-        19,
-        20,
-        20,
-        20,
-        20,
-        21,
-        21,
-        21,
-        21,
-        16,
-        199,
-        75
-      ]);
-      var dbase2 = new Uint16Array([
-        /* Distance codes 0..29 base */
-        1,
-        2,
-        3,
-        4,
-        5,
-        7,
-        9,
-        13,
-        17,
-        25,
-        33,
-        49,
-        65,
-        97,
-        129,
-        193,
-        257,
-        385,
-        513,
-        769,
-        1025,
-        1537,
-        2049,
-        3073,
-        4097,
-        6145,
-        8193,
-        12289,
-        16385,
-        24577,
-        0,
-        0
-      ]);
-      var dext2 = new Uint8Array([
-        /* Distance codes 0..29 extra */
-        16,
-        16,
-        16,
-        16,
-        17,
-        17,
-        18,
-        18,
-        19,
-        19,
-        20,
-        20,
-        21,
-        21,
-        22,
-        22,
-        23,
-        23,
-        24,
-        24,
-        25,
-        25,
-        26,
-        26,
-        27,
-        27,
-        28,
-        28,
-        29,
-        29,
-        64,
-        64
-      ]);
-      var inflate_table2 = (type, lens, lens_index, codes, table, table_index, work, opts) => {
-        const bits = opts.bits;
-        let len = 0;
-        let sym = 0;
-        let min = 0, max = 0;
-        let root = 0;
-        let curr = 0;
-        let drop = 0;
-        let left = 0;
-        let used = 0;
-        let huff = 0;
-        let incr;
-        let fill;
-        let low;
-        let mask;
-        let next;
-        let base = null;
-        let match;
-        const count = new Uint16Array(MAXBITS2 + 1);
-        const offs = new Uint16Array(MAXBITS2 + 1);
-        let extra = null;
-        let here_bits, here_op, here_val;
-        for (len = 0; len <= MAXBITS2; len++) {
-          count[len] = 0;
-        }
-        for (sym = 0; sym < codes; sym++) {
-          count[lens[lens_index + sym]]++;
-        }
-        root = bits;
-        for (max = MAXBITS2; max >= 1; max--) {
-          if (count[max] !== 0) {
-            break;
-          }
-        }
-        if (root > max) {
-          root = max;
-        }
-        if (max === 0) {
-          table[table_index++] = 1 << 24 | 64 << 16 | 0;
-          table[table_index++] = 1 << 24 | 64 << 16 | 0;
-          opts.bits = 1;
-          return 0;
-        }
-        for (min = 1; min < max; min++) {
-          if (count[min] !== 0) {
-            break;
-          }
-        }
-        if (root < min) {
-          root = min;
-        }
-        left = 1;
-        for (len = 1; len <= MAXBITS2; len++) {
-          left <<= 1;
-          left -= count[len];
-          if (left < 0) {
-            return -1;
-          }
-        }
-        if (left > 0 && (type === CODES2 || max !== 1)) {
-          return -1;
-        }
-        offs[1] = 0;
-        for (len = 1; len < MAXBITS2; len++) {
-          offs[len + 1] = offs[len] + count[len];
-        }
-        for (sym = 0; sym < codes; sym++) {
-          if (lens[lens_index + sym] !== 0) {
-            work[offs[lens[lens_index + sym]]++] = sym;
-          }
-        }
-        if (type === CODES2) {
-          base = extra = work;
-          match = 20;
-        } else if (type === LENS2) {
-          base = lbase2;
-          extra = lext2;
-          match = 257;
-        } else {
-          base = dbase2;
-          extra = dext2;
-          match = 0;
-        }
-        huff = 0;
-        sym = 0;
-        len = min;
-        next = table_index;
-        curr = root;
-        drop = 0;
-        low = -1;
-        used = 1 << root;
-        mask = used - 1;
-        if (type === LENS2 && used > ENOUGH_LENS2 || type === DISTS2 && used > ENOUGH_DISTS2) {
-          return 1;
-        }
-        for (; ; ) {
-          here_bits = len - drop;
-          if (work[sym] + 1 < match) {
-            here_op = 0;
-            here_val = work[sym];
-          } else if (work[sym] >= match) {
-            here_op = extra[work[sym] - match];
-            here_val = base[work[sym] - match];
-          } else {
-            here_op = 32 + 64;
-            here_val = 0;
-          }
-          incr = 1 << len - drop;
-          fill = 1 << curr;
-          min = fill;
-          do {
-            fill -= incr;
-            table[next + (huff >> drop) + fill] = here_bits << 24 | here_op << 16 | here_val | 0;
-          } while (fill !== 0);
-          incr = 1 << len - 1;
-          while (huff & incr) {
-            incr >>= 1;
-          }
-          if (incr !== 0) {
-            huff &= incr - 1;
-            huff += incr;
-          } else {
-            huff = 0;
-          }
-          sym++;
-          if (--count[len] === 0) {
-            if (len === max) {
-              break;
-            }
-            len = lens[lens_index + work[sym]];
-          }
-          if (len > root && (huff & mask) !== low) {
-            if (drop === 0) {
-              drop = root;
-            }
-            next += min;
-            curr = len - drop;
-            left = 1 << curr;
-            while (curr + drop < max) {
-              left -= count[curr + drop];
-              if (left <= 0) {
-                break;
-              }
-              curr++;
-              left <<= 1;
-            }
-            used += 1 << curr;
-            if (type === LENS2 && used > ENOUGH_LENS2 || type === DISTS2 && used > ENOUGH_DISTS2) {
-              return 1;
-            }
-            low = huff & mask;
-            table[low] = root << 24 | curr << 16 | next - table_index | 0;
-          }
-        }
-        if (huff !== 0) {
-          table[next + huff] = len - drop << 24 | 64 << 16 | 0;
-        }
-        opts.bits = root;
-        return 0;
-      };
-      module.exports = inflate_table2;
-    }
-  });
-
-  // node_modules/pako/lib/zlib/inflate.js
-  var require_inflate = __commonJS({
-    "node_modules/pako/lib/zlib/inflate.js"(exports, module) {
-      "use strict";
-      var adler322 = require_adler32();
-      var crc322 = require_crc32();
-      var inflate_fast2 = require_inffast();
-      var inflate_table2 = require_inftrees();
-      var CODES2 = 0;
-      var LENS2 = 1;
-      var DISTS2 = 2;
-      var {
-        Z_FINISH: Z_FINISH2,
-        Z_BLOCK: Z_BLOCK2,
-        Z_TREES: Z_TREES2,
-        Z_OK: Z_OK2,
-        Z_STREAM_END: Z_STREAM_END2,
-        Z_NEED_DICT: Z_NEED_DICT2,
-        Z_STREAM_ERROR: Z_STREAM_ERROR2,
-        Z_DATA_ERROR: Z_DATA_ERROR2,
-        Z_MEM_ERROR: Z_MEM_ERROR2,
-        Z_BUF_ERROR: Z_BUF_ERROR2,
-        Z_DEFLATED: Z_DEFLATED2
-      } = require_constants();
-      var HEAD2 = 16180;
-      var FLAGS2 = 16181;
-      var TIME2 = 16182;
-      var OS2 = 16183;
-      var EXLEN2 = 16184;
-      var EXTRA2 = 16185;
-      var NAME2 = 16186;
-      var COMMENT2 = 16187;
-      var HCRC2 = 16188;
-      var DICTID2 = 16189;
-      var DICT2 = 16190;
-      var TYPE2 = 16191;
-      var TYPEDO2 = 16192;
-      var STORED2 = 16193;
-      var COPY_2 = 16194;
-      var COPY2 = 16195;
-      var TABLE2 = 16196;
-      var LENLENS2 = 16197;
-      var CODELENS2 = 16198;
-      var LEN_2 = 16199;
-      var LEN2 = 16200;
-      var LENEXT2 = 16201;
-      var DIST2 = 16202;
-      var DISTEXT2 = 16203;
-      var MATCH2 = 16204;
-      var LIT2 = 16205;
-      var CHECK2 = 16206;
-      var LENGTH2 = 16207;
-      var DONE2 = 16208;
-      var BAD2 = 16209;
-      var MEM2 = 16210;
-      var SYNC2 = 16211;
-      var ENOUGH_LENS2 = 852;
-      var ENOUGH_DISTS2 = 592;
-      var MAX_WBITS2 = 15;
-      var DEF_WBITS2 = MAX_WBITS2;
-      var zswap322 = (q) => {
-        return (q >>> 24 & 255) + (q >>> 8 & 65280) + ((q & 65280) << 8) + ((q & 255) << 24);
-      };
-      function InflateState2() {
-        this.strm = null;
-        this.mode = 0;
-        this.last = false;
-        this.wrap = 0;
-        this.havedict = false;
-        this.flags = 0;
-        this.dmax = 0;
-        this.check = 0;
-        this.total = 0;
-        this.head = null;
-        this.wbits = 0;
-        this.wsize = 0;
-        this.whave = 0;
-        this.wnext = 0;
-        this.window = null;
-        this.hold = 0;
-        this.bits = 0;
-        this.length = 0;
-        this.offset = 0;
-        this.extra = 0;
-        this.lencode = null;
-        this.distcode = null;
-        this.lenbits = 0;
-        this.distbits = 0;
-        this.ncode = 0;
-        this.nlen = 0;
-        this.ndist = 0;
-        this.have = 0;
-        this.next = null;
-        this.lens = new Uint16Array(320);
-        this.work = new Uint16Array(288);
-        this.lendyn = null;
-        this.distdyn = null;
-        this.sane = 0;
-        this.back = 0;
-        this.was = 0;
-      }
-      var inflateStateCheck2 = (strm) => {
-        if (!strm) {
-          return 1;
-        }
-        const state = strm.state;
-        if (!state || state.strm !== strm || state.mode < HEAD2 || state.mode > SYNC2) {
-          return 1;
-        }
-        return 0;
-      };
-      var inflateResetKeep2 = (strm) => {
-        if (inflateStateCheck2(strm)) {
-          return Z_STREAM_ERROR2;
-        }
-        const state = strm.state;
-        strm.total_in = strm.total_out = state.total = 0;
-        strm.msg = "";
-        if (state.wrap) {
-          strm.adler = state.wrap & 1;
-        }
-        state.mode = HEAD2;
-        state.last = 0;
-        state.havedict = 0;
-        state.flags = -1;
-        state.dmax = 32768;
-        state.head = null;
-        state.hold = 0;
-        state.bits = 0;
-        state.lencode = state.lendyn = new Int32Array(ENOUGH_LENS2);
-        state.distcode = state.distdyn = new Int32Array(ENOUGH_DISTS2);
-        state.sane = 1;
-        state.back = -1;
-        return Z_OK2;
-      };
-      var inflateReset3 = (strm) => {
-        if (inflateStateCheck2(strm)) {
-          return Z_STREAM_ERROR2;
-        }
-        const state = strm.state;
-        state.wsize = 0;
-        state.whave = 0;
-        state.wnext = 0;
-        return inflateResetKeep2(strm);
-      };
-      var inflateReset22 = (strm, windowBits) => {
-        let wrap;
-        if (inflateStateCheck2(strm)) {
-          return Z_STREAM_ERROR2;
-        }
-        const state = strm.state;
-        if (windowBits < 0) {
-          wrap = 0;
-          windowBits = -windowBits;
-        } else {
-          wrap = (windowBits >> 4) + 5;
-          if (windowBits < 48) {
-            windowBits &= 15;
-          }
-        }
-        if (windowBits && (windowBits < 8 || windowBits > 15)) {
-          return Z_STREAM_ERROR2;
-        }
-        if (state.window !== null && state.wbits !== windowBits) {
-          state.window = null;
-        }
-        state.wrap = wrap;
-        state.wbits = windowBits;
-        return inflateReset3(strm);
-      };
-      var inflateInit22 = (strm, windowBits) => {
-        if (!strm) {
-          return Z_STREAM_ERROR2;
-        }
-        const state = new InflateState2();
-        strm.state = state;
-        state.strm = strm;
-        state.window = null;
-        state.mode = HEAD2;
-        const ret = inflateReset22(strm, windowBits);
-        if (ret !== Z_OK2) {
-          strm.state = null;
-        }
-        return ret;
-      };
-      var inflateInit3 = (strm) => {
-        return inflateInit22(strm, DEF_WBITS2);
-      };
-      var virgin2 = true;
-      var lenfix2;
-      var distfix2;
-      var fixedtables2 = (state) => {
-        if (virgin2) {
-          lenfix2 = new Int32Array(512);
-          distfix2 = new Int32Array(32);
-          let sym = 0;
-          while (sym < 144) {
-            state.lens[sym++] = 8;
-          }
-          while (sym < 256) {
-            state.lens[sym++] = 9;
-          }
-          while (sym < 280) {
-            state.lens[sym++] = 7;
-          }
-          while (sym < 288) {
-            state.lens[sym++] = 8;
-          }
-          inflate_table2(LENS2, state.lens, 0, 288, lenfix2, 0, state.work, { bits: 9 });
-          sym = 0;
-          while (sym < 32) {
-            state.lens[sym++] = 5;
-          }
-          inflate_table2(DISTS2, state.lens, 0, 32, distfix2, 0, state.work, { bits: 5 });
-          virgin2 = false;
-        }
-        state.lencode = lenfix2;
-        state.lenbits = 9;
-        state.distcode = distfix2;
-        state.distbits = 5;
-      };
-      var updatewindow2 = (strm, src, end, copy) => {
-        let dist;
-        const state = strm.state;
-        if (state.window === null) {
-          state.window = new Uint8Array(1 << state.wbits);
-        }
-        if (state.wsize === 0) {
-          state.wsize = 1 << state.wbits;
-          state.wnext = 0;
-          state.whave = 0;
-        }
-        if (copy >= state.wsize) {
-          state.window.set(src.subarray(end - state.wsize, end), 0);
-          state.wnext = 0;
-          state.whave = state.wsize;
-        } else {
-          dist = state.wsize - state.wnext;
-          if (dist > copy) {
-            dist = copy;
-          }
-          state.window.set(src.subarray(end - copy, end - copy + dist), state.wnext);
-          copy -= dist;
-          if (copy) {
-            state.window.set(src.subarray(end - copy, end), 0);
-            state.wnext = copy;
-            state.whave = state.wsize;
-          } else {
-            state.wnext += dist;
-            if (state.wnext === state.wsize) {
-              state.wnext = 0;
-            }
-            if (state.whave < state.wsize) {
-              state.whave += dist;
-            }
-          }
-        }
-        return 0;
-      };
-      var inflate3 = (strm, flush) => {
-        let state;
-        let input, output;
-        let next;
-        let put;
-        let have, left;
-        let hold;
-        let bits;
-        let _in, _out;
-        let copy;
-        let from;
-        let from_source;
-        let here = 0;
-        let here_bits, here_op, here_val;
-        let last_bits, last_op, last_val;
-        let len;
-        let ret;
-        const hbuf = new Uint8Array(4);
-        let opts;
-        let n;
-        const order = (
-          /* permutation of code lengths */
-          new Uint8Array([16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15])
-        );
-        if (inflateStateCheck2(strm) || !strm.output || !strm.input && strm.avail_in !== 0) {
-          return Z_STREAM_ERROR2;
-        }
-        state = strm.state;
-        if (state.mode === TYPE2) {
-          state.mode = TYPEDO2;
-        }
-        put = strm.next_out;
-        output = strm.output;
-        left = strm.avail_out;
-        next = strm.next_in;
-        input = strm.input;
-        have = strm.avail_in;
-        hold = state.hold;
-        bits = state.bits;
-        _in = have;
-        _out = left;
-        ret = Z_OK2;
-        inf_leave:
-          for (; ; ) {
-            switch (state.mode) {
-              case HEAD2:
-                if (state.wrap === 0) {
-                  state.mode = TYPEDO2;
-                  break;
-                }
-                while (bits < 16) {
-                  if (have === 0) {
-                    break inf_leave;
-                  }
-                  have--;
-                  hold += input[next++] << bits;
-                  bits += 8;
-                }
-                if (state.wrap & 2 && hold === 35615) {
-                  if (state.wbits === 0) {
-                    state.wbits = 15;
-                  }
-                  state.check = 0;
-                  hbuf[0] = hold & 255;
-                  hbuf[1] = hold >>> 8 & 255;
-                  state.check = crc322(state.check, hbuf, 2, 0);
-                  hold = 0;
-                  bits = 0;
-                  state.mode = FLAGS2;
-                  break;
-                }
-                if (state.head) {
-                  state.head.done = false;
-                }
-                if (!(state.wrap & 1) || /* check if zlib header allowed */
-                (((hold & 255) << 8) + (hold >> 8)) % 31) {
-                  strm.msg = "incorrect header check";
-                  state.mode = BAD2;
-                  break;
-                }
-                if ((hold & 15) !== Z_DEFLATED2) {
-                  strm.msg = "unknown compression method";
-                  state.mode = BAD2;
-                  break;
-                }
-                hold >>>= 4;
-                bits -= 4;
-                len = (hold & 15) + 8;
-                if (state.wbits === 0) {
-                  state.wbits = len;
-                }
-                if (len > 15 || len > state.wbits) {
-                  strm.msg = "invalid window size";
-                  state.mode = BAD2;
-                  break;
-                }
-                state.dmax = 1 << state.wbits;
-                state.flags = 0;
-                strm.adler = state.check = 1;
-                state.mode = hold & 512 ? DICTID2 : TYPE2;
-                hold = 0;
-                bits = 0;
-                break;
-              case FLAGS2:
-                while (bits < 16) {
-                  if (have === 0) {
-                    break inf_leave;
-                  }
-                  have--;
-                  hold += input[next++] << bits;
-                  bits += 8;
-                }
-                state.flags = hold;
-                if ((state.flags & 255) !== Z_DEFLATED2) {
-                  strm.msg = "unknown compression method";
-                  state.mode = BAD2;
-                  break;
-                }
-                if (state.flags & 57344) {
-                  strm.msg = "unknown header flags set";
-                  state.mode = BAD2;
-                  break;
-                }
-                if (state.head) {
-                  state.head.text = hold >> 8 & 1;
-                }
-                if (state.flags & 512 && state.wrap & 4) {
-                  hbuf[0] = hold & 255;
-                  hbuf[1] = hold >>> 8 & 255;
-                  state.check = crc322(state.check, hbuf, 2, 0);
-                }
-                hold = 0;
-                bits = 0;
-                state.mode = TIME2;
-              /* falls through */
-              case TIME2:
-                while (bits < 32) {
-                  if (have === 0) {
-                    break inf_leave;
-                  }
-                  have--;
-                  hold += input[next++] << bits;
-                  bits += 8;
-                }
-                if (state.head) {
-                  state.head.time = hold;
-                }
-                if (state.flags & 512 && state.wrap & 4) {
-                  hbuf[0] = hold & 255;
-                  hbuf[1] = hold >>> 8 & 255;
-                  hbuf[2] = hold >>> 16 & 255;
-                  hbuf[3] = hold >>> 24 & 255;
-                  state.check = crc322(state.check, hbuf, 4, 0);
-                }
-                hold = 0;
-                bits = 0;
-                state.mode = OS2;
-              /* falls through */
-              case OS2:
-                while (bits < 16) {
-                  if (have === 0) {
-                    break inf_leave;
-                  }
-                  have--;
-                  hold += input[next++] << bits;
-                  bits += 8;
-                }
-                if (state.head) {
-                  state.head.xflags = hold & 255;
-                  state.head.os = hold >> 8;
-                }
-                if (state.flags & 512 && state.wrap & 4) {
-                  hbuf[0] = hold & 255;
-                  hbuf[1] = hold >>> 8 & 255;
-                  state.check = crc322(state.check, hbuf, 2, 0);
-                }
-                hold = 0;
-                bits = 0;
-                state.mode = EXLEN2;
-              /* falls through */
-              case EXLEN2:
-                if (state.flags & 1024) {
-                  while (bits < 16) {
-                    if (have === 0) {
-                      break inf_leave;
-                    }
-                    have--;
-                    hold += input[next++] << bits;
-                    bits += 8;
-                  }
-                  state.length = hold;
-                  if (state.head) {
-                    state.head.extra_len = hold;
-                  }
-                  if (state.flags & 512 && state.wrap & 4) {
-                    hbuf[0] = hold & 255;
-                    hbuf[1] = hold >>> 8 & 255;
-                    state.check = crc322(state.check, hbuf, 2, 0);
-                  }
-                  hold = 0;
-                  bits = 0;
-                } else if (state.head) {
-                  state.head.extra = null;
-                }
-                state.mode = EXTRA2;
-              /* falls through */
-              case EXTRA2:
-                if (state.flags & 1024) {
-                  copy = state.length;
-                  if (copy > have) {
-                    copy = have;
-                  }
-                  if (copy) {
-                    if (state.head) {
-                      len = state.head.extra_len - state.length;
-                      if (!state.head.extra) {
-                        state.head.extra = new Uint8Array(state.head.extra_len);
-                      }
-                      state.head.extra.set(
-                        input.subarray(
-                          next,
-                          // extra field is limited to 65536 bytes
-                          // - no need for additional size check
-                          next + copy
-                        ),
-                        /*len + copy > state.head.extra_max - len ? state.head.extra_max : copy,*/
-                        len
-                      );
-                    }
-                    if (state.flags & 512 && state.wrap & 4) {
-                      state.check = crc322(state.check, input, copy, next);
-                    }
-                    have -= copy;
-                    next += copy;
-                    state.length -= copy;
-                  }
-                  if (state.length) {
-                    break inf_leave;
-                  }
-                }
-                state.length = 0;
-                state.mode = NAME2;
-              /* falls through */
-              case NAME2:
-                if (state.flags & 2048) {
-                  if (have === 0) {
-                    break inf_leave;
-                  }
-                  copy = 0;
-                  do {
-                    len = input[next + copy++];
-                    if (state.head && len && state.length < 65536) {
-                      state.head.name += String.fromCharCode(len);
-                    }
-                  } while (len && copy < have);
-                  if (state.flags & 512 && state.wrap & 4) {
-                    state.check = crc322(state.check, input, copy, next);
-                  }
-                  have -= copy;
-                  next += copy;
-                  if (len) {
-                    break inf_leave;
-                  }
-                } else if (state.head) {
-                  state.head.name = null;
-                }
-                state.length = 0;
-                state.mode = COMMENT2;
-              /* falls through */
-              case COMMENT2:
-                if (state.flags & 4096) {
-                  if (have === 0) {
-                    break inf_leave;
-                  }
-                  copy = 0;
-                  do {
-                    len = input[next + copy++];
-                    if (state.head && len && state.length < 65536) {
-                      state.head.comment += String.fromCharCode(len);
-                    }
-                  } while (len && copy < have);
-                  if (state.flags & 512 && state.wrap & 4) {
-                    state.check = crc322(state.check, input, copy, next);
-                  }
-                  have -= copy;
-                  next += copy;
-                  if (len) {
-                    break inf_leave;
-                  }
-                } else if (state.head) {
-                  state.head.comment = null;
-                }
-                state.mode = HCRC2;
-              /* falls through */
-              case HCRC2:
-                if (state.flags & 512) {
-                  while (bits < 16) {
-                    if (have === 0) {
-                      break inf_leave;
-                    }
-                    have--;
-                    hold += input[next++] << bits;
-                    bits += 8;
-                  }
-                  if (state.wrap & 4 && hold !== (state.check & 65535)) {
-                    strm.msg = "header crc mismatch";
-                    state.mode = BAD2;
-                    break;
-                  }
-                  hold = 0;
-                  bits = 0;
-                }
-                if (state.head) {
-                  state.head.hcrc = state.flags >> 9 & 1;
-                  state.head.done = true;
-                }
-                strm.adler = state.check = 0;
-                state.mode = TYPE2;
-                break;
-              case DICTID2:
-                while (bits < 32) {
-                  if (have === 0) {
-                    break inf_leave;
-                  }
-                  have--;
-                  hold += input[next++] << bits;
-                  bits += 8;
-                }
-                strm.adler = state.check = zswap322(hold);
-                hold = 0;
-                bits = 0;
-                state.mode = DICT2;
-              /* falls through */
-              case DICT2:
-                if (state.havedict === 0) {
-                  strm.next_out = put;
-                  strm.avail_out = left;
-                  strm.next_in = next;
-                  strm.avail_in = have;
-                  state.hold = hold;
-                  state.bits = bits;
-                  return Z_NEED_DICT2;
-                }
-                strm.adler = state.check = 1;
-                state.mode = TYPE2;
-              /* falls through */
-              case TYPE2:
-                if (flush === Z_BLOCK2 || flush === Z_TREES2) {
-                  break inf_leave;
-                }
-              /* falls through */
-              case TYPEDO2:
-                if (state.last) {
-                  hold >>>= bits & 7;
-                  bits -= bits & 7;
-                  state.mode = CHECK2;
-                  break;
-                }
-                while (bits < 3) {
-                  if (have === 0) {
-                    break inf_leave;
-                  }
-                  have--;
-                  hold += input[next++] << bits;
-                  bits += 8;
-                }
-                state.last = hold & 1;
-                hold >>>= 1;
-                bits -= 1;
-                switch (hold & 3) {
-                  case 0:
-                    state.mode = STORED2;
-                    break;
-                  case 1:
-                    fixedtables2(state);
-                    state.mode = LEN_2;
-                    if (flush === Z_TREES2) {
-                      hold >>>= 2;
-                      bits -= 2;
-                      break inf_leave;
-                    }
-                    break;
-                  case 2:
-                    state.mode = TABLE2;
-                    break;
-                  case 3:
-                    strm.msg = "invalid block type";
-                    state.mode = BAD2;
-                }
-                hold >>>= 2;
-                bits -= 2;
-                break;
-              case STORED2:
-                hold >>>= bits & 7;
-                bits -= bits & 7;
-                while (bits < 32) {
-                  if (have === 0) {
-                    break inf_leave;
-                  }
-                  have--;
-                  hold += input[next++] << bits;
-                  bits += 8;
-                }
-                if ((hold & 65535) !== (hold >>> 16 ^ 65535)) {
-                  strm.msg = "invalid stored block lengths";
-                  state.mode = BAD2;
-                  break;
-                }
-                state.length = hold & 65535;
-                hold = 0;
-                bits = 0;
-                state.mode = COPY_2;
-                if (flush === Z_TREES2) {
-                  break inf_leave;
-                }
-              /* falls through */
-              case COPY_2:
-                state.mode = COPY2;
-              /* falls through */
-              case COPY2:
-                copy = state.length;
-                if (copy) {
-                  if (copy > have) {
-                    copy = have;
-                  }
-                  if (copy > left) {
-                    copy = left;
-                  }
-                  if (copy === 0) {
-                    break inf_leave;
-                  }
-                  output.set(input.subarray(next, next + copy), put);
-                  have -= copy;
-                  next += copy;
-                  left -= copy;
-                  put += copy;
-                  state.length -= copy;
-                  break;
-                }
-                state.mode = TYPE2;
-                break;
-              case TABLE2:
-                while (bits < 14) {
-                  if (have === 0) {
-                    break inf_leave;
-                  }
-                  have--;
-                  hold += input[next++] << bits;
-                  bits += 8;
-                }
-                state.nlen = (hold & 31) + 257;
-                hold >>>= 5;
-                bits -= 5;
-                state.ndist = (hold & 31) + 1;
-                hold >>>= 5;
-                bits -= 5;
-                state.ncode = (hold & 15) + 4;
-                hold >>>= 4;
-                bits -= 4;
-                if (state.nlen > 286 || state.ndist > 30) {
-                  strm.msg = "too many length or distance symbols";
-                  state.mode = BAD2;
-                  break;
-                }
-                state.have = 0;
-                state.mode = LENLENS2;
-              /* falls through */
-              case LENLENS2:
-                while (state.have < state.ncode) {
-                  while (bits < 3) {
-                    if (have === 0) {
-                      break inf_leave;
-                    }
-                    have--;
-                    hold += input[next++] << bits;
-                    bits += 8;
-                  }
-                  state.lens[order[state.have++]] = hold & 7;
-                  hold >>>= 3;
-                  bits -= 3;
-                }
-                while (state.have < 19) {
-                  state.lens[order[state.have++]] = 0;
-                }
-                state.lencode = state.lendyn;
-                state.lenbits = 7;
-                opts = { bits: state.lenbits };
-                ret = inflate_table2(CODES2, state.lens, 0, 19, state.lencode, 0, state.work, opts);
-                state.lenbits = opts.bits;
-                if (ret) {
-                  strm.msg = "invalid code lengths set";
-                  state.mode = BAD2;
-                  break;
-                }
-                state.have = 0;
-                state.mode = CODELENS2;
-              /* falls through */
-              case CODELENS2:
-                while (state.have < state.nlen + state.ndist) {
-                  for (; ; ) {
-                    here = state.lencode[hold & (1 << state.lenbits) - 1];
-                    here_bits = here >>> 24;
-                    here_op = here >>> 16 & 255;
-                    here_val = here & 65535;
-                    if (here_bits <= bits) {
-                      break;
-                    }
-                    if (have === 0) {
-                      break inf_leave;
-                    }
-                    have--;
-                    hold += input[next++] << bits;
-                    bits += 8;
-                  }
-                  if (here_val < 16) {
-                    hold >>>= here_bits;
-                    bits -= here_bits;
-                    state.lens[state.have++] = here_val;
-                  } else {
-                    if (here_val === 16) {
-                      n = here_bits + 2;
-                      while (bits < n) {
-                        if (have === 0) {
-                          break inf_leave;
-                        }
-                        have--;
-                        hold += input[next++] << bits;
-                        bits += 8;
-                      }
-                      hold >>>= here_bits;
-                      bits -= here_bits;
-                      if (state.have === 0) {
-                        strm.msg = "invalid bit length repeat";
-                        state.mode = BAD2;
-                        break;
-                      }
-                      len = state.lens[state.have - 1];
-                      copy = 3 + (hold & 3);
-                      hold >>>= 2;
-                      bits -= 2;
-                    } else if (here_val === 17) {
-                      n = here_bits + 3;
-                      while (bits < n) {
-                        if (have === 0) {
-                          break inf_leave;
-                        }
-                        have--;
-                        hold += input[next++] << bits;
-                        bits += 8;
-                      }
-                      hold >>>= here_bits;
-                      bits -= here_bits;
-                      len = 0;
-                      copy = 3 + (hold & 7);
-                      hold >>>= 3;
-                      bits -= 3;
-                    } else {
-                      n = here_bits + 7;
-                      while (bits < n) {
-                        if (have === 0) {
-                          break inf_leave;
-                        }
-                        have--;
-                        hold += input[next++] << bits;
-                        bits += 8;
-                      }
-                      hold >>>= here_bits;
-                      bits -= here_bits;
-                      len = 0;
-                      copy = 11 + (hold & 127);
-                      hold >>>= 7;
-                      bits -= 7;
-                    }
-                    if (state.have + copy > state.nlen + state.ndist) {
-                      strm.msg = "invalid bit length repeat";
-                      state.mode = BAD2;
-                      break;
-                    }
-                    while (copy--) {
-                      state.lens[state.have++] = len;
-                    }
-                  }
-                }
-                if (state.mode === BAD2) {
-                  break;
-                }
-                if (state.lens[256] === 0) {
-                  strm.msg = "invalid code -- missing end-of-block";
-                  state.mode = BAD2;
-                  break;
-                }
-                state.lenbits = 9;
-                opts = { bits: state.lenbits };
-                ret = inflate_table2(LENS2, state.lens, 0, state.nlen, state.lencode, 0, state.work, opts);
-                state.lenbits = opts.bits;
-                if (ret) {
-                  strm.msg = "invalid literal/lengths set";
-                  state.mode = BAD2;
-                  break;
-                }
-                state.distbits = 6;
-                state.distcode = state.distdyn;
-                opts = { bits: state.distbits };
-                ret = inflate_table2(DISTS2, state.lens, state.nlen, state.ndist, state.distcode, 0, state.work, opts);
-                state.distbits = opts.bits;
-                if (ret) {
-                  strm.msg = "invalid distances set";
-                  state.mode = BAD2;
-                  break;
-                }
-                state.mode = LEN_2;
-                if (flush === Z_TREES2) {
-                  break inf_leave;
-                }
-              /* falls through */
-              case LEN_2:
-                state.mode = LEN2;
-              /* falls through */
-              case LEN2:
-                if (have >= 6 && left >= 258) {
-                  strm.next_out = put;
-                  strm.avail_out = left;
-                  strm.next_in = next;
-                  strm.avail_in = have;
-                  state.hold = hold;
-                  state.bits = bits;
-                  inflate_fast2(strm, _out);
-                  put = strm.next_out;
-                  output = strm.output;
-                  left = strm.avail_out;
-                  next = strm.next_in;
-                  input = strm.input;
-                  have = strm.avail_in;
-                  hold = state.hold;
-                  bits = state.bits;
-                  if (state.mode === TYPE2) {
-                    state.back = -1;
-                  }
-                  break;
-                }
-                state.back = 0;
-                for (; ; ) {
-                  here = state.lencode[hold & (1 << state.lenbits) - 1];
-                  here_bits = here >>> 24;
-                  here_op = here >>> 16 & 255;
-                  here_val = here & 65535;
-                  if (here_bits <= bits) {
-                    break;
-                  }
-                  if (have === 0) {
-                    break inf_leave;
-                  }
-                  have--;
-                  hold += input[next++] << bits;
-                  bits += 8;
-                }
-                if (here_op && (here_op & 240) === 0) {
-                  last_bits = here_bits;
-                  last_op = here_op;
-                  last_val = here_val;
-                  for (; ; ) {
-                    here = state.lencode[last_val + ((hold & (1 << last_bits + last_op) - 1) >> last_bits)];
-                    here_bits = here >>> 24;
-                    here_op = here >>> 16 & 255;
-                    here_val = here & 65535;
-                    if (last_bits + here_bits <= bits) {
-                      break;
-                    }
-                    if (have === 0) {
-                      break inf_leave;
-                    }
-                    have--;
-                    hold += input[next++] << bits;
-                    bits += 8;
-                  }
-                  hold >>>= last_bits;
-                  bits -= last_bits;
-                  state.back += last_bits;
-                }
-                hold >>>= here_bits;
-                bits -= here_bits;
-                state.back += here_bits;
-                state.length = here_val;
-                if (here_op === 0) {
-                  state.mode = LIT2;
-                  break;
-                }
-                if (here_op & 32) {
-                  state.back = -1;
-                  state.mode = TYPE2;
-                  break;
-                }
-                if (here_op & 64) {
-                  strm.msg = "invalid literal/length code";
-                  state.mode = BAD2;
-                  break;
-                }
-                state.extra = here_op & 15;
-                state.mode = LENEXT2;
-              /* falls through */
-              case LENEXT2:
-                if (state.extra) {
-                  n = state.extra;
-                  while (bits < n) {
-                    if (have === 0) {
-                      break inf_leave;
-                    }
-                    have--;
-                    hold += input[next++] << bits;
-                    bits += 8;
-                  }
-                  state.length += hold & (1 << state.extra) - 1;
-                  hold >>>= state.extra;
-                  bits -= state.extra;
-                  state.back += state.extra;
-                }
-                state.was = state.length;
-                state.mode = DIST2;
-              /* falls through */
-              case DIST2:
-                for (; ; ) {
-                  here = state.distcode[hold & (1 << state.distbits) - 1];
-                  here_bits = here >>> 24;
-                  here_op = here >>> 16 & 255;
-                  here_val = here & 65535;
-                  if (here_bits <= bits) {
-                    break;
-                  }
-                  if (have === 0) {
-                    break inf_leave;
-                  }
-                  have--;
-                  hold += input[next++] << bits;
-                  bits += 8;
-                }
-                if ((here_op & 240) === 0) {
-                  last_bits = here_bits;
-                  last_op = here_op;
-                  last_val = here_val;
-                  for (; ; ) {
-                    here = state.distcode[last_val + ((hold & (1 << last_bits + last_op) - 1) >> last_bits)];
-                    here_bits = here >>> 24;
-                    here_op = here >>> 16 & 255;
-                    here_val = here & 65535;
-                    if (last_bits + here_bits <= bits) {
-                      break;
-                    }
-                    if (have === 0) {
-                      break inf_leave;
-                    }
-                    have--;
-                    hold += input[next++] << bits;
-                    bits += 8;
-                  }
-                  hold >>>= last_bits;
-                  bits -= last_bits;
-                  state.back += last_bits;
-                }
-                hold >>>= here_bits;
-                bits -= here_bits;
-                state.back += here_bits;
-                if (here_op & 64) {
-                  strm.msg = "invalid distance code";
-                  state.mode = BAD2;
-                  break;
-                }
-                state.offset = here_val;
-                state.extra = here_op & 15;
-                state.mode = DISTEXT2;
-              /* falls through */
-              case DISTEXT2:
-                if (state.extra) {
-                  n = state.extra;
-                  while (bits < n) {
-                    if (have === 0) {
-                      break inf_leave;
-                    }
-                    have--;
-                    hold += input[next++] << bits;
-                    bits += 8;
-                  }
-                  state.offset += hold & (1 << state.extra) - 1;
-                  hold >>>= state.extra;
-                  bits -= state.extra;
-                  state.back += state.extra;
-                }
-                if (state.offset > state.dmax) {
-                  strm.msg = "invalid distance too far back";
-                  state.mode = BAD2;
-                  break;
-                }
-                state.mode = MATCH2;
-              /* falls through */
-              case MATCH2:
-                if (left === 0) {
-                  break inf_leave;
-                }
-                copy = _out - left;
-                if (state.offset > copy) {
-                  copy = state.offset - copy;
-                  if (copy > state.whave) {
-                    if (state.sane) {
-                      strm.msg = "invalid distance too far back";
-                      state.mode = BAD2;
-                      break;
-                    }
-                  }
-                  if (copy > state.wnext) {
-                    copy -= state.wnext;
-                    from = state.wsize - copy;
-                  } else {
-                    from = state.wnext - copy;
-                  }
-                  if (copy > state.length) {
-                    copy = state.length;
-                  }
-                  from_source = state.window;
-                } else {
-                  from_source = output;
-                  from = put - state.offset;
-                  copy = state.length;
-                }
-                if (copy > left) {
-                  copy = left;
-                }
-                left -= copy;
-                state.length -= copy;
-                do {
-                  output[put++] = from_source[from++];
-                } while (--copy);
-                if (state.length === 0) {
-                  state.mode = LEN2;
-                }
-                break;
-              case LIT2:
-                if (left === 0) {
-                  break inf_leave;
-                }
-                output[put++] = state.length;
-                left--;
-                state.mode = LEN2;
-                break;
-              case CHECK2:
-                if (state.wrap) {
-                  while (bits < 32) {
-                    if (have === 0) {
-                      break inf_leave;
-                    }
-                    have--;
-                    hold |= input[next++] << bits;
-                    bits += 8;
-                  }
-                  _out -= left;
-                  strm.total_out += _out;
-                  state.total += _out;
-                  if (state.wrap & 4 && _out) {
-                    strm.adler = state.check = /*UPDATE_CHECK(state.check, put - _out, _out);*/
-                    state.flags ? crc322(state.check, output, _out, put - _out) : adler322(state.check, output, _out, put - _out);
-                  }
-                  _out = left;
-                  if (state.wrap & 4 && (state.flags ? hold : zswap322(hold)) !== state.check) {
-                    strm.msg = "incorrect data check";
-                    state.mode = BAD2;
-                    break;
-                  }
-                  hold = 0;
-                  bits = 0;
-                }
-                state.mode = LENGTH2;
-              /* falls through */
-              case LENGTH2:
-                if (state.wrap && state.flags) {
-                  while (bits < 32) {
-                    if (have === 0) {
-                      break inf_leave;
-                    }
-                    have--;
-                    hold += input[next++] << bits;
-                    bits += 8;
-                  }
-                  if (state.wrap & 4 && hold !== (state.total & 4294967295)) {
-                    strm.msg = "incorrect length check";
-                    state.mode = BAD2;
-                    break;
-                  }
-                  hold = 0;
-                  bits = 0;
-                }
-                state.mode = DONE2;
-              /* falls through */
-              case DONE2:
-                ret = Z_STREAM_END2;
-                break inf_leave;
-              case BAD2:
-                ret = Z_DATA_ERROR2;
-                break inf_leave;
-              case MEM2:
-                return Z_MEM_ERROR2;
-              case SYNC2:
-              /* falls through */
-              default:
-                return Z_STREAM_ERROR2;
-            }
-          }
-        strm.next_out = put;
-        strm.avail_out = left;
-        strm.next_in = next;
-        strm.avail_in = have;
-        state.hold = hold;
-        state.bits = bits;
-        if (state.wsize || _out !== strm.avail_out && state.mode < BAD2 && (state.mode < CHECK2 || flush !== Z_FINISH2)) {
-          if (updatewindow2(strm, strm.output, strm.next_out, _out - strm.avail_out)) {
-            state.mode = MEM2;
-            return Z_MEM_ERROR2;
-          }
-        }
-        _in -= strm.avail_in;
-        _out -= strm.avail_out;
-        strm.total_in += _in;
-        strm.total_out += _out;
-        state.total += _out;
-        if (state.wrap & 4 && _out) {
-          strm.adler = state.check = /*UPDATE_CHECK(state.check, strm.next_out - _out, _out);*/
-          state.flags ? crc322(state.check, output, _out, strm.next_out - _out) : adler322(state.check, output, _out, strm.next_out - _out);
-        }
-        strm.data_type = state.bits + (state.last ? 64 : 0) + (state.mode === TYPE2 ? 128 : 0) + (state.mode === LEN_2 || state.mode === COPY_2 ? 256 : 0);
-        if ((_in === 0 && _out === 0 || flush === Z_FINISH2) && ret === Z_OK2) {
-          ret = Z_BUF_ERROR2;
-        }
-        return ret;
-      };
-      var inflateEnd2 = (strm) => {
-        if (inflateStateCheck2(strm)) {
-          return Z_STREAM_ERROR2;
-        }
-        let state = strm.state;
-        if (state.window) {
-          state.window = null;
-        }
-        strm.state = null;
-        return Z_OK2;
-      };
-      var inflateGetHeader2 = (strm, head) => {
-        if (inflateStateCheck2(strm)) {
-          return Z_STREAM_ERROR2;
-        }
-        const state = strm.state;
-        if ((state.wrap & 2) === 0) {
-          return Z_STREAM_ERROR2;
-        }
-        state.head = head;
-        head.done = false;
-        return Z_OK2;
-      };
-      var inflateSetDictionary2 = (strm, dictionary) => {
-        const dictLength = dictionary.length;
-        let state;
-        let dictid;
-        let ret;
-        if (inflateStateCheck2(strm)) {
-          return Z_STREAM_ERROR2;
-        }
-        state = strm.state;
-        if (state.wrap !== 0 && state.mode !== DICT2) {
-          return Z_STREAM_ERROR2;
-        }
-        if (state.mode === DICT2) {
-          dictid = 1;
-          dictid = adler322(dictid, dictionary, dictLength, 0);
-          if (dictid !== state.check) {
-            return Z_DATA_ERROR2;
-          }
-        }
-        ret = updatewindow2(strm, dictionary, dictLength, dictLength);
-        if (ret) {
-          state.mode = MEM2;
-          return Z_MEM_ERROR2;
-        }
-        state.havedict = 1;
-        return Z_OK2;
-      };
-      module.exports.inflateReset = inflateReset3;
-      module.exports.inflateReset2 = inflateReset22;
-      module.exports.inflateResetKeep = inflateResetKeep2;
-      module.exports.inflateInit = inflateInit3;
-      module.exports.inflateInit2 = inflateInit22;
-      module.exports.inflate = inflate3;
-      module.exports.inflateEnd = inflateEnd2;
-      module.exports.inflateGetHeader = inflateGetHeader2;
-      module.exports.inflateSetDictionary = inflateSetDictionary2;
-      module.exports.inflateInfo = "pako inflate (from Nodeca project)";
-    }
-  });
-
-  // node_modules/pako/lib/zlib/gzheader.js
-  var require_gzheader = __commonJS({
-    "node_modules/pako/lib/zlib/gzheader.js"(exports, module) {
-      "use strict";
-      function GZheader2() {
-        this.text = 0;
-        this.time = 0;
-        this.xflags = 0;
-        this.os = 0;
-        this.extra = null;
-        this.extra_len = 0;
-        this.name = "";
-        this.comment = "";
-        this.hcrc = 0;
-        this.done = false;
-      }
-      module.exports = GZheader2;
-    }
-  });
-
-  // node_modules/pako/lib/inflate.js
-  var require_inflate2 = __commonJS({
-    "node_modules/pako/lib/inflate.js"(exports, module) {
-      "use strict";
-      var zlib_inflate = require_inflate();
-      var utils = require_common();
-      var strings2 = require_strings();
-      var msg = require_messages();
-      var ZStream2 = require_zstream();
-      var GZheader2 = require_gzheader();
-      var toString2 = Object.prototype.toString;
-      var {
-        Z_NO_FLUSH: Z_NO_FLUSH2,
-        Z_FINISH: Z_FINISH2,
-        Z_OK: Z_OK2,
-        Z_STREAM_END: Z_STREAM_END2,
-        Z_NEED_DICT: Z_NEED_DICT2,
-        Z_STREAM_ERROR: Z_STREAM_ERROR2,
-        Z_DATA_ERROR: Z_DATA_ERROR2,
-        Z_MEM_ERROR: Z_MEM_ERROR2,
-        Z_BUF_ERROR: Z_BUF_ERROR2
-      } = require_constants();
-      var defaultOptions2 = {
-        chunkSize: 1024 * 64,
-        windowBits: 15,
-        to: ""
-      };
-      function Inflate2(options) {
-        this.options = utils.assign({}, defaultOptions2, options || {});
-        const opt = this.options;
-        if (opt.raw && opt.windowBits >= 0 && opt.windowBits < 16) {
-          opt.windowBits = -opt.windowBits;
-          if (opt.windowBits === 0) {
-            opt.windowBits = -15;
-          }
-        }
-        if (opt.windowBits >= 0 && opt.windowBits < 16 && !(options && options.windowBits)) {
-          opt.windowBits += 32;
-        }
-        if (opt.windowBits > 15 && opt.windowBits < 48) {
-          if ((opt.windowBits & 15) === 0) {
-            opt.windowBits |= 15;
-          }
-        }
-        this.err = 0;
-        this.msg = "";
-        this.ended = false;
-        this.chunks = [];
-        this.strm = new ZStream2();
-        this.strm.avail_out = 0;
-        let status = zlib_inflate.inflateInit2(
-          this.strm,
-          opt.windowBits
-        );
-        if (status !== Z_OK2) {
-          throw new Error(msg[status]);
-        }
-        this.header = new GZheader2();
-        zlib_inflate.inflateGetHeader(this.strm, this.header);
-        if (opt.dictionary) {
-          if (typeof opt.dictionary === "string") {
-            opt.dictionary = strings2.string2buf(opt.dictionary);
-          } else if (toString2.call(opt.dictionary) === "[object ArrayBuffer]") {
-            opt.dictionary = new Uint8Array(opt.dictionary);
-          }
-          if (opt.raw) {
-            status = zlib_inflate.inflateSetDictionary(this.strm, opt.dictionary);
-            if (status !== Z_OK2) {
-              throw new Error(msg[status]);
-            }
-          }
-        }
-      }
-      Inflate2.prototype.push = function(data, flush_mode) {
-        const strm = this.strm;
-        const chunkSize = this.options.chunkSize;
-        const dictionary = this.options.dictionary;
-        let status, _flush_mode, last_avail_out;
-        if (this.ended) return false;
-        if (flush_mode === ~~flush_mode) _flush_mode = flush_mode;
-        else _flush_mode = flush_mode === true ? Z_FINISH2 : Z_NO_FLUSH2;
-        if (toString2.call(data) === "[object ArrayBuffer]") {
-          strm.input = new Uint8Array(data);
-        } else {
-          strm.input = data;
-        }
-        strm.next_in = 0;
-        strm.avail_in = strm.input.length;
-        for (; ; ) {
-          if (strm.avail_out === 0) {
-            strm.output = new Uint8Array(chunkSize);
-            strm.next_out = 0;
-            strm.avail_out = chunkSize;
-          }
-          status = zlib_inflate.inflate(strm, _flush_mode);
-          if (status === Z_NEED_DICT2 && dictionary) {
-            status = zlib_inflate.inflateSetDictionary(strm, dictionary);
-            if (status === Z_OK2) {
-              status = zlib_inflate.inflate(strm, _flush_mode);
-            } else if (status === Z_DATA_ERROR2) {
-              status = Z_NEED_DICT2;
-            }
-          }
-          while (strm.avail_in > 0 && status === Z_STREAM_END2 && strm.state.wrap & 2 && strm.state.flags !== 0 && strm.input[strm.next_in] !== 0) {
-            zlib_inflate.inflateReset(strm);
-            status = zlib_inflate.inflate(strm, _flush_mode);
-          }
-          switch (status) {
-            case Z_STREAM_ERROR2:
-            case Z_DATA_ERROR2:
-            case Z_NEED_DICT2:
-            case Z_MEM_ERROR2:
-              this.onEnd(status);
-              this.ended = true;
-              return false;
-          }
-          last_avail_out = strm.avail_out;
-          if (strm.next_out) {
-            if (strm.avail_out === 0 || status === Z_STREAM_END2 || _flush_mode > 0) {
-              if (this.options.to === "string") {
-                let next_out_utf8 = strings2.utf8border(strm.output, strm.next_out);
-                let tail = strm.next_out - next_out_utf8;
-                let utf8str = strings2.buf2string(strm.output, next_out_utf8);
-                strm.next_out = tail;
-                strm.avail_out = chunkSize - tail;
-                if (tail) strm.output.set(strm.output.subarray(next_out_utf8, next_out_utf8 + tail), 0);
-                this.onData(utf8str);
-              } else {
-                this.onData(strm.output.length === strm.next_out ? strm.output : strm.output.subarray(0, strm.next_out));
-                strm.avail_out = 0;
-                strm.next_out = 0;
-              }
-            }
-          }
-          if ((status === Z_OK2 || status === Z_BUF_ERROR2) && last_avail_out === 0) continue;
-          if (status === Z_STREAM_END2) {
-            status = zlib_inflate.inflateEnd(this.strm);
-            this.onEnd(status);
-            this.ended = true;
-            return true;
-          }
-          if (strm.avail_in === 0) {
-            if (_flush_mode === Z_FINISH2) {
-              status = zlib_inflate.inflateEnd(this.strm);
-              this.onEnd(status === Z_OK2 ? Z_BUF_ERROR2 : status);
-              this.ended = true;
-              return false;
-            }
-            break;
-          }
-        }
-        return true;
-      };
-      Inflate2.prototype.onData = function(chunk) {
-        this.chunks.push(chunk);
-      };
-      Inflate2.prototype.onEnd = function(status) {
-        if (status === Z_OK2) {
-          if (this.options.to === "string") {
-            this.result = this.chunks.join("");
-          } else {
-            this.result = utils.flattenChunks(this.chunks);
-          }
-        }
-        this.chunks = [];
-        this.err = status;
-        this.msg = this.strm.msg;
-      };
-      function inflate3(input, options) {
-        const inflator = new Inflate2(options);
-        inflator.push(input, true);
-        if (inflator.err) throw inflator.msg || msg[inflator.err];
-        return inflator.result;
-      }
-      function inflateRaw2(input, options) {
-        options = options || {};
-        options.raw = true;
-        return inflate3(input, options);
-      }
-      module.exports.Inflate = Inflate2;
-      module.exports.inflate = inflate3;
-      module.exports.inflateRaw = inflateRaw2;
-      module.exports.ungzip = inflate3;
-      module.exports.constants = require_constants();
-    }
-  });
-
-  // node_modules/pako/index.js
-  var require_pako = __commonJS({
-    "node_modules/pako/index.js"(exports, module) {
-      "use strict";
-      var { Deflate: Deflate2, deflate: deflate2, deflateRaw: deflateRaw2, gzip: gzip2 } = require_deflate2();
-      var { Inflate: Inflate2, inflate: inflate3, inflateRaw: inflateRaw2, ungzip: ungzip2 } = require_inflate2();
-      var constants2 = require_constants();
-      module.exports.Deflate = Deflate2;
-      module.exports.deflate = deflate2;
-      module.exports.deflateRaw = deflateRaw2;
-      module.exports.gzip = gzip2;
-      module.exports.Inflate = Inflate2;
-      module.exports.inflate = inflate3;
-      module.exports.inflateRaw = inflateRaw2;
-      module.exports.ungzip = ungzip2;
-      module.exports.constants = constants2;
-    }
-  });
-
   // src/musicSdk/kg/vendors/infSign.min.cjs
   var require_infSign_min = __commonJS({
     "src/musicSdk/kg/vendors/infSign.min.cjs"(exports, module) {
@@ -6670,8 +2129,4068 @@
     }
   });
 
+  // node_modules/he/src/data.mjs
+  var regexAstralSymbols = /[\uD800-\uDBFF][\uDC00-\uDFFF]/g;
+  var regexAsciiWhitelist = /[\x01-\x7F]/g;
+  var regexBmpWhitelist = /[\x01-\t\x0B\f\x0E-\x1F\x7F\x81\x8D\x8F\x90\x9D\xA0-\uFFFF]/g;
+  var regexEncodeNonAscii = /<\u20D2|=\u20E5|>\u20D2|\u205F\u200A|\u219D\u0338|\u2202\u0338|\u2220\u20D2|\u2229\uFE00|\u222A\uFE00|\u223C\u20D2|\u223D\u0331|\u223E\u0333|\u2242\u0338|\u224B\u0338|\u224D\u20D2|\u224E\u0338|\u224F\u0338|\u2250\u0338|\u2261\u20E5|\u2264\u20D2|\u2265\u20D2|\u2266\u0338|\u2267\u0338|\u2268\uFE00|\u2269\uFE00|\u226A\u0338|\u226A\u20D2|\u226B\u0338|\u226B\u20D2|\u227F\u0338|\u2282\u20D2|\u2283\u20D2|\u228A\uFE00|\u228B\uFE00|\u228F\u0338|\u2290\u0338|\u2293\uFE00|\u2294\uFE00|\u22B4\u20D2|\u22B5\u20D2|\u22D8\u0338|\u22D9\u0338|\u22DA\uFE00|\u22DB\uFE00|\u22F5\u0338|\u22F9\u0338|\u2933\u0338|\u29CF\u0338|\u29D0\u0338|\u2A6D\u0338|\u2A70\u0338|\u2A7D\u0338|\u2A7E\u0338|\u2AA1\u0338|\u2AA2\u0338|\u2AAC\uFE00|\u2AAD\uFE00|\u2AAF\u0338|\u2AB0\u0338|\u2AC5\u0338|\u2AC6\u0338|\u2ACB\uFE00|\u2ACC\uFE00|\u2AFD\u20E5|[\xA0-\u0113\u0116-\u0122\u0124-\u012B\u012E-\u014D\u0150-\u017E\u0192\u01B5\u01F5\u0237\u02C6\u02C7\u02D8-\u02DD\u0311\u0391-\u03A1\u03A3-\u03A9\u03B1-\u03C9\u03D1\u03D2\u03D5\u03D6\u03DC\u03DD\u03F0\u03F1\u03F5\u03F6\u0401-\u040C\u040E-\u044F\u0451-\u045C\u045E\u045F\u2002-\u2005\u2007-\u2010\u2013-\u2016\u2018-\u201A\u201C-\u201E\u2020-\u2022\u2025\u2026\u2030-\u2035\u2039\u203A\u203E\u2041\u2043\u2044\u204F\u2057\u205F-\u2063\u20AC\u20DB\u20DC\u2102\u2105\u210A-\u2113\u2115-\u211E\u2122\u2124\u2127-\u2129\u212C\u212D\u212F-\u2131\u2133-\u2138\u2145-\u2148\u2153-\u215E\u2190-\u219B\u219D-\u21A7\u21A9-\u21AE\u21B0-\u21B3\u21B5-\u21B7\u21BA-\u21DB\u21DD\u21E4\u21E5\u21F5\u21FD-\u2205\u2207-\u2209\u220B\u220C\u220F-\u2214\u2216-\u2218\u221A\u221D-\u2238\u223A-\u2257\u2259\u225A\u225C\u225F-\u2262\u2264-\u228B\u228D-\u229B\u229D-\u22A5\u22A7-\u22B0\u22B2-\u22BB\u22BD-\u22DB\u22DE-\u22E3\u22E6-\u22F7\u22F9-\u22FE\u2305\u2306\u2308-\u2310\u2312\u2313\u2315\u2316\u231C-\u231F\u2322\u2323\u232D\u232E\u2336\u233D\u233F\u237C\u23B0\u23B1\u23B4-\u23B6\u23DC-\u23DF\u23E2\u23E7\u2423\u24C8\u2500\u2502\u250C\u2510\u2514\u2518\u251C\u2524\u252C\u2534\u253C\u2550-\u256C\u2580\u2584\u2588\u2591-\u2593\u25A1\u25AA\u25AB\u25AD\u25AE\u25B1\u25B3-\u25B5\u25B8\u25B9\u25BD-\u25BF\u25C2\u25C3\u25CA\u25CB\u25EC\u25EF\u25F8-\u25FC\u2605\u2606\u260E\u2640\u2642\u2660\u2663\u2665\u2666\u266A\u266D-\u266F\u2713\u2717\u2720\u2736\u2758\u2772\u2773\u27C8\u27C9\u27E6-\u27ED\u27F5-\u27FA\u27FC\u27FF\u2902-\u2905\u290C-\u2913\u2916\u2919-\u2920\u2923-\u292A\u2933\u2935-\u2939\u293C\u293D\u2945\u2948-\u294B\u294E-\u2976\u2978\u2979\u297B-\u297F\u2985\u2986\u298B-\u2996\u299A\u299C\u299D\u29A4-\u29B7\u29B9\u29BB\u29BC\u29BE-\u29C5\u29C9\u29CD-\u29D0\u29DC-\u29DE\u29E3-\u29E5\u29EB\u29F4\u29F6\u2A00-\u2A02\u2A04\u2A06\u2A0C\u2A0D\u2A10-\u2A17\u2A22-\u2A27\u2A29\u2A2A\u2A2D-\u2A31\u2A33-\u2A3C\u2A3F\u2A40\u2A42-\u2A4D\u2A50\u2A53-\u2A58\u2A5A-\u2A5D\u2A5F\u2A66\u2A6A\u2A6D-\u2A75\u2A77-\u2A9A\u2A9D-\u2AA2\u2AA4-\u2AB0\u2AB3-\u2AC8\u2ACB\u2ACC\u2ACF-\u2ADB\u2AE4\u2AE6-\u2AE9\u2AEB-\u2AF3\u2AFD\uFB00-\uFB04]|\uD835[\uDC9C\uDC9E\uDC9F\uDCA2\uDCA5\uDCA6\uDCA9-\uDCAC\uDCAE-\uDCB9\uDCBB\uDCBD-\uDCC3\uDCC5-\uDCCF\uDD04\uDD05\uDD07-\uDD0A\uDD0D-\uDD14\uDD16-\uDD1C\uDD1E-\uDD39\uDD3B-\uDD3E\uDD40-\uDD44\uDD46\uDD4A-\uDD50\uDD52-\uDD6B]/g;
+  var encodeMap = /* @__PURE__ */ new Map([
+    ["	", "Tab"],
+    ["\n", "NewLine"],
+    ["!", "excl"],
+    ['"', "quot"],
+    ["#", "num"],
+    ["$", "dollar"],
+    ["%", "percnt"],
+    ["&", "amp"],
+    ["'", "apos"],
+    ["(", "lpar"],
+    [")", "rpar"],
+    ["*", "ast"],
+    ["+", "plus"],
+    [",", "comma"],
+    [".", "period"],
+    ["/", "sol"],
+    [":", "colon"],
+    [";", "semi"],
+    ["<", "lt"],
+    ["<⃒", "nvlt"],
+    ["=", "equals"],
+    ["=⃥", "bne"],
+    [">", "gt"],
+    [">⃒", "nvgt"],
+    ["?", "quest"],
+    ["@", "commat"],
+    ["[", "lsqb"],
+    ["]", "rsqb"],
+    ["^", "Hat"],
+    ["_", "lowbar"],
+    ["`", "grave"],
+    ["fj", "fjlig"],
+    ["{", "lcub"],
+    ["|", "vert"],
+    ["}", "rcub"],
+    [" ", "nbsp"],
+    ["¡", "iexcl"],
+    ["¢", "cent"],
+    ["£", "pound"],
+    ["¤", "curren"],
+    ["¥", "yen"],
+    ["¦", "brvbar"],
+    ["§", "sect"],
+    ["¨", "die"],
+    ["©", "copy"],
+    ["ª", "ordf"],
+    ["«", "laquo"],
+    ["¬", "not"],
+    ["­", "shy"],
+    ["®", "reg"],
+    ["¯", "macr"],
+    ["°", "deg"],
+    ["±", "pm"],
+    ["²", "sup2"],
+    ["³", "sup3"],
+    ["´", "acute"],
+    ["µ", "micro"],
+    ["¶", "para"],
+    ["·", "middot"],
+    ["¸", "cedil"],
+    ["¹", "sup1"],
+    ["º", "ordm"],
+    ["»", "raquo"],
+    ["¼", "frac14"],
+    ["½", "half"],
+    ["¾", "frac34"],
+    ["¿", "iquest"],
+    ["À", "Agrave"],
+    ["Á", "Aacute"],
+    ["Â", "Acirc"],
+    ["Ã", "Atilde"],
+    ["Ä", "Auml"],
+    ["Å", "angst"],
+    ["Æ", "AElig"],
+    ["Ç", "Ccedil"],
+    ["È", "Egrave"],
+    ["É", "Eacute"],
+    ["Ê", "Ecirc"],
+    ["Ë", "Euml"],
+    ["Ì", "Igrave"],
+    ["Í", "Iacute"],
+    ["Î", "Icirc"],
+    ["Ï", "Iuml"],
+    ["Ð", "ETH"],
+    ["Ñ", "Ntilde"],
+    ["Ò", "Ograve"],
+    ["Ó", "Oacute"],
+    ["Ô", "Ocirc"],
+    ["Õ", "Otilde"],
+    ["Ö", "Ouml"],
+    ["×", "times"],
+    ["Ø", "Oslash"],
+    ["Ù", "Ugrave"],
+    ["Ú", "Uacute"],
+    ["Û", "Ucirc"],
+    ["Ü", "Uuml"],
+    ["Ý", "Yacute"],
+    ["Þ", "THORN"],
+    ["ß", "szlig"],
+    ["à", "agrave"],
+    ["á", "aacute"],
+    ["â", "acirc"],
+    ["ã", "atilde"],
+    ["ä", "auml"],
+    ["å", "aring"],
+    ["æ", "aelig"],
+    ["ç", "ccedil"],
+    ["è", "egrave"],
+    ["é", "eacute"],
+    ["ê", "ecirc"],
+    ["ë", "euml"],
+    ["ì", "igrave"],
+    ["í", "iacute"],
+    ["î", "icirc"],
+    ["ï", "iuml"],
+    ["ð", "eth"],
+    ["ñ", "ntilde"],
+    ["ò", "ograve"],
+    ["ó", "oacute"],
+    ["ô", "ocirc"],
+    ["õ", "otilde"],
+    ["ö", "ouml"],
+    ["÷", "div"],
+    ["ø", "oslash"],
+    ["ù", "ugrave"],
+    ["ú", "uacute"],
+    ["û", "ucirc"],
+    ["ü", "uuml"],
+    ["ý", "yacute"],
+    ["þ", "thorn"],
+    ["ÿ", "yuml"],
+    ["Ā", "Amacr"],
+    ["ā", "amacr"],
+    ["Ă", "Abreve"],
+    ["ă", "abreve"],
+    ["Ą", "Aogon"],
+    ["ą", "aogon"],
+    ["Ć", "Cacute"],
+    ["ć", "cacute"],
+    ["Ĉ", "Ccirc"],
+    ["ĉ", "ccirc"],
+    ["Ċ", "Cdot"],
+    ["ċ", "cdot"],
+    ["Č", "Ccaron"],
+    ["č", "ccaron"],
+    ["Ď", "Dcaron"],
+    ["ď", "dcaron"],
+    ["Đ", "Dstrok"],
+    ["đ", "dstrok"],
+    ["Ē", "Emacr"],
+    ["ē", "emacr"],
+    ["Ė", "Edot"],
+    ["ė", "edot"],
+    ["Ę", "Eogon"],
+    ["ę", "eogon"],
+    ["Ě", "Ecaron"],
+    ["ě", "ecaron"],
+    ["Ĝ", "Gcirc"],
+    ["ĝ", "gcirc"],
+    ["Ğ", "Gbreve"],
+    ["ğ", "gbreve"],
+    ["Ġ", "Gdot"],
+    ["ġ", "gdot"],
+    ["Ģ", "Gcedil"],
+    ["Ĥ", "Hcirc"],
+    ["ĥ", "hcirc"],
+    ["Ħ", "Hstrok"],
+    ["ħ", "hstrok"],
+    ["Ĩ", "Itilde"],
+    ["ĩ", "itilde"],
+    ["Ī", "Imacr"],
+    ["ī", "imacr"],
+    ["Į", "Iogon"],
+    ["į", "iogon"],
+    ["İ", "Idot"],
+    ["ı", "imath"],
+    ["Ĳ", "IJlig"],
+    ["ĳ", "ijlig"],
+    ["Ĵ", "Jcirc"],
+    ["ĵ", "jcirc"],
+    ["Ķ", "Kcedil"],
+    ["ķ", "kcedil"],
+    ["ĸ", "kgreen"],
+    ["Ĺ", "Lacute"],
+    ["ĺ", "lacute"],
+    ["Ļ", "Lcedil"],
+    ["ļ", "lcedil"],
+    ["Ľ", "Lcaron"],
+    ["ľ", "lcaron"],
+    ["Ŀ", "Lmidot"],
+    ["ŀ", "lmidot"],
+    ["Ł", "Lstrok"],
+    ["ł", "lstrok"],
+    ["Ń", "Nacute"],
+    ["ń", "nacute"],
+    ["Ņ", "Ncedil"],
+    ["ņ", "ncedil"],
+    ["Ň", "Ncaron"],
+    ["ň", "ncaron"],
+    ["ŉ", "napos"],
+    ["Ŋ", "ENG"],
+    ["ŋ", "eng"],
+    ["Ō", "Omacr"],
+    ["ō", "omacr"],
+    ["Ő", "Odblac"],
+    ["ő", "odblac"],
+    ["Œ", "OElig"],
+    ["œ", "oelig"],
+    ["Ŕ", "Racute"],
+    ["ŕ", "racute"],
+    ["Ŗ", "Rcedil"],
+    ["ŗ", "rcedil"],
+    ["Ř", "Rcaron"],
+    ["ř", "rcaron"],
+    ["Ś", "Sacute"],
+    ["ś", "sacute"],
+    ["Ŝ", "Scirc"],
+    ["ŝ", "scirc"],
+    ["Ş", "Scedil"],
+    ["ş", "scedil"],
+    ["Š", "Scaron"],
+    ["š", "scaron"],
+    ["Ţ", "Tcedil"],
+    ["ţ", "tcedil"],
+    ["Ť", "Tcaron"],
+    ["ť", "tcaron"],
+    ["Ŧ", "Tstrok"],
+    ["ŧ", "tstrok"],
+    ["Ũ", "Utilde"],
+    ["ũ", "utilde"],
+    ["Ū", "Umacr"],
+    ["ū", "umacr"],
+    ["Ŭ", "Ubreve"],
+    ["ŭ", "ubreve"],
+    ["Ů", "Uring"],
+    ["ů", "uring"],
+    ["Ű", "Udblac"],
+    ["ű", "udblac"],
+    ["Ų", "Uogon"],
+    ["ų", "uogon"],
+    ["Ŵ", "Wcirc"],
+    ["ŵ", "wcirc"],
+    ["Ŷ", "Ycirc"],
+    ["ŷ", "ycirc"],
+    ["Ÿ", "Yuml"],
+    ["Ź", "Zacute"],
+    ["ź", "zacute"],
+    ["Ż", "Zdot"],
+    ["ż", "zdot"],
+    ["Ž", "Zcaron"],
+    ["ž", "zcaron"],
+    ["ƒ", "fnof"],
+    ["Ƶ", "imped"],
+    ["ǵ", "gacute"],
+    ["ȷ", "jmath"],
+    ["ˆ", "circ"],
+    ["ˇ", "caron"],
+    ["˘", "breve"],
+    ["˙", "dot"],
+    ["˚", "ring"],
+    ["˛", "ogon"],
+    ["˜", "tilde"],
+    ["˝", "dblac"],
+    ["̑", "DownBreve"],
+    ["Α", "Alpha"],
+    ["Β", "Beta"],
+    ["Γ", "Gamma"],
+    ["Δ", "Delta"],
+    ["Ε", "Epsilon"],
+    ["Ζ", "Zeta"],
+    ["Η", "Eta"],
+    ["Θ", "Theta"],
+    ["Ι", "Iota"],
+    ["Κ", "Kappa"],
+    ["Λ", "Lambda"],
+    ["Μ", "Mu"],
+    ["Ν", "Nu"],
+    ["Ξ", "Xi"],
+    ["Ο", "Omicron"],
+    ["Π", "Pi"],
+    ["Ρ", "Rho"],
+    ["Σ", "Sigma"],
+    ["Τ", "Tau"],
+    ["Υ", "Upsilon"],
+    ["Φ", "Phi"],
+    ["Χ", "Chi"],
+    ["Ψ", "Psi"],
+    ["Ω", "ohm"],
+    ["α", "alpha"],
+    ["β", "beta"],
+    ["γ", "gamma"],
+    ["δ", "delta"],
+    ["ε", "epsi"],
+    ["ζ", "zeta"],
+    ["η", "eta"],
+    ["θ", "theta"],
+    ["ι", "iota"],
+    ["κ", "kappa"],
+    ["λ", "lambda"],
+    ["μ", "mu"],
+    ["ν", "nu"],
+    ["ξ", "xi"],
+    ["ο", "omicron"],
+    ["π", "pi"],
+    ["ρ", "rho"],
+    ["ς", "sigmaf"],
+    ["σ", "sigma"],
+    ["τ", "tau"],
+    ["υ", "upsi"],
+    ["φ", "phi"],
+    ["χ", "chi"],
+    ["ψ", "psi"],
+    ["ω", "omega"],
+    ["ϑ", "thetav"],
+    ["ϒ", "Upsi"],
+    ["ϕ", "phiv"],
+    ["ϖ", "piv"],
+    ["Ϝ", "Gammad"],
+    ["ϝ", "gammad"],
+    ["ϰ", "kappav"],
+    ["ϱ", "rhov"],
+    ["ϵ", "epsiv"],
+    ["϶", "bepsi"],
+    ["Ё", "IOcy"],
+    ["Ђ", "DJcy"],
+    ["Ѓ", "GJcy"],
+    ["Є", "Jukcy"],
+    ["Ѕ", "DScy"],
+    ["І", "Iukcy"],
+    ["Ї", "YIcy"],
+    ["Ј", "Jsercy"],
+    ["Љ", "LJcy"],
+    ["Њ", "NJcy"],
+    ["Ћ", "TSHcy"],
+    ["Ќ", "KJcy"],
+    ["Ў", "Ubrcy"],
+    ["Џ", "DZcy"],
+    ["А", "Acy"],
+    ["Б", "Bcy"],
+    ["В", "Vcy"],
+    ["Г", "Gcy"],
+    ["Д", "Dcy"],
+    ["Е", "IEcy"],
+    ["Ж", "ZHcy"],
+    ["З", "Zcy"],
+    ["И", "Icy"],
+    ["Й", "Jcy"],
+    ["К", "Kcy"],
+    ["Л", "Lcy"],
+    ["М", "Mcy"],
+    ["Н", "Ncy"],
+    ["О", "Ocy"],
+    ["П", "Pcy"],
+    ["Р", "Rcy"],
+    ["С", "Scy"],
+    ["Т", "Tcy"],
+    ["У", "Ucy"],
+    ["Ф", "Fcy"],
+    ["Х", "KHcy"],
+    ["Ц", "TScy"],
+    ["Ч", "CHcy"],
+    ["Ш", "SHcy"],
+    ["Щ", "SHCHcy"],
+    ["Ъ", "HARDcy"],
+    ["Ы", "Ycy"],
+    ["Ь", "SOFTcy"],
+    ["Э", "Ecy"],
+    ["Ю", "YUcy"],
+    ["Я", "YAcy"],
+    ["а", "acy"],
+    ["б", "bcy"],
+    ["в", "vcy"],
+    ["г", "gcy"],
+    ["д", "dcy"],
+    ["е", "iecy"],
+    ["ж", "zhcy"],
+    ["з", "zcy"],
+    ["и", "icy"],
+    ["й", "jcy"],
+    ["к", "kcy"],
+    ["л", "lcy"],
+    ["м", "mcy"],
+    ["н", "ncy"],
+    ["о", "ocy"],
+    ["п", "pcy"],
+    ["р", "rcy"],
+    ["с", "scy"],
+    ["т", "tcy"],
+    ["у", "ucy"],
+    ["ф", "fcy"],
+    ["х", "khcy"],
+    ["ц", "tscy"],
+    ["ч", "chcy"],
+    ["ш", "shcy"],
+    ["щ", "shchcy"],
+    ["ъ", "hardcy"],
+    ["ы", "ycy"],
+    ["ь", "softcy"],
+    ["э", "ecy"],
+    ["ю", "yucy"],
+    ["я", "yacy"],
+    ["ё", "iocy"],
+    ["ђ", "djcy"],
+    ["ѓ", "gjcy"],
+    ["є", "jukcy"],
+    ["ѕ", "dscy"],
+    ["і", "iukcy"],
+    ["ї", "yicy"],
+    ["ј", "jsercy"],
+    ["љ", "ljcy"],
+    ["њ", "njcy"],
+    ["ћ", "tshcy"],
+    ["ќ", "kjcy"],
+    ["ў", "ubrcy"],
+    ["џ", "dzcy"],
+    [" ", "ensp"],
+    [" ", "emsp"],
+    [" ", "emsp13"],
+    [" ", "emsp14"],
+    [" ", "numsp"],
+    [" ", "puncsp"],
+    [" ", "thinsp"],
+    [" ", "hairsp"],
+    ["​", "ZeroWidthSpace"],
+    ["‌", "zwnj"],
+    ["‍", "zwj"],
+    ["‎", "lrm"],
+    ["‏", "rlm"],
+    ["‐", "dash"],
+    ["–", "ndash"],
+    ["—", "mdash"],
+    ["―", "horbar"],
+    ["‖", "Vert"],
+    ["‘", "lsquo"],
+    ["’", "rsquo"],
+    ["‚", "sbquo"],
+    ["“", "ldquo"],
+    ["”", "rdquo"],
+    ["„", "bdquo"],
+    ["†", "dagger"],
+    ["‡", "Dagger"],
+    ["•", "bull"],
+    ["‥", "nldr"],
+    ["…", "mldr"],
+    ["‰", "permil"],
+    ["‱", "pertenk"],
+    ["′", "prime"],
+    ["″", "Prime"],
+    ["‴", "tprime"],
+    ["‵", "bprime"],
+    ["‹", "lsaquo"],
+    ["›", "rsaquo"],
+    ["‾", "oline"],
+    ["⁁", "caret"],
+    ["⁃", "hybull"],
+    ["⁄", "frasl"],
+    ["⁏", "bsemi"],
+    ["⁗", "qprime"],
+    [" ", "MediumSpace"],
+    ["  ", "ThickSpace"],
+    ["⁠", "NoBreak"],
+    ["⁡", "af"],
+    ["⁢", "it"],
+    ["⁣", "ic"],
+    ["€", "euro"],
+    ["⃛", "tdot"],
+    ["⃜", "DotDot"],
+    ["ℂ", "Copf"],
+    ["℅", "incare"],
+    ["ℊ", "gscr"],
+    ["ℋ", "Hscr"],
+    ["ℌ", "Hfr"],
+    ["ℍ", "Hopf"],
+    ["ℎ", "planckh"],
+    ["ℏ", "hbar"],
+    ["ℐ", "Iscr"],
+    ["ℑ", "Im"],
+    ["ℒ", "Lscr"],
+    ["ℓ", "ell"],
+    ["ℕ", "Nopf"],
+    ["№", "numero"],
+    ["℗", "copysr"],
+    ["℘", "wp"],
+    ["ℙ", "Popf"],
+    ["ℚ", "Qopf"],
+    ["ℛ", "Rscr"],
+    ["ℜ", "Re"],
+    ["ℝ", "Ropf"],
+    ["℞", "rx"],
+    ["™", "trade"],
+    ["ℤ", "Zopf"],
+    ["℧", "mho"],
+    ["ℨ", "Zfr"],
+    ["℩", "iiota"],
+    ["ℬ", "Bscr"],
+    ["ℭ", "Cfr"],
+    ["ℯ", "escr"],
+    ["ℰ", "Escr"],
+    ["ℱ", "Fscr"],
+    ["ℳ", "Mscr"],
+    ["ℴ", "oscr"],
+    ["ℵ", "aleph"],
+    ["ℶ", "beth"],
+    ["ℷ", "gimel"],
+    ["ℸ", "daleth"],
+    ["ⅅ", "DD"],
+    ["ⅆ", "dd"],
+    ["ⅇ", "ee"],
+    ["ⅈ", "ii"],
+    ["⅓", "frac13"],
+    ["⅔", "frac23"],
+    ["⅕", "frac15"],
+    ["⅖", "frac25"],
+    ["⅗", "frac35"],
+    ["⅘", "frac45"],
+    ["⅙", "frac16"],
+    ["⅚", "frac56"],
+    ["⅛", "frac18"],
+    ["⅜", "frac38"],
+    ["⅝", "frac58"],
+    ["⅞", "frac78"],
+    ["←", "larr"],
+    ["↑", "uarr"],
+    ["→", "rarr"],
+    ["↓", "darr"],
+    ["↔", "harr"],
+    ["↕", "varr"],
+    ["↖", "nwarr"],
+    ["↗", "nearr"],
+    ["↘", "searr"],
+    ["↙", "swarr"],
+    ["↚", "nlarr"],
+    ["↛", "nrarr"],
+    ["↝", "rarrw"],
+    ["↝̸", "nrarrw"],
+    ["↞", "Larr"],
+    ["↟", "Uarr"],
+    ["↠", "Rarr"],
+    ["↡", "Darr"],
+    ["↢", "larrtl"],
+    ["↣", "rarrtl"],
+    ["↤", "mapstoleft"],
+    ["↥", "mapstoup"],
+    ["↦", "map"],
+    ["↧", "mapstodown"],
+    ["↩", "larrhk"],
+    ["↪", "rarrhk"],
+    ["↫", "larrlp"],
+    ["↬", "rarrlp"],
+    ["↭", "harrw"],
+    ["↮", "nharr"],
+    ["↰", "lsh"],
+    ["↱", "rsh"],
+    ["↲", "ldsh"],
+    ["↳", "rdsh"],
+    ["↵", "crarr"],
+    ["↶", "cularr"],
+    ["↷", "curarr"],
+    ["↺", "olarr"],
+    ["↻", "orarr"],
+    ["↼", "lharu"],
+    ["↽", "lhard"],
+    ["↾", "uharr"],
+    ["↿", "uharl"],
+    ["⇀", "rharu"],
+    ["⇁", "rhard"],
+    ["⇂", "dharr"],
+    ["⇃", "dharl"],
+    ["⇄", "rlarr"],
+    ["⇅", "udarr"],
+    ["⇆", "lrarr"],
+    ["⇇", "llarr"],
+    ["⇈", "uuarr"],
+    ["⇉", "rrarr"],
+    ["⇊", "ddarr"],
+    ["⇋", "lrhar"],
+    ["⇌", "rlhar"],
+    ["⇍", "nlArr"],
+    ["⇎", "nhArr"],
+    ["⇏", "nrArr"],
+    ["⇐", "lArr"],
+    ["⇑", "uArr"],
+    ["⇒", "rArr"],
+    ["⇓", "dArr"],
+    ["⇔", "iff"],
+    ["⇕", "vArr"],
+    ["⇖", "nwArr"],
+    ["⇗", "neArr"],
+    ["⇘", "seArr"],
+    ["⇙", "swArr"],
+    ["⇚", "lAarr"],
+    ["⇛", "rAarr"],
+    ["⇝", "zigrarr"],
+    ["⇤", "larrb"],
+    ["⇥", "rarrb"],
+    ["⇵", "duarr"],
+    ["⇽", "loarr"],
+    ["⇾", "roarr"],
+    ["⇿", "hoarr"],
+    ["∀", "forall"],
+    ["∁", "comp"],
+    ["∂", "part"],
+    ["∂̸", "npart"],
+    ["∃", "exist"],
+    ["∄", "nexist"],
+    ["∅", "empty"],
+    ["∇", "Del"],
+    ["∈", "in"],
+    ["∉", "notin"],
+    ["∋", "ni"],
+    ["∌", "notni"],
+    ["∏", "prod"],
+    ["∐", "coprod"],
+    ["∑", "sum"],
+    ["−", "minus"],
+    ["∓", "mp"],
+    ["∔", "plusdo"],
+    ["∖", "setmn"],
+    ["∗", "lowast"],
+    ["∘", "compfn"],
+    ["√", "Sqrt"],
+    ["∝", "prop"],
+    ["∞", "infin"],
+    ["∟", "angrt"],
+    ["∠", "ang"],
+    ["∠⃒", "nang"],
+    ["∡", "angmsd"],
+    ["∢", "angsph"],
+    ["∣", "mid"],
+    ["∤", "nmid"],
+    ["∥", "par"],
+    ["∦", "npar"],
+    ["∧", "and"],
+    ["∨", "or"],
+    ["∩", "cap"],
+    ["∩︀", "caps"],
+    ["∪", "cup"],
+    ["∪︀", "cups"],
+    ["∫", "int"],
+    ["∬", "Int"],
+    ["∭", "tint"],
+    ["∮", "oint"],
+    ["∯", "Conint"],
+    ["∰", "Cconint"],
+    ["∱", "cwint"],
+    ["∲", "cwconint"],
+    ["∳", "awconint"],
+    ["∴", "there4"],
+    ["∵", "becaus"],
+    ["∶", "ratio"],
+    ["∷", "Colon"],
+    ["∸", "minusd"],
+    ["∺", "mDDot"],
+    ["∻", "homtht"],
+    ["∼", "sim"],
+    ["∼⃒", "nvsim"],
+    ["∽", "bsim"],
+    ["∽̱", "race"],
+    ["∾", "ac"],
+    ["∾̳", "acE"],
+    ["∿", "acd"],
+    ["≀", "wr"],
+    ["≁", "nsim"],
+    ["≂", "esim"],
+    ["≂̸", "nesim"],
+    ["≃", "sime"],
+    ["≄", "nsime"],
+    ["≅", "cong"],
+    ["≆", "simne"],
+    ["≇", "ncong"],
+    ["≈", "ap"],
+    ["≉", "nap"],
+    ["≊", "ape"],
+    ["≋", "apid"],
+    ["≋̸", "napid"],
+    ["≌", "bcong"],
+    ["≍", "CupCap"],
+    ["≍⃒", "nvap"],
+    ["≎", "bump"],
+    ["≎̸", "nbump"],
+    ["≏", "bumpe"],
+    ["≏̸", "nbumpe"],
+    ["≐", "doteq"],
+    ["≐̸", "nedot"],
+    ["≑", "eDot"],
+    ["≒", "efDot"],
+    ["≓", "erDot"],
+    ["≔", "colone"],
+    ["≕", "ecolon"],
+    ["≖", "ecir"],
+    ["≗", "cire"],
+    ["≙", "wedgeq"],
+    ["≚", "veeeq"],
+    ["≜", "trie"],
+    ["≟", "equest"],
+    ["≠", "ne"],
+    ["≡", "equiv"],
+    ["≡⃥", "bnequiv"],
+    ["≢", "nequiv"],
+    ["≤", "le"],
+    ["≤⃒", "nvle"],
+    ["≥", "ge"],
+    ["≥⃒", "nvge"],
+    ["≦", "lE"],
+    ["≦̸", "nlE"],
+    ["≧", "gE"],
+    ["≧̸", "ngE"],
+    ["≨", "lnE"],
+    ["≨︀", "lvnE"],
+    ["≩", "gnE"],
+    ["≩︀", "gvnE"],
+    ["≪", "ll"],
+    ["≪̸", "nLtv"],
+    ["≪⃒", "nLt"],
+    ["≫", "gg"],
+    ["≫̸", "nGtv"],
+    ["≫⃒", "nGt"],
+    ["≬", "twixt"],
+    ["≭", "NotCupCap"],
+    ["≮", "nlt"],
+    ["≯", "ngt"],
+    ["≰", "nle"],
+    ["≱", "nge"],
+    ["≲", "lsim"],
+    ["≳", "gsim"],
+    ["≴", "nlsim"],
+    ["≵", "ngsim"],
+    ["≶", "lg"],
+    ["≷", "gl"],
+    ["≸", "ntlg"],
+    ["≹", "ntgl"],
+    ["≺", "pr"],
+    ["≻", "sc"],
+    ["≼", "prcue"],
+    ["≽", "sccue"],
+    ["≾", "prsim"],
+    ["≿", "scsim"],
+    ["≿̸", "NotSucceedsTilde"],
+    ["⊀", "npr"],
+    ["⊁", "nsc"],
+    ["⊂", "sub"],
+    ["⊂⃒", "vnsub"],
+    ["⊃", "sup"],
+    ["⊃⃒", "vnsup"],
+    ["⊄", "nsub"],
+    ["⊅", "nsup"],
+    ["⊆", "sube"],
+    ["⊇", "supe"],
+    ["⊈", "nsube"],
+    ["⊉", "nsupe"],
+    ["⊊", "subne"],
+    ["⊊︀", "vsubne"],
+    ["⊋", "supne"],
+    ["⊋︀", "vsupne"],
+    ["⊍", "cupdot"],
+    ["⊎", "uplus"],
+    ["⊏", "sqsub"],
+    ["⊏̸", "NotSquareSubset"],
+    ["⊐", "sqsup"],
+    ["⊐̸", "NotSquareSuperset"],
+    ["⊑", "sqsube"],
+    ["⊒", "sqsupe"],
+    ["⊓", "sqcap"],
+    ["⊓︀", "sqcaps"],
+    ["⊔", "sqcup"],
+    ["⊔︀", "sqcups"],
+    ["⊕", "oplus"],
+    ["⊖", "ominus"],
+    ["⊗", "otimes"],
+    ["⊘", "osol"],
+    ["⊙", "odot"],
+    ["⊚", "ocir"],
+    ["⊛", "oast"],
+    ["⊝", "odash"],
+    ["⊞", "plusb"],
+    ["⊟", "minusb"],
+    ["⊠", "timesb"],
+    ["⊡", "sdotb"],
+    ["⊢", "vdash"],
+    ["⊣", "dashv"],
+    ["⊤", "top"],
+    ["⊥", "bot"],
+    ["⊧", "models"],
+    ["⊨", "vDash"],
+    ["⊩", "Vdash"],
+    ["⊪", "Vvdash"],
+    ["⊫", "VDash"],
+    ["⊬", "nvdash"],
+    ["⊭", "nvDash"],
+    ["⊮", "nVdash"],
+    ["⊯", "nVDash"],
+    ["⊰", "prurel"],
+    ["⊲", "vltri"],
+    ["⊳", "vrtri"],
+    ["⊴", "ltrie"],
+    ["⊴⃒", "nvltrie"],
+    ["⊵", "rtrie"],
+    ["⊵⃒", "nvrtrie"],
+    ["⊶", "origof"],
+    ["⊷", "imof"],
+    ["⊸", "mumap"],
+    ["⊹", "hercon"],
+    ["⊺", "intcal"],
+    ["⊻", "veebar"],
+    ["⊽", "barvee"],
+    ["⊾", "angrtvb"],
+    ["⊿", "lrtri"],
+    ["⋀", "Wedge"],
+    ["⋁", "Vee"],
+    ["⋂", "xcap"],
+    ["⋃", "xcup"],
+    ["⋄", "diam"],
+    ["⋅", "sdot"],
+    ["⋆", "Star"],
+    ["⋇", "divonx"],
+    ["⋈", "bowtie"],
+    ["⋉", "ltimes"],
+    ["⋊", "rtimes"],
+    ["⋋", "lthree"],
+    ["⋌", "rthree"],
+    ["⋍", "bsime"],
+    ["⋎", "cuvee"],
+    ["⋏", "cuwed"],
+    ["⋐", "Sub"],
+    ["⋑", "Sup"],
+    ["⋒", "Cap"],
+    ["⋓", "Cup"],
+    ["⋔", "fork"],
+    ["⋕", "epar"],
+    ["⋖", "ltdot"],
+    ["⋗", "gtdot"],
+    ["⋘", "Ll"],
+    ["⋘̸", "nLl"],
+    ["⋙", "Gg"],
+    ["⋙̸", "nGg"],
+    ["⋚", "leg"],
+    ["⋚︀", "lesg"],
+    ["⋛", "gel"],
+    ["⋛︀", "gesl"],
+    ["⋞", "cuepr"],
+    ["⋟", "cuesc"],
+    ["⋠", "nprcue"],
+    ["⋡", "nsccue"],
+    ["⋢", "nsqsube"],
+    ["⋣", "nsqsupe"],
+    ["⋦", "lnsim"],
+    ["⋧", "gnsim"],
+    ["⋨", "prnsim"],
+    ["⋩", "scnsim"],
+    ["⋪", "nltri"],
+    ["⋫", "nrtri"],
+    ["⋬", "nltrie"],
+    ["⋭", "nrtrie"],
+    ["⋮", "vellip"],
+    ["⋯", "ctdot"],
+    ["⋰", "utdot"],
+    ["⋱", "dtdot"],
+    ["⋲", "disin"],
+    ["⋳", "isinsv"],
+    ["⋴", "isins"],
+    ["⋵", "isindot"],
+    ["⋵̸", "notindot"],
+    ["⋶", "notinvc"],
+    ["⋷", "notinvb"],
+    ["⋹", "isinE"],
+    ["⋹̸", "notinE"],
+    ["⋺", "nisd"],
+    ["⋻", "xnis"],
+    ["⋼", "nis"],
+    ["⋽", "notnivc"],
+    ["⋾", "notnivb"],
+    ["⌅", "barwed"],
+    ["⌆", "Barwed"],
+    ["⌈", "lceil"],
+    ["⌉", "rceil"],
+    ["⌊", "lfloor"],
+    ["⌋", "rfloor"],
+    ["⌌", "drcrop"],
+    ["⌍", "dlcrop"],
+    ["⌎", "urcrop"],
+    ["⌏", "ulcrop"],
+    ["⌐", "bnot"],
+    ["⌒", "profline"],
+    ["⌓", "profsurf"],
+    ["⌕", "telrec"],
+    ["⌖", "target"],
+    ["⌜", "ulcorn"],
+    ["⌝", "urcorn"],
+    ["⌞", "dlcorn"],
+    ["⌟", "drcorn"],
+    ["⌢", "frown"],
+    ["⌣", "smile"],
+    ["⌭", "cylcty"],
+    ["⌮", "profalar"],
+    ["⌶", "topbot"],
+    ["⌽", "ovbar"],
+    ["⌿", "solbar"],
+    ["⍼", "angzarr"],
+    ["⎰", "lmoust"],
+    ["⎱", "rmoust"],
+    ["⎴", "tbrk"],
+    ["⎵", "bbrk"],
+    ["⎶", "bbrktbrk"],
+    ["⏜", "OverParenthesis"],
+    ["⏝", "UnderParenthesis"],
+    ["⏞", "OverBrace"],
+    ["⏟", "UnderBrace"],
+    ["⏢", "trpezium"],
+    ["⏧", "elinters"],
+    ["␣", "blank"],
+    ["Ⓢ", "oS"],
+    ["─", "boxh"],
+    ["│", "boxv"],
+    ["┌", "boxdr"],
+    ["┐", "boxdl"],
+    ["└", "boxur"],
+    ["┘", "boxul"],
+    ["├", "boxvr"],
+    ["┤", "boxvl"],
+    ["┬", "boxhd"],
+    ["┴", "boxhu"],
+    ["┼", "boxvh"],
+    ["═", "boxH"],
+    ["║", "boxV"],
+    ["╒", "boxdR"],
+    ["╓", "boxDr"],
+    ["╔", "boxDR"],
+    ["╕", "boxdL"],
+    ["╖", "boxDl"],
+    ["╗", "boxDL"],
+    ["╘", "boxuR"],
+    ["╙", "boxUr"],
+    ["╚", "boxUR"],
+    ["╛", "boxuL"],
+    ["╜", "boxUl"],
+    ["╝", "boxUL"],
+    ["╞", "boxvR"],
+    ["╟", "boxVr"],
+    ["╠", "boxVR"],
+    ["╡", "boxvL"],
+    ["╢", "boxVl"],
+    ["╣", "boxVL"],
+    ["╤", "boxHd"],
+    ["╥", "boxhD"],
+    ["╦", "boxHD"],
+    ["╧", "boxHu"],
+    ["╨", "boxhU"],
+    ["╩", "boxHU"],
+    ["╪", "boxvH"],
+    ["╫", "boxVh"],
+    ["╬", "boxVH"],
+    ["▀", "uhblk"],
+    ["▄", "lhblk"],
+    ["█", "block"],
+    ["░", "blk14"],
+    ["▒", "blk12"],
+    ["▓", "blk34"],
+    ["□", "squ"],
+    ["▪", "squf"],
+    ["▫", "EmptyVerySmallSquare"],
+    ["▭", "rect"],
+    ["▮", "marker"],
+    ["▱", "fltns"],
+    ["△", "xutri"],
+    ["▴", "utrif"],
+    ["▵", "utri"],
+    ["▸", "rtrif"],
+    ["▹", "rtri"],
+    ["▽", "xdtri"],
+    ["▾", "dtrif"],
+    ["▿", "dtri"],
+    ["◂", "ltrif"],
+    ["◃", "ltri"],
+    ["◊", "loz"],
+    ["○", "cir"],
+    ["◬", "tridot"],
+    ["◯", "xcirc"],
+    ["◸", "ultri"],
+    ["◹", "urtri"],
+    ["◺", "lltri"],
+    ["◻", "EmptySmallSquare"],
+    ["◼", "FilledSmallSquare"],
+    ["★", "starf"],
+    ["☆", "star"],
+    ["☎", "phone"],
+    ["♀", "female"],
+    ["♂", "male"],
+    ["♠", "spades"],
+    ["♣", "clubs"],
+    ["♥", "hearts"],
+    ["♦", "diams"],
+    ["♪", "sung"],
+    ["♭", "flat"],
+    ["♮", "natur"],
+    ["♯", "sharp"],
+    ["✓", "check"],
+    ["✗", "cross"],
+    ["✠", "malt"],
+    ["✶", "sext"],
+    ["❘", "VerticalSeparator"],
+    ["❲", "lbbrk"],
+    ["❳", "rbbrk"],
+    ["⟈", "bsolhsub"],
+    ["⟉", "suphsol"],
+    ["⟦", "lobrk"],
+    ["⟧", "robrk"],
+    ["⟨", "lang"],
+    ["⟩", "rang"],
+    ["⟪", "Lang"],
+    ["⟫", "Rang"],
+    ["⟬", "loang"],
+    ["⟭", "roang"],
+    ["⟵", "xlarr"],
+    ["⟶", "xrarr"],
+    ["⟷", "xharr"],
+    ["⟸", "xlArr"],
+    ["⟹", "xrArr"],
+    ["⟺", "xhArr"],
+    ["⟼", "xmap"],
+    ["⟿", "dzigrarr"],
+    ["⤂", "nvlArr"],
+    ["⤃", "nvrArr"],
+    ["⤄", "nvHarr"],
+    ["⤅", "Map"],
+    ["⤌", "lbarr"],
+    ["⤍", "rbarr"],
+    ["⤎", "lBarr"],
+    ["⤏", "rBarr"],
+    ["⤐", "RBarr"],
+    ["⤑", "DDotrahd"],
+    ["⤒", "UpArrowBar"],
+    ["⤓", "DownArrowBar"],
+    ["⤖", "Rarrtl"],
+    ["⤙", "latail"],
+    ["⤚", "ratail"],
+    ["⤛", "lAtail"],
+    ["⤜", "rAtail"],
+    ["⤝", "larrfs"],
+    ["⤞", "rarrfs"],
+    ["⤟", "larrbfs"],
+    ["⤠", "rarrbfs"],
+    ["⤣", "nwarhk"],
+    ["⤤", "nearhk"],
+    ["⤥", "searhk"],
+    ["⤦", "swarhk"],
+    ["⤧", "nwnear"],
+    ["⤨", "toea"],
+    ["⤩", "tosa"],
+    ["⤪", "swnwar"],
+    ["⤳", "rarrc"],
+    ["⤳̸", "nrarrc"],
+    ["⤵", "cudarrr"],
+    ["⤶", "ldca"],
+    ["⤷", "rdca"],
+    ["⤸", "cudarrl"],
+    ["⤹", "larrpl"],
+    ["⤼", "curarrm"],
+    ["⤽", "cularrp"],
+    ["⥅", "rarrpl"],
+    ["⥈", "harrcir"],
+    ["⥉", "Uarrocir"],
+    ["⥊", "lurdshar"],
+    ["⥋", "ldrushar"],
+    ["⥎", "LeftRightVector"],
+    ["⥏", "RightUpDownVector"],
+    ["⥐", "DownLeftRightVector"],
+    ["⥑", "LeftUpDownVector"],
+    ["⥒", "LeftVectorBar"],
+    ["⥓", "RightVectorBar"],
+    ["⥔", "RightUpVectorBar"],
+    ["⥕", "RightDownVectorBar"],
+    ["⥖", "DownLeftVectorBar"],
+    ["⥗", "DownRightVectorBar"],
+    ["⥘", "LeftUpVectorBar"],
+    ["⥙", "LeftDownVectorBar"],
+    ["⥚", "LeftTeeVector"],
+    ["⥛", "RightTeeVector"],
+    ["⥜", "RightUpTeeVector"],
+    ["⥝", "RightDownTeeVector"],
+    ["⥞", "DownLeftTeeVector"],
+    ["⥟", "DownRightTeeVector"],
+    ["⥠", "LeftUpTeeVector"],
+    ["⥡", "LeftDownTeeVector"],
+    ["⥢", "lHar"],
+    ["⥣", "uHar"],
+    ["⥤", "rHar"],
+    ["⥥", "dHar"],
+    ["⥦", "luruhar"],
+    ["⥧", "ldrdhar"],
+    ["⥨", "ruluhar"],
+    ["⥩", "rdldhar"],
+    ["⥪", "lharul"],
+    ["⥫", "llhard"],
+    ["⥬", "rharul"],
+    ["⥭", "lrhard"],
+    ["⥮", "udhar"],
+    ["⥯", "duhar"],
+    ["⥰", "RoundImplies"],
+    ["⥱", "erarr"],
+    ["⥲", "simrarr"],
+    ["⥳", "larrsim"],
+    ["⥴", "rarrsim"],
+    ["⥵", "rarrap"],
+    ["⥶", "ltlarr"],
+    ["⥸", "gtrarr"],
+    ["⥹", "subrarr"],
+    ["⥻", "suplarr"],
+    ["⥼", "lfisht"],
+    ["⥽", "rfisht"],
+    ["⥾", "ufisht"],
+    ["⥿", "dfisht"],
+    ["⦅", "lopar"],
+    ["⦆", "ropar"],
+    ["⦋", "lbrke"],
+    ["⦌", "rbrke"],
+    ["⦍", "lbrkslu"],
+    ["⦎", "rbrksld"],
+    ["⦏", "lbrksld"],
+    ["⦐", "rbrkslu"],
+    ["⦑", "langd"],
+    ["⦒", "rangd"],
+    ["⦓", "lparlt"],
+    ["⦔", "rpargt"],
+    ["⦕", "gtlPar"],
+    ["⦖", "ltrPar"],
+    ["⦚", "vzigzag"],
+    ["⦜", "vangrt"],
+    ["⦝", "angrtvbd"],
+    ["⦤", "ange"],
+    ["⦥", "range"],
+    ["⦦", "dwangle"],
+    ["⦧", "uwangle"],
+    ["⦨", "angmsdaa"],
+    ["⦩", "angmsdab"],
+    ["⦪", "angmsdac"],
+    ["⦫", "angmsdad"],
+    ["⦬", "angmsdae"],
+    ["⦭", "angmsdaf"],
+    ["⦮", "angmsdag"],
+    ["⦯", "angmsdah"],
+    ["⦰", "bemptyv"],
+    ["⦱", "demptyv"],
+    ["⦲", "cemptyv"],
+    ["⦳", "raemptyv"],
+    ["⦴", "laemptyv"],
+    ["⦵", "ohbar"],
+    ["⦶", "omid"],
+    ["⦷", "opar"],
+    ["⦹", "operp"],
+    ["⦻", "olcross"],
+    ["⦼", "odsold"],
+    ["⦾", "olcir"],
+    ["⦿", "ofcir"],
+    ["⧀", "olt"],
+    ["⧁", "ogt"],
+    ["⧂", "cirscir"],
+    ["⧃", "cirE"],
+    ["⧄", "solb"],
+    ["⧅", "bsolb"],
+    ["⧉", "boxbox"],
+    ["⧍", "trisb"],
+    ["⧎", "rtriltri"],
+    ["⧏", "LeftTriangleBar"],
+    ["⧏̸", "NotLeftTriangleBar"],
+    ["⧐", "RightTriangleBar"],
+    ["⧐̸", "NotRightTriangleBar"],
+    ["⧜", "iinfin"],
+    ["⧝", "infintie"],
+    ["⧞", "nvinfin"],
+    ["⧣", "eparsl"],
+    ["⧤", "smeparsl"],
+    ["⧥", "eqvparsl"],
+    ["⧫", "lozf"],
+    ["⧴", "RuleDelayed"],
+    ["⧶", "dsol"],
+    ["⨀", "xodot"],
+    ["⨁", "xoplus"],
+    ["⨂", "xotime"],
+    ["⨄", "xuplus"],
+    ["⨆", "xsqcup"],
+    ["⨌", "qint"],
+    ["⨍", "fpartint"],
+    ["⨐", "cirfnint"],
+    ["⨑", "awint"],
+    ["⨒", "rppolint"],
+    ["⨓", "scpolint"],
+    ["⨔", "npolint"],
+    ["⨕", "pointint"],
+    ["⨖", "quatint"],
+    ["⨗", "intlarhk"],
+    ["⨢", "pluscir"],
+    ["⨣", "plusacir"],
+    ["⨤", "simplus"],
+    ["⨥", "plusdu"],
+    ["⨦", "plussim"],
+    ["⨧", "plustwo"],
+    ["⨩", "mcomma"],
+    ["⨪", "minusdu"],
+    ["⨭", "loplus"],
+    ["⨮", "roplus"],
+    ["⨯", "Cross"],
+    ["⨰", "timesd"],
+    ["⨱", "timesbar"],
+    ["⨳", "smashp"],
+    ["⨴", "lotimes"],
+    ["⨵", "rotimes"],
+    ["⨶", "otimesas"],
+    ["⨷", "Otimes"],
+    ["⨸", "odiv"],
+    ["⨹", "triplus"],
+    ["⨺", "triminus"],
+    ["⨻", "tritime"],
+    ["⨼", "iprod"],
+    ["⨿", "amalg"],
+    ["⩀", "capdot"],
+    ["⩂", "ncup"],
+    ["⩃", "ncap"],
+    ["⩄", "capand"],
+    ["⩅", "cupor"],
+    ["⩆", "cupcap"],
+    ["⩇", "capcup"],
+    ["⩈", "cupbrcap"],
+    ["⩉", "capbrcup"],
+    ["⩊", "cupcup"],
+    ["⩋", "capcap"],
+    ["⩌", "ccups"],
+    ["⩍", "ccaps"],
+    ["⩐", "ccupssm"],
+    ["⩓", "And"],
+    ["⩔", "Or"],
+    ["⩕", "andand"],
+    ["⩖", "oror"],
+    ["⩗", "orslope"],
+    ["⩘", "andslope"],
+    ["⩚", "andv"],
+    ["⩛", "orv"],
+    ["⩜", "andd"],
+    ["⩝", "ord"],
+    ["⩟", "wedbar"],
+    ["⩦", "sdote"],
+    ["⩪", "simdot"],
+    ["⩭", "congdot"],
+    ["⩭̸", "ncongdot"],
+    ["⩮", "easter"],
+    ["⩯", "apacir"],
+    ["⩰", "apE"],
+    ["⩰̸", "napE"],
+    ["⩱", "eplus"],
+    ["⩲", "pluse"],
+    ["⩳", "Esim"],
+    ["⩴", "Colone"],
+    ["⩵", "Equal"],
+    ["⩷", "eDDot"],
+    ["⩸", "equivDD"],
+    ["⩹", "ltcir"],
+    ["⩺", "gtcir"],
+    ["⩻", "ltquest"],
+    ["⩼", "gtquest"],
+    ["⩽", "les"],
+    ["⩽̸", "nles"],
+    ["⩾", "ges"],
+    ["⩾̸", "nges"],
+    ["⩿", "lesdot"],
+    ["⪀", "gesdot"],
+    ["⪁", "lesdoto"],
+    ["⪂", "gesdoto"],
+    ["⪃", "lesdotor"],
+    ["⪄", "gesdotol"],
+    ["⪅", "lap"],
+    ["⪆", "gap"],
+    ["⪇", "lne"],
+    ["⪈", "gne"],
+    ["⪉", "lnap"],
+    ["⪊", "gnap"],
+    ["⪋", "lEg"],
+    ["⪌", "gEl"],
+    ["⪍", "lsime"],
+    ["⪎", "gsime"],
+    ["⪏", "lsimg"],
+    ["⪐", "gsiml"],
+    ["⪑", "lgE"],
+    ["⪒", "glE"],
+    ["⪓", "lesges"],
+    ["⪔", "gesles"],
+    ["⪕", "els"],
+    ["⪖", "egs"],
+    ["⪗", "elsdot"],
+    ["⪘", "egsdot"],
+    ["⪙", "el"],
+    ["⪚", "eg"],
+    ["⪝", "siml"],
+    ["⪞", "simg"],
+    ["⪟", "simlE"],
+    ["⪠", "simgE"],
+    ["⪡", "LessLess"],
+    ["⪡̸", "NotNestedLessLess"],
+    ["⪢", "GreaterGreater"],
+    ["⪢̸", "NotNestedGreaterGreater"],
+    ["⪤", "glj"],
+    ["⪥", "gla"],
+    ["⪦", "ltcc"],
+    ["⪧", "gtcc"],
+    ["⪨", "lescc"],
+    ["⪩", "gescc"],
+    ["⪪", "smt"],
+    ["⪫", "lat"],
+    ["⪬", "smte"],
+    ["⪬︀", "smtes"],
+    ["⪭", "late"],
+    ["⪭︀", "lates"],
+    ["⪮", "bumpE"],
+    ["⪯", "pre"],
+    ["⪯̸", "npre"],
+    ["⪰", "sce"],
+    ["⪰̸", "nsce"],
+    ["⪳", "prE"],
+    ["⪴", "scE"],
+    ["⪵", "prnE"],
+    ["⪶", "scnE"],
+    ["⪷", "prap"],
+    ["⪸", "scap"],
+    ["⪹", "prnap"],
+    ["⪺", "scnap"],
+    ["⪻", "Pr"],
+    ["⪼", "Sc"],
+    ["⪽", "subdot"],
+    ["⪾", "supdot"],
+    ["⪿", "subplus"],
+    ["⫀", "supplus"],
+    ["⫁", "submult"],
+    ["⫂", "supmult"],
+    ["⫃", "subedot"],
+    ["⫄", "supedot"],
+    ["⫅", "subE"],
+    ["⫅̸", "nsubE"],
+    ["⫆", "supE"],
+    ["⫆̸", "nsupE"],
+    ["⫇", "subsim"],
+    ["⫈", "supsim"],
+    ["⫋", "subnE"],
+    ["⫋︀", "vsubnE"],
+    ["⫌", "supnE"],
+    ["⫌︀", "vsupnE"],
+    ["⫏", "csub"],
+    ["⫐", "csup"],
+    ["⫑", "csube"],
+    ["⫒", "csupe"],
+    ["⫓", "subsup"],
+    ["⫔", "supsub"],
+    ["⫕", "subsub"],
+    ["⫖", "supsup"],
+    ["⫗", "suphsub"],
+    ["⫘", "supdsub"],
+    ["⫙", "forkv"],
+    ["⫚", "topfork"],
+    ["⫛", "mlcp"],
+    ["⫤", "Dashv"],
+    ["⫦", "Vdashl"],
+    ["⫧", "Barv"],
+    ["⫨", "vBar"],
+    ["⫩", "vBarv"],
+    ["⫫", "Vbar"],
+    ["⫬", "Not"],
+    ["⫭", "bNot"],
+    ["⫮", "rnmid"],
+    ["⫯", "cirmid"],
+    ["⫰", "midcir"],
+    ["⫱", "topcir"],
+    ["⫲", "nhpar"],
+    ["⫳", "parsim"],
+    ["⫽", "parsl"],
+    ["⫽⃥", "nparsl"],
+    ["𝒜", "Ascr"],
+    ["𝒞", "Cscr"],
+    ["𝒟", "Dscr"],
+    ["𝒢", "Gscr"],
+    ["𝒥", "Jscr"],
+    ["𝒦", "Kscr"],
+    ["𝒩", "Nscr"],
+    ["𝒪", "Oscr"],
+    ["𝒫", "Pscr"],
+    ["𝒬", "Qscr"],
+    ["𝒮", "Sscr"],
+    ["𝒯", "Tscr"],
+    ["𝒰", "Uscr"],
+    ["𝒱", "Vscr"],
+    ["𝒲", "Wscr"],
+    ["𝒳", "Xscr"],
+    ["𝒴", "Yscr"],
+    ["𝒵", "Zscr"],
+    ["𝒶", "ascr"],
+    ["𝒷", "bscr"],
+    ["𝒸", "cscr"],
+    ["𝒹", "dscr"],
+    ["𝒻", "fscr"],
+    ["𝒽", "hscr"],
+    ["𝒾", "iscr"],
+    ["𝒿", "jscr"],
+    ["𝓀", "kscr"],
+    ["𝓁", "lscr"],
+    ["𝓂", "mscr"],
+    ["𝓃", "nscr"],
+    ["𝓅", "pscr"],
+    ["𝓆", "qscr"],
+    ["𝓇", "rscr"],
+    ["𝓈", "sscr"],
+    ["𝓉", "tscr"],
+    ["𝓊", "uscr"],
+    ["𝓋", "vscr"],
+    ["𝓌", "wscr"],
+    ["𝓍", "xscr"],
+    ["𝓎", "yscr"],
+    ["𝓏", "zscr"],
+    ["𝔄", "Afr"],
+    ["𝔅", "Bfr"],
+    ["𝔇", "Dfr"],
+    ["𝔈", "Efr"],
+    ["𝔉", "Ffr"],
+    ["𝔊", "Gfr"],
+    ["𝔍", "Jfr"],
+    ["𝔎", "Kfr"],
+    ["𝔏", "Lfr"],
+    ["𝔐", "Mfr"],
+    ["𝔑", "Nfr"],
+    ["𝔒", "Ofr"],
+    ["𝔓", "Pfr"],
+    ["𝔔", "Qfr"],
+    ["𝔖", "Sfr"],
+    ["𝔗", "Tfr"],
+    ["𝔘", "Ufr"],
+    ["𝔙", "Vfr"],
+    ["𝔚", "Wfr"],
+    ["𝔛", "Xfr"],
+    ["𝔜", "Yfr"],
+    ["𝔞", "afr"],
+    ["𝔟", "bfr"],
+    ["𝔠", "cfr"],
+    ["𝔡", "dfr"],
+    ["𝔢", "efr"],
+    ["𝔣", "ffr"],
+    ["𝔤", "gfr"],
+    ["𝔥", "hfr"],
+    ["𝔦", "ifr"],
+    ["𝔧", "jfr"],
+    ["𝔨", "kfr"],
+    ["𝔩", "lfr"],
+    ["𝔪", "mfr"],
+    ["𝔫", "nfr"],
+    ["𝔬", "ofr"],
+    ["𝔭", "pfr"],
+    ["𝔮", "qfr"],
+    ["𝔯", "rfr"],
+    ["𝔰", "sfr"],
+    ["𝔱", "tfr"],
+    ["𝔲", "ufr"],
+    ["𝔳", "vfr"],
+    ["𝔴", "wfr"],
+    ["𝔵", "xfr"],
+    ["𝔶", "yfr"],
+    ["𝔷", "zfr"],
+    ["𝔸", "Aopf"],
+    ["𝔹", "Bopf"],
+    ["𝔻", "Dopf"],
+    ["𝔼", "Eopf"],
+    ["𝔽", "Fopf"],
+    ["𝔾", "Gopf"],
+    ["𝕀", "Iopf"],
+    ["𝕁", "Jopf"],
+    ["𝕂", "Kopf"],
+    ["𝕃", "Lopf"],
+    ["𝕄", "Mopf"],
+    ["𝕆", "Oopf"],
+    ["𝕊", "Sopf"],
+    ["𝕋", "Topf"],
+    ["𝕌", "Uopf"],
+    ["𝕍", "Vopf"],
+    ["𝕎", "Wopf"],
+    ["𝕏", "Xopf"],
+    ["𝕐", "Yopf"],
+    ["𝕒", "aopf"],
+    ["𝕓", "bopf"],
+    ["𝕔", "copf"],
+    ["𝕕", "dopf"],
+    ["𝕖", "eopf"],
+    ["𝕗", "fopf"],
+    ["𝕘", "gopf"],
+    ["𝕙", "hopf"],
+    ["𝕚", "iopf"],
+    ["𝕛", "jopf"],
+    ["𝕜", "kopf"],
+    ["𝕝", "lopf"],
+    ["𝕞", "mopf"],
+    ["𝕟", "nopf"],
+    ["𝕠", "oopf"],
+    ["𝕡", "popf"],
+    ["𝕢", "qopf"],
+    ["𝕣", "ropf"],
+    ["𝕤", "sopf"],
+    ["𝕥", "topf"],
+    ["𝕦", "uopf"],
+    ["𝕧", "vopf"],
+    ["𝕨", "wopf"],
+    ["𝕩", "xopf"],
+    ["𝕪", "yopf"],
+    ["𝕫", "zopf"],
+    ["ﬀ", "fflig"],
+    ["ﬁ", "filig"],
+    ["ﬂ", "fllig"],
+    ["ﬃ", "ffilig"],
+    ["ﬄ", "ffllig"]
+  ]);
+  var regexInvalidRawCodePoint = /[\0-\x08\x0B\x0E-\x1F\x7F-\x9F\uFDD0-\uFDEF\uFFFE\uFFFF]|[\uD83F\uD87F\uD8BF\uD8FF\uD93F\uD97F\uD9BF\uD9FF\uDA3F\uDA7F\uDABF\uDAFF\uDB3F\uDB7F\uDBBF\uDBFF][\uDFFE\uDFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:[^\uD800-\uDBFF]|^)[\uDC00-\uDFFF]/;
+  var regexDecode = /&(CounterClockwiseContourIntegral|ClockwiseContourIntegral|DoubleLongLeftRightArrow|NotNestedGreaterGreater|DiacriticalDoubleAcute|NotSquareSupersetEqual|CloseCurlyDoubleQuote|DoubleContourIntegral|FilledVerySmallSquare|NegativeVeryThinSpace|NotPrecedesSlantEqual|NotRightTriangleEqual|NotSucceedsSlantEqual|CapitalDifferentialD|DoubleLeftRightArrow|DoubleLongRightArrow|EmptyVerySmallSquare|NestedGreaterGreater|NotDoubleVerticalBar|NotGreaterSlantEqual|NotLeftTriangleEqual|NotSquareSubsetEqual|OpenCurlyDoubleQuote|ReverseUpEquilibrium|DoubleLongLeftArrow|DownLeftRightVector|LeftArrowRightArrow|NegativeMediumSpace|NotGreaterFullEqual|NotRightTriangleBar|RightArrowLeftArrow|SquareSupersetEqual|leftrightsquigarrow|DownRightTeeVector|DownRightVectorBar|LongLeftRightArrow|Longleftrightarrow|NegativeThickSpace|NotLeftTriangleBar|PrecedesSlantEqual|ReverseEquilibrium|RightDoubleBracket|RightDownTeeVector|RightDownVectorBar|RightTriangleEqual|SquareIntersection|SucceedsSlantEqual|blacktriangleright|longleftrightarrow|DoubleUpDownArrow|DoubleVerticalBar|DownLeftTeeVector|DownLeftVectorBar|FilledSmallSquare|GreaterSlantEqual|LeftDoubleBracket|LeftDownTeeVector|LeftDownVectorBar|LeftTriangleEqual|NegativeThinSpace|NotGreaterGreater|NotLessSlantEqual|NotNestedLessLess|NotReverseElement|NotSquareSuperset|NotTildeFullEqual|RightAngleBracket|RightUpDownVector|SquareSubsetEqual|VerticalSeparator|blacktriangledown|blacktriangleleft|leftrightharpoons|rightleftharpoons|twoheadrightarrow|DiacriticalAcute|DiacriticalGrave|DiacriticalTilde|DoubleRightArrow|DownArrowUpArrow|EmptySmallSquare|GreaterEqualLess|GreaterFullEqual|LeftAngleBracket|LeftUpDownVector|LessEqualGreater|NonBreakingSpace|NotPrecedesEqual|NotRightTriangle|NotSucceedsEqual|NotSucceedsTilde|NotSupersetEqual|RightTriangleBar|RightUpTeeVector|RightUpVectorBar|UnderParenthesis|UpArrowDownArrow|circlearrowright|downharpoonright|ntrianglerighteq|rightharpoondown|rightrightarrows|twoheadleftarrow|vartriangleright|CloseCurlyQuote|ContourIntegral|DoubleDownArrow|DoubleLeftArrow|DownRightVector|LeftRightVector|LeftTriangleBar|LeftUpTeeVector|LeftUpVectorBar|LowerRightArrow|NotGreaterEqual|NotGreaterTilde|NotHumpDownHump|NotLeftTriangle|NotSquareSubset|OverParenthesis|RightDownVector|ShortRightArrow|UpperRightArrow|bigtriangledown|circlearrowleft|curvearrowright|downharpoonleft|leftharpoondown|leftrightarrows|nLeftrightarrow|nleftrightarrow|ntrianglelefteq|rightleftarrows|rightsquigarrow|rightthreetimes|straightepsilon|trianglerighteq|vartriangleleft|DiacriticalDot|DoubleRightTee|DownLeftVector|GreaterGreater|HorizontalLine|InvisibleComma|InvisibleTimes|LeftDownVector|LeftRightArrow|Leftrightarrow|LessSlantEqual|LongRightArrow|Longrightarrow|LowerLeftArrow|NestedLessLess|NotGreaterLess|NotLessGreater|NotSubsetEqual|NotVerticalBar|OpenCurlyQuote|ReverseElement|RightTeeVector|RightVectorBar|ShortDownArrow|ShortLeftArrow|SquareSuperset|TildeFullEqual|UpperLeftArrow|ZeroWidthSpace|curvearrowleft|doublebarwedge|downdownarrows|hookrightarrow|leftleftarrows|leftrightarrow|leftthreetimes|longrightarrow|looparrowright|nshortparallel|ntriangleright|rightarrowtail|rightharpoonup|trianglelefteq|upharpoonright|ApplyFunction|DifferentialD|DoubleLeftTee|DoubleUpArrow|LeftTeeVector|LeftVectorBar|LessFullEqual|LongLeftArrow|Longleftarrow|NotEqualTilde|NotTildeEqual|NotTildeTilde|Poincareplane|PrecedesEqual|PrecedesTilde|RightArrowBar|RightTeeArrow|RightTriangle|RightUpVector|SucceedsEqual|SucceedsTilde|SupersetEqual|UpEquilibrium|VerticalTilde|VeryThinSpace|bigtriangleup|blacktriangle|divideontimes|fallingdotseq|hookleftarrow|leftarrowtail|leftharpoonup|longleftarrow|looparrowleft|measuredangle|ntriangleleft|shortparallel|smallsetminus|triangleright|upharpoonleft|varsubsetneqq|varsupsetneqq|DownArrowBar|DownTeeArrow|ExponentialE|GreaterEqual|GreaterTilde|HilbertSpace|HumpDownHump|Intersection|LeftArrowBar|LeftTeeArrow|LeftTriangle|LeftUpVector|NotCongruent|NotHumpEqual|NotLessEqual|NotLessTilde|Proportional|RightCeiling|RoundImplies|ShortUpArrow|SquareSubset|UnderBracket|VerticalLine|blacklozenge|exponentiale|risingdotseq|triangledown|triangleleft|varsubsetneq|varsupsetneq|CircleMinus|CircleTimes|Equilibrium|GreaterLess|LeftCeiling|LessGreater|MediumSpace|NotLessLess|NotPrecedes|NotSucceeds|NotSuperset|OverBracket|RightVector|Rrightarrow|RuleDelayed|SmallCircle|SquareUnion|SubsetEqual|UpDownArrow|Updownarrow|VerticalBar|backepsilon|blacksquare|circledcirc|circleddash|curlyeqprec|curlyeqsucc|diamondsuit|eqslantless|expectation|nRightarrow|nrightarrow|preccurlyeq|precnapprox|quaternions|straightphi|succcurlyeq|succnapprox|thickapprox|updownarrow|Bernoullis|CirclePlus|EqualTilde|Fouriertrf|ImaginaryI|Laplacetrf|LeftVector|Lleftarrow|NotElement|NotGreater|Proportion|RightArrow|RightFloor|Rightarrow|ThickSpace|TildeEqual|TildeTilde|UnderBrace|UpArrowBar|UpTeeArrow|circledast|complement|curlywedge|eqslantgtr|gtreqqless|lessapprox|lesseqqgtr|lmoustache|longmapsto|mapstodown|mapstoleft|nLeftarrow|nleftarrow|nsubseteqq|nsupseteqq|precapprox|rightarrow|rmoustache|sqsubseteq|sqsupseteq|subsetneqq|succapprox|supsetneqq|upuparrows|varepsilon|varnothing|Backslash|CenterDot|CircleDot|Congruent|Coproduct|DoubleDot|DownArrow|DownBreve|Downarrow|HumpEqual|LeftArrow|LeftFloor|Leftarrow|LessTilde|Mellintrf|MinusPlus|NotCupCap|NotExists|NotSubset|OverBrace|PlusMinus|Therefore|ThinSpace|TripleDot|UnionPlus|backprime|backsimeq|bigotimes|centerdot|checkmark|complexes|dotsquare|downarrow|gtrapprox|gtreqless|gvertneqq|heartsuit|leftarrow|lesseqgtr|lvertneqq|ngeqslant|nleqslant|nparallel|nshortmid|nsubseteq|nsupseteq|pitchfork|rationals|spadesuit|subseteqq|subsetneq|supseteqq|supsetneq|therefore|triangleq|varpropto|DDotrahd|DotEqual|Integral|LessLess|NotEqual|NotTilde|PartialD|Precedes|RightTee|Succeeds|SuchThat|Superset|Uarrocir|UnderBar|andslope|angmsdaa|angmsdab|angmsdac|angmsdad|angmsdae|angmsdaf|angmsdag|angmsdah|angrtvbd|approxeq|awconint|backcong|barwedge|bbrktbrk|bigoplus|bigsqcup|biguplus|bigwedge|boxminus|boxtimes|bsolhsub|capbrcup|circledR|circledS|cirfnint|clubsuit|cupbrcap|curlyvee|cwconint|doteqdot|dotminus|drbkarow|dzigrarr|elinters|emptyset|eqvparsl|fpartint|geqslant|gesdotol|gnapprox|hksearow|hkswarow|imagline|imagpart|infintie|integers|intercal|intlarhk|laemptyv|ldrushar|leqslant|lesdotor|llcorner|lnapprox|lrcorner|lurdshar|mapstoup|multimap|naturals|ncongdot|notindot|otimesas|parallel|plusacir|pointint|precneqq|precnsim|profalar|profline|profsurf|raemptyv|realpart|rppolint|rtriltri|scpolint|setminus|shortmid|smeparsl|sqsubset|sqsupset|subseteq|succneqq|succnsim|supseteq|thetasym|thicksim|timesbar|triangle|triminus|trpezium|ulcorner|urcorner|varkappa|varsigma|vartheta|Because|Cayleys|Cconint|Cedilla|Diamond|DownTee|Element|Epsilon|Implies|LeftTee|NewLine|NoBreak|NotLess|Omicron|OverBar|Product|UpArrow|Uparrow|Upsilon|alefsym|angrtvb|angzarr|asympeq|backsim|because|bemptyv|between|bigcirc|bigodot|bigstar|bnequiv|boxplus|ccupssm|cemptyv|cirscir|coloneq|congdot|cudarrl|cudarrr|cularrp|curarrm|dbkarow|ddagger|ddotseq|demptyv|diamond|digamma|dotplus|dwangle|epsilon|eqcolon|equivDD|gesdoto|gtquest|gtrless|harrcir|intprod|isindot|larrbfs|larrsim|lbrksld|lbrkslu|ldrdhar|lesdoto|lessdot|lessgtr|lesssim|lotimes|lozenge|ltquest|luruhar|maltese|minusdu|napprox|natural|nearrow|nexists|notinva|notinvb|notinvc|notniva|notnivb|notnivc|npolint|npreceq|nsqsube|nsqsupe|nsubset|nsucceq|nsupset|nvinfin|nvltrie|nvrtrie|nwarrow|olcross|omicron|orderof|orslope|pertenk|planckh|pluscir|plussim|plustwo|precsim|quatint|questeq|rarrbfs|rarrsim|rbrksld|rbrkslu|rdldhar|realine|rotimes|ruluhar|searrow|simplus|simrarr|subedot|submult|subplus|subrarr|succsim|supdsub|supedot|suphsol|suphsub|suplarr|supmult|supplus|swarrow|topfork|triplus|tritime|uparrow|upsilon|uwangle|vzigzag|zigrarr|Aacute|Abreve|Agrave|Assign|Atilde|Barwed|Bumpeq|Cacute|Ccaron|Ccedil|Colone|Conint|CupCap|Dagger|Dcaron|DotDot|Dstrok|Eacute|Ecaron|Egrave|Exists|ForAll|Gammad|Gbreve|Gcedil|HARDcy|Hstrok|Iacute|Igrave|Itilde|Jsercy|Kcedil|Lacute|Lambda|Lcaron|Lcedil|Lmidot|Lstrok|Nacute|Ncaron|Ncedil|Ntilde|Oacute|Odblac|Ograve|Oslash|Otilde|Otimes|Racute|Rarrtl|Rcaron|Rcedil|SHCHcy|SOFTcy|Sacute|Scaron|Scedil|Square|Subset|Supset|Tcaron|Tcedil|Tstrok|Uacute|Ubreve|Udblac|Ugrave|Utilde|Vdashl|Verbar|Vvdash|Yacute|Zacute|Zcaron|aacute|abreve|agrave|andand|angmsd|angsph|apacir|approx|atilde|barvee|barwed|becaus|bernou|bigcap|bigcup|bigvee|bkarow|bottom|bowtie|boxbox|bprime|brvbar|bullet|bumpeq|cacute|capand|capcap|capcup|capdot|ccaron|ccedil|circeq|cirmid|colone|commat|compfn|conint|coprod|copysr|cularr|cupcap|cupcup|cupdot|curarr|curren|cylcty|dagger|daleth|dcaron|dfisht|divide|divonx|dlcorn|dlcrop|dollar|drcorn|drcrop|dstrok|eacute|easter|ecaron|ecolon|egrave|egsdot|elsdot|emptyv|emsp13|emsp14|eparsl|eqcirc|equals|equest|female|ffilig|ffllig|forall|frac12|frac13|frac14|frac15|frac16|frac18|frac23|frac25|frac34|frac35|frac38|frac45|frac56|frac58|frac78|gacute|gammad|gbreve|gesdot|gesles|gtlPar|gtrarr|gtrdot|gtrsim|hairsp|hamilt|hardcy|hearts|hellip|hercon|homtht|horbar|hslash|hstrok|hybull|hyphen|iacute|igrave|iiiint|iinfin|incare|inodot|intcal|iquest|isinsv|itilde|jsercy|kappav|kcedil|kgreen|lAtail|lacute|lagran|lambda|langle|larrfs|larrhk|larrlp|larrpl|larrtl|latail|lbrace|lbrack|lcaron|lcedil|ldquor|lesdot|lesges|lfisht|lfloor|lharul|llhard|lmidot|lmoust|loplus|lowast|lowbar|lparlt|lrhard|lsaquo|lsquor|lstrok|lthree|ltimes|ltlarr|ltrPar|mapsto|marker|mcomma|midast|midcir|middot|minusb|minusd|mnplus|models|mstpos|nVDash|nVdash|nacute|nbumpe|ncaron|ncedil|nearhk|nequiv|nesear|nexist|nltrie|notinE|nparsl|nprcue|nrarrc|nrarrw|nrtrie|nsccue|nsimeq|ntilde|numero|nvDash|nvHarr|nvdash|nvlArr|nvrArr|nwarhk|nwnear|oacute|odblac|odsold|ograve|ominus|origof|oslash|otilde|otimes|parsim|percnt|period|permil|phmmat|planck|plankv|plusdo|plusdu|plusmn|preceq|primes|prnsim|propto|prurel|puncsp|qprime|rAtail|racute|rangle|rarrap|rarrfs|rarrhk|rarrlp|rarrpl|rarrtl|ratail|rbrace|rbrack|rcaron|rcedil|rdquor|rfisht|rfloor|rharul|rmoust|roplus|rpargt|rsaquo|rsquor|rthree|rtimes|sacute|scaron|scedil|scnsim|searhk|seswar|sfrown|shchcy|sigmaf|sigmav|simdot|smashp|softcy|solbar|spades|sqcaps|sqcups|sqsube|sqsupe|square|squarf|ssetmn|ssmile|sstarf|subdot|subset|subsim|subsub|subsup|succeq|supdot|supset|supsim|supsub|supsup|swarhk|swnwar|target|tcaron|tcedil|telrec|there4|thetav|thinsp|thksim|timesb|timesd|topbot|topcir|tprime|tridot|tstrok|uacute|ubreve|udblac|ufisht|ugrave|ulcorn|ulcrop|urcorn|urcrop|utilde|vangrt|varphi|varrho|veebar|vellip|verbar|vsubnE|vsubne|vsupnE|vsupne|wedbar|wedgeq|weierp|wreath|xoplus|xotime|xsqcup|xuplus|xwedge|yacute|zacute|zcaron|zeetrf|AElig|Acirc|Alpha|Amacr|Aogon|Aring|Breve|Ccirc|Colon|Cross|Dashv|Delta|Ecirc|Emacr|Eogon|Equal|Gamma|Gcirc|Hacek|Hcirc|IJlig|Icirc|Imacr|Iogon|Iukcy|Jcirc|Jukcy|Kappa|OElig|Ocirc|Omacr|Omega|Prime|RBarr|Scirc|Sigma|THORN|TRADE|TSHcy|Theta|Tilde|Ubrcy|Ucirc|Umacr|Union|Uogon|UpTee|Uring|VDash|Vdash|Wcirc|Wedge|Ycirc|acirc|acute|aelig|aleph|alpha|amacr|amalg|angle|angrt|angst|aogon|aring|asymp|awint|bcong|bdquo|bepsi|blank|blk12|blk14|blk34|block|boxDL|boxDR|boxDl|boxDr|boxHD|boxHU|boxHd|boxHu|boxUL|boxUR|boxUl|boxUr|boxVH|boxVL|boxVR|boxVh|boxVl|boxVr|boxdL|boxdR|boxdl|boxdr|boxhD|boxhU|boxhd|boxhu|boxuL|boxuR|boxul|boxur|boxvH|boxvL|boxvR|boxvh|boxvl|boxvr|breve|bsemi|bsime|bsolb|bumpE|bumpe|caret|caron|ccaps|ccirc|ccups|cedil|check|clubs|colon|comma|crarr|cross|csube|csupe|ctdot|cuepr|cuesc|cupor|cuvee|cuwed|cwint|dashv|dblac|ddarr|delta|dharl|dharr|diams|disin|doteq|dtdot|dtrif|duarr|duhar|eDDot|ecirc|efDot|emacr|empty|eogon|eplus|epsiv|eqsim|equiv|erDot|erarr|esdot|exist|fflig|filig|fjlig|fllig|fltns|forkv|frasl|frown|gamma|gcirc|gescc|gimel|gneqq|gnsim|grave|gsime|gsiml|gtcir|gtdot|harrw|hcirc|hoarr|icirc|iexcl|iiint|iiota|ijlig|imacr|image|imath|imped|infin|iogon|iprod|isinE|isins|isinv|iukcy|jcirc|jmath|jukcy|kappa|lAarr|lBarr|langd|laquo|larrb|lates|lbarr|lbbrk|lbrke|lceil|ldquo|lescc|lhard|lharu|lhblk|llarr|lltri|lneqq|lnsim|loang|loarr|lobrk|lopar|lrarr|lrhar|lrtri|lsime|lsimg|lsquo|ltcir|ltdot|ltrie|ltrif|mDDot|mdash|micro|minus|mumap|nabla|napid|napos|natur|nbump|ncong|ndash|neArr|nearr|nedot|nesim|ngeqq|ngsim|nhArr|nharr|nhpar|nlArr|nlarr|nleqq|nless|nlsim|nltri|notin|notni|npart|nprec|nrArr|nrarr|nrtri|nsime|nsmid|nspar|nsubE|nsube|nsucc|nsupE|nsupe|numsp|nvsim|nwArr|nwarr|ocirc|odash|oelig|ofcir|ohbar|olarr|olcir|oline|omacr|omega|operp|oplus|orarr|order|ovbar|parsl|phone|plusb|pluse|pound|prcue|prime|prnap|prsim|quest|rAarr|rBarr|radic|rangd|range|raquo|rarrb|rarrc|rarrw|ratio|rbarr|rbbrk|rbrke|rceil|rdquo|reals|rhard|rharu|rlarr|rlhar|rnmid|roang|roarr|robrk|ropar|rrarr|rsquo|rtrie|rtrif|sbquo|sccue|scirc|scnap|scsim|sdotb|sdote|seArr|searr|setmn|sharp|sigma|simeq|simgE|simlE|simne|slarr|smile|smtes|sqcap|sqcup|sqsub|sqsup|srarr|starf|strns|subnE|subne|supnE|supne|swArr|swarr|szlig|theta|thkap|thorn|tilde|times|trade|trisb|tshcy|twixt|ubrcy|ucirc|udarr|udhar|uharl|uharr|uhblk|ultri|umacr|uogon|uplus|upsih|uring|urtri|utdot|utrif|uuarr|vBarv|vDash|varpi|vdash|veeeq|vltri|vnsub|vnsup|vprop|vrtri|wcirc|wedge|xcirc|xdtri|xhArr|xharr|xlArr|xlarr|xodot|xrArr|xrarr|xutri|ycirc|Aopf|Ascr|Auml|Barv|Beta|Bopf|Bscr|CHcy|COPY|Cdot|Copf|Cscr|DJcy|DScy|DZcy|Darr|Dopf|Dscr|Edot|Eopf|Escr|Esim|Euml|Fopf|Fscr|GJcy|Gdot|Gopf|Gscr|Hopf|Hscr|IEcy|IOcy|Idot|Iopf|Iota|Iscr|Iuml|Jopf|Jscr|KHcy|KJcy|Kopf|Kscr|LJcy|Lang|Larr|Lopf|Lscr|Mopf|Mscr|NJcy|Nopf|Nscr|Oopf|Oscr|Ouml|Popf|Pscr|QUOT|Qopf|Qscr|Rang|Rarr|Ropf|Rscr|SHcy|Sopf|Sqrt|Sscr|Star|TScy|Topf|Tscr|Uarr|Uopf|Upsi|Uscr|Uuml|Vbar|Vert|Vopf|Vscr|Wopf|Wscr|Xopf|Xscr|YAcy|YIcy|YUcy|Yopf|Yscr|Yuml|ZHcy|Zdot|Zeta|Zopf|Zscr|andd|andv|ange|aopf|apid|apos|ascr|auml|bNot|bbrk|beta|beth|bnot|bopf|boxH|boxV|boxh|boxv|bscr|bsim|bsol|bull|bump|caps|cdot|cent|chcy|cirE|circ|cire|comp|cong|copf|copy|cscr|csub|csup|cups|dArr|dHar|darr|dash|diam|djcy|dopf|dscr|dscy|dsol|dtri|dzcy|eDot|ecir|edot|emsp|ensp|eopf|epar|epsi|escr|esim|euml|euro|excl|flat|fnof|fopf|fork|fscr|gdot|geqq|gesl|gjcy|gnap|gneq|gopf|gscr|gsim|gtcc|gvnE|hArr|half|harr|hbar|hopf|hscr|iecy|imof|iocy|iopf|iota|iscr|isin|iuml|jopf|jscr|khcy|kjcy|kopf|kscr|lArr|lHar|lang|larr|late|lcub|ldca|ldsh|leqq|lesg|ljcy|lnap|lneq|lopf|lozf|lpar|lscr|lsim|lsqb|ltcc|ltri|lvnE|macr|male|malt|mlcp|mldr|mopf|mscr|nGtv|nLtv|nang|napE|nbsp|ncap|ncup|ngeq|nges|ngtr|nisd|njcy|nldr|nleq|nles|nmid|nopf|npar|npre|nsce|nscr|nsim|nsub|nsup|ntgl|ntlg|nvap|nvge|nvgt|nvle|nvlt|oast|ocir|odiv|odot|ogon|oint|omid|oopf|opar|ordf|ordm|oror|oscr|osol|ouml|para|part|perp|phiv|plus|popf|prap|prec|prnE|prod|prop|pscr|qint|qopf|qscr|quot|rArr|rHar|race|rang|rarr|rcub|rdca|rdsh|real|rect|rhov|ring|ropf|rpar|rscr|rsqb|rtri|scap|scnE|sdot|sect|semi|sext|shcy|sime|simg|siml|smid|smte|solb|sopf|spar|squf|sscr|star|subE|sube|succ|sung|sup1|sup2|sup3|supE|supe|tbrk|tdot|tint|toea|topf|tosa|trie|tscr|tscy|uArr|uHar|uarr|uopf|upsi|uscr|utri|uuml|vArr|vBar|varr|vert|vopf|vscr|wopf|wscr|xcap|xcup|xmap|xnis|xopf|xscr|xvee|yacy|yicy|yopf|yscr|yucy|yuml|zdot|zeta|zhcy|zopf|zscr|zwnj|AMP|Acy|Afr|And|Bcy|Bfr|Cap|Cfr|Chi|Cup|Dcy|Del|Dfr|Dot|ENG|ETH|Ecy|Efr|Eta|Fcy|Ffr|Gcy|Gfr|Hat|Hfr|Icy|Ifr|Int|Jcy|Jfr|Kcy|Kfr|Lcy|Lfr|Lsh|Map|Mcy|Mfr|Ncy|Nfr|Not|Ocy|Ofr|Pcy|Pfr|Phi|Psi|Qfr|REG|Rcy|Rfr|Rho|Rsh|Scy|Sfr|Sub|Sum|Sup|Tab|Tau|Tcy|Tfr|Ucy|Ufr|Vcy|Vee|Vfr|Wfr|Xfr|Ycy|Yfr|Zcy|Zfr|acE|acd|acy|afr|amp|and|ang|apE|ape|ast|bcy|bfr|bne|bot|cap|cfr|chi|cir|cup|dcy|deg|dfr|die|div|dot|ecy|efr|egs|ell|els|eng|eta|eth|fcy|ffr|gEl|gap|gcy|gel|geq|ges|gfr|ggg|glE|gla|glj|gnE|gne|hfr|icy|iff|ifr|int|jcy|jfr|kcy|kfr|lEg|lap|lat|lcy|leg|leq|les|lfr|lgE|lnE|lne|loz|lrm|lsh|map|mcy|mfr|mho|mid|nGg|nGt|nLl|nLt|nap|ncy|nfr|ngE|nge|ngt|nis|niv|nlE|nle|nlt|not|npr|nsc|num|ocy|ofr|ogt|ohm|olt|ord|orv|par|pcy|pfr|phi|piv|prE|pre|psi|qfr|rcy|reg|rfr|rho|rlm|rsh|scE|sce|scy|sfr|shy|sim|smt|sol|squ|sub|sum|sup|tau|tcy|tfr|top|ucy|ufr|uml|vcy|vee|vfr|wfr|xfr|ycy|yen|yfr|zcy|zfr|zwj|DD|GT|Gg|Gt|Im|LT|Ll|Lt|Mu|Nu|Or|Pi|Pr|Re|Sc|Xi|ac|af|ap|dd|ee|eg|el|gE|ge|gg|gl|gt|ic|ii|in|it|lE|le|lg|ll|lt|mp|mu|ne|ni|nu|oS|or|pi|pm|pr|rx|sc|wp|wr|xi);|&(Aacute|Agrave|Atilde|Ccedil|Eacute|Egrave|Iacute|Igrave|Ntilde|Oacute|Ograve|Oslash|Otilde|Uacute|Ugrave|Yacute|aacute|agrave|atilde|brvbar|ccedil|curren|divide|eacute|egrave|frac12|frac14|frac34|iacute|igrave|iquest|middot|ntilde|oacute|ograve|oslash|otilde|plusmn|uacute|ugrave|yacute|AElig|Acirc|Aring|Ecirc|Icirc|Ocirc|THORN|Ucirc|acirc|acute|aelig|aring|cedil|ecirc|icirc|iexcl|laquo|micro|ocirc|pound|raquo|szlig|thorn|times|ucirc|Auml|COPY|Euml|Iuml|Ouml|QUOT|Uuml|auml|cent|copy|euml|iuml|macr|nbsp|ordf|ordm|ouml|para|quot|sect|sup1|sup2|sup3|uuml|yuml|AMP|ETH|REG|amp|deg|eth|not|reg|shy|uml|yen|GT|LT|gt|lt)(?!;)([=a-zA-Z0-9]?)|&#([0-9]+)(;?)|&#[xX]([a-fA-F0-9]+)(;?)|&([0-9a-zA-Z]+)/g;
+  var decodeMap = /* @__PURE__ */ new Map([
+    ["AElig", "Æ"],
+    ["AMP", "&"],
+    ["Aacute", "Á"],
+    ["Abreve", "Ă"],
+    ["Acirc", "Â"],
+    ["Acy", "А"],
+    ["Afr", "𝔄"],
+    ["Agrave", "À"],
+    ["Alpha", "Α"],
+    ["Amacr", "Ā"],
+    ["And", "⩓"],
+    ["Aogon", "Ą"],
+    ["Aopf", "𝔸"],
+    ["ApplyFunction", "⁡"],
+    ["Aring", "Å"],
+    ["Ascr", "𝒜"],
+    ["Assign", "≔"],
+    ["Atilde", "Ã"],
+    ["Auml", "Ä"],
+    ["Backslash", "∖"],
+    ["Barv", "⫧"],
+    ["Barwed", "⌆"],
+    ["Bcy", "Б"],
+    ["Because", "∵"],
+    ["Bernoullis", "ℬ"],
+    ["Beta", "Β"],
+    ["Bfr", "𝔅"],
+    ["Bopf", "𝔹"],
+    ["Breve", "˘"],
+    ["Bscr", "ℬ"],
+    ["Bumpeq", "≎"],
+    ["CHcy", "Ч"],
+    ["COPY", "©"],
+    ["Cacute", "Ć"],
+    ["Cap", "⋒"],
+    ["CapitalDifferentialD", "ⅅ"],
+    ["Cayleys", "ℭ"],
+    ["Ccaron", "Č"],
+    ["Ccedil", "Ç"],
+    ["Ccirc", "Ĉ"],
+    ["Cconint", "∰"],
+    ["Cdot", "Ċ"],
+    ["Cedilla", "¸"],
+    ["CenterDot", "·"],
+    ["Cfr", "ℭ"],
+    ["Chi", "Χ"],
+    ["CircleDot", "⊙"],
+    ["CircleMinus", "⊖"],
+    ["CirclePlus", "⊕"],
+    ["CircleTimes", "⊗"],
+    ["ClockwiseContourIntegral", "∲"],
+    ["CloseCurlyDoubleQuote", "”"],
+    ["CloseCurlyQuote", "’"],
+    ["Colon", "∷"],
+    ["Colone", "⩴"],
+    ["Congruent", "≡"],
+    ["Conint", "∯"],
+    ["ContourIntegral", "∮"],
+    ["Copf", "ℂ"],
+    ["Coproduct", "∐"],
+    ["CounterClockwiseContourIntegral", "∳"],
+    ["Cross", "⨯"],
+    ["Cscr", "𝒞"],
+    ["Cup", "⋓"],
+    ["CupCap", "≍"],
+    ["DD", "ⅅ"],
+    ["DDotrahd", "⤑"],
+    ["DJcy", "Ђ"],
+    ["DScy", "Ѕ"],
+    ["DZcy", "Џ"],
+    ["Dagger", "‡"],
+    ["Darr", "↡"],
+    ["Dashv", "⫤"],
+    ["Dcaron", "Ď"],
+    ["Dcy", "Д"],
+    ["Del", "∇"],
+    ["Delta", "Δ"],
+    ["Dfr", "𝔇"],
+    ["DiacriticalAcute", "´"],
+    ["DiacriticalDot", "˙"],
+    ["DiacriticalDoubleAcute", "˝"],
+    ["DiacriticalGrave", "`"],
+    ["DiacriticalTilde", "˜"],
+    ["Diamond", "⋄"],
+    ["DifferentialD", "ⅆ"],
+    ["Dopf", "𝔻"],
+    ["Dot", "¨"],
+    ["DotDot", "⃜"],
+    ["DotEqual", "≐"],
+    ["DoubleContourIntegral", "∯"],
+    ["DoubleDot", "¨"],
+    ["DoubleDownArrow", "⇓"],
+    ["DoubleLeftArrow", "⇐"],
+    ["DoubleLeftRightArrow", "⇔"],
+    ["DoubleLeftTee", "⫤"],
+    ["DoubleLongLeftArrow", "⟸"],
+    ["DoubleLongLeftRightArrow", "⟺"],
+    ["DoubleLongRightArrow", "⟹"],
+    ["DoubleRightArrow", "⇒"],
+    ["DoubleRightTee", "⊨"],
+    ["DoubleUpArrow", "⇑"],
+    ["DoubleUpDownArrow", "⇕"],
+    ["DoubleVerticalBar", "∥"],
+    ["DownArrow", "↓"],
+    ["DownArrowBar", "⤓"],
+    ["DownArrowUpArrow", "⇵"],
+    ["DownBreve", "̑"],
+    ["DownLeftRightVector", "⥐"],
+    ["DownLeftTeeVector", "⥞"],
+    ["DownLeftVector", "↽"],
+    ["DownLeftVectorBar", "⥖"],
+    ["DownRightTeeVector", "⥟"],
+    ["DownRightVector", "⇁"],
+    ["DownRightVectorBar", "⥗"],
+    ["DownTee", "⊤"],
+    ["DownTeeArrow", "↧"],
+    ["Downarrow", "⇓"],
+    ["Dscr", "𝒟"],
+    ["Dstrok", "Đ"],
+    ["ENG", "Ŋ"],
+    ["ETH", "Ð"],
+    ["Eacute", "É"],
+    ["Ecaron", "Ě"],
+    ["Ecirc", "Ê"],
+    ["Ecy", "Э"],
+    ["Edot", "Ė"],
+    ["Efr", "𝔈"],
+    ["Egrave", "È"],
+    ["Element", "∈"],
+    ["Emacr", "Ē"],
+    ["EmptySmallSquare", "◻"],
+    ["EmptyVerySmallSquare", "▫"],
+    ["Eogon", "Ę"],
+    ["Eopf", "𝔼"],
+    ["Epsilon", "Ε"],
+    ["Equal", "⩵"],
+    ["EqualTilde", "≂"],
+    ["Equilibrium", "⇌"],
+    ["Escr", "ℰ"],
+    ["Esim", "⩳"],
+    ["Eta", "Η"],
+    ["Euml", "Ë"],
+    ["Exists", "∃"],
+    ["ExponentialE", "ⅇ"],
+    ["Fcy", "Ф"],
+    ["Ffr", "𝔉"],
+    ["FilledSmallSquare", "◼"],
+    ["FilledVerySmallSquare", "▪"],
+    ["Fopf", "𝔽"],
+    ["ForAll", "∀"],
+    ["Fouriertrf", "ℱ"],
+    ["Fscr", "ℱ"],
+    ["GJcy", "Ѓ"],
+    ["GT", ">"],
+    ["Gamma", "Γ"],
+    ["Gammad", "Ϝ"],
+    ["Gbreve", "Ğ"],
+    ["Gcedil", "Ģ"],
+    ["Gcirc", "Ĝ"],
+    ["Gcy", "Г"],
+    ["Gdot", "Ġ"],
+    ["Gfr", "𝔊"],
+    ["Gg", "⋙"],
+    ["Gopf", "𝔾"],
+    ["GreaterEqual", "≥"],
+    ["GreaterEqualLess", "⋛"],
+    ["GreaterFullEqual", "≧"],
+    ["GreaterGreater", "⪢"],
+    ["GreaterLess", "≷"],
+    ["GreaterSlantEqual", "⩾"],
+    ["GreaterTilde", "≳"],
+    ["Gscr", "𝒢"],
+    ["Gt", "≫"],
+    ["HARDcy", "Ъ"],
+    ["Hacek", "ˇ"],
+    ["Hat", "^"],
+    ["Hcirc", "Ĥ"],
+    ["Hfr", "ℌ"],
+    ["HilbertSpace", "ℋ"],
+    ["Hopf", "ℍ"],
+    ["HorizontalLine", "─"],
+    ["Hscr", "ℋ"],
+    ["Hstrok", "Ħ"],
+    ["HumpDownHump", "≎"],
+    ["HumpEqual", "≏"],
+    ["IEcy", "Е"],
+    ["IJlig", "Ĳ"],
+    ["IOcy", "Ё"],
+    ["Iacute", "Í"],
+    ["Icirc", "Î"],
+    ["Icy", "И"],
+    ["Idot", "İ"],
+    ["Ifr", "ℑ"],
+    ["Igrave", "Ì"],
+    ["Im", "ℑ"],
+    ["Imacr", "Ī"],
+    ["ImaginaryI", "ⅈ"],
+    ["Implies", "⇒"],
+    ["Int", "∬"],
+    ["Integral", "∫"],
+    ["Intersection", "⋂"],
+    ["InvisibleComma", "⁣"],
+    ["InvisibleTimes", "⁢"],
+    ["Iogon", "Į"],
+    ["Iopf", "𝕀"],
+    ["Iota", "Ι"],
+    ["Iscr", "ℐ"],
+    ["Itilde", "Ĩ"],
+    ["Iukcy", "І"],
+    ["Iuml", "Ï"],
+    ["Jcirc", "Ĵ"],
+    ["Jcy", "Й"],
+    ["Jfr", "𝔍"],
+    ["Jopf", "𝕁"],
+    ["Jscr", "𝒥"],
+    ["Jsercy", "Ј"],
+    ["Jukcy", "Є"],
+    ["KHcy", "Х"],
+    ["KJcy", "Ќ"],
+    ["Kappa", "Κ"],
+    ["Kcedil", "Ķ"],
+    ["Kcy", "К"],
+    ["Kfr", "𝔎"],
+    ["Kopf", "𝕂"],
+    ["Kscr", "𝒦"],
+    ["LJcy", "Љ"],
+    ["LT", "<"],
+    ["Lacute", "Ĺ"],
+    ["Lambda", "Λ"],
+    ["Lang", "⟪"],
+    ["Laplacetrf", "ℒ"],
+    ["Larr", "↞"],
+    ["Lcaron", "Ľ"],
+    ["Lcedil", "Ļ"],
+    ["Lcy", "Л"],
+    ["LeftAngleBracket", "⟨"],
+    ["LeftArrow", "←"],
+    ["LeftArrowBar", "⇤"],
+    ["LeftArrowRightArrow", "⇆"],
+    ["LeftCeiling", "⌈"],
+    ["LeftDoubleBracket", "⟦"],
+    ["LeftDownTeeVector", "⥡"],
+    ["LeftDownVector", "⇃"],
+    ["LeftDownVectorBar", "⥙"],
+    ["LeftFloor", "⌊"],
+    ["LeftRightArrow", "↔"],
+    ["LeftRightVector", "⥎"],
+    ["LeftTee", "⊣"],
+    ["LeftTeeArrow", "↤"],
+    ["LeftTeeVector", "⥚"],
+    ["LeftTriangle", "⊲"],
+    ["LeftTriangleBar", "⧏"],
+    ["LeftTriangleEqual", "⊴"],
+    ["LeftUpDownVector", "⥑"],
+    ["LeftUpTeeVector", "⥠"],
+    ["LeftUpVector", "↿"],
+    ["LeftUpVectorBar", "⥘"],
+    ["LeftVector", "↼"],
+    ["LeftVectorBar", "⥒"],
+    ["Leftarrow", "⇐"],
+    ["Leftrightarrow", "⇔"],
+    ["LessEqualGreater", "⋚"],
+    ["LessFullEqual", "≦"],
+    ["LessGreater", "≶"],
+    ["LessLess", "⪡"],
+    ["LessSlantEqual", "⩽"],
+    ["LessTilde", "≲"],
+    ["Lfr", "𝔏"],
+    ["Ll", "⋘"],
+    ["Lleftarrow", "⇚"],
+    ["Lmidot", "Ŀ"],
+    ["LongLeftArrow", "⟵"],
+    ["LongLeftRightArrow", "⟷"],
+    ["LongRightArrow", "⟶"],
+    ["Longleftarrow", "⟸"],
+    ["Longleftrightarrow", "⟺"],
+    ["Longrightarrow", "⟹"],
+    ["Lopf", "𝕃"],
+    ["LowerLeftArrow", "↙"],
+    ["LowerRightArrow", "↘"],
+    ["Lscr", "ℒ"],
+    ["Lsh", "↰"],
+    ["Lstrok", "Ł"],
+    ["Lt", "≪"],
+    ["Map", "⤅"],
+    ["Mcy", "М"],
+    ["MediumSpace", " "],
+    ["Mellintrf", "ℳ"],
+    ["Mfr", "𝔐"],
+    ["MinusPlus", "∓"],
+    ["Mopf", "𝕄"],
+    ["Mscr", "ℳ"],
+    ["Mu", "Μ"],
+    ["NJcy", "Њ"],
+    ["Nacute", "Ń"],
+    ["Ncaron", "Ň"],
+    ["Ncedil", "Ņ"],
+    ["Ncy", "Н"],
+    ["NegativeMediumSpace", "​"],
+    ["NegativeThickSpace", "​"],
+    ["NegativeThinSpace", "​"],
+    ["NegativeVeryThinSpace", "​"],
+    ["NestedGreaterGreater", "≫"],
+    ["NestedLessLess", "≪"],
+    ["NewLine", "\n"],
+    ["Nfr", "𝔑"],
+    ["NoBreak", "⁠"],
+    ["NonBreakingSpace", " "],
+    ["Nopf", "ℕ"],
+    ["Not", "⫬"],
+    ["NotCongruent", "≢"],
+    ["NotCupCap", "≭"],
+    ["NotDoubleVerticalBar", "∦"],
+    ["NotElement", "∉"],
+    ["NotEqual", "≠"],
+    ["NotEqualTilde", "≂̸"],
+    ["NotExists", "∄"],
+    ["NotGreater", "≯"],
+    ["NotGreaterEqual", "≱"],
+    ["NotGreaterFullEqual", "≧̸"],
+    ["NotGreaterGreater", "≫̸"],
+    ["NotGreaterLess", "≹"],
+    ["NotGreaterSlantEqual", "⩾̸"],
+    ["NotGreaterTilde", "≵"],
+    ["NotHumpDownHump", "≎̸"],
+    ["NotHumpEqual", "≏̸"],
+    ["NotLeftTriangle", "⋪"],
+    ["NotLeftTriangleBar", "⧏̸"],
+    ["NotLeftTriangleEqual", "⋬"],
+    ["NotLess", "≮"],
+    ["NotLessEqual", "≰"],
+    ["NotLessGreater", "≸"],
+    ["NotLessLess", "≪̸"],
+    ["NotLessSlantEqual", "⩽̸"],
+    ["NotLessTilde", "≴"],
+    ["NotNestedGreaterGreater", "⪢̸"],
+    ["NotNestedLessLess", "⪡̸"],
+    ["NotPrecedes", "⊀"],
+    ["NotPrecedesEqual", "⪯̸"],
+    ["NotPrecedesSlantEqual", "⋠"],
+    ["NotReverseElement", "∌"],
+    ["NotRightTriangle", "⋫"],
+    ["NotRightTriangleBar", "⧐̸"],
+    ["NotRightTriangleEqual", "⋭"],
+    ["NotSquareSubset", "⊏̸"],
+    ["NotSquareSubsetEqual", "⋢"],
+    ["NotSquareSuperset", "⊐̸"],
+    ["NotSquareSupersetEqual", "⋣"],
+    ["NotSubset", "⊂⃒"],
+    ["NotSubsetEqual", "⊈"],
+    ["NotSucceeds", "⊁"],
+    ["NotSucceedsEqual", "⪰̸"],
+    ["NotSucceedsSlantEqual", "⋡"],
+    ["NotSucceedsTilde", "≿̸"],
+    ["NotSuperset", "⊃⃒"],
+    ["NotSupersetEqual", "⊉"],
+    ["NotTilde", "≁"],
+    ["NotTildeEqual", "≄"],
+    ["NotTildeFullEqual", "≇"],
+    ["NotTildeTilde", "≉"],
+    ["NotVerticalBar", "∤"],
+    ["Nscr", "𝒩"],
+    ["Ntilde", "Ñ"],
+    ["Nu", "Ν"],
+    ["OElig", "Œ"],
+    ["Oacute", "Ó"],
+    ["Ocirc", "Ô"],
+    ["Ocy", "О"],
+    ["Odblac", "Ő"],
+    ["Ofr", "𝔒"],
+    ["Ograve", "Ò"],
+    ["Omacr", "Ō"],
+    ["Omega", "Ω"],
+    ["Omicron", "Ο"],
+    ["Oopf", "𝕆"],
+    ["OpenCurlyDoubleQuote", "“"],
+    ["OpenCurlyQuote", "‘"],
+    ["Or", "⩔"],
+    ["Oscr", "𝒪"],
+    ["Oslash", "Ø"],
+    ["Otilde", "Õ"],
+    ["Otimes", "⨷"],
+    ["Ouml", "Ö"],
+    ["OverBar", "‾"],
+    ["OverBrace", "⏞"],
+    ["OverBracket", "⎴"],
+    ["OverParenthesis", "⏜"],
+    ["PartialD", "∂"],
+    ["Pcy", "П"],
+    ["Pfr", "𝔓"],
+    ["Phi", "Φ"],
+    ["Pi", "Π"],
+    ["PlusMinus", "±"],
+    ["Poincareplane", "ℌ"],
+    ["Popf", "ℙ"],
+    ["Pr", "⪻"],
+    ["Precedes", "≺"],
+    ["PrecedesEqual", "⪯"],
+    ["PrecedesSlantEqual", "≼"],
+    ["PrecedesTilde", "≾"],
+    ["Prime", "″"],
+    ["Product", "∏"],
+    ["Proportion", "∷"],
+    ["Proportional", "∝"],
+    ["Pscr", "𝒫"],
+    ["Psi", "Ψ"],
+    ["QUOT", '"'],
+    ["Qfr", "𝔔"],
+    ["Qopf", "ℚ"],
+    ["Qscr", "𝒬"],
+    ["RBarr", "⤐"],
+    ["REG", "®"],
+    ["Racute", "Ŕ"],
+    ["Rang", "⟫"],
+    ["Rarr", "↠"],
+    ["Rarrtl", "⤖"],
+    ["Rcaron", "Ř"],
+    ["Rcedil", "Ŗ"],
+    ["Rcy", "Р"],
+    ["Re", "ℜ"],
+    ["ReverseElement", "∋"],
+    ["ReverseEquilibrium", "⇋"],
+    ["ReverseUpEquilibrium", "⥯"],
+    ["Rfr", "ℜ"],
+    ["Rho", "Ρ"],
+    ["RightAngleBracket", "⟩"],
+    ["RightArrow", "→"],
+    ["RightArrowBar", "⇥"],
+    ["RightArrowLeftArrow", "⇄"],
+    ["RightCeiling", "⌉"],
+    ["RightDoubleBracket", "⟧"],
+    ["RightDownTeeVector", "⥝"],
+    ["RightDownVector", "⇂"],
+    ["RightDownVectorBar", "⥕"],
+    ["RightFloor", "⌋"],
+    ["RightTee", "⊢"],
+    ["RightTeeArrow", "↦"],
+    ["RightTeeVector", "⥛"],
+    ["RightTriangle", "⊳"],
+    ["RightTriangleBar", "⧐"],
+    ["RightTriangleEqual", "⊵"],
+    ["RightUpDownVector", "⥏"],
+    ["RightUpTeeVector", "⥜"],
+    ["RightUpVector", "↾"],
+    ["RightUpVectorBar", "⥔"],
+    ["RightVector", "⇀"],
+    ["RightVectorBar", "⥓"],
+    ["Rightarrow", "⇒"],
+    ["Ropf", "ℝ"],
+    ["RoundImplies", "⥰"],
+    ["Rrightarrow", "⇛"],
+    ["Rscr", "ℛ"],
+    ["Rsh", "↱"],
+    ["RuleDelayed", "⧴"],
+    ["SHCHcy", "Щ"],
+    ["SHcy", "Ш"],
+    ["SOFTcy", "Ь"],
+    ["Sacute", "Ś"],
+    ["Sc", "⪼"],
+    ["Scaron", "Š"],
+    ["Scedil", "Ş"],
+    ["Scirc", "Ŝ"],
+    ["Scy", "С"],
+    ["Sfr", "𝔖"],
+    ["ShortDownArrow", "↓"],
+    ["ShortLeftArrow", "←"],
+    ["ShortRightArrow", "→"],
+    ["ShortUpArrow", "↑"],
+    ["Sigma", "Σ"],
+    ["SmallCircle", "∘"],
+    ["Sopf", "𝕊"],
+    ["Sqrt", "√"],
+    ["Square", "□"],
+    ["SquareIntersection", "⊓"],
+    ["SquareSubset", "⊏"],
+    ["SquareSubsetEqual", "⊑"],
+    ["SquareSuperset", "⊐"],
+    ["SquareSupersetEqual", "⊒"],
+    ["SquareUnion", "⊔"],
+    ["Sscr", "𝒮"],
+    ["Star", "⋆"],
+    ["Sub", "⋐"],
+    ["Subset", "⋐"],
+    ["SubsetEqual", "⊆"],
+    ["Succeeds", "≻"],
+    ["SucceedsEqual", "⪰"],
+    ["SucceedsSlantEqual", "≽"],
+    ["SucceedsTilde", "≿"],
+    ["SuchThat", "∋"],
+    ["Sum", "∑"],
+    ["Sup", "⋑"],
+    ["Superset", "⊃"],
+    ["SupersetEqual", "⊇"],
+    ["Supset", "⋑"],
+    ["THORN", "Þ"],
+    ["TRADE", "™"],
+    ["TSHcy", "Ћ"],
+    ["TScy", "Ц"],
+    ["Tab", "	"],
+    ["Tau", "Τ"],
+    ["Tcaron", "Ť"],
+    ["Tcedil", "Ţ"],
+    ["Tcy", "Т"],
+    ["Tfr", "𝔗"],
+    ["Therefore", "∴"],
+    ["Theta", "Θ"],
+    ["ThickSpace", "  "],
+    ["ThinSpace", " "],
+    ["Tilde", "∼"],
+    ["TildeEqual", "≃"],
+    ["TildeFullEqual", "≅"],
+    ["TildeTilde", "≈"],
+    ["Topf", "𝕋"],
+    ["TripleDot", "⃛"],
+    ["Tscr", "𝒯"],
+    ["Tstrok", "Ŧ"],
+    ["Uacute", "Ú"],
+    ["Uarr", "↟"],
+    ["Uarrocir", "⥉"],
+    ["Ubrcy", "Ў"],
+    ["Ubreve", "Ŭ"],
+    ["Ucirc", "Û"],
+    ["Ucy", "У"],
+    ["Udblac", "Ű"],
+    ["Ufr", "𝔘"],
+    ["Ugrave", "Ù"],
+    ["Umacr", "Ū"],
+    ["UnderBar", "_"],
+    ["UnderBrace", "⏟"],
+    ["UnderBracket", "⎵"],
+    ["UnderParenthesis", "⏝"],
+    ["Union", "⋃"],
+    ["UnionPlus", "⊎"],
+    ["Uogon", "Ų"],
+    ["Uopf", "𝕌"],
+    ["UpArrow", "↑"],
+    ["UpArrowBar", "⤒"],
+    ["UpArrowDownArrow", "⇅"],
+    ["UpDownArrow", "↕"],
+    ["UpEquilibrium", "⥮"],
+    ["UpTee", "⊥"],
+    ["UpTeeArrow", "↥"],
+    ["Uparrow", "⇑"],
+    ["Updownarrow", "⇕"],
+    ["UpperLeftArrow", "↖"],
+    ["UpperRightArrow", "↗"],
+    ["Upsi", "ϒ"],
+    ["Upsilon", "Υ"],
+    ["Uring", "Ů"],
+    ["Uscr", "𝒰"],
+    ["Utilde", "Ũ"],
+    ["Uuml", "Ü"],
+    ["VDash", "⊫"],
+    ["Vbar", "⫫"],
+    ["Vcy", "В"],
+    ["Vdash", "⊩"],
+    ["Vdashl", "⫦"],
+    ["Vee", "⋁"],
+    ["Verbar", "‖"],
+    ["Vert", "‖"],
+    ["VerticalBar", "∣"],
+    ["VerticalLine", "|"],
+    ["VerticalSeparator", "❘"],
+    ["VerticalTilde", "≀"],
+    ["VeryThinSpace", " "],
+    ["Vfr", "𝔙"],
+    ["Vopf", "𝕍"],
+    ["Vscr", "𝒱"],
+    ["Vvdash", "⊪"],
+    ["Wcirc", "Ŵ"],
+    ["Wedge", "⋀"],
+    ["Wfr", "𝔚"],
+    ["Wopf", "𝕎"],
+    ["Wscr", "𝒲"],
+    ["Xfr", "𝔛"],
+    ["Xi", "Ξ"],
+    ["Xopf", "𝕏"],
+    ["Xscr", "𝒳"],
+    ["YAcy", "Я"],
+    ["YIcy", "Ї"],
+    ["YUcy", "Ю"],
+    ["Yacute", "Ý"],
+    ["Ycirc", "Ŷ"],
+    ["Ycy", "Ы"],
+    ["Yfr", "𝔜"],
+    ["Yopf", "𝕐"],
+    ["Yscr", "𝒴"],
+    ["Yuml", "Ÿ"],
+    ["ZHcy", "Ж"],
+    ["Zacute", "Ź"],
+    ["Zcaron", "Ž"],
+    ["Zcy", "З"],
+    ["Zdot", "Ż"],
+    ["ZeroWidthSpace", "​"],
+    ["Zeta", "Ζ"],
+    ["Zfr", "ℨ"],
+    ["Zopf", "ℤ"],
+    ["Zscr", "𝒵"],
+    ["aacute", "á"],
+    ["abreve", "ă"],
+    ["ac", "∾"],
+    ["acE", "∾̳"],
+    ["acd", "∿"],
+    ["acirc", "â"],
+    ["acute", "´"],
+    ["acy", "а"],
+    ["aelig", "æ"],
+    ["af", "⁡"],
+    ["afr", "𝔞"],
+    ["agrave", "à"],
+    ["alefsym", "ℵ"],
+    ["aleph", "ℵ"],
+    ["alpha", "α"],
+    ["amacr", "ā"],
+    ["amalg", "⨿"],
+    ["amp", "&"],
+    ["and", "∧"],
+    ["andand", "⩕"],
+    ["andd", "⩜"],
+    ["andslope", "⩘"],
+    ["andv", "⩚"],
+    ["ang", "∠"],
+    ["ange", "⦤"],
+    ["angle", "∠"],
+    ["angmsd", "∡"],
+    ["angmsdaa", "⦨"],
+    ["angmsdab", "⦩"],
+    ["angmsdac", "⦪"],
+    ["angmsdad", "⦫"],
+    ["angmsdae", "⦬"],
+    ["angmsdaf", "⦭"],
+    ["angmsdag", "⦮"],
+    ["angmsdah", "⦯"],
+    ["angrt", "∟"],
+    ["angrtvb", "⊾"],
+    ["angrtvbd", "⦝"],
+    ["angsph", "∢"],
+    ["angst", "Å"],
+    ["angzarr", "⍼"],
+    ["aogon", "ą"],
+    ["aopf", "𝕒"],
+    ["ap", "≈"],
+    ["apE", "⩰"],
+    ["apacir", "⩯"],
+    ["ape", "≊"],
+    ["apid", "≋"],
+    ["apos", "'"],
+    ["approx", "≈"],
+    ["approxeq", "≊"],
+    ["aring", "å"],
+    ["ascr", "𝒶"],
+    ["ast", "*"],
+    ["asymp", "≈"],
+    ["asympeq", "≍"],
+    ["atilde", "ã"],
+    ["auml", "ä"],
+    ["awconint", "∳"],
+    ["awint", "⨑"],
+    ["bNot", "⫭"],
+    ["backcong", "≌"],
+    ["backepsilon", "϶"],
+    ["backprime", "‵"],
+    ["backsim", "∽"],
+    ["backsimeq", "⋍"],
+    ["barvee", "⊽"],
+    ["barwed", "⌅"],
+    ["barwedge", "⌅"],
+    ["bbrk", "⎵"],
+    ["bbrktbrk", "⎶"],
+    ["bcong", "≌"],
+    ["bcy", "б"],
+    ["bdquo", "„"],
+    ["becaus", "∵"],
+    ["because", "∵"],
+    ["bemptyv", "⦰"],
+    ["bepsi", "϶"],
+    ["bernou", "ℬ"],
+    ["beta", "β"],
+    ["beth", "ℶ"],
+    ["between", "≬"],
+    ["bfr", "𝔟"],
+    ["bigcap", "⋂"],
+    ["bigcirc", "◯"],
+    ["bigcup", "⋃"],
+    ["bigodot", "⨀"],
+    ["bigoplus", "⨁"],
+    ["bigotimes", "⨂"],
+    ["bigsqcup", "⨆"],
+    ["bigstar", "★"],
+    ["bigtriangledown", "▽"],
+    ["bigtriangleup", "△"],
+    ["biguplus", "⨄"],
+    ["bigvee", "⋁"],
+    ["bigwedge", "⋀"],
+    ["bkarow", "⤍"],
+    ["blacklozenge", "⧫"],
+    ["blacksquare", "▪"],
+    ["blacktriangle", "▴"],
+    ["blacktriangledown", "▾"],
+    ["blacktriangleleft", "◂"],
+    ["blacktriangleright", "▸"],
+    ["blank", "␣"],
+    ["blk12", "▒"],
+    ["blk14", "░"],
+    ["blk34", "▓"],
+    ["block", "█"],
+    ["bne", "=⃥"],
+    ["bnequiv", "≡⃥"],
+    ["bnot", "⌐"],
+    ["bopf", "𝕓"],
+    ["bot", "⊥"],
+    ["bottom", "⊥"],
+    ["bowtie", "⋈"],
+    ["boxDL", "╗"],
+    ["boxDR", "╔"],
+    ["boxDl", "╖"],
+    ["boxDr", "╓"],
+    ["boxH", "═"],
+    ["boxHD", "╦"],
+    ["boxHU", "╩"],
+    ["boxHd", "╤"],
+    ["boxHu", "╧"],
+    ["boxUL", "╝"],
+    ["boxUR", "╚"],
+    ["boxUl", "╜"],
+    ["boxUr", "╙"],
+    ["boxV", "║"],
+    ["boxVH", "╬"],
+    ["boxVL", "╣"],
+    ["boxVR", "╠"],
+    ["boxVh", "╫"],
+    ["boxVl", "╢"],
+    ["boxVr", "╟"],
+    ["boxbox", "⧉"],
+    ["boxdL", "╕"],
+    ["boxdR", "╒"],
+    ["boxdl", "┐"],
+    ["boxdr", "┌"],
+    ["boxh", "─"],
+    ["boxhD", "╥"],
+    ["boxhU", "╨"],
+    ["boxhd", "┬"],
+    ["boxhu", "┴"],
+    ["boxminus", "⊟"],
+    ["boxplus", "⊞"],
+    ["boxtimes", "⊠"],
+    ["boxuL", "╛"],
+    ["boxuR", "╘"],
+    ["boxul", "┘"],
+    ["boxur", "└"],
+    ["boxv", "│"],
+    ["boxvH", "╪"],
+    ["boxvL", "╡"],
+    ["boxvR", "╞"],
+    ["boxvh", "┼"],
+    ["boxvl", "┤"],
+    ["boxvr", "├"],
+    ["bprime", "‵"],
+    ["breve", "˘"],
+    ["brvbar", "¦"],
+    ["bscr", "𝒷"],
+    ["bsemi", "⁏"],
+    ["bsim", "∽"],
+    ["bsime", "⋍"],
+    ["bsol", "\\"],
+    ["bsolb", "⧅"],
+    ["bsolhsub", "⟈"],
+    ["bull", "•"],
+    ["bullet", "•"],
+    ["bump", "≎"],
+    ["bumpE", "⪮"],
+    ["bumpe", "≏"],
+    ["bumpeq", "≏"],
+    ["cacute", "ć"],
+    ["cap", "∩"],
+    ["capand", "⩄"],
+    ["capbrcup", "⩉"],
+    ["capcap", "⩋"],
+    ["capcup", "⩇"],
+    ["capdot", "⩀"],
+    ["caps", "∩︀"],
+    ["caret", "⁁"],
+    ["caron", "ˇ"],
+    ["ccaps", "⩍"],
+    ["ccaron", "č"],
+    ["ccedil", "ç"],
+    ["ccirc", "ĉ"],
+    ["ccups", "⩌"],
+    ["ccupssm", "⩐"],
+    ["cdot", "ċ"],
+    ["cedil", "¸"],
+    ["cemptyv", "⦲"],
+    ["cent", "¢"],
+    ["centerdot", "·"],
+    ["cfr", "𝔠"],
+    ["chcy", "ч"],
+    ["check", "✓"],
+    ["checkmark", "✓"],
+    ["chi", "χ"],
+    ["cir", "○"],
+    ["cirE", "⧃"],
+    ["circ", "ˆ"],
+    ["circeq", "≗"],
+    ["circlearrowleft", "↺"],
+    ["circlearrowright", "↻"],
+    ["circledR", "®"],
+    ["circledS", "Ⓢ"],
+    ["circledast", "⊛"],
+    ["circledcirc", "⊚"],
+    ["circleddash", "⊝"],
+    ["cire", "≗"],
+    ["cirfnint", "⨐"],
+    ["cirmid", "⫯"],
+    ["cirscir", "⧂"],
+    ["clubs", "♣"],
+    ["clubsuit", "♣"],
+    ["colon", ":"],
+    ["colone", "≔"],
+    ["coloneq", "≔"],
+    ["comma", ","],
+    ["commat", "@"],
+    ["comp", "∁"],
+    ["compfn", "∘"],
+    ["complement", "∁"],
+    ["complexes", "ℂ"],
+    ["cong", "≅"],
+    ["congdot", "⩭"],
+    ["conint", "∮"],
+    ["copf", "𝕔"],
+    ["coprod", "∐"],
+    ["copy", "©"],
+    ["copysr", "℗"],
+    ["crarr", "↵"],
+    ["cross", "✗"],
+    ["cscr", "𝒸"],
+    ["csub", "⫏"],
+    ["csube", "⫑"],
+    ["csup", "⫐"],
+    ["csupe", "⫒"],
+    ["ctdot", "⋯"],
+    ["cudarrl", "⤸"],
+    ["cudarrr", "⤵"],
+    ["cuepr", "⋞"],
+    ["cuesc", "⋟"],
+    ["cularr", "↶"],
+    ["cularrp", "⤽"],
+    ["cup", "∪"],
+    ["cupbrcap", "⩈"],
+    ["cupcap", "⩆"],
+    ["cupcup", "⩊"],
+    ["cupdot", "⊍"],
+    ["cupor", "⩅"],
+    ["cups", "∪︀"],
+    ["curarr", "↷"],
+    ["curarrm", "⤼"],
+    ["curlyeqprec", "⋞"],
+    ["curlyeqsucc", "⋟"],
+    ["curlyvee", "⋎"],
+    ["curlywedge", "⋏"],
+    ["curren", "¤"],
+    ["curvearrowleft", "↶"],
+    ["curvearrowright", "↷"],
+    ["cuvee", "⋎"],
+    ["cuwed", "⋏"],
+    ["cwconint", "∲"],
+    ["cwint", "∱"],
+    ["cylcty", "⌭"],
+    ["dArr", "⇓"],
+    ["dHar", "⥥"],
+    ["dagger", "†"],
+    ["daleth", "ℸ"],
+    ["darr", "↓"],
+    ["dash", "‐"],
+    ["dashv", "⊣"],
+    ["dbkarow", "⤏"],
+    ["dblac", "˝"],
+    ["dcaron", "ď"],
+    ["dcy", "д"],
+    ["dd", "ⅆ"],
+    ["ddagger", "‡"],
+    ["ddarr", "⇊"],
+    ["ddotseq", "⩷"],
+    ["deg", "°"],
+    ["delta", "δ"],
+    ["demptyv", "⦱"],
+    ["dfisht", "⥿"],
+    ["dfr", "𝔡"],
+    ["dharl", "⇃"],
+    ["dharr", "⇂"],
+    ["diam", "⋄"],
+    ["diamond", "⋄"],
+    ["diamondsuit", "♦"],
+    ["diams", "♦"],
+    ["die", "¨"],
+    ["digamma", "ϝ"],
+    ["disin", "⋲"],
+    ["div", "÷"],
+    ["divide", "÷"],
+    ["divideontimes", "⋇"],
+    ["divonx", "⋇"],
+    ["djcy", "ђ"],
+    ["dlcorn", "⌞"],
+    ["dlcrop", "⌍"],
+    ["dollar", "$"],
+    ["dopf", "𝕕"],
+    ["dot", "˙"],
+    ["doteq", "≐"],
+    ["doteqdot", "≑"],
+    ["dotminus", "∸"],
+    ["dotplus", "∔"],
+    ["dotsquare", "⊡"],
+    ["doublebarwedge", "⌆"],
+    ["downarrow", "↓"],
+    ["downdownarrows", "⇊"],
+    ["downharpoonleft", "⇃"],
+    ["downharpoonright", "⇂"],
+    ["drbkarow", "⤐"],
+    ["drcorn", "⌟"],
+    ["drcrop", "⌌"],
+    ["dscr", "𝒹"],
+    ["dscy", "ѕ"],
+    ["dsol", "⧶"],
+    ["dstrok", "đ"],
+    ["dtdot", "⋱"],
+    ["dtri", "▿"],
+    ["dtrif", "▾"],
+    ["duarr", "⇵"],
+    ["duhar", "⥯"],
+    ["dwangle", "⦦"],
+    ["dzcy", "џ"],
+    ["dzigrarr", "⟿"],
+    ["eDDot", "⩷"],
+    ["eDot", "≑"],
+    ["eacute", "é"],
+    ["easter", "⩮"],
+    ["ecaron", "ě"],
+    ["ecir", "≖"],
+    ["ecirc", "ê"],
+    ["ecolon", "≕"],
+    ["ecy", "э"],
+    ["edot", "ė"],
+    ["ee", "ⅇ"],
+    ["efDot", "≒"],
+    ["efr", "𝔢"],
+    ["eg", "⪚"],
+    ["egrave", "è"],
+    ["egs", "⪖"],
+    ["egsdot", "⪘"],
+    ["el", "⪙"],
+    ["elinters", "⏧"],
+    ["ell", "ℓ"],
+    ["els", "⪕"],
+    ["elsdot", "⪗"],
+    ["emacr", "ē"],
+    ["empty", "∅"],
+    ["emptyset", "∅"],
+    ["emptyv", "∅"],
+    ["emsp", " "],
+    ["emsp13", " "],
+    ["emsp14", " "],
+    ["eng", "ŋ"],
+    ["ensp", " "],
+    ["eogon", "ę"],
+    ["eopf", "𝕖"],
+    ["epar", "⋕"],
+    ["eparsl", "⧣"],
+    ["eplus", "⩱"],
+    ["epsi", "ε"],
+    ["epsilon", "ε"],
+    ["epsiv", "ϵ"],
+    ["eqcirc", "≖"],
+    ["eqcolon", "≕"],
+    ["eqsim", "≂"],
+    ["eqslantgtr", "⪖"],
+    ["eqslantless", "⪕"],
+    ["equals", "="],
+    ["equest", "≟"],
+    ["equiv", "≡"],
+    ["equivDD", "⩸"],
+    ["eqvparsl", "⧥"],
+    ["erDot", "≓"],
+    ["erarr", "⥱"],
+    ["escr", "ℯ"],
+    ["esdot", "≐"],
+    ["esim", "≂"],
+    ["eta", "η"],
+    ["eth", "ð"],
+    ["euml", "ë"],
+    ["euro", "€"],
+    ["excl", "!"],
+    ["exist", "∃"],
+    ["expectation", "ℰ"],
+    ["exponentiale", "ⅇ"],
+    ["fallingdotseq", "≒"],
+    ["fcy", "ф"],
+    ["female", "♀"],
+    ["ffilig", "ﬃ"],
+    ["fflig", "ﬀ"],
+    ["ffllig", "ﬄ"],
+    ["ffr", "𝔣"],
+    ["filig", "ﬁ"],
+    ["fjlig", "fj"],
+    ["flat", "♭"],
+    ["fllig", "ﬂ"],
+    ["fltns", "▱"],
+    ["fnof", "ƒ"],
+    ["fopf", "𝕗"],
+    ["forall", "∀"],
+    ["fork", "⋔"],
+    ["forkv", "⫙"],
+    ["fpartint", "⨍"],
+    ["frac12", "½"],
+    ["frac13", "⅓"],
+    ["frac14", "¼"],
+    ["frac15", "⅕"],
+    ["frac16", "⅙"],
+    ["frac18", "⅛"],
+    ["frac23", "⅔"],
+    ["frac25", "⅖"],
+    ["frac34", "¾"],
+    ["frac35", "⅗"],
+    ["frac38", "⅜"],
+    ["frac45", "⅘"],
+    ["frac56", "⅚"],
+    ["frac58", "⅝"],
+    ["frac78", "⅞"],
+    ["frasl", "⁄"],
+    ["frown", "⌢"],
+    ["fscr", "𝒻"],
+    ["gE", "≧"],
+    ["gEl", "⪌"],
+    ["gacute", "ǵ"],
+    ["gamma", "γ"],
+    ["gammad", "ϝ"],
+    ["gap", "⪆"],
+    ["gbreve", "ğ"],
+    ["gcirc", "ĝ"],
+    ["gcy", "г"],
+    ["gdot", "ġ"],
+    ["ge", "≥"],
+    ["gel", "⋛"],
+    ["geq", "≥"],
+    ["geqq", "≧"],
+    ["geqslant", "⩾"],
+    ["ges", "⩾"],
+    ["gescc", "⪩"],
+    ["gesdot", "⪀"],
+    ["gesdoto", "⪂"],
+    ["gesdotol", "⪄"],
+    ["gesl", "⋛︀"],
+    ["gesles", "⪔"],
+    ["gfr", "𝔤"],
+    ["gg", "≫"],
+    ["ggg", "⋙"],
+    ["gimel", "ℷ"],
+    ["gjcy", "ѓ"],
+    ["gl", "≷"],
+    ["glE", "⪒"],
+    ["gla", "⪥"],
+    ["glj", "⪤"],
+    ["gnE", "≩"],
+    ["gnap", "⪊"],
+    ["gnapprox", "⪊"],
+    ["gne", "⪈"],
+    ["gneq", "⪈"],
+    ["gneqq", "≩"],
+    ["gnsim", "⋧"],
+    ["gopf", "𝕘"],
+    ["grave", "`"],
+    ["gscr", "ℊ"],
+    ["gsim", "≳"],
+    ["gsime", "⪎"],
+    ["gsiml", "⪐"],
+    ["gt", ">"],
+    ["gtcc", "⪧"],
+    ["gtcir", "⩺"],
+    ["gtdot", "⋗"],
+    ["gtlPar", "⦕"],
+    ["gtquest", "⩼"],
+    ["gtrapprox", "⪆"],
+    ["gtrarr", "⥸"],
+    ["gtrdot", "⋗"],
+    ["gtreqless", "⋛"],
+    ["gtreqqless", "⪌"],
+    ["gtrless", "≷"],
+    ["gtrsim", "≳"],
+    ["gvertneqq", "≩︀"],
+    ["gvnE", "≩︀"],
+    ["hArr", "⇔"],
+    ["hairsp", " "],
+    ["half", "½"],
+    ["hamilt", "ℋ"],
+    ["hardcy", "ъ"],
+    ["harr", "↔"],
+    ["harrcir", "⥈"],
+    ["harrw", "↭"],
+    ["hbar", "ℏ"],
+    ["hcirc", "ĥ"],
+    ["hearts", "♥"],
+    ["heartsuit", "♥"],
+    ["hellip", "…"],
+    ["hercon", "⊹"],
+    ["hfr", "𝔥"],
+    ["hksearow", "⤥"],
+    ["hkswarow", "⤦"],
+    ["hoarr", "⇿"],
+    ["homtht", "∻"],
+    ["hookleftarrow", "↩"],
+    ["hookrightarrow", "↪"],
+    ["hopf", "𝕙"],
+    ["horbar", "―"],
+    ["hscr", "𝒽"],
+    ["hslash", "ℏ"],
+    ["hstrok", "ħ"],
+    ["hybull", "⁃"],
+    ["hyphen", "‐"],
+    ["iacute", "í"],
+    ["ic", "⁣"],
+    ["icirc", "î"],
+    ["icy", "и"],
+    ["iecy", "е"],
+    ["iexcl", "¡"],
+    ["iff", "⇔"],
+    ["ifr", "𝔦"],
+    ["igrave", "ì"],
+    ["ii", "ⅈ"],
+    ["iiiint", "⨌"],
+    ["iiint", "∭"],
+    ["iinfin", "⧜"],
+    ["iiota", "℩"],
+    ["ijlig", "ĳ"],
+    ["imacr", "ī"],
+    ["image", "ℑ"],
+    ["imagline", "ℐ"],
+    ["imagpart", "ℑ"],
+    ["imath", "ı"],
+    ["imof", "⊷"],
+    ["imped", "Ƶ"],
+    ["in", "∈"],
+    ["incare", "℅"],
+    ["infin", "∞"],
+    ["infintie", "⧝"],
+    ["inodot", "ı"],
+    ["int", "∫"],
+    ["intcal", "⊺"],
+    ["integers", "ℤ"],
+    ["intercal", "⊺"],
+    ["intlarhk", "⨗"],
+    ["intprod", "⨼"],
+    ["iocy", "ё"],
+    ["iogon", "į"],
+    ["iopf", "𝕚"],
+    ["iota", "ι"],
+    ["iprod", "⨼"],
+    ["iquest", "¿"],
+    ["iscr", "𝒾"],
+    ["isin", "∈"],
+    ["isinE", "⋹"],
+    ["isindot", "⋵"],
+    ["isins", "⋴"],
+    ["isinsv", "⋳"],
+    ["isinv", "∈"],
+    ["it", "⁢"],
+    ["itilde", "ĩ"],
+    ["iukcy", "і"],
+    ["iuml", "ï"],
+    ["jcirc", "ĵ"],
+    ["jcy", "й"],
+    ["jfr", "𝔧"],
+    ["jmath", "ȷ"],
+    ["jopf", "𝕛"],
+    ["jscr", "𝒿"],
+    ["jsercy", "ј"],
+    ["jukcy", "є"],
+    ["kappa", "κ"],
+    ["kappav", "ϰ"],
+    ["kcedil", "ķ"],
+    ["kcy", "к"],
+    ["kfr", "𝔨"],
+    ["kgreen", "ĸ"],
+    ["khcy", "х"],
+    ["kjcy", "ќ"],
+    ["kopf", "𝕜"],
+    ["kscr", "𝓀"],
+    ["lAarr", "⇚"],
+    ["lArr", "⇐"],
+    ["lAtail", "⤛"],
+    ["lBarr", "⤎"],
+    ["lE", "≦"],
+    ["lEg", "⪋"],
+    ["lHar", "⥢"],
+    ["lacute", "ĺ"],
+    ["laemptyv", "⦴"],
+    ["lagran", "ℒ"],
+    ["lambda", "λ"],
+    ["lang", "⟨"],
+    ["langd", "⦑"],
+    ["langle", "⟨"],
+    ["lap", "⪅"],
+    ["laquo", "«"],
+    ["larr", "←"],
+    ["larrb", "⇤"],
+    ["larrbfs", "⤟"],
+    ["larrfs", "⤝"],
+    ["larrhk", "↩"],
+    ["larrlp", "↫"],
+    ["larrpl", "⤹"],
+    ["larrsim", "⥳"],
+    ["larrtl", "↢"],
+    ["lat", "⪫"],
+    ["latail", "⤙"],
+    ["late", "⪭"],
+    ["lates", "⪭︀"],
+    ["lbarr", "⤌"],
+    ["lbbrk", "❲"],
+    ["lbrace", "{"],
+    ["lbrack", "["],
+    ["lbrke", "⦋"],
+    ["lbrksld", "⦏"],
+    ["lbrkslu", "⦍"],
+    ["lcaron", "ľ"],
+    ["lcedil", "ļ"],
+    ["lceil", "⌈"],
+    ["lcub", "{"],
+    ["lcy", "л"],
+    ["ldca", "⤶"],
+    ["ldquo", "“"],
+    ["ldquor", "„"],
+    ["ldrdhar", "⥧"],
+    ["ldrushar", "⥋"],
+    ["ldsh", "↲"],
+    ["le", "≤"],
+    ["leftarrow", "←"],
+    ["leftarrowtail", "↢"],
+    ["leftharpoondown", "↽"],
+    ["leftharpoonup", "↼"],
+    ["leftleftarrows", "⇇"],
+    ["leftrightarrow", "↔"],
+    ["leftrightarrows", "⇆"],
+    ["leftrightharpoons", "⇋"],
+    ["leftrightsquigarrow", "↭"],
+    ["leftthreetimes", "⋋"],
+    ["leg", "⋚"],
+    ["leq", "≤"],
+    ["leqq", "≦"],
+    ["leqslant", "⩽"],
+    ["les", "⩽"],
+    ["lescc", "⪨"],
+    ["lesdot", "⩿"],
+    ["lesdoto", "⪁"],
+    ["lesdotor", "⪃"],
+    ["lesg", "⋚︀"],
+    ["lesges", "⪓"],
+    ["lessapprox", "⪅"],
+    ["lessdot", "⋖"],
+    ["lesseqgtr", "⋚"],
+    ["lesseqqgtr", "⪋"],
+    ["lessgtr", "≶"],
+    ["lesssim", "≲"],
+    ["lfisht", "⥼"],
+    ["lfloor", "⌊"],
+    ["lfr", "𝔩"],
+    ["lg", "≶"],
+    ["lgE", "⪑"],
+    ["lhard", "↽"],
+    ["lharu", "↼"],
+    ["lharul", "⥪"],
+    ["lhblk", "▄"],
+    ["ljcy", "љ"],
+    ["ll", "≪"],
+    ["llarr", "⇇"],
+    ["llcorner", "⌞"],
+    ["llhard", "⥫"],
+    ["lltri", "◺"],
+    ["lmidot", "ŀ"],
+    ["lmoust", "⎰"],
+    ["lmoustache", "⎰"],
+    ["lnE", "≨"],
+    ["lnap", "⪉"],
+    ["lnapprox", "⪉"],
+    ["lne", "⪇"],
+    ["lneq", "⪇"],
+    ["lneqq", "≨"],
+    ["lnsim", "⋦"],
+    ["loang", "⟬"],
+    ["loarr", "⇽"],
+    ["lobrk", "⟦"],
+    ["longleftarrow", "⟵"],
+    ["longleftrightarrow", "⟷"],
+    ["longmapsto", "⟼"],
+    ["longrightarrow", "⟶"],
+    ["looparrowleft", "↫"],
+    ["looparrowright", "↬"],
+    ["lopar", "⦅"],
+    ["lopf", "𝕝"],
+    ["loplus", "⨭"],
+    ["lotimes", "⨴"],
+    ["lowast", "∗"],
+    ["lowbar", "_"],
+    ["loz", "◊"],
+    ["lozenge", "◊"],
+    ["lozf", "⧫"],
+    ["lpar", "("],
+    ["lparlt", "⦓"],
+    ["lrarr", "⇆"],
+    ["lrcorner", "⌟"],
+    ["lrhar", "⇋"],
+    ["lrhard", "⥭"],
+    ["lrm", "‎"],
+    ["lrtri", "⊿"],
+    ["lsaquo", "‹"],
+    ["lscr", "𝓁"],
+    ["lsh", "↰"],
+    ["lsim", "≲"],
+    ["lsime", "⪍"],
+    ["lsimg", "⪏"],
+    ["lsqb", "["],
+    ["lsquo", "‘"],
+    ["lsquor", "‚"],
+    ["lstrok", "ł"],
+    ["lt", "<"],
+    ["ltcc", "⪦"],
+    ["ltcir", "⩹"],
+    ["ltdot", "⋖"],
+    ["lthree", "⋋"],
+    ["ltimes", "⋉"],
+    ["ltlarr", "⥶"],
+    ["ltquest", "⩻"],
+    ["ltrPar", "⦖"],
+    ["ltri", "◃"],
+    ["ltrie", "⊴"],
+    ["ltrif", "◂"],
+    ["lurdshar", "⥊"],
+    ["luruhar", "⥦"],
+    ["lvertneqq", "≨︀"],
+    ["lvnE", "≨︀"],
+    ["mDDot", "∺"],
+    ["macr", "¯"],
+    ["male", "♂"],
+    ["malt", "✠"],
+    ["maltese", "✠"],
+    ["map", "↦"],
+    ["mapsto", "↦"],
+    ["mapstodown", "↧"],
+    ["mapstoleft", "↤"],
+    ["mapstoup", "↥"],
+    ["marker", "▮"],
+    ["mcomma", "⨩"],
+    ["mcy", "м"],
+    ["mdash", "—"],
+    ["measuredangle", "∡"],
+    ["mfr", "𝔪"],
+    ["mho", "℧"],
+    ["micro", "µ"],
+    ["mid", "∣"],
+    ["midast", "*"],
+    ["midcir", "⫰"],
+    ["middot", "·"],
+    ["minus", "−"],
+    ["minusb", "⊟"],
+    ["minusd", "∸"],
+    ["minusdu", "⨪"],
+    ["mlcp", "⫛"],
+    ["mldr", "…"],
+    ["mnplus", "∓"],
+    ["models", "⊧"],
+    ["mopf", "𝕞"],
+    ["mp", "∓"],
+    ["mscr", "𝓂"],
+    ["mstpos", "∾"],
+    ["mu", "μ"],
+    ["multimap", "⊸"],
+    ["mumap", "⊸"],
+    ["nGg", "⋙̸"],
+    ["nGt", "≫⃒"],
+    ["nGtv", "≫̸"],
+    ["nLeftarrow", "⇍"],
+    ["nLeftrightarrow", "⇎"],
+    ["nLl", "⋘̸"],
+    ["nLt", "≪⃒"],
+    ["nLtv", "≪̸"],
+    ["nRightarrow", "⇏"],
+    ["nVDash", "⊯"],
+    ["nVdash", "⊮"],
+    ["nabla", "∇"],
+    ["nacute", "ń"],
+    ["nang", "∠⃒"],
+    ["nap", "≉"],
+    ["napE", "⩰̸"],
+    ["napid", "≋̸"],
+    ["napos", "ŉ"],
+    ["napprox", "≉"],
+    ["natur", "♮"],
+    ["natural", "♮"],
+    ["naturals", "ℕ"],
+    ["nbsp", " "],
+    ["nbump", "≎̸"],
+    ["nbumpe", "≏̸"],
+    ["ncap", "⩃"],
+    ["ncaron", "ň"],
+    ["ncedil", "ņ"],
+    ["ncong", "≇"],
+    ["ncongdot", "⩭̸"],
+    ["ncup", "⩂"],
+    ["ncy", "н"],
+    ["ndash", "–"],
+    ["ne", "≠"],
+    ["neArr", "⇗"],
+    ["nearhk", "⤤"],
+    ["nearr", "↗"],
+    ["nearrow", "↗"],
+    ["nedot", "≐̸"],
+    ["nequiv", "≢"],
+    ["nesear", "⤨"],
+    ["nesim", "≂̸"],
+    ["nexist", "∄"],
+    ["nexists", "∄"],
+    ["nfr", "𝔫"],
+    ["ngE", "≧̸"],
+    ["nge", "≱"],
+    ["ngeq", "≱"],
+    ["ngeqq", "≧̸"],
+    ["ngeqslant", "⩾̸"],
+    ["nges", "⩾̸"],
+    ["ngsim", "≵"],
+    ["ngt", "≯"],
+    ["ngtr", "≯"],
+    ["nhArr", "⇎"],
+    ["nharr", "↮"],
+    ["nhpar", "⫲"],
+    ["ni", "∋"],
+    ["nis", "⋼"],
+    ["nisd", "⋺"],
+    ["niv", "∋"],
+    ["njcy", "њ"],
+    ["nlArr", "⇍"],
+    ["nlE", "≦̸"],
+    ["nlarr", "↚"],
+    ["nldr", "‥"],
+    ["nle", "≰"],
+    ["nleftarrow", "↚"],
+    ["nleftrightarrow", "↮"],
+    ["nleq", "≰"],
+    ["nleqq", "≦̸"],
+    ["nleqslant", "⩽̸"],
+    ["nles", "⩽̸"],
+    ["nless", "≮"],
+    ["nlsim", "≴"],
+    ["nlt", "≮"],
+    ["nltri", "⋪"],
+    ["nltrie", "⋬"],
+    ["nmid", "∤"],
+    ["nopf", "𝕟"],
+    ["not", "¬"],
+    ["notin", "∉"],
+    ["notinE", "⋹̸"],
+    ["notindot", "⋵̸"],
+    ["notinva", "∉"],
+    ["notinvb", "⋷"],
+    ["notinvc", "⋶"],
+    ["notni", "∌"],
+    ["notniva", "∌"],
+    ["notnivb", "⋾"],
+    ["notnivc", "⋽"],
+    ["npar", "∦"],
+    ["nparallel", "∦"],
+    ["nparsl", "⫽⃥"],
+    ["npart", "∂̸"],
+    ["npolint", "⨔"],
+    ["npr", "⊀"],
+    ["nprcue", "⋠"],
+    ["npre", "⪯̸"],
+    ["nprec", "⊀"],
+    ["npreceq", "⪯̸"],
+    ["nrArr", "⇏"],
+    ["nrarr", "↛"],
+    ["nrarrc", "⤳̸"],
+    ["nrarrw", "↝̸"],
+    ["nrightarrow", "↛"],
+    ["nrtri", "⋫"],
+    ["nrtrie", "⋭"],
+    ["nsc", "⊁"],
+    ["nsccue", "⋡"],
+    ["nsce", "⪰̸"],
+    ["nscr", "𝓃"],
+    ["nshortmid", "∤"],
+    ["nshortparallel", "∦"],
+    ["nsim", "≁"],
+    ["nsime", "≄"],
+    ["nsimeq", "≄"],
+    ["nsmid", "∤"],
+    ["nspar", "∦"],
+    ["nsqsube", "⋢"],
+    ["nsqsupe", "⋣"],
+    ["nsub", "⊄"],
+    ["nsubE", "⫅̸"],
+    ["nsube", "⊈"],
+    ["nsubset", "⊂⃒"],
+    ["nsubseteq", "⊈"],
+    ["nsubseteqq", "⫅̸"],
+    ["nsucc", "⊁"],
+    ["nsucceq", "⪰̸"],
+    ["nsup", "⊅"],
+    ["nsupE", "⫆̸"],
+    ["nsupe", "⊉"],
+    ["nsupset", "⊃⃒"],
+    ["nsupseteq", "⊉"],
+    ["nsupseteqq", "⫆̸"],
+    ["ntgl", "≹"],
+    ["ntilde", "ñ"],
+    ["ntlg", "≸"],
+    ["ntriangleleft", "⋪"],
+    ["ntrianglelefteq", "⋬"],
+    ["ntriangleright", "⋫"],
+    ["ntrianglerighteq", "⋭"],
+    ["nu", "ν"],
+    ["num", "#"],
+    ["numero", "№"],
+    ["numsp", " "],
+    ["nvDash", "⊭"],
+    ["nvHarr", "⤄"],
+    ["nvap", "≍⃒"],
+    ["nvdash", "⊬"],
+    ["nvge", "≥⃒"],
+    ["nvgt", ">⃒"],
+    ["nvinfin", "⧞"],
+    ["nvlArr", "⤂"],
+    ["nvle", "≤⃒"],
+    ["nvlt", "<⃒"],
+    ["nvltrie", "⊴⃒"],
+    ["nvrArr", "⤃"],
+    ["nvrtrie", "⊵⃒"],
+    ["nvsim", "∼⃒"],
+    ["nwArr", "⇖"],
+    ["nwarhk", "⤣"],
+    ["nwarr", "↖"],
+    ["nwarrow", "↖"],
+    ["nwnear", "⤧"],
+    ["oS", "Ⓢ"],
+    ["oacute", "ó"],
+    ["oast", "⊛"],
+    ["ocir", "⊚"],
+    ["ocirc", "ô"],
+    ["ocy", "о"],
+    ["odash", "⊝"],
+    ["odblac", "ő"],
+    ["odiv", "⨸"],
+    ["odot", "⊙"],
+    ["odsold", "⦼"],
+    ["oelig", "œ"],
+    ["ofcir", "⦿"],
+    ["ofr", "𝔬"],
+    ["ogon", "˛"],
+    ["ograve", "ò"],
+    ["ogt", "⧁"],
+    ["ohbar", "⦵"],
+    ["ohm", "Ω"],
+    ["oint", "∮"],
+    ["olarr", "↺"],
+    ["olcir", "⦾"],
+    ["olcross", "⦻"],
+    ["oline", "‾"],
+    ["olt", "⧀"],
+    ["omacr", "ō"],
+    ["omega", "ω"],
+    ["omicron", "ο"],
+    ["omid", "⦶"],
+    ["ominus", "⊖"],
+    ["oopf", "𝕠"],
+    ["opar", "⦷"],
+    ["operp", "⦹"],
+    ["oplus", "⊕"],
+    ["or", "∨"],
+    ["orarr", "↻"],
+    ["ord", "⩝"],
+    ["order", "ℴ"],
+    ["orderof", "ℴ"],
+    ["ordf", "ª"],
+    ["ordm", "º"],
+    ["origof", "⊶"],
+    ["oror", "⩖"],
+    ["orslope", "⩗"],
+    ["orv", "⩛"],
+    ["oscr", "ℴ"],
+    ["oslash", "ø"],
+    ["osol", "⊘"],
+    ["otilde", "õ"],
+    ["otimes", "⊗"],
+    ["otimesas", "⨶"],
+    ["ouml", "ö"],
+    ["ovbar", "⌽"],
+    ["par", "∥"],
+    ["para", "¶"],
+    ["parallel", "∥"],
+    ["parsim", "⫳"],
+    ["parsl", "⫽"],
+    ["part", "∂"],
+    ["pcy", "п"],
+    ["percnt", "%"],
+    ["period", "."],
+    ["permil", "‰"],
+    ["perp", "⊥"],
+    ["pertenk", "‱"],
+    ["pfr", "𝔭"],
+    ["phi", "φ"],
+    ["phiv", "ϕ"],
+    ["phmmat", "ℳ"],
+    ["phone", "☎"],
+    ["pi", "π"],
+    ["pitchfork", "⋔"],
+    ["piv", "ϖ"],
+    ["planck", "ℏ"],
+    ["planckh", "ℎ"],
+    ["plankv", "ℏ"],
+    ["plus", "+"],
+    ["plusacir", "⨣"],
+    ["plusb", "⊞"],
+    ["pluscir", "⨢"],
+    ["plusdo", "∔"],
+    ["plusdu", "⨥"],
+    ["pluse", "⩲"],
+    ["plusmn", "±"],
+    ["plussim", "⨦"],
+    ["plustwo", "⨧"],
+    ["pm", "±"],
+    ["pointint", "⨕"],
+    ["popf", "𝕡"],
+    ["pound", "£"],
+    ["pr", "≺"],
+    ["prE", "⪳"],
+    ["prap", "⪷"],
+    ["prcue", "≼"],
+    ["pre", "⪯"],
+    ["prec", "≺"],
+    ["precapprox", "⪷"],
+    ["preccurlyeq", "≼"],
+    ["preceq", "⪯"],
+    ["precnapprox", "⪹"],
+    ["precneqq", "⪵"],
+    ["precnsim", "⋨"],
+    ["precsim", "≾"],
+    ["prime", "′"],
+    ["primes", "ℙ"],
+    ["prnE", "⪵"],
+    ["prnap", "⪹"],
+    ["prnsim", "⋨"],
+    ["prod", "∏"],
+    ["profalar", "⌮"],
+    ["profline", "⌒"],
+    ["profsurf", "⌓"],
+    ["prop", "∝"],
+    ["propto", "∝"],
+    ["prsim", "≾"],
+    ["prurel", "⊰"],
+    ["pscr", "𝓅"],
+    ["psi", "ψ"],
+    ["puncsp", " "],
+    ["qfr", "𝔮"],
+    ["qint", "⨌"],
+    ["qopf", "𝕢"],
+    ["qprime", "⁗"],
+    ["qscr", "𝓆"],
+    ["quaternions", "ℍ"],
+    ["quatint", "⨖"],
+    ["quest", "?"],
+    ["questeq", "≟"],
+    ["quot", '"'],
+    ["rAarr", "⇛"],
+    ["rArr", "⇒"],
+    ["rAtail", "⤜"],
+    ["rBarr", "⤏"],
+    ["rHar", "⥤"],
+    ["race", "∽̱"],
+    ["racute", "ŕ"],
+    ["radic", "√"],
+    ["raemptyv", "⦳"],
+    ["rang", "⟩"],
+    ["rangd", "⦒"],
+    ["range", "⦥"],
+    ["rangle", "⟩"],
+    ["raquo", "»"],
+    ["rarr", "→"],
+    ["rarrap", "⥵"],
+    ["rarrb", "⇥"],
+    ["rarrbfs", "⤠"],
+    ["rarrc", "⤳"],
+    ["rarrfs", "⤞"],
+    ["rarrhk", "↪"],
+    ["rarrlp", "↬"],
+    ["rarrpl", "⥅"],
+    ["rarrsim", "⥴"],
+    ["rarrtl", "↣"],
+    ["rarrw", "↝"],
+    ["ratail", "⤚"],
+    ["ratio", "∶"],
+    ["rationals", "ℚ"],
+    ["rbarr", "⤍"],
+    ["rbbrk", "❳"],
+    ["rbrace", "}"],
+    ["rbrack", "]"],
+    ["rbrke", "⦌"],
+    ["rbrksld", "⦎"],
+    ["rbrkslu", "⦐"],
+    ["rcaron", "ř"],
+    ["rcedil", "ŗ"],
+    ["rceil", "⌉"],
+    ["rcub", "}"],
+    ["rcy", "р"],
+    ["rdca", "⤷"],
+    ["rdldhar", "⥩"],
+    ["rdquo", "”"],
+    ["rdquor", "”"],
+    ["rdsh", "↳"],
+    ["real", "ℜ"],
+    ["realine", "ℛ"],
+    ["realpart", "ℜ"],
+    ["reals", "ℝ"],
+    ["rect", "▭"],
+    ["reg", "®"],
+    ["rfisht", "⥽"],
+    ["rfloor", "⌋"],
+    ["rfr", "𝔯"],
+    ["rhard", "⇁"],
+    ["rharu", "⇀"],
+    ["rharul", "⥬"],
+    ["rho", "ρ"],
+    ["rhov", "ϱ"],
+    ["rightarrow", "→"],
+    ["rightarrowtail", "↣"],
+    ["rightharpoondown", "⇁"],
+    ["rightharpoonup", "⇀"],
+    ["rightleftarrows", "⇄"],
+    ["rightleftharpoons", "⇌"],
+    ["rightrightarrows", "⇉"],
+    ["rightsquigarrow", "↝"],
+    ["rightthreetimes", "⋌"],
+    ["ring", "˚"],
+    ["risingdotseq", "≓"],
+    ["rlarr", "⇄"],
+    ["rlhar", "⇌"],
+    ["rlm", "‏"],
+    ["rmoust", "⎱"],
+    ["rmoustache", "⎱"],
+    ["rnmid", "⫮"],
+    ["roang", "⟭"],
+    ["roarr", "⇾"],
+    ["robrk", "⟧"],
+    ["ropar", "⦆"],
+    ["ropf", "𝕣"],
+    ["roplus", "⨮"],
+    ["rotimes", "⨵"],
+    ["rpar", ")"],
+    ["rpargt", "⦔"],
+    ["rppolint", "⨒"],
+    ["rrarr", "⇉"],
+    ["rsaquo", "›"],
+    ["rscr", "𝓇"],
+    ["rsh", "↱"],
+    ["rsqb", "]"],
+    ["rsquo", "’"],
+    ["rsquor", "’"],
+    ["rthree", "⋌"],
+    ["rtimes", "⋊"],
+    ["rtri", "▹"],
+    ["rtrie", "⊵"],
+    ["rtrif", "▸"],
+    ["rtriltri", "⧎"],
+    ["ruluhar", "⥨"],
+    ["rx", "℞"],
+    ["sacute", "ś"],
+    ["sbquo", "‚"],
+    ["sc", "≻"],
+    ["scE", "⪴"],
+    ["scap", "⪸"],
+    ["scaron", "š"],
+    ["sccue", "≽"],
+    ["sce", "⪰"],
+    ["scedil", "ş"],
+    ["scirc", "ŝ"],
+    ["scnE", "⪶"],
+    ["scnap", "⪺"],
+    ["scnsim", "⋩"],
+    ["scpolint", "⨓"],
+    ["scsim", "≿"],
+    ["scy", "с"],
+    ["sdot", "⋅"],
+    ["sdotb", "⊡"],
+    ["sdote", "⩦"],
+    ["seArr", "⇘"],
+    ["searhk", "⤥"],
+    ["searr", "↘"],
+    ["searrow", "↘"],
+    ["sect", "§"],
+    ["semi", ";"],
+    ["seswar", "⤩"],
+    ["setminus", "∖"],
+    ["setmn", "∖"],
+    ["sext", "✶"],
+    ["sfr", "𝔰"],
+    ["sfrown", "⌢"],
+    ["sharp", "♯"],
+    ["shchcy", "щ"],
+    ["shcy", "ш"],
+    ["shortmid", "∣"],
+    ["shortparallel", "∥"],
+    ["shy", "­"],
+    ["sigma", "σ"],
+    ["sigmaf", "ς"],
+    ["sigmav", "ς"],
+    ["sim", "∼"],
+    ["simdot", "⩪"],
+    ["sime", "≃"],
+    ["simeq", "≃"],
+    ["simg", "⪞"],
+    ["simgE", "⪠"],
+    ["siml", "⪝"],
+    ["simlE", "⪟"],
+    ["simne", "≆"],
+    ["simplus", "⨤"],
+    ["simrarr", "⥲"],
+    ["slarr", "←"],
+    ["smallsetminus", "∖"],
+    ["smashp", "⨳"],
+    ["smeparsl", "⧤"],
+    ["smid", "∣"],
+    ["smile", "⌣"],
+    ["smt", "⪪"],
+    ["smte", "⪬"],
+    ["smtes", "⪬︀"],
+    ["softcy", "ь"],
+    ["sol", "/"],
+    ["solb", "⧄"],
+    ["solbar", "⌿"],
+    ["sopf", "𝕤"],
+    ["spades", "♠"],
+    ["spadesuit", "♠"],
+    ["spar", "∥"],
+    ["sqcap", "⊓"],
+    ["sqcaps", "⊓︀"],
+    ["sqcup", "⊔"],
+    ["sqcups", "⊔︀"],
+    ["sqsub", "⊏"],
+    ["sqsube", "⊑"],
+    ["sqsubset", "⊏"],
+    ["sqsubseteq", "⊑"],
+    ["sqsup", "⊐"],
+    ["sqsupe", "⊒"],
+    ["sqsupset", "⊐"],
+    ["sqsupseteq", "⊒"],
+    ["squ", "□"],
+    ["square", "□"],
+    ["squarf", "▪"],
+    ["squf", "▪"],
+    ["srarr", "→"],
+    ["sscr", "𝓈"],
+    ["ssetmn", "∖"],
+    ["ssmile", "⌣"],
+    ["sstarf", "⋆"],
+    ["star", "☆"],
+    ["starf", "★"],
+    ["straightepsilon", "ϵ"],
+    ["straightphi", "ϕ"],
+    ["strns", "¯"],
+    ["sub", "⊂"],
+    ["subE", "⫅"],
+    ["subdot", "⪽"],
+    ["sube", "⊆"],
+    ["subedot", "⫃"],
+    ["submult", "⫁"],
+    ["subnE", "⫋"],
+    ["subne", "⊊"],
+    ["subplus", "⪿"],
+    ["subrarr", "⥹"],
+    ["subset", "⊂"],
+    ["subseteq", "⊆"],
+    ["subseteqq", "⫅"],
+    ["subsetneq", "⊊"],
+    ["subsetneqq", "⫋"],
+    ["subsim", "⫇"],
+    ["subsub", "⫕"],
+    ["subsup", "⫓"],
+    ["succ", "≻"],
+    ["succapprox", "⪸"],
+    ["succcurlyeq", "≽"],
+    ["succeq", "⪰"],
+    ["succnapprox", "⪺"],
+    ["succneqq", "⪶"],
+    ["succnsim", "⋩"],
+    ["succsim", "≿"],
+    ["sum", "∑"],
+    ["sung", "♪"],
+    ["sup", "⊃"],
+    ["sup1", "¹"],
+    ["sup2", "²"],
+    ["sup3", "³"],
+    ["supE", "⫆"],
+    ["supdot", "⪾"],
+    ["supdsub", "⫘"],
+    ["supe", "⊇"],
+    ["supedot", "⫄"],
+    ["suphsol", "⟉"],
+    ["suphsub", "⫗"],
+    ["suplarr", "⥻"],
+    ["supmult", "⫂"],
+    ["supnE", "⫌"],
+    ["supne", "⊋"],
+    ["supplus", "⫀"],
+    ["supset", "⊃"],
+    ["supseteq", "⊇"],
+    ["supseteqq", "⫆"],
+    ["supsetneq", "⊋"],
+    ["supsetneqq", "⫌"],
+    ["supsim", "⫈"],
+    ["supsub", "⫔"],
+    ["supsup", "⫖"],
+    ["swArr", "⇙"],
+    ["swarhk", "⤦"],
+    ["swarr", "↙"],
+    ["swarrow", "↙"],
+    ["swnwar", "⤪"],
+    ["szlig", "ß"],
+    ["target", "⌖"],
+    ["tau", "τ"],
+    ["tbrk", "⎴"],
+    ["tcaron", "ť"],
+    ["tcedil", "ţ"],
+    ["tcy", "т"],
+    ["tdot", "⃛"],
+    ["telrec", "⌕"],
+    ["tfr", "𝔱"],
+    ["there4", "∴"],
+    ["therefore", "∴"],
+    ["theta", "θ"],
+    ["thetasym", "ϑ"],
+    ["thetav", "ϑ"],
+    ["thickapprox", "≈"],
+    ["thicksim", "∼"],
+    ["thinsp", " "],
+    ["thkap", "≈"],
+    ["thksim", "∼"],
+    ["thorn", "þ"],
+    ["tilde", "˜"],
+    ["times", "×"],
+    ["timesb", "⊠"],
+    ["timesbar", "⨱"],
+    ["timesd", "⨰"],
+    ["tint", "∭"],
+    ["toea", "⤨"],
+    ["top", "⊤"],
+    ["topbot", "⌶"],
+    ["topcir", "⫱"],
+    ["topf", "𝕥"],
+    ["topfork", "⫚"],
+    ["tosa", "⤩"],
+    ["tprime", "‴"],
+    ["trade", "™"],
+    ["triangle", "▵"],
+    ["triangledown", "▿"],
+    ["triangleleft", "◃"],
+    ["trianglelefteq", "⊴"],
+    ["triangleq", "≜"],
+    ["triangleright", "▹"],
+    ["trianglerighteq", "⊵"],
+    ["tridot", "◬"],
+    ["trie", "≜"],
+    ["triminus", "⨺"],
+    ["triplus", "⨹"],
+    ["trisb", "⧍"],
+    ["tritime", "⨻"],
+    ["trpezium", "⏢"],
+    ["tscr", "𝓉"],
+    ["tscy", "ц"],
+    ["tshcy", "ћ"],
+    ["tstrok", "ŧ"],
+    ["twixt", "≬"],
+    ["twoheadleftarrow", "↞"],
+    ["twoheadrightarrow", "↠"],
+    ["uArr", "⇑"],
+    ["uHar", "⥣"],
+    ["uacute", "ú"],
+    ["uarr", "↑"],
+    ["ubrcy", "ў"],
+    ["ubreve", "ŭ"],
+    ["ucirc", "û"],
+    ["ucy", "у"],
+    ["udarr", "⇅"],
+    ["udblac", "ű"],
+    ["udhar", "⥮"],
+    ["ufisht", "⥾"],
+    ["ufr", "𝔲"],
+    ["ugrave", "ù"],
+    ["uharl", "↿"],
+    ["uharr", "↾"],
+    ["uhblk", "▀"],
+    ["ulcorn", "⌜"],
+    ["ulcorner", "⌜"],
+    ["ulcrop", "⌏"],
+    ["ultri", "◸"],
+    ["umacr", "ū"],
+    ["uml", "¨"],
+    ["uogon", "ų"],
+    ["uopf", "𝕦"],
+    ["uparrow", "↑"],
+    ["updownarrow", "↕"],
+    ["upharpoonleft", "↿"],
+    ["upharpoonright", "↾"],
+    ["uplus", "⊎"],
+    ["upsi", "υ"],
+    ["upsih", "ϒ"],
+    ["upsilon", "υ"],
+    ["upuparrows", "⇈"],
+    ["urcorn", "⌝"],
+    ["urcorner", "⌝"],
+    ["urcrop", "⌎"],
+    ["uring", "ů"],
+    ["urtri", "◹"],
+    ["uscr", "𝓊"],
+    ["utdot", "⋰"],
+    ["utilde", "ũ"],
+    ["utri", "▵"],
+    ["utrif", "▴"],
+    ["uuarr", "⇈"],
+    ["uuml", "ü"],
+    ["uwangle", "⦧"],
+    ["vArr", "⇕"],
+    ["vBar", "⫨"],
+    ["vBarv", "⫩"],
+    ["vDash", "⊨"],
+    ["vangrt", "⦜"],
+    ["varepsilon", "ϵ"],
+    ["varkappa", "ϰ"],
+    ["varnothing", "∅"],
+    ["varphi", "ϕ"],
+    ["varpi", "ϖ"],
+    ["varpropto", "∝"],
+    ["varr", "↕"],
+    ["varrho", "ϱ"],
+    ["varsigma", "ς"],
+    ["varsubsetneq", "⊊︀"],
+    ["varsubsetneqq", "⫋︀"],
+    ["varsupsetneq", "⊋︀"],
+    ["varsupsetneqq", "⫌︀"],
+    ["vartheta", "ϑ"],
+    ["vartriangleleft", "⊲"],
+    ["vartriangleright", "⊳"],
+    ["vcy", "в"],
+    ["vdash", "⊢"],
+    ["vee", "∨"],
+    ["veebar", "⊻"],
+    ["veeeq", "≚"],
+    ["vellip", "⋮"],
+    ["verbar", "|"],
+    ["vert", "|"],
+    ["vfr", "𝔳"],
+    ["vltri", "⊲"],
+    ["vnsub", "⊂⃒"],
+    ["vnsup", "⊃⃒"],
+    ["vopf", "𝕧"],
+    ["vprop", "∝"],
+    ["vrtri", "⊳"],
+    ["vscr", "𝓋"],
+    ["vsubnE", "⫋︀"],
+    ["vsubne", "⊊︀"],
+    ["vsupnE", "⫌︀"],
+    ["vsupne", "⊋︀"],
+    ["vzigzag", "⦚"],
+    ["wcirc", "ŵ"],
+    ["wedbar", "⩟"],
+    ["wedge", "∧"],
+    ["wedgeq", "≙"],
+    ["weierp", "℘"],
+    ["wfr", "𝔴"],
+    ["wopf", "𝕨"],
+    ["wp", "℘"],
+    ["wr", "≀"],
+    ["wreath", "≀"],
+    ["wscr", "𝓌"],
+    ["xcap", "⋂"],
+    ["xcirc", "◯"],
+    ["xcup", "⋃"],
+    ["xdtri", "▽"],
+    ["xfr", "𝔵"],
+    ["xhArr", "⟺"],
+    ["xharr", "⟷"],
+    ["xi", "ξ"],
+    ["xlArr", "⟸"],
+    ["xlarr", "⟵"],
+    ["xmap", "⟼"],
+    ["xnis", "⋻"],
+    ["xodot", "⨀"],
+    ["xopf", "𝕩"],
+    ["xoplus", "⨁"],
+    ["xotime", "⨂"],
+    ["xrArr", "⟹"],
+    ["xrarr", "⟶"],
+    ["xscr", "𝓍"],
+    ["xsqcup", "⨆"],
+    ["xuplus", "⨄"],
+    ["xutri", "△"],
+    ["xvee", "⋁"],
+    ["xwedge", "⋀"],
+    ["yacute", "ý"],
+    ["yacy", "я"],
+    ["ycirc", "ŷ"],
+    ["ycy", "ы"],
+    ["yen", "¥"],
+    ["yfr", "𝔶"],
+    ["yicy", "ї"],
+    ["yopf", "𝕪"],
+    ["yscr", "𝓎"],
+    ["yucy", "ю"],
+    ["yuml", "ÿ"],
+    ["zacute", "ź"],
+    ["zcaron", "ž"],
+    ["zcy", "з"],
+    ["zdot", "ż"],
+    ["zeetrf", "ℨ"],
+    ["zeta", "ζ"],
+    ["zfr", "𝔷"],
+    ["zhcy", "ж"],
+    ["zigrarr", "⇝"],
+    ["zopf", "𝕫"],
+    ["zscr", "𝓏"],
+    ["zwj", "‍"],
+    ["zwnj", "‌"]
+  ]);
+  var decodeMapLegacy = /* @__PURE__ */ new Map([
+    ["AElig", "Æ"],
+    ["AMP", "&"],
+    ["Aacute", "Á"],
+    ["Acirc", "Â"],
+    ["Agrave", "À"],
+    ["Aring", "Å"],
+    ["Atilde", "Ã"],
+    ["Auml", "Ä"],
+    ["COPY", "©"],
+    ["Ccedil", "Ç"],
+    ["ETH", "Ð"],
+    ["Eacute", "É"],
+    ["Ecirc", "Ê"],
+    ["Egrave", "È"],
+    ["Euml", "Ë"],
+    ["GT", ">"],
+    ["Iacute", "Í"],
+    ["Icirc", "Î"],
+    ["Igrave", "Ì"],
+    ["Iuml", "Ï"],
+    ["LT", "<"],
+    ["Ntilde", "Ñ"],
+    ["Oacute", "Ó"],
+    ["Ocirc", "Ô"],
+    ["Ograve", "Ò"],
+    ["Oslash", "Ø"],
+    ["Otilde", "Õ"],
+    ["Ouml", "Ö"],
+    ["QUOT", '"'],
+    ["REG", "®"],
+    ["THORN", "Þ"],
+    ["Uacute", "Ú"],
+    ["Ucirc", "Û"],
+    ["Ugrave", "Ù"],
+    ["Uuml", "Ü"],
+    ["Yacute", "Ý"],
+    ["aacute", "á"],
+    ["acirc", "â"],
+    ["acute", "´"],
+    ["aelig", "æ"],
+    ["agrave", "à"],
+    ["amp", "&"],
+    ["aring", "å"],
+    ["atilde", "ã"],
+    ["auml", "ä"],
+    ["brvbar", "¦"],
+    ["ccedil", "ç"],
+    ["cedil", "¸"],
+    ["cent", "¢"],
+    ["copy", "©"],
+    ["curren", "¤"],
+    ["deg", "°"],
+    ["divide", "÷"],
+    ["eacute", "é"],
+    ["ecirc", "ê"],
+    ["egrave", "è"],
+    ["eth", "ð"],
+    ["euml", "ë"],
+    ["frac12", "½"],
+    ["frac14", "¼"],
+    ["frac34", "¾"],
+    ["gt", ">"],
+    ["iacute", "í"],
+    ["icirc", "î"],
+    ["iexcl", "¡"],
+    ["igrave", "ì"],
+    ["iquest", "¿"],
+    ["iuml", "ï"],
+    ["laquo", "«"],
+    ["lt", "<"],
+    ["macr", "¯"],
+    ["micro", "µ"],
+    ["middot", "·"],
+    ["nbsp", " "],
+    ["not", "¬"],
+    ["ntilde", "ñ"],
+    ["oacute", "ó"],
+    ["ocirc", "ô"],
+    ["ograve", "ò"],
+    ["ordf", "ª"],
+    ["ordm", "º"],
+    ["oslash", "ø"],
+    ["otilde", "õ"],
+    ["ouml", "ö"],
+    ["para", "¶"],
+    ["plusmn", "±"],
+    ["pound", "£"],
+    ["quot", '"'],
+    ["raquo", "»"],
+    ["reg", "®"],
+    ["sect", "§"],
+    ["shy", "­"],
+    ["sup1", "¹"],
+    ["sup2", "²"],
+    ["sup3", "³"],
+    ["szlig", "ß"],
+    ["thorn", "þ"],
+    ["times", "×"],
+    ["uacute", "ú"],
+    ["ucirc", "û"],
+    ["ugrave", "ù"],
+    ["uml", "¨"],
+    ["uuml", "ü"],
+    ["yacute", "ý"],
+    ["yen", "¥"],
+    ["yuml", "ÿ"]
+  ]);
+  var decodeMapNumeric = /* @__PURE__ */ new Map([
+    [0, "�"],
+    [128, "€"],
+    [130, "‚"],
+    [131, "ƒ"],
+    [132, "„"],
+    [133, "…"],
+    [134, "†"],
+    [135, "‡"],
+    [136, "ˆ"],
+    [137, "‰"],
+    [138, "Š"],
+    [139, "‹"],
+    [140, "Œ"],
+    [142, "Ž"],
+    [145, "‘"],
+    [146, "’"],
+    [147, "“"],
+    [148, "”"],
+    [149, "•"],
+    [150, "–"],
+    [151, "—"],
+    [152, "˜"],
+    [153, "™"],
+    [154, "š"],
+    [155, "›"],
+    [156, "œ"],
+    [158, "ž"],
+    [159, "Ÿ"]
+  ]);
+  var invalidReferenceCodePoints = /* @__PURE__ */ new Set([
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    11,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31,
+    127,
+    128,
+    129,
+    130,
+    131,
+    132,
+    133,
+    134,
+    135,
+    136,
+    137,
+    138,
+    139,
+    140,
+    141,
+    142,
+    143,
+    144,
+    145,
+    146,
+    147,
+    148,
+    149,
+    150,
+    151,
+    152,
+    153,
+    154,
+    155,
+    156,
+    157,
+    158,
+    159,
+    64976,
+    64977,
+    64978,
+    64979,
+    64980,
+    64981,
+    64982,
+    64983,
+    64984,
+    64985,
+    64986,
+    64987,
+    64988,
+    64989,
+    64990,
+    64991,
+    64992,
+    64993,
+    64994,
+    64995,
+    64996,
+    64997,
+    64998,
+    64999,
+    65e3,
+    65001,
+    65002,
+    65003,
+    65004,
+    65005,
+    65006,
+    65007,
+    65534,
+    65535,
+    131070,
+    131071,
+    196606,
+    196607,
+    262142,
+    262143,
+    327678,
+    327679,
+    393214,
+    393215,
+    458750,
+    458751,
+    524286,
+    524287,
+    589822,
+    589823,
+    655358,
+    655359,
+    720894,
+    720895,
+    786430,
+    786431,
+    851966,
+    851967,
+    917502,
+    917503,
+    983038,
+    983039,
+    1048574,
+    1048575,
+    1114110,
+    1114111
+  ]);
+
+  // node_modules/he/src/he.mjs
+  var regexEscape = /["&'<>`]/g;
+  var regexInvalidEntity = /&#(?:[xX][^a-fA-F0-9]|[^0-9xX])/;
+  var has = (object, propertyName) => Object.hasOwn(object, propertyName);
+  var merge = (options, defaults) => {
+    if (!options) {
+      return defaults;
+    }
+    const result = {};
+    for (const key in defaults) {
+      result[key] = has(options, key) ? options[key] : defaults[key];
+    }
+    return result;
+  };
+  var parseError = (message) => {
+    throw new Error(`Parse error: ${message}`);
+  };
+  var codePointToSymbol = (codePoint, strict) => {
+    if (codePoint >= 55296 && codePoint <= 57343 || codePoint > 1114111) {
+      if (strict) {
+        parseError("character reference outside the permissible Unicode range");
+      }
+      return "�";
+    }
+    if (decodeMapNumeric.has(codePoint)) {
+      if (strict) {
+        parseError("disallowed character reference");
+      }
+      return decodeMapNumeric.get(codePoint);
+    }
+    if (strict && invalidReferenceCodePoints.has(codePoint)) {
+      parseError("disallowed character reference");
+    }
+    return String.fromCodePoint(codePoint);
+  };
+  var hexEscape = (codePoint) => {
+    return `&#x${codePoint.toString(16).toUpperCase()};`;
+  };
+  var decEscape = (codePoint) => {
+    return `&#${codePoint};`;
+  };
+  var encode = (string, options) => {
+    options = merge(options, encode.options);
+    const strict = options.strict;
+    if (strict && regexInvalidRawCodePoint.test(string)) {
+      parseError("forbidden code point");
+    }
+    const encodeEverything = options.encodeEverything;
+    const useNamedReferences = options.useNamedReferences;
+    const allowUnsafeSymbols = options.allowUnsafeSymbols;
+    const escapeCodePoint = options.decimal ? decEscape : hexEscape;
+    const escapeBmpSymbol = (symbol) => {
+      return escapeCodePoint(symbol.charCodeAt(0));
+    };
+    if (encodeEverything) {
+      string = string.replace(regexAsciiWhitelist, (symbol) => {
+        if (useNamedReferences && encodeMap.has(symbol)) {
+          return `&${encodeMap.get(symbol)};`;
+        }
+        return escapeBmpSymbol(symbol);
+      });
+      if (useNamedReferences) {
+        string = string.replace(/&gt;\u20D2/g, "&nvgt;").replace(/&lt;\u20D2/g, "&nvlt;").replace(/&#x66;&#x6A;/g, "&fjlig;");
+      }
+      if (useNamedReferences) {
+        string = string.replace(regexEncodeNonAscii, (string2) => {
+          return `&${encodeMap.get(string2)};`;
+        });
+      }
+    } else if (useNamedReferences) {
+      if (!allowUnsafeSymbols) {
+        string = string.replace(regexEscape, (string2) => {
+          return `&${encodeMap.get(string2)};`;
+        });
+      }
+      string = string.replace(/&gt;\u20D2/g, "&nvgt;").replace(/&lt;\u20D2/g, "&nvlt;");
+      string = string.replace(regexEncodeNonAscii, (string2) => {
+        return `&${encodeMap.get(string2)};`;
+      });
+    } else if (!allowUnsafeSymbols) {
+      string = string.replace(regexEscape, escapeBmpSymbol);
+    }
+    return string.replace(regexAstralSymbols, ($0) => {
+      const high = $0.charCodeAt(0);
+      const low = $0.charCodeAt(1);
+      const codePoint = (high - 55296) * 1024 + low - 56320 + 65536;
+      return escapeCodePoint(codePoint);
+    }).replace(regexBmpWhitelist, escapeBmpSymbol);
+  };
+  encode.options = {
+    allowUnsafeSymbols: false,
+    encodeEverything: false,
+    strict: false,
+    useNamedReferences: false,
+    decimal: false
+  };
+  var decode = (html, options) => {
+    options = merge(options, decode.options);
+    const strict = options.strict;
+    if (strict && regexInvalidEntity.test(html)) {
+      parseError("malformed character reference");
+    }
+    return html.replace(regexDecode, ($0, $1, $2, $3, $4, $5, $6, $7) => {
+      if ($1) {
+        return decodeMap.get($1);
+      }
+      if ($2) {
+        const reference = $2;
+        const next = $3;
+        if (next && options.isAttributeValue) {
+          if (strict && next == "=") {
+            parseError("`&` did not start a character reference");
+          }
+          return $0;
+        }
+        if (strict) {
+          parseError(
+            "named character reference was not terminated by a semicolon"
+          );
+        }
+        return decodeMapLegacy.get(reference) + (next || "");
+      }
+      if ($4) {
+        const semicolon = $5;
+        if (strict && !semicolon) {
+          parseError("character reference was not terminated by a semicolon");
+        }
+        return codePointToSymbol(parseInt($4, 10), strict);
+      }
+      if ($6) {
+        const semicolon = $7;
+        if (strict && !semicolon) {
+          parseError("character reference was not terminated by a semicolon");
+        }
+        return codePointToSymbol(parseInt($6, 16), strict);
+      }
+      if (strict) {
+        parseError("named character reference was not recognized");
+      }
+      return $0;
+    });
+  };
+  decode.options = {
+    isAttributeValue: false,
+    strict: false
+  };
+
   // src/index.js
-  var import_he = __toESM(require_he(), 1);
   var import_buffer3 = __toESM(require_buffer(), 1);
   var native2 = globalThis.__lxNative;
   var numFix = (n) => n < 10 ? `0${n}` : String(n);
@@ -6714,7 +6233,7 @@
   };
   var decodeName = (str) => {
     if (!str) return "";
-    return import_he.default.decode(str);
+    return decode(str);
   };
 
   // compat/quick-md5.js
@@ -6779,8 +6298,2637 @@
   var rsaEncryptSync = (textBase64, keyPem, padding) => native4.rsaEncrypt(textBase64, keyPem, padding || RSA_PADDING.NoPadding);
   var hashSHA1 = (text) => native4.hash("sha1", import_buffer5.Buffer.from(String(text), "utf8").toString("base64"));
 
+  // node_modules/pako/dist/pako.mjs
+  var Z_FIXED = 4;
+  var Z_BINARY = 0;
+  var Z_TEXT = 1;
+  var Z_UNKNOWN = 2;
+  function zero$1(buf) {
+    let len = buf.length;
+    while (--len >= 0) buf[len] = 0;
+  }
+  var STORED_BLOCK = 0;
+  var STATIC_TREES = 1;
+  var DYN_TREES = 2;
+  var LENGTH_CODES = 29;
+  var LITERALS = 256;
+  var L_CODES = 286;
+  var D_CODES = 30;
+  var BL_CODES = 19;
+  var HEAP_SIZE$1 = 573;
+  var MAX_BITS = 15;
+  var Buf_size = 16;
+  var END_BLOCK = 256;
+  var REP_3_6 = 16;
+  var REPZ_3_10 = 17;
+  var REPZ_11_138 = 18;
+  var extra_lbits = new Uint8Array([
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1,
+    1,
+    1,
+    1,
+    2,
+    2,
+    2,
+    2,
+    3,
+    3,
+    3,
+    3,
+    4,
+    4,
+    4,
+    4,
+    5,
+    5,
+    5,
+    5,
+    0
+  ]);
+  var extra_dbits = new Uint8Array([
+    0,
+    0,
+    0,
+    0,
+    1,
+    1,
+    2,
+    2,
+    3,
+    3,
+    4,
+    4,
+    5,
+    5,
+    6,
+    6,
+    7,
+    7,
+    8,
+    8,
+    9,
+    9,
+    10,
+    10,
+    11,
+    11,
+    12,
+    12,
+    13,
+    13
+  ]);
+  var extra_blbits = new Uint8Array([
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    2,
+    3,
+    7
+  ]);
+  var bl_order = new Uint8Array([
+    16,
+    17,
+    18,
+    0,
+    8,
+    7,
+    9,
+    6,
+    10,
+    5,
+    11,
+    4,
+    12,
+    3,
+    13,
+    2,
+    14,
+    1,
+    15
+  ]);
+  var DIST_CODE_LEN = 512;
+  var static_ltree = new Array(288 * 2);
+  zero$1(static_ltree);
+  var static_dtree = new Array(D_CODES * 2);
+  zero$1(static_dtree);
+  var _dist_code = new Array(DIST_CODE_LEN);
+  zero$1(_dist_code);
+  var _length_code = new Array(256);
+  zero$1(_length_code);
+  var base_length = new Array(LENGTH_CODES);
+  zero$1(base_length);
+  var base_dist = new Array(D_CODES);
+  zero$1(base_dist);
+  var d_code = (dist) => {
+    return dist < 256 ? _dist_code[dist] : _dist_code[256 + (dist >>> 7)];
+  };
+  var put_short = (s, w) => {
+    s.pending_buf[s.pending++] = w & 255;
+    s.pending_buf[s.pending++] = w >>> 8 & 255;
+  };
+  var send_bits = (s, value, length) => {
+    if (s.bi_valid > Buf_size - length) {
+      s.bi_buf |= value << s.bi_valid & 65535;
+      put_short(s, s.bi_buf);
+      s.bi_buf = value >> Buf_size - s.bi_valid;
+      s.bi_valid += length - Buf_size;
+    } else {
+      s.bi_buf |= value << s.bi_valid & 65535;
+      s.bi_valid += length;
+    }
+  };
+  var send_code = (s, c, tree) => {
+    send_bits(s, tree[c * 2], tree[c * 2 + 1]);
+  };
+  var bi_reverse = (code, len) => {
+    let res = 0;
+    do {
+      res |= code & 1;
+      code >>>= 1;
+      res <<= 1;
+    } while (--len > 0);
+    return res >>> 1;
+  };
+  var gen_bitlen = (s, desc) => {
+    const tree = desc.dyn_tree;
+    const max_code = desc.max_code;
+    const stree = desc.stat_desc.static_tree;
+    const has_stree = desc.stat_desc.has_stree;
+    const extra = desc.stat_desc.extra_bits;
+    const base = desc.stat_desc.extra_base;
+    const max_length = desc.stat_desc.max_length;
+    let h;
+    let n, m;
+    let bits;
+    let xbits;
+    let f;
+    let overflow = 0;
+    for (bits = 0; bits <= MAX_BITS; bits++) s.bl_count[bits] = 0;
+    tree[s.heap[s.heap_max] * 2 + 1] = 0;
+    for (h = s.heap_max + 1; h < HEAP_SIZE$1; h++) {
+      n = s.heap[h];
+      bits = tree[tree[n * 2 + 1] * 2 + 1] + 1;
+      if (bits > max_length) {
+        bits = max_length;
+        overflow++;
+      }
+      tree[n * 2 + 1] = bits;
+      if (n > max_code) continue;
+      s.bl_count[bits]++;
+      xbits = 0;
+      if (n >= base) xbits = extra[n - base];
+      f = tree[n * 2];
+      s.opt_len += f * (bits + xbits);
+      if (has_stree) s.static_len += f * (stree[n * 2 + 1] + xbits);
+    }
+    if (overflow === 0) return;
+    do {
+      bits = max_length - 1;
+      while (s.bl_count[bits] === 0) bits--;
+      s.bl_count[bits]--;
+      s.bl_count[bits + 1] += 2;
+      s.bl_count[max_length]--;
+      overflow -= 2;
+    } while (overflow > 0);
+    for (bits = max_length; bits !== 0; bits--) {
+      n = s.bl_count[bits];
+      while (n !== 0) {
+        m = s.heap[--h];
+        if (m > max_code) continue;
+        if (tree[m * 2 + 1] !== bits) {
+          s.opt_len += (bits - tree[m * 2 + 1]) * tree[m * 2];
+          tree[m * 2 + 1] = bits;
+        }
+        n--;
+      }
+    }
+  };
+  var gen_codes = (tree, max_code, bl_count) => {
+    const next_code = new Array(16);
+    let code = 0;
+    let bits;
+    let n;
+    for (bits = 1; bits <= MAX_BITS; bits++) {
+      code = code + bl_count[bits - 1] << 1;
+      next_code[bits] = code;
+    }
+    for (n = 0; n <= max_code; n++) {
+      let len = tree[n * 2 + 1];
+      if (len === 0) continue;
+      tree[n * 2] = bi_reverse(next_code[len]++, len);
+    }
+  };
+  var init_block = (s) => {
+    let n;
+    for (n = 0; n < L_CODES; n++) s.dyn_ltree[n * 2] = 0;
+    for (n = 0; n < D_CODES; n++) s.dyn_dtree[n * 2] = 0;
+    for (n = 0; n < BL_CODES; n++) s.bl_tree[n * 2] = 0;
+    s.dyn_ltree[END_BLOCK * 2] = 1;
+    s.opt_len = s.static_len = 0;
+    s.sym_next = s.matches = 0;
+  };
+  var bi_windup = (s) => {
+    if (s.bi_valid > 8) put_short(s, s.bi_buf);
+    else if (s.bi_valid > 0) s.pending_buf[s.pending++] = s.bi_buf;
+    s.bi_buf = 0;
+    s.bi_valid = 0;
+  };
+  var smaller = (tree, n, m, depth) => {
+    const _n2 = n * 2;
+    const _m2 = m * 2;
+    return tree[_n2] < tree[_m2] || tree[_n2] === tree[_m2] && depth[n] <= depth[m];
+  };
+  var pqdownheap = (s, tree, k) => {
+    const v = s.heap[k];
+    let j = k << 1;
+    while (j <= s.heap_len) {
+      if (j < s.heap_len && smaller(tree, s.heap[j + 1], s.heap[j], s.depth)) j++;
+      if (smaller(tree, v, s.heap[j], s.depth)) break;
+      s.heap[k] = s.heap[j];
+      k = j;
+      j <<= 1;
+    }
+    s.heap[k] = v;
+  };
+  var compress_block = (s, ltree, dtree) => {
+    let dist;
+    let lc;
+    let sx = 0;
+    let code;
+    let extra;
+    if (s.sym_next !== 0) do {
+      dist = s.pending_buf[s.sym_buf + sx++] & 255;
+      dist += (s.pending_buf[s.sym_buf + sx++] & 255) << 8;
+      lc = s.pending_buf[s.sym_buf + sx++];
+      if (dist === 0) send_code(s, lc, ltree);
+      else {
+        code = _length_code[lc];
+        send_code(s, code + LITERALS + 1, ltree);
+        extra = extra_lbits[code];
+        if (extra !== 0) {
+          lc -= base_length[code];
+          send_bits(s, lc, extra);
+        }
+        dist--;
+        code = d_code(dist);
+        send_code(s, code, dtree);
+        extra = extra_dbits[code];
+        if (extra !== 0) {
+          dist -= base_dist[code];
+          send_bits(s, dist, extra);
+        }
+      }
+    } while (sx < s.sym_next);
+    send_code(s, END_BLOCK, ltree);
+  };
+  var build_tree = (s, desc) => {
+    const tree = desc.dyn_tree;
+    const stree = desc.stat_desc.static_tree;
+    const has_stree = desc.stat_desc.has_stree;
+    const elems = desc.stat_desc.elems;
+    let n, m;
+    let max_code = -1;
+    let node;
+    s.heap_len = 0;
+    s.heap_max = HEAP_SIZE$1;
+    for (n = 0; n < elems; n++) if (tree[n * 2] !== 0) {
+      s.heap[++s.heap_len] = max_code = n;
+      s.depth[n] = 0;
+    } else tree[n * 2 + 1] = 0;
+    while (s.heap_len < 2) {
+      node = s.heap[++s.heap_len] = max_code < 2 ? ++max_code : 0;
+      tree[node * 2] = 1;
+      s.depth[node] = 0;
+      s.opt_len--;
+      if (has_stree) s.static_len -= stree[node * 2 + 1];
+    }
+    desc.max_code = max_code;
+    for (n = s.heap_len >> 1; n >= 1; n--) pqdownheap(s, tree, n);
+    node = elems;
+    do {
+      n = s.heap[1];
+      s.heap[1] = s.heap[s.heap_len--];
+      pqdownheap(s, tree, 1);
+      m = s.heap[1];
+      s.heap[--s.heap_max] = n;
+      s.heap[--s.heap_max] = m;
+      tree[node * 2] = tree[n * 2] + tree[m * 2];
+      s.depth[node] = (s.depth[n] >= s.depth[m] ? s.depth[n] : s.depth[m]) + 1;
+      tree[n * 2 + 1] = tree[m * 2 + 1] = node;
+      s.heap[1] = node++;
+      pqdownheap(s, tree, 1);
+    } while (s.heap_len >= 2);
+    s.heap[--s.heap_max] = s.heap[1];
+    gen_bitlen(s, desc);
+    gen_codes(tree, max_code, s.bl_count);
+  };
+  var scan_tree = (s, tree, max_code) => {
+    let n;
+    let prevlen = -1;
+    let curlen;
+    let nextlen = tree[1];
+    let count = 0;
+    let max_count = 7;
+    let min_count = 4;
+    if (nextlen === 0) {
+      max_count = 138;
+      min_count = 3;
+    }
+    tree[(max_code + 1) * 2 + 1] = 65535;
+    for (n = 0; n <= max_code; n++) {
+      curlen = nextlen;
+      nextlen = tree[(n + 1) * 2 + 1];
+      if (++count < max_count && curlen === nextlen) continue;
+      else if (count < min_count) s.bl_tree[curlen * 2] += count;
+      else if (curlen !== 0) {
+        if (curlen !== prevlen) s.bl_tree[curlen * 2]++;
+        s.bl_tree[REP_3_6 * 2]++;
+      } else if (count <= 10) s.bl_tree[REPZ_3_10 * 2]++;
+      else s.bl_tree[REPZ_11_138 * 2]++;
+      count = 0;
+      prevlen = curlen;
+      if (nextlen === 0) {
+        max_count = 138;
+        min_count = 3;
+      } else if (curlen === nextlen) {
+        max_count = 6;
+        min_count = 3;
+      } else {
+        max_count = 7;
+        min_count = 4;
+      }
+    }
+  };
+  var send_tree = (s, tree, max_code) => {
+    let n;
+    let prevlen = -1;
+    let curlen;
+    let nextlen = tree[1];
+    let count = 0;
+    let max_count = 7;
+    let min_count = 4;
+    if (nextlen === 0) {
+      max_count = 138;
+      min_count = 3;
+    }
+    for (n = 0; n <= max_code; n++) {
+      curlen = nextlen;
+      nextlen = tree[(n + 1) * 2 + 1];
+      if (++count < max_count && curlen === nextlen) continue;
+      else if (count < min_count) do
+        send_code(s, curlen, s.bl_tree);
+      while (--count !== 0);
+      else if (curlen !== 0) {
+        if (curlen !== prevlen) {
+          send_code(s, curlen, s.bl_tree);
+          count--;
+        }
+        send_code(s, REP_3_6, s.bl_tree);
+        send_bits(s, count - 3, 2);
+      } else if (count <= 10) {
+        send_code(s, REPZ_3_10, s.bl_tree);
+        send_bits(s, count - 3, 3);
+      } else {
+        send_code(s, REPZ_11_138, s.bl_tree);
+        send_bits(s, count - 11, 7);
+      }
+      count = 0;
+      prevlen = curlen;
+      if (nextlen === 0) {
+        max_count = 138;
+        min_count = 3;
+      } else if (curlen === nextlen) {
+        max_count = 6;
+        min_count = 3;
+      } else {
+        max_count = 7;
+        min_count = 4;
+      }
+    }
+  };
+  var build_bl_tree = (s) => {
+    let max_blindex;
+    scan_tree(s, s.dyn_ltree, s.l_desc.max_code);
+    scan_tree(s, s.dyn_dtree, s.d_desc.max_code);
+    build_tree(s, s.bl_desc);
+    for (max_blindex = BL_CODES - 1; max_blindex >= 3; max_blindex--) if (s.bl_tree[bl_order[max_blindex] * 2 + 1] !== 0) break;
+    s.opt_len += 3 * (max_blindex + 1) + 5 + 5 + 4;
+    return max_blindex;
+  };
+  var send_all_trees = (s, lcodes, dcodes, blcodes) => {
+    let rank;
+    send_bits(s, lcodes - 257, 5);
+    send_bits(s, dcodes - 1, 5);
+    send_bits(s, blcodes - 4, 4);
+    for (rank = 0; rank < blcodes; rank++) send_bits(s, s.bl_tree[bl_order[rank] * 2 + 1], 3);
+    send_tree(s, s.dyn_ltree, lcodes - 1);
+    send_tree(s, s.dyn_dtree, dcodes - 1);
+  };
+  var detect_data_type = (s) => {
+    let block_mask = 4093624447;
+    let n;
+    for (n = 0; n <= 31; n++, block_mask >>>= 1) if (block_mask & 1 && s.dyn_ltree[n * 2] !== 0) return Z_BINARY;
+    if (s.dyn_ltree[18] !== 0 || s.dyn_ltree[20] !== 0 || s.dyn_ltree[26] !== 0) return Z_TEXT;
+    for (n = 32; n < LITERALS; n++) if (s.dyn_ltree[n * 2] !== 0) return Z_TEXT;
+    return Z_BINARY;
+  };
+  var _tr_stored_block = (s, buf, stored_len, last) => {
+    send_bits(s, (STORED_BLOCK << 1) + (last ? 1 : 0), 3);
+    bi_windup(s);
+    put_short(s, stored_len);
+    put_short(s, ~stored_len);
+    if (stored_len) s.pending_buf.set(s.window.subarray(buf, buf + stored_len), s.pending);
+    s.pending += stored_len;
+  };
+  var _tr_flush_block = (s, buf, stored_len, last) => {
+    let opt_lenb, static_lenb;
+    let max_blindex = 0;
+    if (s.level > 0) {
+      if (s.strm.data_type === Z_UNKNOWN) s.strm.data_type = detect_data_type(s);
+      build_tree(s, s.l_desc);
+      build_tree(s, s.d_desc);
+      max_blindex = build_bl_tree(s);
+      opt_lenb = s.opt_len + 3 + 7 >>> 3;
+      static_lenb = s.static_len + 3 + 7 >>> 3;
+      if (static_lenb <= opt_lenb || s.strategy === Z_FIXED) opt_lenb = static_lenb;
+    } else opt_lenb = static_lenb = stored_len + 5;
+    if (stored_len + 4 <= opt_lenb && buf !== -1) _tr_stored_block(s, buf, stored_len, last);
+    else if (s.strategy === Z_FIXED || static_lenb === opt_lenb) {
+      send_bits(s, (STATIC_TREES << 1) + (last ? 1 : 0), 3);
+      compress_block(s, static_ltree, static_dtree);
+    } else {
+      send_bits(s, (DYN_TREES << 1) + (last ? 1 : 0), 3);
+      send_all_trees(s, s.l_desc.max_code + 1, s.d_desc.max_code + 1, max_blindex + 1);
+      compress_block(s, s.dyn_ltree, s.dyn_dtree);
+    }
+    init_block(s);
+    if (last) bi_windup(s);
+  };
+  var _tr_tally = (s, dist, lc) => {
+    s.pending_buf[s.sym_buf + s.sym_next++] = dist;
+    s.pending_buf[s.sym_buf + s.sym_next++] = dist >> 8;
+    s.pending_buf[s.sym_buf + s.sym_next++] = lc;
+    if (dist === 0) s.dyn_ltree[lc * 2]++;
+    else {
+      s.matches++;
+      dist--;
+      s.dyn_ltree[(_length_code[lc] + LITERALS + 1) * 2]++;
+      s.dyn_dtree[d_code(dist) * 2]++;
+    }
+    return s.sym_next === s.sym_end;
+  };
+  var adler32 = (adler, buf, len, pos) => {
+    let s1 = adler & 65535 | 0, s2 = adler >>> 16 & 65535 | 0, n = 0;
+    while (len !== 0) {
+      n = len > 2e3 ? 2e3 : len;
+      len -= n;
+      do {
+        s1 = s1 + buf[pos++] | 0;
+        s2 = s2 + s1 | 0;
+      } while (--n);
+      s1 %= 65521;
+      s2 %= 65521;
+    }
+    return s1 | s2 << 16 | 0;
+  };
+  var makeTable = () => {
+    let c, table = [];
+    for (var n = 0; n < 256; n++) {
+      c = n;
+      for (var k = 0; k < 8; k++) c = c & 1 ? 3988292384 ^ c >>> 1 : c >>> 1;
+      table[n] = c;
+    }
+    return table;
+  };
+  var crcTable = new Uint32Array(makeTable());
+  var crc32 = (crc, buf, len, pos) => {
+    const t = crcTable;
+    const end = pos + len;
+    crc ^= -1;
+    for (let i = pos; i < end; i++) crc = crc >>> 8 ^ t[(crc ^ buf[i]) & 255];
+    return crc ^ -1;
+  };
+  var messages_default = {
+    2: "need dictionary",
+    1: "stream end",
+    0: "",
+    "-1": "file error",
+    "-2": "stream error",
+    "-3": "data error",
+    "-4": "insufficient memory",
+    "-5": "buffer error",
+    "-6": "incompatible version"
+  };
+  var MIN_MATCH = 3;
+  var MAX_MATCH = 258;
+  var MIN_LOOKAHEAD = 262;
+  var BS_NEED_MORE = 1;
+  var BS_BLOCK_DONE = 2;
+  var BS_FINISH_STARTED = 3;
+  var BS_FINISH_DONE = 4;
+  var slide_hash = (s) => {
+    let n, m;
+    let p;
+    let wsize = s.w_size;
+    n = s.hash_size;
+    p = n;
+    do {
+      m = s.head[--p];
+      s.head[p] = m >= wsize ? m - wsize : 0;
+    } while (--n);
+    n = wsize;
+    p = n;
+    do {
+      m = s.prev[--p];
+      s.prev[p] = m >= wsize ? m - wsize : 0;
+    } while (--n);
+  };
+  var HASH = (s, prev, data) => (prev << s.hash_shift ^ data) & s.hash_mask;
+  var INSERT_STRING = (s, str) => {
+    let h;
+    if (s.legacy_hash) h = s.ins_h = HASH(s, s.ins_h, s.window[str + MIN_MATCH - 1]);
+    else {
+      const w = s.window;
+      const value = w[str] | w[str + 1] << 8 | w[str + 2] << 16 | w[str + 3] << 24;
+      h = s.ins_h = Math.imul(value, 66521) + 66521 >>> 16 & s.hash_mask;
+    }
+    const hash_head = s.prev[str & s.w_mask] = s.head[h];
+    s.head[h] = str;
+    return hash_head;
+  };
+  var flush_pending = (strm) => {
+    const s = strm.state;
+    let len = s.pending;
+    if (len > strm.avail_out) len = strm.avail_out;
+    if (len === 0) return;
+    strm.output.set(s.pending_buf.subarray(s.pending_out, s.pending_out + len), strm.next_out);
+    strm.next_out += len;
+    s.pending_out += len;
+    strm.total_out += len;
+    strm.avail_out -= len;
+    s.pending -= len;
+    if (s.pending === 0) s.pending_out = 0;
+  };
+  var flush_block_only = (s, last) => {
+    _tr_flush_block(s, s.block_start >= 0 ? s.block_start : -1, s.strstart - s.block_start, last);
+    s.block_start = s.strstart;
+    flush_pending(s.strm);
+  };
+  var read_buf = (strm, buf, start, size) => {
+    let len = strm.avail_in;
+    if (len > size) len = size;
+    if (len === 0) return 0;
+    strm.avail_in -= len;
+    buf.set(strm.input.subarray(strm.next_in, strm.next_in + len), start);
+    if (strm.state.wrap === 1) strm.adler = adler32(strm.adler, buf, len, start);
+    else if (strm.state.wrap === 2) strm.adler = crc32(strm.adler, buf, len, start);
+    strm.next_in += len;
+    strm.total_in += len;
+    return len;
+  };
+  var longest_match = (s, cur_match) => {
+    let chain_length = s.max_chain_length;
+    let scan = s.strstart;
+    let match;
+    let len;
+    let best_len = s.prev_length;
+    let nice_match = s.nice_match;
+    const limit = s.strstart > s.w_size - MIN_LOOKAHEAD ? s.strstart - (s.w_size - MIN_LOOKAHEAD) : 0;
+    const _win = s.window;
+    const wmask = s.w_mask;
+    const prev = s.prev;
+    const strend = s.strstart + MAX_MATCH;
+    let scan_end1 = _win[scan + best_len - 1];
+    let scan_end = _win[scan + best_len];
+    if (s.prev_length >= s.good_match) chain_length >>= 2;
+    if (nice_match > s.lookahead) nice_match = s.lookahead;
+    do {
+      match = cur_match;
+      if (_win[match + best_len] !== scan_end || _win[match + best_len - 1] !== scan_end1 || _win[match] !== _win[scan] || _win[++match] !== _win[scan + 1]) continue;
+      scan += 2;
+      match++;
+      do
+        ;
+      while (_win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && scan < strend);
+      len = MAX_MATCH - (strend - scan);
+      scan = strend - MAX_MATCH;
+      if (len > best_len) {
+        s.match_start = cur_match;
+        best_len = len;
+        if (len >= nice_match) break;
+        scan_end1 = _win[scan + best_len - 1];
+        scan_end = _win[scan + best_len];
+      }
+    } while ((cur_match = prev[cur_match & wmask]) > limit && --chain_length !== 0);
+    if (best_len <= s.lookahead) return best_len;
+    return s.lookahead;
+  };
+  var fill_window = (s) => {
+    const _w_size = s.w_size;
+    let n, more, str;
+    do {
+      more = s.window_size - s.lookahead - s.strstart;
+      if (s.strstart >= _w_size + (_w_size - MIN_LOOKAHEAD)) {
+        s.window.set(s.window.subarray(_w_size, _w_size + _w_size - more), 0);
+        s.match_start -= _w_size;
+        s.strstart -= _w_size;
+        s.block_start -= _w_size;
+        if (s.insert > s.strstart) s.insert = s.strstart;
+        slide_hash(s);
+        more += _w_size;
+      }
+      if (s.strm.avail_in === 0) break;
+      n = read_buf(s.strm, s.window, s.strstart + s.lookahead, more);
+      s.lookahead += n;
+      if (!s.legacy_hash) {
+        if (s.lookahead + s.insert > MIN_MATCH) {
+          str = s.strstart - s.insert;
+          while (s.insert) {
+            INSERT_STRING(s, str);
+            str++;
+            s.insert--;
+            if (s.lookahead + s.insert <= MIN_MATCH) break;
+          }
+        }
+      } else if (s.lookahead + s.insert >= MIN_MATCH) {
+        str = s.strstart - s.insert;
+        s.ins_h = s.window[str];
+        s.ins_h = HASH(s, s.ins_h, s.window[str + 1]);
+        while (s.insert) {
+          INSERT_STRING(s, str);
+          str++;
+          s.insert--;
+          if (s.lookahead + s.insert < MIN_MATCH) break;
+        }
+      }
+    } while (s.lookahead < MIN_LOOKAHEAD && s.strm.avail_in !== 0);
+  };
+  var deflate_stored = (s, flush) => {
+    let min_block = s.pending_buf_size - 5 > s.w_size ? s.w_size : s.pending_buf_size - 5;
+    let len, left, have, last = 0;
+    let used = s.strm.avail_in;
+    do {
+      len = 65535;
+      have = s.bi_valid + 42 >> 3;
+      if (s.strm.avail_out < have) break;
+      have = s.strm.avail_out - have;
+      left = s.strstart - s.block_start;
+      if (len > left + s.strm.avail_in) len = left + s.strm.avail_in;
+      if (len > have) len = have;
+      if (len < min_block && (len === 0 && flush !== 4 || flush === 0 || len !== left + s.strm.avail_in)) break;
+      last = flush === 4 && len === left + s.strm.avail_in ? 1 : 0;
+      _tr_stored_block(s, 0, 0, last);
+      s.pending_buf[s.pending - 4] = len;
+      s.pending_buf[s.pending - 3] = len >> 8;
+      s.pending_buf[s.pending - 2] = ~len;
+      s.pending_buf[s.pending - 1] = ~len >> 8;
+      flush_pending(s.strm);
+      if (left) {
+        if (left > len) left = len;
+        s.strm.output.set(s.window.subarray(s.block_start, s.block_start + left), s.strm.next_out);
+        s.strm.next_out += left;
+        s.strm.avail_out -= left;
+        s.strm.total_out += left;
+        s.block_start += left;
+        len -= left;
+      }
+      if (len) {
+        read_buf(s.strm, s.strm.output, s.strm.next_out, len);
+        s.strm.next_out += len;
+        s.strm.avail_out -= len;
+        s.strm.total_out += len;
+      }
+    } while (last === 0);
+    used -= s.strm.avail_in;
+    if (used) {
+      if (used >= s.w_size) {
+        s.matches = 2;
+        s.window.set(s.strm.input.subarray(s.strm.next_in - s.w_size, s.strm.next_in), 0);
+        s.strstart = s.w_size;
+        s.insert = s.strstart;
+      } else {
+        if (s.window_size - s.strstart <= used) {
+          s.strstart -= s.w_size;
+          s.window.set(s.window.subarray(s.w_size, s.w_size + s.strstart), 0);
+          if (s.matches < 2) s.matches++;
+          if (s.insert > s.strstart) s.insert = s.strstart;
+        }
+        s.window.set(s.strm.input.subarray(s.strm.next_in - used, s.strm.next_in), s.strstart);
+        s.strstart += used;
+        s.insert += used > s.w_size - s.insert ? s.w_size - s.insert : used;
+      }
+      s.block_start = s.strstart;
+    }
+    if (s.high_water < s.strstart) s.high_water = s.strstart;
+    if (last) return BS_FINISH_DONE;
+    if (flush !== 0 && flush !== 4 && s.strm.avail_in === 0 && s.strstart === s.block_start) return BS_BLOCK_DONE;
+    have = s.window_size - s.strstart;
+    if (s.strm.avail_in > have && s.block_start >= s.w_size) {
+      s.block_start -= s.w_size;
+      s.strstart -= s.w_size;
+      s.window.set(s.window.subarray(s.w_size, s.w_size + s.strstart), 0);
+      if (s.matches < 2) s.matches++;
+      have += s.w_size;
+      if (s.insert > s.strstart) s.insert = s.strstart;
+    }
+    if (have > s.strm.avail_in) have = s.strm.avail_in;
+    if (have) {
+      read_buf(s.strm, s.window, s.strstart, have);
+      s.strstart += have;
+      s.insert += have > s.w_size - s.insert ? s.w_size - s.insert : have;
+    }
+    if (s.high_water < s.strstart) s.high_water = s.strstart;
+    have = s.bi_valid + 42 >> 3;
+    have = s.pending_buf_size - have > 65535 ? 65535 : s.pending_buf_size - have;
+    min_block = have > s.w_size ? s.w_size : have;
+    left = s.strstart - s.block_start;
+    if (left >= min_block || (left || flush === 4) && flush !== 0 && s.strm.avail_in === 0 && left <= have) {
+      len = left > have ? have : left;
+      last = flush === 4 && s.strm.avail_in === 0 && len === left ? 1 : 0;
+      _tr_stored_block(s, s.block_start, len, last);
+      s.block_start += len;
+      flush_pending(s.strm);
+    }
+    return last ? BS_FINISH_STARTED : BS_NEED_MORE;
+  };
+  var deflate_fast = (s, flush) => {
+    let hash_head;
+    let bflush;
+    for (; ; ) {
+      if (s.lookahead < MIN_LOOKAHEAD) {
+        fill_window(s);
+        if (s.lookahead < MIN_LOOKAHEAD && flush === 0) return BS_NEED_MORE;
+        if (s.lookahead === 0) break;
+      }
+      hash_head = 0;
+      if (s.lookahead >= MIN_MATCH) hash_head = INSERT_STRING(s, s.strstart);
+      if (hash_head !== 0 && s.strstart - hash_head <= s.w_size - MIN_LOOKAHEAD) s.match_length = longest_match(s, hash_head);
+      if (s.match_length >= MIN_MATCH) {
+        bflush = _tr_tally(s, s.strstart - s.match_start, s.match_length - MIN_MATCH);
+        s.lookahead -= s.match_length;
+        if (s.match_length <= s.max_lazy_match && s.lookahead >= MIN_MATCH) {
+          s.match_length--;
+          do {
+            s.strstart++;
+            hash_head = INSERT_STRING(s, s.strstart);
+          } while (--s.match_length !== 0);
+          s.strstart++;
+        } else {
+          s.strstart += s.match_length;
+          s.match_length = 0;
+          if (s.legacy_hash) {
+            s.ins_h = s.window[s.strstart];
+            s.ins_h = HASH(s, s.ins_h, s.window[s.strstart + 1]);
+          }
+        }
+      } else {
+        bflush = _tr_tally(s, 0, s.window[s.strstart]);
+        s.lookahead--;
+        s.strstart++;
+      }
+      if (bflush) {
+        flush_block_only(s, false);
+        if (s.strm.avail_out === 0) return BS_NEED_MORE;
+      }
+    }
+    s.insert = s.strstart < MIN_MATCH - 1 ? s.strstart : MIN_MATCH - 1;
+    if (flush === 4) {
+      flush_block_only(s, true);
+      if (s.strm.avail_out === 0) return BS_FINISH_STARTED;
+      return BS_FINISH_DONE;
+    }
+    if (s.sym_next) {
+      flush_block_only(s, false);
+      if (s.strm.avail_out === 0) return BS_NEED_MORE;
+    }
+    return BS_BLOCK_DONE;
+  };
+  var deflate_slow = (s, flush) => {
+    let hash_head;
+    let bflush;
+    let max_insert;
+    for (; ; ) {
+      if (s.lookahead < MIN_LOOKAHEAD) {
+        fill_window(s);
+        if (s.lookahead < MIN_LOOKAHEAD && flush === 0) return BS_NEED_MORE;
+        if (s.lookahead === 0) break;
+      }
+      hash_head = 0;
+      if (s.lookahead >= MIN_MATCH) hash_head = INSERT_STRING(s, s.strstart);
+      s.prev_length = s.match_length;
+      s.prev_match = s.match_start;
+      s.match_length = MIN_MATCH - 1;
+      if (hash_head !== 0 && s.prev_length < s.max_lazy_match && s.strstart - hash_head <= s.w_size - MIN_LOOKAHEAD) {
+        s.match_length = longest_match(s, hash_head);
+        if (s.match_length <= 5 && (s.strategy === 1 || s.match_length === MIN_MATCH && s.strstart - s.match_start > 4096)) s.match_length = MIN_MATCH - 1;
+      }
+      if (s.prev_length >= MIN_MATCH && s.match_length <= s.prev_length) {
+        max_insert = s.strstart + s.lookahead - MIN_MATCH;
+        bflush = _tr_tally(s, s.strstart - 1 - s.prev_match, s.prev_length - MIN_MATCH);
+        s.lookahead -= s.prev_length - 1;
+        s.prev_length -= 2;
+        do
+          if (++s.strstart <= max_insert) hash_head = INSERT_STRING(s, s.strstart);
+        while (--s.prev_length !== 0);
+        s.match_available = 0;
+        s.match_length = MIN_MATCH - 1;
+        s.strstart++;
+        if (bflush) {
+          flush_block_only(s, false);
+          if (s.strm.avail_out === 0) return BS_NEED_MORE;
+        }
+      } else if (s.match_available) {
+        bflush = _tr_tally(s, 0, s.window[s.strstart - 1]);
+        if (bflush)
+          flush_block_only(s, false);
+        s.strstart++;
+        s.lookahead--;
+        if (s.strm.avail_out === 0) return BS_NEED_MORE;
+      } else {
+        s.match_available = 1;
+        s.strstart++;
+        s.lookahead--;
+      }
+    }
+    if (s.match_available) {
+      bflush = _tr_tally(s, 0, s.window[s.strstart - 1]);
+      s.match_available = 0;
+    }
+    s.insert = s.strstart < MIN_MATCH - 1 ? s.strstart : MIN_MATCH - 1;
+    if (flush === 4) {
+      flush_block_only(s, true);
+      if (s.strm.avail_out === 0) return BS_FINISH_STARTED;
+      return BS_FINISH_DONE;
+    }
+    if (s.sym_next) {
+      flush_block_only(s, false);
+      if (s.strm.avail_out === 0) return BS_NEED_MORE;
+    }
+    return BS_BLOCK_DONE;
+  };
+  var Config = class {
+    constructor(good_length, max_lazy, nice_length, max_chain, func) {
+      this.good_length = good_length;
+      this.max_lazy = max_lazy;
+      this.nice_length = nice_length;
+      this.max_chain = max_chain;
+      this.func = func;
+    }
+  };
+  var configuration_table = [
+    new Config(0, 0, 0, 0, deflate_stored),
+    new Config(4, 4, 8, 4, deflate_fast),
+    new Config(4, 5, 16, 8, deflate_fast),
+    new Config(4, 6, 32, 32, deflate_fast),
+    new Config(4, 4, 16, 16, deflate_slow),
+    new Config(8, 16, 32, 32, deflate_slow),
+    new Config(8, 16, 128, 128, deflate_slow),
+    new Config(8, 32, 128, 256, deflate_slow),
+    new Config(32, 128, 258, 1024, deflate_slow),
+    new Config(32, 258, 258, 4096, deflate_slow)
+  ];
+  var BAD$1 = 16209;
+  var TYPE$1 = 16191;
+  function inflate_fast(strm, start) {
+    let _in;
+    let last;
+    let _out;
+    let beg;
+    let end;
+    let dmax;
+    let wsize;
+    let whave;
+    let wnext;
+    let s_window;
+    let hold;
+    let bits;
+    let lcode;
+    let dcode;
+    let lmask;
+    let dmask;
+    let here;
+    let op;
+    let len;
+    let dist;
+    let from;
+    let from_source;
+    let input, output;
+    const state = strm.state;
+    _in = strm.next_in;
+    input = strm.input;
+    last = _in + (strm.avail_in - 5);
+    _out = strm.next_out;
+    output = strm.output;
+    beg = _out - (start - strm.avail_out);
+    end = _out + (strm.avail_out - 257);
+    dmax = state.dmax;
+    wsize = state.wsize;
+    whave = state.whave;
+    wnext = state.wnext;
+    s_window = state.window;
+    hold = state.hold;
+    bits = state.bits;
+    lcode = state.lencode;
+    dcode = state.distcode;
+    lmask = (1 << state.lenbits) - 1;
+    dmask = (1 << state.distbits) - 1;
+    top: do {
+      if (bits < 15) {
+        hold += input[_in++] << bits;
+        bits += 8;
+        hold += input[_in++] << bits;
+        bits += 8;
+      }
+      here = lcode[hold & lmask];
+      dolen: for (; ; ) {
+        op = here >>> 24;
+        hold >>>= op;
+        bits -= op;
+        op = here >>> 16 & 255;
+        if (op === 0) output[_out++] = here & 65535;
+        else if (op & 16) {
+          len = here & 65535;
+          op &= 15;
+          if (op) {
+            if (bits < op) {
+              hold += input[_in++] << bits;
+              bits += 8;
+            }
+            len += hold & (1 << op) - 1;
+            hold >>>= op;
+            bits -= op;
+          }
+          if (bits < 15) {
+            hold += input[_in++] << bits;
+            bits += 8;
+            hold += input[_in++] << bits;
+            bits += 8;
+          }
+          here = dcode[hold & dmask];
+          dodist: for (; ; ) {
+            op = here >>> 24;
+            hold >>>= op;
+            bits -= op;
+            op = here >>> 16 & 255;
+            if (op & 16) {
+              dist = here & 65535;
+              op &= 15;
+              if (bits < op) {
+                hold += input[_in++] << bits;
+                bits += 8;
+                if (bits < op) {
+                  hold += input[_in++] << bits;
+                  bits += 8;
+                }
+              }
+              dist += hold & (1 << op) - 1;
+              if (dist > dmax) {
+                strm.msg = "invalid distance too far back";
+                state.mode = BAD$1;
+                break top;
+              }
+              hold >>>= op;
+              bits -= op;
+              op = _out - beg;
+              if (dist > op) {
+                op = dist - op;
+                if (op > whave) {
+                  if (state.sane) {
+                    strm.msg = "invalid distance too far back";
+                    state.mode = BAD$1;
+                    break top;
+                  }
+                }
+                from = 0;
+                from_source = s_window;
+                if (wnext === 0) {
+                  from += wsize - op;
+                  if (op < len) {
+                    len -= op;
+                    do
+                      output[_out++] = s_window[from++];
+                    while (--op);
+                    from = _out - dist;
+                    from_source = output;
+                  }
+                } else if (wnext < op) {
+                  from += wsize + wnext - op;
+                  op -= wnext;
+                  if (op < len) {
+                    len -= op;
+                    do
+                      output[_out++] = s_window[from++];
+                    while (--op);
+                    from = 0;
+                    if (wnext < len) {
+                      op = wnext;
+                      len -= op;
+                      do
+                        output[_out++] = s_window[from++];
+                      while (--op);
+                      from = _out - dist;
+                      from_source = output;
+                    }
+                  }
+                } else {
+                  from += wnext - op;
+                  if (op < len) {
+                    len -= op;
+                    do
+                      output[_out++] = s_window[from++];
+                    while (--op);
+                    from = _out - dist;
+                    from_source = output;
+                  }
+                }
+                while (len > 2) {
+                  output[_out++] = from_source[from++];
+                  output[_out++] = from_source[from++];
+                  output[_out++] = from_source[from++];
+                  len -= 3;
+                }
+                if (len) {
+                  output[_out++] = from_source[from++];
+                  if (len > 1) output[_out++] = from_source[from++];
+                }
+              } else {
+                from = _out - dist;
+                do {
+                  output[_out++] = output[from++];
+                  output[_out++] = output[from++];
+                  output[_out++] = output[from++];
+                  len -= 3;
+                } while (len > 2);
+                if (len) {
+                  output[_out++] = output[from++];
+                  if (len > 1) output[_out++] = output[from++];
+                }
+              }
+            } else if ((op & 64) === 0) {
+              here = dcode[(here & 65535) + (hold & (1 << op) - 1)];
+              continue dodist;
+            } else {
+              strm.msg = "invalid distance code";
+              state.mode = BAD$1;
+              break top;
+            }
+            break;
+          }
+        } else if ((op & 64) === 0) {
+          here = lcode[(here & 65535) + (hold & (1 << op) - 1)];
+          continue dolen;
+        } else if (op & 32) {
+          state.mode = TYPE$1;
+          break top;
+        } else {
+          strm.msg = "invalid literal/length code";
+          state.mode = BAD$1;
+          break top;
+        }
+        break;
+      }
+    } while (_in < last && _out < end);
+    len = bits >> 3;
+    _in -= len;
+    bits -= len << 3;
+    hold &= (1 << bits) - 1;
+    strm.next_in = _in;
+    strm.next_out = _out;
+    strm.avail_in = _in < last ? 5 + (last - _in) : 5 - (_in - last);
+    strm.avail_out = _out < end ? 257 + (end - _out) : 257 - (_out - end);
+    state.hold = hold;
+    state.bits = bits;
+  }
+  var MAXBITS = 15;
+  var ENOUGH_LENS$1 = 852;
+  var ENOUGH_DISTS$1 = 592;
+  var CODES$1 = 0;
+  var LENS$1 = 1;
+  var DISTS$1 = 2;
+  var lbase = new Uint16Array([
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    13,
+    15,
+    17,
+    19,
+    23,
+    27,
+    31,
+    35,
+    43,
+    51,
+    59,
+    67,
+    83,
+    99,
+    115,
+    131,
+    163,
+    195,
+    227,
+    258,
+    0,
+    0
+  ]);
+  var lext = new Uint8Array([
+    16,
+    16,
+    16,
+    16,
+    16,
+    16,
+    16,
+    16,
+    17,
+    17,
+    17,
+    17,
+    18,
+    18,
+    18,
+    18,
+    19,
+    19,
+    19,
+    19,
+    20,
+    20,
+    20,
+    20,
+    21,
+    21,
+    21,
+    21,
+    16,
+    199,
+    75
+  ]);
+  var dbase = new Uint16Array([
+    1,
+    2,
+    3,
+    4,
+    5,
+    7,
+    9,
+    13,
+    17,
+    25,
+    33,
+    49,
+    65,
+    97,
+    129,
+    193,
+    257,
+    385,
+    513,
+    769,
+    1025,
+    1537,
+    2049,
+    3073,
+    4097,
+    6145,
+    8193,
+    12289,
+    16385,
+    24577,
+    0,
+    0
+  ]);
+  var dext = new Uint8Array([
+    16,
+    16,
+    16,
+    16,
+    17,
+    17,
+    18,
+    18,
+    19,
+    19,
+    20,
+    20,
+    21,
+    21,
+    22,
+    22,
+    23,
+    23,
+    24,
+    24,
+    25,
+    25,
+    26,
+    26,
+    27,
+    27,
+    28,
+    28,
+    29,
+    29,
+    64,
+    64
+  ]);
+  var inflate_table = (type, lens, lens_index, codes, table, table_index, work, opts) => {
+    const bits = opts.bits;
+    let len = 0;
+    let sym = 0;
+    let min = 0, max = 0;
+    let root = 0;
+    let curr = 0;
+    let drop = 0;
+    let left = 0;
+    let used = 0;
+    let huff = 0;
+    let incr;
+    let fill;
+    let low;
+    let mask;
+    let next;
+    let base = null;
+    let match;
+    const count = /* @__PURE__ */ new Uint16Array(16);
+    const offs = /* @__PURE__ */ new Uint16Array(16);
+    let extra = null;
+    let here_bits, here_op, here_val;
+    for (len = 0; len <= MAXBITS; len++) count[len] = 0;
+    for (sym = 0; sym < codes; sym++) count[lens[lens_index + sym]]++;
+    root = bits;
+    for (max = MAXBITS; max >= 1; max--) if (count[max] !== 0) break;
+    if (root > max) root = max;
+    if (max === 0) {
+      table[table_index++] = 20971520;
+      table[table_index++] = 20971520;
+      opts.bits = 1;
+      return 0;
+    }
+    for (min = 1; min < max; min++) if (count[min] !== 0) break;
+    if (root < min) root = min;
+    left = 1;
+    for (len = 1; len <= MAXBITS; len++) {
+      left <<= 1;
+      left -= count[len];
+      if (left < 0) return -1;
+    }
+    if (left > 0 && (type === CODES$1 || max !== 1)) return -1;
+    offs[1] = 0;
+    for (len = 1; len < MAXBITS; len++) offs[len + 1] = offs[len] + count[len];
+    for (sym = 0; sym < codes; sym++) if (lens[lens_index + sym] !== 0) work[offs[lens[lens_index + sym]]++] = sym;
+    if (type === CODES$1) {
+      base = extra = work;
+      match = 20;
+    } else if (type === LENS$1) {
+      base = lbase;
+      extra = lext;
+      match = 257;
+    } else {
+      base = dbase;
+      extra = dext;
+      match = 0;
+    }
+    huff = 0;
+    sym = 0;
+    len = min;
+    next = table_index;
+    curr = root;
+    drop = 0;
+    low = -1;
+    used = 1 << root;
+    mask = used - 1;
+    if (type === LENS$1 && used > ENOUGH_LENS$1 || type === DISTS$1 && used > ENOUGH_DISTS$1) return 1;
+    for (; ; ) {
+      here_bits = len - drop;
+      if (work[sym] + 1 < match) {
+        here_op = 0;
+        here_val = work[sym];
+      } else if (work[sym] >= match) {
+        here_op = extra[work[sym] - match];
+        here_val = base[work[sym] - match];
+      } else {
+        here_op = 96;
+        here_val = 0;
+      }
+      incr = 1 << len - drop;
+      fill = 1 << curr;
+      min = fill;
+      do {
+        fill -= incr;
+        table[next + (huff >> drop) + fill] = here_bits << 24 | here_op << 16 | here_val | 0;
+      } while (fill !== 0);
+      incr = 1 << len - 1;
+      while (huff & incr) incr >>= 1;
+      if (incr !== 0) {
+        huff &= incr - 1;
+        huff += incr;
+      } else huff = 0;
+      sym++;
+      if (--count[len] === 0) {
+        if (len === max) break;
+        len = lens[lens_index + work[sym]];
+      }
+      if (len > root && (huff & mask) !== low) {
+        if (drop === 0) drop = root;
+        next += min;
+        curr = len - drop;
+        left = 1 << curr;
+        while (curr + drop < max) {
+          left -= count[curr + drop];
+          if (left <= 0) break;
+          curr++;
+          left <<= 1;
+        }
+        used += 1 << curr;
+        if (type === LENS$1 && used > ENOUGH_LENS$1 || type === DISTS$1 && used > ENOUGH_DISTS$1) return 1;
+        low = huff & mask;
+        table[low] = root << 24 | curr << 16 | next - table_index | 0;
+      }
+    }
+    if (huff !== 0) table[next + huff] = len - drop << 24 | 4194304;
+    opts.bits = root;
+    return 0;
+  };
+  var CODES = 0;
+  var LENS = 1;
+  var DISTS = 2;
+  var HEAD = 16180;
+  var FLAGS = 16181;
+  var TIME = 16182;
+  var OS = 16183;
+  var EXLEN = 16184;
+  var EXTRA = 16185;
+  var NAME = 16186;
+  var COMMENT = 16187;
+  var HCRC = 16188;
+  var DICTID = 16189;
+  var DICT = 16190;
+  var TYPE = 16191;
+  var TYPEDO = 16192;
+  var STORED = 16193;
+  var COPY_ = 16194;
+  var COPY = 16195;
+  var TABLE = 16196;
+  var LENLENS = 16197;
+  var CODELENS = 16198;
+  var LEN_ = 16199;
+  var LEN = 16200;
+  var LENEXT = 16201;
+  var DIST = 16202;
+  var DISTEXT = 16203;
+  var MATCH = 16204;
+  var LIT = 16205;
+  var CHECK = 16206;
+  var LENGTH = 16207;
+  var DONE = 16208;
+  var BAD = 16209;
+  var MEM = 16210;
+  var SYNC = 16211;
+  var ENOUGH_LENS = 852;
+  var ENOUGH_DISTS = 592;
+  var zswap32 = (q) => {
+    return (q >>> 24 & 255) + (q >>> 8 & 65280) + ((q & 65280) << 8) + ((q & 255) << 24);
+  };
+  var InflateState = class {
+    constructor() {
+      this.strm = null;
+      this.mode = 0;
+      this.last = false;
+      this.wrap = 0;
+      this.havedict = false;
+      this.flags = 0;
+      this.dmax = 0;
+      this.check = 0;
+      this.total = 0;
+      this.head = null;
+      this.wbits = 0;
+      this.wsize = 0;
+      this.whave = 0;
+      this.wnext = 0;
+      this.window = null;
+      this.hold = 0;
+      this.bits = 0;
+      this.length = 0;
+      this.offset = 0;
+      this.extra = 0;
+      this.lencode = null;
+      this.distcode = null;
+      this.lenbits = 0;
+      this.distbits = 0;
+      this.ncode = 0;
+      this.nlen = 0;
+      this.ndist = 0;
+      this.have = 0;
+      this.next = null;
+      this.lens = /* @__PURE__ */ new Uint16Array(320);
+      this.work = /* @__PURE__ */ new Uint16Array(288);
+      this.lendyn = null;
+      this.distdyn = null;
+      this.sane = 0;
+      this.back = 0;
+      this.was = 0;
+    }
+  };
+  var inflateStateCheck = (strm) => {
+    if (!strm) return 1;
+    const state = strm.state;
+    if (!state || state.strm !== strm || state.mode < HEAD || state.mode > SYNC) return 1;
+    return 0;
+  };
+  var inflateResetKeep = (strm) => {
+    if (inflateStateCheck(strm)) return -2;
+    const state = strm.state;
+    strm.total_in = strm.total_out = state.total = 0;
+    strm.msg = "";
+    if (state.wrap) strm.adler = state.wrap & 1;
+    state.mode = HEAD;
+    state.last = 0;
+    state.havedict = 0;
+    state.flags = -1;
+    state.dmax = 32768;
+    state.head = null;
+    state.hold = 0;
+    state.bits = 0;
+    state.lencode = state.lendyn = new Int32Array(ENOUGH_LENS);
+    state.distcode = state.distdyn = new Int32Array(ENOUGH_DISTS);
+    state.sane = 1;
+    state.back = -1;
+    return 0;
+  };
+  var inflateReset = (strm) => {
+    if (inflateStateCheck(strm)) return -2;
+    const state = strm.state;
+    state.wsize = 0;
+    state.whave = 0;
+    state.wnext = 0;
+    return inflateResetKeep(strm);
+  };
+  var inflateReset2 = (strm, windowBits) => {
+    let wrap;
+    if (inflateStateCheck(strm)) return -2;
+    const state = strm.state;
+    if (windowBits < 0) {
+      wrap = 0;
+      windowBits = -windowBits;
+    } else {
+      wrap = (windowBits >> 4) + 5;
+      if (windowBits < 48) windowBits &= 15;
+    }
+    if (windowBits && (windowBits < 8 || windowBits > 15)) return -2;
+    if (state.window !== null && state.wbits !== windowBits) state.window = null;
+    state.wrap = wrap;
+    state.wbits = windowBits;
+    return inflateReset(strm);
+  };
+  var inflateInit2 = (strm, windowBits) => {
+    if (!strm) return -2;
+    const state = new InflateState();
+    strm.state = state;
+    state.strm = strm;
+    state.window = null;
+    state.mode = HEAD;
+    const ret = inflateReset2(strm, windowBits);
+    if (ret !== 0) strm.state = null;
+    return ret;
+  };
+  var virgin = true;
+  var lenfix;
+  var distfix;
+  var fixedtables = (state) => {
+    if (virgin) {
+      lenfix = /* @__PURE__ */ new Int32Array(512);
+      distfix = /* @__PURE__ */ new Int32Array(32);
+      let sym = 0;
+      while (sym < 144) state.lens[sym++] = 8;
+      while (sym < 256) state.lens[sym++] = 9;
+      while (sym < 280) state.lens[sym++] = 7;
+      while (sym < 288) state.lens[sym++] = 8;
+      inflate_table(LENS, state.lens, 0, 288, lenfix, 0, state.work, { bits: 9 });
+      sym = 0;
+      while (sym < 32) state.lens[sym++] = 5;
+      inflate_table(DISTS, state.lens, 0, 32, distfix, 0, state.work, { bits: 5 });
+      virgin = false;
+    }
+    state.lencode = lenfix;
+    state.lenbits = 9;
+    state.distcode = distfix;
+    state.distbits = 5;
+  };
+  var updatewindow = (strm, src, end, copy) => {
+    let dist;
+    const state = strm.state;
+    if (state.window === null) state.window = new Uint8Array(1 << state.wbits);
+    if (state.wsize === 0) {
+      state.wsize = 1 << state.wbits;
+      state.wnext = 0;
+      state.whave = 0;
+    }
+    if (copy >= state.wsize) {
+      state.window.set(src.subarray(end - state.wsize, end), 0);
+      state.wnext = 0;
+      state.whave = state.wsize;
+    } else {
+      dist = state.wsize - state.wnext;
+      if (dist > copy) dist = copy;
+      state.window.set(src.subarray(end - copy, end - copy + dist), state.wnext);
+      copy -= dist;
+      if (copy) {
+        state.window.set(src.subarray(end - copy, end), 0);
+        state.wnext = copy;
+        state.whave = state.wsize;
+      } else {
+        state.wnext += dist;
+        if (state.wnext === state.wsize) state.wnext = 0;
+        if (state.whave < state.wsize) state.whave += dist;
+      }
+    }
+    return 0;
+  };
+  var inflate$1 = (strm, flush) => {
+    let state;
+    let input, output;
+    let next;
+    let put;
+    let have, left;
+    let hold;
+    let bits;
+    let _in, _out;
+    let copy;
+    let from;
+    let from_source;
+    let here = 0;
+    let here_bits, here_op, here_val;
+    let last_bits, last_op, last_val;
+    let len;
+    let ret;
+    const hbuf = /* @__PURE__ */ new Uint8Array(4);
+    let opts;
+    let n;
+    const order = new Uint8Array([
+      16,
+      17,
+      18,
+      0,
+      8,
+      7,
+      9,
+      6,
+      10,
+      5,
+      11,
+      4,
+      12,
+      3,
+      13,
+      2,
+      14,
+      1,
+      15
+    ]);
+    if (inflateStateCheck(strm) || !strm.output || !strm.input && strm.avail_in !== 0) return -2;
+    state = strm.state;
+    if (state.mode === TYPE) state.mode = TYPEDO;
+    put = strm.next_out;
+    output = strm.output;
+    left = strm.avail_out;
+    next = strm.next_in;
+    input = strm.input;
+    have = strm.avail_in;
+    hold = state.hold;
+    bits = state.bits;
+    _in = have;
+    _out = left;
+    ret = 0;
+    inf_leave: for (; ; ) switch (state.mode) {
+      case HEAD:
+        if (state.wrap === 0) {
+          state.mode = TYPEDO;
+          break;
+        }
+        while (bits < 16) {
+          if (have === 0) break inf_leave;
+          have--;
+          hold += input[next++] << bits;
+          bits += 8;
+        }
+        if (state.wrap & 2 && hold === 35615) {
+          if (state.wbits === 0) state.wbits = 15;
+          state.check = 0;
+          hbuf[0] = hold & 255;
+          hbuf[1] = hold >>> 8 & 255;
+          state.check = crc32(state.check, hbuf, 2, 0);
+          hold = 0;
+          bits = 0;
+          state.mode = FLAGS;
+          break;
+        }
+        if (state.head) state.head.done = false;
+        if (!(state.wrap & 1) || (((hold & 255) << 8) + (hold >> 8)) % 31) {
+          strm.msg = "incorrect header check";
+          state.mode = BAD;
+          break;
+        }
+        if ((hold & 15) !== 8) {
+          strm.msg = "unknown compression method";
+          state.mode = BAD;
+          break;
+        }
+        hold >>>= 4;
+        bits -= 4;
+        len = (hold & 15) + 8;
+        if (state.wbits === 0) state.wbits = len;
+        if (len > 15 || len > state.wbits) {
+          strm.msg = "invalid window size";
+          state.mode = BAD;
+          break;
+        }
+        state.dmax = 1 << state.wbits;
+        state.flags = 0;
+        strm.adler = state.check = 1;
+        state.mode = hold & 512 ? DICTID : TYPE;
+        hold = 0;
+        bits = 0;
+        break;
+      case FLAGS:
+        while (bits < 16) {
+          if (have === 0) break inf_leave;
+          have--;
+          hold += input[next++] << bits;
+          bits += 8;
+        }
+        state.flags = hold;
+        if ((state.flags & 255) !== 8) {
+          strm.msg = "unknown compression method";
+          state.mode = BAD;
+          break;
+        }
+        if (state.flags & 57344) {
+          strm.msg = "unknown header flags set";
+          state.mode = BAD;
+          break;
+        }
+        if (state.head) state.head.text = hold >> 8 & 1;
+        if (state.flags & 512 && state.wrap & 4) {
+          hbuf[0] = hold & 255;
+          hbuf[1] = hold >>> 8 & 255;
+          state.check = crc32(state.check, hbuf, 2, 0);
+        }
+        hold = 0;
+        bits = 0;
+        state.mode = TIME;
+      case TIME:
+        while (bits < 32) {
+          if (have === 0) break inf_leave;
+          have--;
+          hold += input[next++] << bits;
+          bits += 8;
+        }
+        if (state.head) state.head.time = hold >>> 0;
+        if (state.flags & 512 && state.wrap & 4) {
+          hbuf[0] = hold & 255;
+          hbuf[1] = hold >>> 8 & 255;
+          hbuf[2] = hold >>> 16 & 255;
+          hbuf[3] = hold >>> 24 & 255;
+          state.check = crc32(state.check, hbuf, 4, 0);
+        }
+        hold = 0;
+        bits = 0;
+        state.mode = OS;
+      case OS:
+        while (bits < 16) {
+          if (have === 0) break inf_leave;
+          have--;
+          hold += input[next++] << bits;
+          bits += 8;
+        }
+        if (state.head) {
+          state.head.xflags = hold & 255;
+          state.head.os = hold >> 8;
+        }
+        if (state.flags & 512 && state.wrap & 4) {
+          hbuf[0] = hold & 255;
+          hbuf[1] = hold >>> 8 & 255;
+          state.check = crc32(state.check, hbuf, 2, 0);
+        }
+        hold = 0;
+        bits = 0;
+        state.mode = EXLEN;
+      case EXLEN:
+        if (state.flags & 1024) {
+          while (bits < 16) {
+            if (have === 0) break inf_leave;
+            have--;
+            hold += input[next++] << bits;
+            bits += 8;
+          }
+          state.length = hold;
+          if (state.head) state.head.extra_len = hold;
+          if (state.flags & 512 && state.wrap & 4) {
+            hbuf[0] = hold & 255;
+            hbuf[1] = hold >>> 8 & 255;
+            state.check = crc32(state.check, hbuf, 2, 0);
+          }
+          hold = 0;
+          bits = 0;
+        } else if (state.head) state.head.extra = null;
+        state.mode = EXTRA;
+      case EXTRA:
+        if (state.flags & 1024) {
+          copy = state.length;
+          if (copy > have) copy = have;
+          if (copy) {
+            if (state.head) {
+              len = state.head.extra_len - state.length;
+              if (!state.head.extra) state.head.extra = new Uint8Array(state.head.extra_len);
+              state.head.extra.set(input.subarray(next, next + copy), len);
+            }
+            if (state.flags & 512 && state.wrap & 4) state.check = crc32(state.check, input, copy, next);
+            have -= copy;
+            next += copy;
+            state.length -= copy;
+          }
+          if (state.length) break inf_leave;
+        }
+        state.length = 0;
+        state.mode = NAME;
+      case NAME:
+        if (state.flags & 2048) {
+          if (have === 0) break inf_leave;
+          copy = 0;
+          do {
+            len = input[next + copy++];
+            if (state.head && len && state.length < 65536) state.head.name += String.fromCharCode(len);
+          } while (len && copy < have);
+          if (state.flags & 512 && state.wrap & 4) state.check = crc32(state.check, input, copy, next);
+          have -= copy;
+          next += copy;
+          if (len) break inf_leave;
+        } else if (state.head) state.head.name = null;
+        state.length = 0;
+        state.mode = COMMENT;
+      case COMMENT:
+        if (state.flags & 4096) {
+          if (have === 0) break inf_leave;
+          copy = 0;
+          do {
+            len = input[next + copy++];
+            if (state.head && len && state.length < 65536) state.head.comment += String.fromCharCode(len);
+          } while (len && copy < have);
+          if (state.flags & 512 && state.wrap & 4) state.check = crc32(state.check, input, copy, next);
+          have -= copy;
+          next += copy;
+          if (len) break inf_leave;
+        } else if (state.head) state.head.comment = null;
+        state.mode = HCRC;
+      case HCRC:
+        if (state.flags & 512) {
+          while (bits < 16) {
+            if (have === 0) break inf_leave;
+            have--;
+            hold += input[next++] << bits;
+            bits += 8;
+          }
+          if (state.wrap & 4 && hold !== (state.check & 65535)) {
+            strm.msg = "header crc mismatch";
+            state.mode = BAD;
+            break;
+          }
+          hold = 0;
+          bits = 0;
+        }
+        if (state.head) {
+          state.head.hcrc = state.flags >> 9 & 1;
+          state.head.done = true;
+        }
+        strm.adler = state.check = 0;
+        state.mode = TYPE;
+        break;
+      case DICTID:
+        while (bits < 32) {
+          if (have === 0) break inf_leave;
+          have--;
+          hold += input[next++] << bits;
+          bits += 8;
+        }
+        strm.adler = state.check = zswap32(hold);
+        hold = 0;
+        bits = 0;
+        state.mode = DICT;
+      case DICT:
+        if (state.havedict === 0) {
+          strm.next_out = put;
+          strm.avail_out = left;
+          strm.next_in = next;
+          strm.avail_in = have;
+          state.hold = hold;
+          state.bits = bits;
+          return 2;
+        }
+        strm.adler = state.check = 1;
+        state.mode = TYPE;
+      case TYPE:
+        if (flush === 5 || flush === 6) break inf_leave;
+      case TYPEDO:
+        if (state.last) {
+          hold >>>= bits & 7;
+          bits -= bits & 7;
+          state.mode = CHECK;
+          break;
+        }
+        while (bits < 3) {
+          if (have === 0) break inf_leave;
+          have--;
+          hold += input[next++] << bits;
+          bits += 8;
+        }
+        state.last = hold & 1;
+        hold >>>= 1;
+        bits -= 1;
+        switch (hold & 3) {
+          case 0:
+            state.mode = STORED;
+            break;
+          case 1:
+            fixedtables(state);
+            state.mode = LEN_;
+            if (flush === 6) {
+              hold >>>= 2;
+              bits -= 2;
+              break inf_leave;
+            }
+            break;
+          case 2:
+            state.mode = TABLE;
+            break;
+          case 3:
+            strm.msg = "invalid block type";
+            state.mode = BAD;
+        }
+        hold >>>= 2;
+        bits -= 2;
+        break;
+      case STORED:
+        hold >>>= bits & 7;
+        bits -= bits & 7;
+        while (bits < 32) {
+          if (have === 0) break inf_leave;
+          have--;
+          hold += input[next++] << bits;
+          bits += 8;
+        }
+        if ((hold & 65535) !== (hold >>> 16 ^ 65535)) {
+          strm.msg = "invalid stored block lengths";
+          state.mode = BAD;
+          break;
+        }
+        state.length = hold & 65535;
+        hold = 0;
+        bits = 0;
+        state.mode = COPY_;
+        if (flush === 6) break inf_leave;
+      case COPY_:
+        state.mode = COPY;
+      case COPY:
+        copy = state.length;
+        if (copy) {
+          if (copy > have) copy = have;
+          if (copy > left) copy = left;
+          if (copy === 0) break inf_leave;
+          output.set(input.subarray(next, next + copy), put);
+          have -= copy;
+          next += copy;
+          left -= copy;
+          put += copy;
+          state.length -= copy;
+          break;
+        }
+        state.mode = TYPE;
+        break;
+      case TABLE:
+        while (bits < 14) {
+          if (have === 0) break inf_leave;
+          have--;
+          hold += input[next++] << bits;
+          bits += 8;
+        }
+        state.nlen = (hold & 31) + 257;
+        hold >>>= 5;
+        bits -= 5;
+        state.ndist = (hold & 31) + 1;
+        hold >>>= 5;
+        bits -= 5;
+        state.ncode = (hold & 15) + 4;
+        hold >>>= 4;
+        bits -= 4;
+        if (state.nlen > 286 || state.ndist > 30) {
+          strm.msg = "too many length or distance symbols";
+          state.mode = BAD;
+          break;
+        }
+        state.have = 0;
+        state.mode = LENLENS;
+      case LENLENS:
+        while (state.have < state.ncode) {
+          while (bits < 3) {
+            if (have === 0) break inf_leave;
+            have--;
+            hold += input[next++] << bits;
+            bits += 8;
+          }
+          state.lens[order[state.have++]] = hold & 7;
+          hold >>>= 3;
+          bits -= 3;
+        }
+        while (state.have < 19) state.lens[order[state.have++]] = 0;
+        state.lencode = state.lendyn;
+        state.lenbits = 7;
+        opts = { bits: state.lenbits };
+        ret = inflate_table(CODES, state.lens, 0, 19, state.lencode, 0, state.work, opts);
+        state.lenbits = opts.bits;
+        if (ret) {
+          strm.msg = "invalid code lengths set";
+          state.mode = BAD;
+          break;
+        }
+        state.have = 0;
+        state.mode = CODELENS;
+      case CODELENS:
+        while (state.have < state.nlen + state.ndist) {
+          for (; ; ) {
+            here = state.lencode[hold & (1 << state.lenbits) - 1];
+            here_bits = here >>> 24;
+            here_op = here >>> 16 & 255;
+            here_val = here & 65535;
+            if (here_bits <= bits) break;
+            if (have === 0) break inf_leave;
+            have--;
+            hold += input[next++] << bits;
+            bits += 8;
+          }
+          if (here_val < 16) {
+            hold >>>= here_bits;
+            bits -= here_bits;
+            state.lens[state.have++] = here_val;
+          } else {
+            if (here_val === 16) {
+              n = here_bits + 2;
+              while (bits < n) {
+                if (have === 0) break inf_leave;
+                have--;
+                hold += input[next++] << bits;
+                bits += 8;
+              }
+              hold >>>= here_bits;
+              bits -= here_bits;
+              if (state.have === 0) {
+                strm.msg = "invalid bit length repeat";
+                state.mode = BAD;
+                break;
+              }
+              len = state.lens[state.have - 1];
+              copy = 3 + (hold & 3);
+              hold >>>= 2;
+              bits -= 2;
+            } else if (here_val === 17) {
+              n = here_bits + 3;
+              while (bits < n) {
+                if (have === 0) break inf_leave;
+                have--;
+                hold += input[next++] << bits;
+                bits += 8;
+              }
+              hold >>>= here_bits;
+              bits -= here_bits;
+              len = 0;
+              copy = 3 + (hold & 7);
+              hold >>>= 3;
+              bits -= 3;
+            } else {
+              n = here_bits + 7;
+              while (bits < n) {
+                if (have === 0) break inf_leave;
+                have--;
+                hold += input[next++] << bits;
+                bits += 8;
+              }
+              hold >>>= here_bits;
+              bits -= here_bits;
+              len = 0;
+              copy = 11 + (hold & 127);
+              hold >>>= 7;
+              bits -= 7;
+            }
+            if (state.have + copy > state.nlen + state.ndist) {
+              strm.msg = "invalid bit length repeat";
+              state.mode = BAD;
+              break;
+            }
+            while (copy--) state.lens[state.have++] = len;
+          }
+        }
+        if (state.mode === BAD) break;
+        if (state.lens[256] === 0) {
+          strm.msg = "invalid code -- missing end-of-block";
+          state.mode = BAD;
+          break;
+        }
+        state.lenbits = 9;
+        opts = { bits: state.lenbits };
+        ret = inflate_table(LENS, state.lens, 0, state.nlen, state.lencode, 0, state.work, opts);
+        state.lenbits = opts.bits;
+        if (ret) {
+          strm.msg = "invalid literal/lengths set";
+          state.mode = BAD;
+          break;
+        }
+        state.distbits = 6;
+        state.distcode = state.distdyn;
+        opts = { bits: state.distbits };
+        ret = inflate_table(DISTS, state.lens, state.nlen, state.ndist, state.distcode, 0, state.work, opts);
+        state.distbits = opts.bits;
+        if (ret) {
+          strm.msg = "invalid distances set";
+          state.mode = BAD;
+          break;
+        }
+        state.mode = LEN_;
+        if (flush === 6) break inf_leave;
+      case LEN_:
+        state.mode = LEN;
+      case LEN:
+        if (have >= 6 && left >= 258) {
+          strm.next_out = put;
+          strm.avail_out = left;
+          strm.next_in = next;
+          strm.avail_in = have;
+          state.hold = hold;
+          state.bits = bits;
+          inflate_fast(strm, _out);
+          put = strm.next_out;
+          output = strm.output;
+          left = strm.avail_out;
+          next = strm.next_in;
+          input = strm.input;
+          have = strm.avail_in;
+          hold = state.hold;
+          bits = state.bits;
+          if (state.mode === TYPE) state.back = -1;
+          break;
+        }
+        state.back = 0;
+        for (; ; ) {
+          here = state.lencode[hold & (1 << state.lenbits) - 1];
+          here_bits = here >>> 24;
+          here_op = here >>> 16 & 255;
+          here_val = here & 65535;
+          if (here_bits <= bits) break;
+          if (have === 0) break inf_leave;
+          have--;
+          hold += input[next++] << bits;
+          bits += 8;
+        }
+        if (here_op && (here_op & 240) === 0) {
+          last_bits = here_bits;
+          last_op = here_op;
+          last_val = here_val;
+          for (; ; ) {
+            here = state.lencode[last_val + ((hold & (1 << last_bits + last_op) - 1) >> last_bits)];
+            here_bits = here >>> 24;
+            here_op = here >>> 16 & 255;
+            here_val = here & 65535;
+            if (last_bits + here_bits <= bits) break;
+            if (have === 0) break inf_leave;
+            have--;
+            hold += input[next++] << bits;
+            bits += 8;
+          }
+          hold >>>= last_bits;
+          bits -= last_bits;
+          state.back += last_bits;
+        }
+        hold >>>= here_bits;
+        bits -= here_bits;
+        state.back += here_bits;
+        state.length = here_val;
+        if (here_op === 0) {
+          state.mode = LIT;
+          break;
+        }
+        if (here_op & 32) {
+          state.back = -1;
+          state.mode = TYPE;
+          break;
+        }
+        if (here_op & 64) {
+          strm.msg = "invalid literal/length code";
+          state.mode = BAD;
+          break;
+        }
+        state.extra = here_op & 15;
+        state.mode = LENEXT;
+      case LENEXT:
+        if (state.extra) {
+          n = state.extra;
+          while (bits < n) {
+            if (have === 0) break inf_leave;
+            have--;
+            hold += input[next++] << bits;
+            bits += 8;
+          }
+          state.length += hold & (1 << state.extra) - 1;
+          hold >>>= state.extra;
+          bits -= state.extra;
+          state.back += state.extra;
+        }
+        state.was = state.length;
+        state.mode = DIST;
+      case DIST:
+        for (; ; ) {
+          here = state.distcode[hold & (1 << state.distbits) - 1];
+          here_bits = here >>> 24;
+          here_op = here >>> 16 & 255;
+          here_val = here & 65535;
+          if (here_bits <= bits) break;
+          if (have === 0) break inf_leave;
+          have--;
+          hold += input[next++] << bits;
+          bits += 8;
+        }
+        if ((here_op & 240) === 0) {
+          last_bits = here_bits;
+          last_op = here_op;
+          last_val = here_val;
+          for (; ; ) {
+            here = state.distcode[last_val + ((hold & (1 << last_bits + last_op) - 1) >> last_bits)];
+            here_bits = here >>> 24;
+            here_op = here >>> 16 & 255;
+            here_val = here & 65535;
+            if (last_bits + here_bits <= bits) break;
+            if (have === 0) break inf_leave;
+            have--;
+            hold += input[next++] << bits;
+            bits += 8;
+          }
+          hold >>>= last_bits;
+          bits -= last_bits;
+          state.back += last_bits;
+        }
+        hold >>>= here_bits;
+        bits -= here_bits;
+        state.back += here_bits;
+        if (here_op & 64) {
+          strm.msg = "invalid distance code";
+          state.mode = BAD;
+          break;
+        }
+        state.offset = here_val;
+        state.extra = here_op & 15;
+        state.mode = DISTEXT;
+      case DISTEXT:
+        if (state.extra) {
+          n = state.extra;
+          while (bits < n) {
+            if (have === 0) break inf_leave;
+            have--;
+            hold += input[next++] << bits;
+            bits += 8;
+          }
+          state.offset += hold & (1 << state.extra) - 1;
+          hold >>>= state.extra;
+          bits -= state.extra;
+          state.back += state.extra;
+        }
+        if (state.offset > state.dmax) {
+          strm.msg = "invalid distance too far back";
+          state.mode = BAD;
+          break;
+        }
+        state.mode = MATCH;
+      case MATCH:
+        if (left === 0) break inf_leave;
+        copy = _out - left;
+        if (state.offset > copy) {
+          copy = state.offset - copy;
+          if (copy > state.whave) {
+            if (state.sane) {
+              strm.msg = "invalid distance too far back";
+              state.mode = BAD;
+              break;
+            }
+          }
+          if (copy > state.wnext) {
+            copy -= state.wnext;
+            from = state.wsize - copy;
+          } else from = state.wnext - copy;
+          if (copy > state.length) copy = state.length;
+          from_source = state.window;
+        } else {
+          from_source = output;
+          from = put - state.offset;
+          copy = state.length;
+        }
+        if (copy > left) copy = left;
+        left -= copy;
+        state.length -= copy;
+        do
+          output[put++] = from_source[from++];
+        while (--copy);
+        if (state.length === 0) state.mode = LEN;
+        break;
+      case LIT:
+        if (left === 0) break inf_leave;
+        output[put++] = state.length;
+        left--;
+        state.mode = LEN;
+        break;
+      case CHECK:
+        if (state.wrap) {
+          while (bits < 32) {
+            if (have === 0) break inf_leave;
+            have--;
+            hold |= input[next++] << bits;
+            bits += 8;
+          }
+          _out -= left;
+          strm.total_out += _out;
+          state.total += _out;
+          if (state.wrap & 4 && _out) strm.adler = state.check = state.flags ? crc32(state.check, output, _out, put - _out) : adler32(state.check, output, _out, put - _out);
+          _out = left;
+          if (state.wrap & 4 && (state.flags ? hold : zswap32(hold)) !== state.check) {
+            strm.msg = "incorrect data check";
+            state.mode = BAD;
+            break;
+          }
+          hold = 0;
+          bits = 0;
+        }
+        state.mode = LENGTH;
+      case LENGTH:
+        if (state.wrap && state.flags) {
+          while (bits < 32) {
+            if (have === 0) break inf_leave;
+            have--;
+            hold += input[next++] << bits;
+            bits += 8;
+          }
+          if (state.wrap & 4 && hold !== (state.total & 4294967295)) {
+            strm.msg = "incorrect length check";
+            state.mode = BAD;
+            break;
+          }
+          hold = 0;
+          bits = 0;
+        }
+        state.mode = DONE;
+      case DONE:
+        ret = 1;
+        break inf_leave;
+      case BAD:
+        ret = -3;
+        break inf_leave;
+      case MEM:
+        return -4;
+      case SYNC:
+      default:
+        return -2;
+    }
+    strm.next_out = put;
+    strm.avail_out = left;
+    strm.next_in = next;
+    strm.avail_in = have;
+    state.hold = hold;
+    state.bits = bits;
+    if (state.wsize || _out !== strm.avail_out && state.mode < BAD && (state.mode < CHECK || flush !== 4)) {
+      if (updatewindow(strm, strm.output, strm.next_out, _out - strm.avail_out)) {
+        state.mode = MEM;
+        return -4;
+      }
+    }
+    _in -= strm.avail_in;
+    _out -= strm.avail_out;
+    strm.total_in += _in;
+    strm.total_out += _out;
+    state.total += _out;
+    if (state.wrap & 4 && _out) strm.adler = state.check = state.flags ? crc32(state.check, output, _out, strm.next_out - _out) : adler32(state.check, output, _out, strm.next_out - _out);
+    strm.data_type = state.bits + (state.last ? 64 : 0) + (state.mode === TYPE ? 128 : 0) + (state.mode === LEN_ || state.mode === COPY_ ? 256 : 0);
+    if ((_in === 0 && _out === 0 || flush === 4) && ret === 0) ret = -5;
+    return ret;
+  };
+  var inflateEnd = (strm) => {
+    if (inflateStateCheck(strm)) return -2;
+    let state = strm.state;
+    if (state.window) state.window = null;
+    strm.state = null;
+    return 0;
+  };
+  var inflateSetDictionary = (strm, dictionary) => {
+    const dictLength = dictionary.length;
+    let state;
+    let dictid;
+    let ret;
+    if (inflateStateCheck(strm)) return -2;
+    state = strm.state;
+    if (state.wrap !== 0 && state.mode !== DICT) return -2;
+    if (state.mode === DICT) {
+      dictid = 1;
+      dictid = adler32(dictid, dictionary, dictLength, 0);
+      if (dictid !== state.check) return -3;
+    }
+    ret = updatewindow(strm, dictionary, dictLength, dictLength);
+    if (ret) {
+      state.mode = MEM;
+      return -4;
+    }
+    state.havedict = 1;
+    return 0;
+  };
+  var ZStream = class {
+    constructor() {
+      this.input = null;
+      this.next_in = 0;
+      this.avail_in = 0;
+      this.total_in = 0;
+      this.output = null;
+      this.next_out = 0;
+      this.avail_out = 0;
+      this.total_out = 0;
+      this.msg = "";
+      this.state = null;
+      this.data_type = 2;
+      this.adler = 0;
+    }
+  };
+  var flattenChunks = (chunks) => {
+    const result = new Uint8Array(chunks.reduce((len, chunk) => len + chunk.length, 0));
+    let pos = 0;
+    for (const chunk of chunks) {
+      result.set(chunk, pos);
+      pos += chunk.length;
+    }
+    return result;
+  };
+  var toString = Object.prototype.toString;
+  var defaultOptions = {
+    chunkSize: 1024 * 64,
+    windowBits: 15,
+    raw: false,
+    dictionary: /* @__PURE__ */ new Uint8Array(0)
+  };
+  var Inflate = class {
+    /**
+    * Creates a new inflator instance with the specified params. Throws an
+    * exception on bad params. See {@link InflateOptions} for the list of
+    * supported options.
+    *
+    * By default, when no options are set, the deflate/gzip data format is
+    * autodetected via the wrapper header.
+    *
+    * @example
+    * ```javascript
+    * import { Inflate } from 'pako'
+    *
+    * const chunk1 = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9])
+    * const chunk2 = new Uint8Array([10, 11, 12, 13, 14, 15, 16, 17, 18, 19])
+    *
+    * const inflate = new Inflate({ level: 3 })
+    *
+    * inflate.push(chunk1, false)
+    * inflate.push(chunk2, true)  // true -> last chunk
+    *
+    * if (inflate.err) throw new Error(inflate.err)
+    *
+    * console.log(inflate.result)
+    * ```
+    */
+    constructor(options = {}) {
+      __publicField(this, "options");
+      /**
+      * Error code after inflate finishes. {@link Z_OK} on success.
+      * Should be checked when broken data is possible.
+      */
+      __publicField(this, "err");
+      /** Error message, if {@link Inflate.err} is not {@link Z_OK}. */
+      __publicField(this, "msg");
+      /**
+      * `true` once the compressed stream has ended. A stream may end before the
+      * caller's data does (trailing bytes), so check this to know when to stop
+      * pushing - further {@link Inflate.push} calls are no-ops.
+      */
+      __publicField(this, "ended");
+      __publicField(this, "started");
+      /**
+      * Chunks of output data, if {@link Inflate.onData} not overridden.
+      * @internal
+      */
+      __publicField(this, "chunks");
+      __publicField(this, "strm");
+      /**
+      * Uncompressed result, generated by default {@link Inflate.onData}
+      * and {@link Inflate.onEnd} handlers. Filled after you push last chunk
+      * (call {@link Inflate.push} with {@link Z_FINISH} / `true` param).
+      */
+      __publicField(this, "result");
+      this.options = Object.assign({}, defaultOptions, options);
+      const opt = this.options;
+      if (opt.raw && opt.windowBits >= 0 && opt.windowBits < 16) {
+        opt.windowBits = -opt.windowBits;
+        if (opt.windowBits === 0) opt.windowBits = -15;
+      }
+      if (opt.windowBits >= 0 && opt.windowBits < 16 && !options.windowBits) opt.windowBits += 32;
+      if (opt.windowBits > 15 && opt.windowBits < 48) {
+        if ((opt.windowBits & 15) === 0) opt.windowBits |= 15;
+      }
+      this.err = 0;
+      this.msg = "";
+      this.ended = false;
+      this.started = false;
+      this.chunks = [];
+      this.result = /* @__PURE__ */ new Uint8Array(0);
+      this.strm = new ZStream();
+      this.strm.avail_out = 0;
+      let status = inflateInit2(this.strm, opt.windowBits);
+      if (status !== 0) throw new Error(messages_default[status]);
+      if (toString.call(opt.dictionary) === "[object ArrayBuffer]") opt.dictionary = new Uint8Array(opt.dictionary);
+      const dictionary = opt.dictionary;
+      if (opt.raw && dictionary.length) {
+        status = inflateSetDictionary(this.strm, dictionary);
+        if (status !== 0) throw new Error(messages_default[status]);
+      }
+    }
+    /**
+    * Sends input data to the inflate pipe, generating {@link Inflate.onData} calls
+    * with new output chunks. Returns `true` on success. If end of stream is
+    * detected, {@link Inflate.onEnd} will be called.
+    *
+    * `flush_mode` is not needed for normal operation, because end of stream
+    * is detected automatically. Pass {@link Z_SYNC_FLUSH} to force the decoder
+    * to emit all currently available output — handy when you need to decode
+    * data frame-by-frame from a long-running stream.
+    *
+    * On failure, calls {@link Inflate.onEnd} with the error code and returns false.
+    *
+    * Once the stream has ended (a compressed stream may end before your data
+    * does), further `push` calls are no-ops and return whether the decode
+    * finished successfully. The final outcome is in {@link Inflate.result},
+    * {@link Inflate.err} and {@link Inflate.msg}.
+    *
+    * @param flush_mode 0..6 for corresponding {@link Z_NO_FLUSH}..{@link Z_TREES}
+    *   flush modes. See constants. Skipped or `false` means {@link Z_NO_FLUSH},
+    *   `true` means {@link Z_FINISH}.
+    *
+    * @example
+    * ```javascript
+    * push(chunk, false) // push one of data chunks
+    * ...
+    * push(chunk, true)  // push last chunk
+    * ```
+    */
+    push(data, flush_mode = false) {
+      const strm = this.strm;
+      const chunkSize = this.options.chunkSize;
+      let status;
+      let _flush_mode;
+      let last_avail_out;
+      if (this.ended) return this.err === 0;
+      if (typeof flush_mode === "number") _flush_mode = flush_mode;
+      else _flush_mode = flush_mode === true ? 4 : 0;
+      if (toString.call(data) === "[object ArrayBuffer]") strm.input = new Uint8Array(data);
+      else strm.input = data;
+      strm.next_in = 0;
+      strm.avail_in = strm.input.length;
+      if (!this.started) {
+        this.started = true;
+        this.onStart(strm);
+      }
+      for (; ; ) {
+        if (strm.avail_out === 0) {
+          strm.output = new Uint8Array(chunkSize);
+          strm.next_out = 0;
+          strm.avail_out = chunkSize;
+        }
+        status = inflate$1(strm, _flush_mode);
+        if (status === 2) {
+          const dictionary = this.options.dictionary;
+          if (dictionary.length) {
+            status = inflateSetDictionary(strm, dictionary);
+            if (status === 0) status = inflate$1(strm, _flush_mode);
+            else if (status === -3) status = 2;
+          }
+        }
+        while (strm.avail_in > 0 && status === 1 && strm.state.wrap & 2 && strm.state.flags !== 0 && strm.input[strm.next_in] !== 0) {
+          inflateReset(strm);
+          status = inflate$1(strm, _flush_mode);
+        }
+        if (status === -2 || status === -3 || status === 2 || status === -4) break;
+        last_avail_out = strm.avail_out;
+        if (strm.next_out) {
+          if (strm.avail_out === 0 || status === 1 || _flush_mode > 0) {
+            this.onData(strm.output.length === strm.next_out ? strm.output : strm.output.subarray(0, strm.next_out));
+            strm.avail_out = 0;
+            strm.next_out = 0;
+          }
+        }
+        if ((status === 0 || status === -5) && last_avail_out === 0) continue;
+        if (status === 1) {
+          status = inflateEnd(this.strm);
+          break;
+        }
+        if (strm.avail_in === 0) {
+          if (_flush_mode === 4) {
+            status = inflateEnd(this.strm);
+            if (status === 0) status = -5;
+            break;
+          }
+          return true;
+        }
+      }
+      this.err = status;
+      this.msg = strm.msg || messages_default[status];
+      this.ended = true;
+      this.onEnd(status);
+      return status === 0;
+    }
+    /**
+    * Called once before the first low-level inflate call.
+    *
+    * Override this handler to attach low-level inflate state, for example to read
+    * gzip header metadata:
+    *
+    * ```javascript
+    * import { Inflate, GZheader, zlibInflateGetHeader } from 'pako'
+    *
+    * const inflator = new Inflate()
+    *
+    * inflator.onStart = function (strm) {
+    *   this.header = new GZheader()
+    *   zlibInflateGetHeader(strm, this.header)
+    * }
+    *
+    * inflator.push(data, true)
+    * console.log(inflator.header.name)
+    * ```
+    */
+    onStart(strm) {
+    }
+    /**
+    * By default, stores data blocks in the {@link Inflate.chunks} property and glues
+    * them in {@link Inflate.onEnd}. Override this handler if you need another behaviour.
+    *
+    * @param chunk output data.
+    */
+    onData(chunk) {
+      this.chunks.push(chunk);
+    }
+    /**
+    * Called after you tell inflate that the input stream is
+    * complete ({@link Z_FINISH}). By default, joins the collected {@link Inflate.chunks},
+    * frees memory and fills the {@link Inflate.result} property.
+    *
+    * @param status inflate status. {@link Z_OK} on success, other if not.
+    */
+    onEnd(status) {
+      if (status === 0) this.result = flattenChunks(this.chunks);
+      this.chunks = [];
+    }
+  };
+  function inflate(input, options = {}) {
+    const inflator = new Inflate(options);
+    inflator.push(input, true);
+    if (inflator.err) throw new Error(inflator.msg);
+    const result = inflator.result;
+    return options.toText ? new TextDecoder().decode(result) : result;
+  }
+
   // src/musicSdk/kw/decodeLyric.js
-  var { inflate } = require_pako();
   var handleInflate = (data) => new Promise((resolve, reject) => {
     resolve(Buffer.from(inflate(data)));
   });
@@ -7875,58 +10023,6 @@ ${lrcs}`;
   var existTimeExp = /\[\d{1,2}:.*\d{1,4}]/;
   var lyricxTag = /^<-?\d+,-?\d+>/;
   var lyric_default = {
-    /* sortLrcArr(arr) {
-        const lrcSet = new Set()
-        let lrc = []
-        let lrcT = []
-        let markIndex = []
-        for (const item of arr) {
-          if (lrcSet.has(item.time)) {
-            if (lrc.length < 2) continue
-            const index = lrc.findIndex(l => l.time == item.time)
-            markIndex.push(index)
-            if (index == lrc.length - 1) {
-              lrcT.push({ ...lrc[index], time: item.time })
-              lrc.push(item)
-            } else {
-              lrcT.push({ ...lrc[index], time: lrc[index + 1].time })
-              if (item.text) {
-                //   const lastIndex = lrc.length - 1
-                //   markIndex.push(lastIndex)
-                //   lrcT.push({ ...lrc[lastIndex], time: lrc[lastIndex - 1].time })
-                lrc.push(item)
-              }
-            }
-          } else {
-            lrc.push(item)
-            lrcSet.add(item.time)
-          }
-        }
-    
-        // console.log(markIndex)
-        markIndex = Array.from(new Set(markIndex))
-        for (let index = markIndex.length - 1; index >= 0; index--) {
-          lrc.splice(markIndex[index], 1)
-        }
-    
-        // if (lrcT.length) {
-        //   if (lrc.length * 0.4 < lrcT.length) { // 翻译数量需大于歌词数量的0.4倍，否则认为没有翻译
-        //     const tItem = lrc.pop()
-        //     tItem.time = lrc[lrc.length - 1].time
-        //     lrcT.push(tItem)
-        //   } else {
-        //     lrc = arr
-        //     lrcT = []
-        //   }
-        // }
-    
-        console.log(lrc, lrcT)
-    
-        return {
-          lrc,
-          lrcT,
-        }
-      }, */
     sortLrcArr(arr) {
       const lrcSet = /* @__PURE__ */ new Set();
       let lrc = [];
@@ -8016,7 +10112,7 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
         let lrcInfo;
         try {
           lrcInfo = this.parseLrc(lrcText);
-        } catch (err2) {
+        } catch (err) {
           return Promise.reject(new Error("Get lyric failed"));
         }
         if (lrcInfo.tlyric) lrcInfo.tlyric = lrcInfo.tlyric.replace(lrcTools.rxps.wordTimeAll, "");
@@ -8202,4235 +10298,6 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
   // src/musicSdk/kg/songList.js
   var import_infSign_min = __toESM(require_infSign_min(), 1);
 
-  // node_modules/pako/dist/pako.esm.mjs
-  var Z_FIXED$1 = 4;
-  var Z_BINARY = 0;
-  var Z_TEXT = 1;
-  var Z_UNKNOWN$1 = 2;
-  function zero$1(buf) {
-    let len = buf.length;
-    while (--len >= 0) {
-      buf[len] = 0;
-    }
-  }
-  var STORED_BLOCK = 0;
-  var STATIC_TREES = 1;
-  var DYN_TREES = 2;
-  var MIN_MATCH$1 = 3;
-  var MAX_MATCH$1 = 258;
-  var LENGTH_CODES$1 = 29;
-  var LITERALS$1 = 256;
-  var L_CODES$1 = LITERALS$1 + 1 + LENGTH_CODES$1;
-  var D_CODES$1 = 30;
-  var BL_CODES$1 = 19;
-  var HEAP_SIZE$1 = 2 * L_CODES$1 + 1;
-  var MAX_BITS$1 = 15;
-  var Buf_size = 16;
-  var MAX_BL_BITS = 7;
-  var END_BLOCK = 256;
-  var REP_3_6 = 16;
-  var REPZ_3_10 = 17;
-  var REPZ_11_138 = 18;
-  var extra_lbits = (
-    /* extra bits for each length code */
-    new Uint8Array([0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0])
-  );
-  var extra_dbits = (
-    /* extra bits for each distance code */
-    new Uint8Array([0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13])
-  );
-  var extra_blbits = (
-    /* extra bits for each bit length code */
-    new Uint8Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 3, 7])
-  );
-  var bl_order = new Uint8Array([16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]);
-  var DIST_CODE_LEN = 512;
-  var static_ltree = new Array((L_CODES$1 + 2) * 2);
-  zero$1(static_ltree);
-  var static_dtree = new Array(D_CODES$1 * 2);
-  zero$1(static_dtree);
-  var _dist_code = new Array(DIST_CODE_LEN);
-  zero$1(_dist_code);
-  var _length_code = new Array(MAX_MATCH$1 - MIN_MATCH$1 + 1);
-  zero$1(_length_code);
-  var base_length = new Array(LENGTH_CODES$1);
-  zero$1(base_length);
-  var base_dist = new Array(D_CODES$1);
-  zero$1(base_dist);
-  function StaticTreeDesc(static_tree, extra_bits, extra_base, elems, max_length) {
-    this.static_tree = static_tree;
-    this.extra_bits = extra_bits;
-    this.extra_base = extra_base;
-    this.elems = elems;
-    this.max_length = max_length;
-    this.has_stree = static_tree && static_tree.length;
-  }
-  var static_l_desc;
-  var static_d_desc;
-  var static_bl_desc;
-  function TreeDesc(dyn_tree, stat_desc) {
-    this.dyn_tree = dyn_tree;
-    this.max_code = 0;
-    this.stat_desc = stat_desc;
-  }
-  var d_code = (dist) => {
-    return dist < 256 ? _dist_code[dist] : _dist_code[256 + (dist >>> 7)];
-  };
-  var put_short = (s, w) => {
-    s.pending_buf[s.pending++] = w & 255;
-    s.pending_buf[s.pending++] = w >>> 8 & 255;
-  };
-  var send_bits = (s, value, length) => {
-    if (s.bi_valid > Buf_size - length) {
-      s.bi_buf |= value << s.bi_valid & 65535;
-      put_short(s, s.bi_buf);
-      s.bi_buf = value >> Buf_size - s.bi_valid;
-      s.bi_valid += length - Buf_size;
-    } else {
-      s.bi_buf |= value << s.bi_valid & 65535;
-      s.bi_valid += length;
-    }
-  };
-  var send_code = (s, c, tree) => {
-    send_bits(
-      s,
-      tree[c * 2],
-      tree[c * 2 + 1]
-      /*.Len*/
-    );
-  };
-  var bi_reverse = (code, len) => {
-    let res = 0;
-    do {
-      res |= code & 1;
-      code >>>= 1;
-      res <<= 1;
-    } while (--len > 0);
-    return res >>> 1;
-  };
-  var bi_flush = (s) => {
-    if (s.bi_valid === 16) {
-      put_short(s, s.bi_buf);
-      s.bi_buf = 0;
-      s.bi_valid = 0;
-    } else if (s.bi_valid >= 8) {
-      s.pending_buf[s.pending++] = s.bi_buf & 255;
-      s.bi_buf >>= 8;
-      s.bi_valid -= 8;
-    }
-  };
-  var gen_bitlen = (s, desc) => {
-    const tree = desc.dyn_tree;
-    const max_code = desc.max_code;
-    const stree = desc.stat_desc.static_tree;
-    const has_stree = desc.stat_desc.has_stree;
-    const extra = desc.stat_desc.extra_bits;
-    const base = desc.stat_desc.extra_base;
-    const max_length = desc.stat_desc.max_length;
-    let h;
-    let n, m;
-    let bits;
-    let xbits;
-    let f;
-    let overflow = 0;
-    for (bits = 0; bits <= MAX_BITS$1; bits++) {
-      s.bl_count[bits] = 0;
-    }
-    tree[s.heap[s.heap_max] * 2 + 1] = 0;
-    for (h = s.heap_max + 1; h < HEAP_SIZE$1; h++) {
-      n = s.heap[h];
-      bits = tree[tree[n * 2 + 1] * 2 + 1] + 1;
-      if (bits > max_length) {
-        bits = max_length;
-        overflow++;
-      }
-      tree[n * 2 + 1] = bits;
-      if (n > max_code) {
-        continue;
-      }
-      s.bl_count[bits]++;
-      xbits = 0;
-      if (n >= base) {
-        xbits = extra[n - base];
-      }
-      f = tree[n * 2];
-      s.opt_len += f * (bits + xbits);
-      if (has_stree) {
-        s.static_len += f * (stree[n * 2 + 1] + xbits);
-      }
-    }
-    if (overflow === 0) {
-      return;
-    }
-    do {
-      bits = max_length - 1;
-      while (s.bl_count[bits] === 0) {
-        bits--;
-      }
-      s.bl_count[bits]--;
-      s.bl_count[bits + 1] += 2;
-      s.bl_count[max_length]--;
-      overflow -= 2;
-    } while (overflow > 0);
-    for (bits = max_length; bits !== 0; bits--) {
-      n = s.bl_count[bits];
-      while (n !== 0) {
-        m = s.heap[--h];
-        if (m > max_code) {
-          continue;
-        }
-        if (tree[m * 2 + 1] !== bits) {
-          s.opt_len += (bits - tree[m * 2 + 1]) * tree[m * 2];
-          tree[m * 2 + 1] = bits;
-        }
-        n--;
-      }
-    }
-  };
-  var gen_codes = (tree, max_code, bl_count) => {
-    const next_code = new Array(MAX_BITS$1 + 1);
-    let code = 0;
-    let bits;
-    let n;
-    for (bits = 1; bits <= MAX_BITS$1; bits++) {
-      code = code + bl_count[bits - 1] << 1;
-      next_code[bits] = code;
-    }
-    for (n = 0; n <= max_code; n++) {
-      let len = tree[n * 2 + 1];
-      if (len === 0) {
-        continue;
-      }
-      tree[n * 2] = bi_reverse(next_code[len]++, len);
-    }
-  };
-  var tr_static_init = () => {
-    let n;
-    let bits;
-    let length;
-    let code;
-    let dist;
-    const bl_count = new Array(MAX_BITS$1 + 1);
-    length = 0;
-    for (code = 0; code < LENGTH_CODES$1 - 1; code++) {
-      base_length[code] = length;
-      for (n = 0; n < 1 << extra_lbits[code]; n++) {
-        _length_code[length++] = code;
-      }
-    }
-    _length_code[length - 1] = code;
-    dist = 0;
-    for (code = 0; code < 16; code++) {
-      base_dist[code] = dist;
-      for (n = 0; n < 1 << extra_dbits[code]; n++) {
-        _dist_code[dist++] = code;
-      }
-    }
-    dist >>= 7;
-    for (; code < D_CODES$1; code++) {
-      base_dist[code] = dist << 7;
-      for (n = 0; n < 1 << extra_dbits[code] - 7; n++) {
-        _dist_code[256 + dist++] = code;
-      }
-    }
-    for (bits = 0; bits <= MAX_BITS$1; bits++) {
-      bl_count[bits] = 0;
-    }
-    n = 0;
-    while (n <= 143) {
-      static_ltree[n * 2 + 1] = 8;
-      n++;
-      bl_count[8]++;
-    }
-    while (n <= 255) {
-      static_ltree[n * 2 + 1] = 9;
-      n++;
-      bl_count[9]++;
-    }
-    while (n <= 279) {
-      static_ltree[n * 2 + 1] = 7;
-      n++;
-      bl_count[7]++;
-    }
-    while (n <= 287) {
-      static_ltree[n * 2 + 1] = 8;
-      n++;
-      bl_count[8]++;
-    }
-    gen_codes(static_ltree, L_CODES$1 + 1, bl_count);
-    for (n = 0; n < D_CODES$1; n++) {
-      static_dtree[n * 2 + 1] = 5;
-      static_dtree[n * 2] = bi_reverse(n, 5);
-    }
-    static_l_desc = new StaticTreeDesc(static_ltree, extra_lbits, LITERALS$1 + 1, L_CODES$1, MAX_BITS$1);
-    static_d_desc = new StaticTreeDesc(static_dtree, extra_dbits, 0, D_CODES$1, MAX_BITS$1);
-    static_bl_desc = new StaticTreeDesc(new Array(0), extra_blbits, 0, BL_CODES$1, MAX_BL_BITS);
-  };
-  var init_block = (s) => {
-    let n;
-    for (n = 0; n < L_CODES$1; n++) {
-      s.dyn_ltree[n * 2] = 0;
-    }
-    for (n = 0; n < D_CODES$1; n++) {
-      s.dyn_dtree[n * 2] = 0;
-    }
-    for (n = 0; n < BL_CODES$1; n++) {
-      s.bl_tree[n * 2] = 0;
-    }
-    s.dyn_ltree[END_BLOCK * 2] = 1;
-    s.opt_len = s.static_len = 0;
-    s.sym_next = s.matches = 0;
-  };
-  var bi_windup = (s) => {
-    if (s.bi_valid > 8) {
-      put_short(s, s.bi_buf);
-    } else if (s.bi_valid > 0) {
-      s.pending_buf[s.pending++] = s.bi_buf;
-    }
-    s.bi_buf = 0;
-    s.bi_valid = 0;
-  };
-  var smaller = (tree, n, m, depth) => {
-    const _n2 = n * 2;
-    const _m2 = m * 2;
-    return tree[_n2] < tree[_m2] || tree[_n2] === tree[_m2] && depth[n] <= depth[m];
-  };
-  var pqdownheap = (s, tree, k) => {
-    const v = s.heap[k];
-    let j = k << 1;
-    while (j <= s.heap_len) {
-      if (j < s.heap_len && smaller(tree, s.heap[j + 1], s.heap[j], s.depth)) {
-        j++;
-      }
-      if (smaller(tree, v, s.heap[j], s.depth)) {
-        break;
-      }
-      s.heap[k] = s.heap[j];
-      k = j;
-      j <<= 1;
-    }
-    s.heap[k] = v;
-  };
-  var compress_block = (s, ltree, dtree) => {
-    let dist;
-    let lc;
-    let sx = 0;
-    let code;
-    let extra;
-    if (s.sym_next !== 0) {
-      do {
-        dist = s.pending_buf[s.sym_buf + sx++] & 255;
-        dist += (s.pending_buf[s.sym_buf + sx++] & 255) << 8;
-        lc = s.pending_buf[s.sym_buf + sx++];
-        if (dist === 0) {
-          send_code(s, lc, ltree);
-        } else {
-          code = _length_code[lc];
-          send_code(s, code + LITERALS$1 + 1, ltree);
-          extra = extra_lbits[code];
-          if (extra !== 0) {
-            lc -= base_length[code];
-            send_bits(s, lc, extra);
-          }
-          dist--;
-          code = d_code(dist);
-          send_code(s, code, dtree);
-          extra = extra_dbits[code];
-          if (extra !== 0) {
-            dist -= base_dist[code];
-            send_bits(s, dist, extra);
-          }
-        }
-      } while (sx < s.sym_next);
-    }
-    send_code(s, END_BLOCK, ltree);
-  };
-  var build_tree = (s, desc) => {
-    const tree = desc.dyn_tree;
-    const stree = desc.stat_desc.static_tree;
-    const has_stree = desc.stat_desc.has_stree;
-    const elems = desc.stat_desc.elems;
-    let n, m;
-    let max_code = -1;
-    let node;
-    s.heap_len = 0;
-    s.heap_max = HEAP_SIZE$1;
-    for (n = 0; n < elems; n++) {
-      if (tree[n * 2] !== 0) {
-        s.heap[++s.heap_len] = max_code = n;
-        s.depth[n] = 0;
-      } else {
-        tree[n * 2 + 1] = 0;
-      }
-    }
-    while (s.heap_len < 2) {
-      node = s.heap[++s.heap_len] = max_code < 2 ? ++max_code : 0;
-      tree[node * 2] = 1;
-      s.depth[node] = 0;
-      s.opt_len--;
-      if (has_stree) {
-        s.static_len -= stree[node * 2 + 1];
-      }
-    }
-    desc.max_code = max_code;
-    for (n = s.heap_len >> 1; n >= 1; n--) {
-      pqdownheap(s, tree, n);
-    }
-    node = elems;
-    do {
-      n = s.heap[
-        1
-        /*SMALLEST*/
-      ];
-      s.heap[
-        1
-        /*SMALLEST*/
-      ] = s.heap[s.heap_len--];
-      pqdownheap(
-        s,
-        tree,
-        1
-        /*SMALLEST*/
-      );
-      m = s.heap[
-        1
-        /*SMALLEST*/
-      ];
-      s.heap[--s.heap_max] = n;
-      s.heap[--s.heap_max] = m;
-      tree[node * 2] = tree[n * 2] + tree[m * 2];
-      s.depth[node] = (s.depth[n] >= s.depth[m] ? s.depth[n] : s.depth[m]) + 1;
-      tree[n * 2 + 1] = tree[m * 2 + 1] = node;
-      s.heap[
-        1
-        /*SMALLEST*/
-      ] = node++;
-      pqdownheap(
-        s,
-        tree,
-        1
-        /*SMALLEST*/
-      );
-    } while (s.heap_len >= 2);
-    s.heap[--s.heap_max] = s.heap[
-      1
-      /*SMALLEST*/
-    ];
-    gen_bitlen(s, desc);
-    gen_codes(tree, max_code, s.bl_count);
-  };
-  var scan_tree = (s, tree, max_code) => {
-    let n;
-    let prevlen = -1;
-    let curlen;
-    let nextlen = tree[0 * 2 + 1];
-    let count = 0;
-    let max_count = 7;
-    let min_count = 4;
-    if (nextlen === 0) {
-      max_count = 138;
-      min_count = 3;
-    }
-    tree[(max_code + 1) * 2 + 1] = 65535;
-    for (n = 0; n <= max_code; n++) {
-      curlen = nextlen;
-      nextlen = tree[(n + 1) * 2 + 1];
-      if (++count < max_count && curlen === nextlen) {
-        continue;
-      } else if (count < min_count) {
-        s.bl_tree[curlen * 2] += count;
-      } else if (curlen !== 0) {
-        if (curlen !== prevlen) {
-          s.bl_tree[curlen * 2]++;
-        }
-        s.bl_tree[REP_3_6 * 2]++;
-      } else if (count <= 10) {
-        s.bl_tree[REPZ_3_10 * 2]++;
-      } else {
-        s.bl_tree[REPZ_11_138 * 2]++;
-      }
-      count = 0;
-      prevlen = curlen;
-      if (nextlen === 0) {
-        max_count = 138;
-        min_count = 3;
-      } else if (curlen === nextlen) {
-        max_count = 6;
-        min_count = 3;
-      } else {
-        max_count = 7;
-        min_count = 4;
-      }
-    }
-  };
-  var send_tree = (s, tree, max_code) => {
-    let n;
-    let prevlen = -1;
-    let curlen;
-    let nextlen = tree[0 * 2 + 1];
-    let count = 0;
-    let max_count = 7;
-    let min_count = 4;
-    if (nextlen === 0) {
-      max_count = 138;
-      min_count = 3;
-    }
-    for (n = 0; n <= max_code; n++) {
-      curlen = nextlen;
-      nextlen = tree[(n + 1) * 2 + 1];
-      if (++count < max_count && curlen === nextlen) {
-        continue;
-      } else if (count < min_count) {
-        do {
-          send_code(s, curlen, s.bl_tree);
-        } while (--count !== 0);
-      } else if (curlen !== 0) {
-        if (curlen !== prevlen) {
-          send_code(s, curlen, s.bl_tree);
-          count--;
-        }
-        send_code(s, REP_3_6, s.bl_tree);
-        send_bits(s, count - 3, 2);
-      } else if (count <= 10) {
-        send_code(s, REPZ_3_10, s.bl_tree);
-        send_bits(s, count - 3, 3);
-      } else {
-        send_code(s, REPZ_11_138, s.bl_tree);
-        send_bits(s, count - 11, 7);
-      }
-      count = 0;
-      prevlen = curlen;
-      if (nextlen === 0) {
-        max_count = 138;
-        min_count = 3;
-      } else if (curlen === nextlen) {
-        max_count = 6;
-        min_count = 3;
-      } else {
-        max_count = 7;
-        min_count = 4;
-      }
-    }
-  };
-  var build_bl_tree = (s) => {
-    let max_blindex;
-    scan_tree(s, s.dyn_ltree, s.l_desc.max_code);
-    scan_tree(s, s.dyn_dtree, s.d_desc.max_code);
-    build_tree(s, s.bl_desc);
-    for (max_blindex = BL_CODES$1 - 1; max_blindex >= 3; max_blindex--) {
-      if (s.bl_tree[bl_order[max_blindex] * 2 + 1] !== 0) {
-        break;
-      }
-    }
-    s.opt_len += 3 * (max_blindex + 1) + 5 + 5 + 4;
-    return max_blindex;
-  };
-  var send_all_trees = (s, lcodes, dcodes, blcodes) => {
-    let rank2;
-    send_bits(s, lcodes - 257, 5);
-    send_bits(s, dcodes - 1, 5);
-    send_bits(s, blcodes - 4, 4);
-    for (rank2 = 0; rank2 < blcodes; rank2++) {
-      send_bits(s, s.bl_tree[bl_order[rank2] * 2 + 1], 3);
-    }
-    send_tree(s, s.dyn_ltree, lcodes - 1);
-    send_tree(s, s.dyn_dtree, dcodes - 1);
-  };
-  var detect_data_type = (s) => {
-    let block_mask = 4093624447;
-    let n;
-    for (n = 0; n <= 31; n++, block_mask >>>= 1) {
-      if (block_mask & 1 && s.dyn_ltree[n * 2] !== 0) {
-        return Z_BINARY;
-      }
-    }
-    if (s.dyn_ltree[9 * 2] !== 0 || s.dyn_ltree[10 * 2] !== 0 || s.dyn_ltree[13 * 2] !== 0) {
-      return Z_TEXT;
-    }
-    for (n = 32; n < LITERALS$1; n++) {
-      if (s.dyn_ltree[n * 2] !== 0) {
-        return Z_TEXT;
-      }
-    }
-    return Z_BINARY;
-  };
-  var static_init_done = false;
-  var _tr_init$1 = (s) => {
-    if (!static_init_done) {
-      tr_static_init();
-      static_init_done = true;
-    }
-    s.l_desc = new TreeDesc(s.dyn_ltree, static_l_desc);
-    s.d_desc = new TreeDesc(s.dyn_dtree, static_d_desc);
-    s.bl_desc = new TreeDesc(s.bl_tree, static_bl_desc);
-    s.bi_buf = 0;
-    s.bi_valid = 0;
-    init_block(s);
-  };
-  var _tr_stored_block$1 = (s, buf, stored_len, last) => {
-    send_bits(s, (STORED_BLOCK << 1) + (last ? 1 : 0), 3);
-    bi_windup(s);
-    put_short(s, stored_len);
-    put_short(s, ~stored_len);
-    if (stored_len) {
-      s.pending_buf.set(s.window.subarray(buf, buf + stored_len), s.pending);
-    }
-    s.pending += stored_len;
-  };
-  var _tr_align$1 = (s) => {
-    send_bits(s, STATIC_TREES << 1, 3);
-    send_code(s, END_BLOCK, static_ltree);
-    bi_flush(s);
-  };
-  var _tr_flush_block$1 = (s, buf, stored_len, last) => {
-    let opt_lenb, static_lenb;
-    let max_blindex = 0;
-    if (s.level > 0) {
-      if (s.strm.data_type === Z_UNKNOWN$1) {
-        s.strm.data_type = detect_data_type(s);
-      }
-      build_tree(s, s.l_desc);
-      build_tree(s, s.d_desc);
-      max_blindex = build_bl_tree(s);
-      opt_lenb = s.opt_len + 3 + 7 >>> 3;
-      static_lenb = s.static_len + 3 + 7 >>> 3;
-      if (static_lenb <= opt_lenb) {
-        opt_lenb = static_lenb;
-      }
-    } else {
-      opt_lenb = static_lenb = stored_len + 5;
-    }
-    if (stored_len + 4 <= opt_lenb && buf !== -1) {
-      _tr_stored_block$1(s, buf, stored_len, last);
-    } else if (s.strategy === Z_FIXED$1 || static_lenb === opt_lenb) {
-      send_bits(s, (STATIC_TREES << 1) + (last ? 1 : 0), 3);
-      compress_block(s, static_ltree, static_dtree);
-    } else {
-      send_bits(s, (DYN_TREES << 1) + (last ? 1 : 0), 3);
-      send_all_trees(s, s.l_desc.max_code + 1, s.d_desc.max_code + 1, max_blindex + 1);
-      compress_block(s, s.dyn_ltree, s.dyn_dtree);
-    }
-    init_block(s);
-    if (last) {
-      bi_windup(s);
-    }
-  };
-  var _tr_tally$1 = (s, dist, lc) => {
-    s.pending_buf[s.sym_buf + s.sym_next++] = dist;
-    s.pending_buf[s.sym_buf + s.sym_next++] = dist >> 8;
-    s.pending_buf[s.sym_buf + s.sym_next++] = lc;
-    if (dist === 0) {
-      s.dyn_ltree[lc * 2]++;
-    } else {
-      s.matches++;
-      dist--;
-      s.dyn_ltree[(_length_code[lc] + LITERALS$1 + 1) * 2]++;
-      s.dyn_dtree[d_code(dist) * 2]++;
-    }
-    return s.sym_next === s.sym_end;
-  };
-  var _tr_init_1 = _tr_init$1;
-  var _tr_stored_block_1 = _tr_stored_block$1;
-  var _tr_flush_block_1 = _tr_flush_block$1;
-  var _tr_tally_1 = _tr_tally$1;
-  var _tr_align_1 = _tr_align$1;
-  var trees = {
-    _tr_init: _tr_init_1,
-    _tr_stored_block: _tr_stored_block_1,
-    _tr_flush_block: _tr_flush_block_1,
-    _tr_tally: _tr_tally_1,
-    _tr_align: _tr_align_1
-  };
-  var adler32 = (adler, buf, len, pos) => {
-    let s1 = adler & 65535 | 0, s2 = adler >>> 16 & 65535 | 0, n = 0;
-    while (len !== 0) {
-      n = len > 2e3 ? 2e3 : len;
-      len -= n;
-      do {
-        s1 = s1 + buf[pos++] | 0;
-        s2 = s2 + s1 | 0;
-      } while (--n);
-      s1 %= 65521;
-      s2 %= 65521;
-    }
-    return s1 | s2 << 16 | 0;
-  };
-  var adler32_1 = adler32;
-  var makeTable = () => {
-    let c, table = [];
-    for (var n = 0; n < 256; n++) {
-      c = n;
-      for (var k = 0; k < 8; k++) {
-        c = c & 1 ? 3988292384 ^ c >>> 1 : c >>> 1;
-      }
-      table[n] = c;
-    }
-    return table;
-  };
-  var crcTable = new Uint32Array(makeTable());
-  var crc32 = (crc, buf, len, pos) => {
-    const t = crcTable;
-    const end = pos + len;
-    crc ^= -1;
-    for (let i = pos; i < end; i++) {
-      crc = crc >>> 8 ^ t[(crc ^ buf[i]) & 255];
-    }
-    return crc ^ -1;
-  };
-  var crc32_1 = crc32;
-  var messages = {
-    2: "need dictionary",
-    /* Z_NEED_DICT       2  */
-    1: "stream end",
-    /* Z_STREAM_END      1  */
-    0: "",
-    /* Z_OK              0  */
-    "-1": "file error",
-    /* Z_ERRNO         (-1) */
-    "-2": "stream error",
-    /* Z_STREAM_ERROR  (-2) */
-    "-3": "data error",
-    /* Z_DATA_ERROR    (-3) */
-    "-4": "insufficient memory",
-    /* Z_MEM_ERROR     (-4) */
-    "-5": "buffer error",
-    /* Z_BUF_ERROR     (-5) */
-    "-6": "incompatible version"
-    /* Z_VERSION_ERROR (-6) */
-  };
-  var constants$2 = {
-    /* Allowed flush values; see deflate() and inflate() below for details */
-    Z_NO_FLUSH: 0,
-    Z_PARTIAL_FLUSH: 1,
-    Z_SYNC_FLUSH: 2,
-    Z_FULL_FLUSH: 3,
-    Z_FINISH: 4,
-    Z_BLOCK: 5,
-    Z_TREES: 6,
-    /* Return codes for the compression/decompression functions. Negative values
-    * are errors, positive values are used for special but normal events.
-    */
-    Z_OK: 0,
-    Z_STREAM_END: 1,
-    Z_NEED_DICT: 2,
-    Z_ERRNO: -1,
-    Z_STREAM_ERROR: -2,
-    Z_DATA_ERROR: -3,
-    Z_MEM_ERROR: -4,
-    Z_BUF_ERROR: -5,
-    //Z_VERSION_ERROR: -6,
-    /* compression levels */
-    Z_NO_COMPRESSION: 0,
-    Z_BEST_SPEED: 1,
-    Z_BEST_COMPRESSION: 9,
-    Z_DEFAULT_COMPRESSION: -1,
-    Z_FILTERED: 1,
-    Z_HUFFMAN_ONLY: 2,
-    Z_RLE: 3,
-    Z_FIXED: 4,
-    Z_DEFAULT_STRATEGY: 0,
-    /* Possible values of the data_type field (though see inflate()) */
-    Z_BINARY: 0,
-    Z_TEXT: 1,
-    //Z_ASCII:                1, // = Z_TEXT (deprecated)
-    Z_UNKNOWN: 2,
-    /* The deflate compression method */
-    Z_DEFLATED: 8
-    //Z_NULL:                 null // Use -1 or null inline, depending on var type
-  };
-  var { _tr_init, _tr_stored_block, _tr_flush_block, _tr_tally, _tr_align } = trees;
-  var {
-    Z_NO_FLUSH: Z_NO_FLUSH$2,
-    Z_PARTIAL_FLUSH,
-    Z_FULL_FLUSH: Z_FULL_FLUSH$1,
-    Z_FINISH: Z_FINISH$3,
-    Z_BLOCK: Z_BLOCK$1,
-    Z_OK: Z_OK$3,
-    Z_STREAM_END: Z_STREAM_END$3,
-    Z_STREAM_ERROR: Z_STREAM_ERROR$2,
-    Z_DATA_ERROR: Z_DATA_ERROR$2,
-    Z_BUF_ERROR: Z_BUF_ERROR$2,
-    Z_DEFAULT_COMPRESSION: Z_DEFAULT_COMPRESSION$1,
-    Z_FILTERED,
-    Z_HUFFMAN_ONLY,
-    Z_RLE,
-    Z_FIXED,
-    Z_DEFAULT_STRATEGY: Z_DEFAULT_STRATEGY$1,
-    Z_UNKNOWN,
-    Z_DEFLATED: Z_DEFLATED$2
-  } = constants$2;
-  var MAX_MEM_LEVEL = 9;
-  var MAX_WBITS$1 = 15;
-  var DEF_MEM_LEVEL = 8;
-  var LENGTH_CODES = 29;
-  var LITERALS = 256;
-  var L_CODES = LITERALS + 1 + LENGTH_CODES;
-  var D_CODES = 30;
-  var BL_CODES = 19;
-  var HEAP_SIZE = 2 * L_CODES + 1;
-  var MAX_BITS = 15;
-  var MIN_MATCH = 3;
-  var MAX_MATCH = 258;
-  var MIN_LOOKAHEAD = MAX_MATCH + MIN_MATCH + 1;
-  var PRESET_DICT = 32;
-  var INIT_STATE = 42;
-  var GZIP_STATE = 57;
-  var EXTRA_STATE = 69;
-  var NAME_STATE = 73;
-  var COMMENT_STATE = 91;
-  var HCRC_STATE = 103;
-  var BUSY_STATE = 113;
-  var FINISH_STATE = 666;
-  var BS_NEED_MORE = 1;
-  var BS_BLOCK_DONE = 2;
-  var BS_FINISH_STARTED = 3;
-  var BS_FINISH_DONE = 4;
-  var OS_CODE = 3;
-  var err = (strm, errorCode) => {
-    strm.msg = messages[errorCode];
-    return errorCode;
-  };
-  var rank = (f) => {
-    return f * 2 - (f > 4 ? 9 : 0);
-  };
-  var zero = (buf) => {
-    let len = buf.length;
-    while (--len >= 0) {
-      buf[len] = 0;
-    }
-  };
-  var slide_hash = (s) => {
-    let n, m;
-    let p;
-    let wsize = s.w_size;
-    n = s.hash_size;
-    p = n;
-    do {
-      m = s.head[--p];
-      s.head[p] = m >= wsize ? m - wsize : 0;
-    } while (--n);
-    n = wsize;
-    p = n;
-    do {
-      m = s.prev[--p];
-      s.prev[p] = m >= wsize ? m - wsize : 0;
-    } while (--n);
-  };
-  var HASH = (s, prev, data) => (prev << s.hash_shift ^ data) & s.hash_mask;
-  var INSERT_STRING = (s, str) => {
-    let h;
-    if (s.legacy_hash) {
-      h = s.ins_h = HASH(s, s.ins_h, s.window[str + MIN_MATCH - 1]);
-    } else {
-      const w = s.window;
-      const value = w[str] | w[str + 1] << 8 | w[str + 2] << 16 | w[str + 3] << 24;
-      h = s.ins_h = Math.imul(value, 66521) + 66521 >>> 16 & s.hash_mask;
-    }
-    const hash_head = s.prev[str & s.w_mask] = s.head[h];
-    s.head[h] = str;
-    return hash_head;
-  };
-  var flush_pending = (strm) => {
-    const s = strm.state;
-    let len = s.pending;
-    if (len > strm.avail_out) {
-      len = strm.avail_out;
-    }
-    if (len === 0) {
-      return;
-    }
-    strm.output.set(s.pending_buf.subarray(s.pending_out, s.pending_out + len), strm.next_out);
-    strm.next_out += len;
-    s.pending_out += len;
-    strm.total_out += len;
-    strm.avail_out -= len;
-    s.pending -= len;
-    if (s.pending === 0) {
-      s.pending_out = 0;
-    }
-  };
-  var flush_block_only = (s, last) => {
-    _tr_flush_block(s, s.block_start >= 0 ? s.block_start : -1, s.strstart - s.block_start, last);
-    s.block_start = s.strstart;
-    flush_pending(s.strm);
-  };
-  var put_byte = (s, b) => {
-    s.pending_buf[s.pending++] = b;
-  };
-  var putShortMSB = (s, b) => {
-    s.pending_buf[s.pending++] = b >>> 8 & 255;
-    s.pending_buf[s.pending++] = b & 255;
-  };
-  var read_buf = (strm, buf, start, size) => {
-    let len = strm.avail_in;
-    if (len > size) {
-      len = size;
-    }
-    if (len === 0) {
-      return 0;
-    }
-    strm.avail_in -= len;
-    buf.set(strm.input.subarray(strm.next_in, strm.next_in + len), start);
-    if (strm.state.wrap === 1) {
-      strm.adler = adler32_1(strm.adler, buf, len, start);
-    } else if (strm.state.wrap === 2) {
-      strm.adler = crc32_1(strm.adler, buf, len, start);
-    }
-    strm.next_in += len;
-    strm.total_in += len;
-    return len;
-  };
-  var longest_match = (s, cur_match) => {
-    let chain_length = s.max_chain_length;
-    let scan = s.strstart;
-    let match;
-    let len;
-    let best_len = s.prev_length;
-    let nice_match = s.nice_match;
-    const limit = s.strstart > s.w_size - MIN_LOOKAHEAD ? s.strstart - (s.w_size - MIN_LOOKAHEAD) : 0;
-    const _win = s.window;
-    const wmask = s.w_mask;
-    const prev = s.prev;
-    const strend = s.strstart + MAX_MATCH;
-    let scan_end1 = _win[scan + best_len - 1];
-    let scan_end = _win[scan + best_len];
-    if (s.prev_length >= s.good_match) {
-      chain_length >>= 2;
-    }
-    if (nice_match > s.lookahead) {
-      nice_match = s.lookahead;
-    }
-    do {
-      match = cur_match;
-      if (_win[match + best_len] !== scan_end || _win[match + best_len - 1] !== scan_end1 || _win[match] !== _win[scan] || _win[++match] !== _win[scan + 1]) {
-        continue;
-      }
-      scan += 2;
-      match++;
-      do {
-      } while (_win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && scan < strend);
-      len = MAX_MATCH - (strend - scan);
-      scan = strend - MAX_MATCH;
-      if (len > best_len) {
-        s.match_start = cur_match;
-        best_len = len;
-        if (len >= nice_match) {
-          break;
-        }
-        scan_end1 = _win[scan + best_len - 1];
-        scan_end = _win[scan + best_len];
-      }
-    } while ((cur_match = prev[cur_match & wmask]) > limit && --chain_length !== 0);
-    if (best_len <= s.lookahead) {
-      return best_len;
-    }
-    return s.lookahead;
-  };
-  var fill_window = (s) => {
-    const _w_size = s.w_size;
-    let n, more, str;
-    do {
-      more = s.window_size - s.lookahead - s.strstart;
-      if (s.strstart >= _w_size + (_w_size - MIN_LOOKAHEAD)) {
-        s.window.set(s.window.subarray(_w_size, _w_size + _w_size - more), 0);
-        s.match_start -= _w_size;
-        s.strstart -= _w_size;
-        s.block_start -= _w_size;
-        if (s.insert > s.strstart) {
-          s.insert = s.strstart;
-        }
-        slide_hash(s);
-        more += _w_size;
-      }
-      if (s.strm.avail_in === 0) {
-        break;
-      }
-      n = read_buf(s.strm, s.window, s.strstart + s.lookahead, more);
-      s.lookahead += n;
-      if (!s.legacy_hash) {
-        if (s.lookahead + s.insert > MIN_MATCH) {
-          str = s.strstart - s.insert;
-          while (s.insert) {
-            INSERT_STRING(s, str);
-            str++;
-            s.insert--;
-            if (s.lookahead + s.insert <= MIN_MATCH) {
-              break;
-            }
-          }
-        }
-      } else if (s.lookahead + s.insert >= MIN_MATCH) {
-        str = s.strstart - s.insert;
-        s.ins_h = s.window[str];
-        s.ins_h = HASH(s, s.ins_h, s.window[str + 1]);
-        while (s.insert) {
-          INSERT_STRING(s, str);
-          str++;
-          s.insert--;
-          if (s.lookahead + s.insert < MIN_MATCH) {
-            break;
-          }
-        }
-      }
-    } while (s.lookahead < MIN_LOOKAHEAD && s.strm.avail_in !== 0);
-  };
-  var deflate_stored = (s, flush) => {
-    let min_block = s.pending_buf_size - 5 > s.w_size ? s.w_size : s.pending_buf_size - 5;
-    let len, left, have, last = 0;
-    let used = s.strm.avail_in;
-    do {
-      len = 65535;
-      have = s.bi_valid + 42 >> 3;
-      if (s.strm.avail_out < have) {
-        break;
-      }
-      have = s.strm.avail_out - have;
-      left = s.strstart - s.block_start;
-      if (len > left + s.strm.avail_in) {
-        len = left + s.strm.avail_in;
-      }
-      if (len > have) {
-        len = have;
-      }
-      if (len < min_block && (len === 0 && flush !== Z_FINISH$3 || flush === Z_NO_FLUSH$2 || len !== left + s.strm.avail_in)) {
-        break;
-      }
-      last = flush === Z_FINISH$3 && len === left + s.strm.avail_in ? 1 : 0;
-      _tr_stored_block(s, 0, 0, last);
-      s.pending_buf[s.pending - 4] = len;
-      s.pending_buf[s.pending - 3] = len >> 8;
-      s.pending_buf[s.pending - 2] = ~len;
-      s.pending_buf[s.pending - 1] = ~len >> 8;
-      flush_pending(s.strm);
-      if (left) {
-        if (left > len) {
-          left = len;
-        }
-        s.strm.output.set(s.window.subarray(s.block_start, s.block_start + left), s.strm.next_out);
-        s.strm.next_out += left;
-        s.strm.avail_out -= left;
-        s.strm.total_out += left;
-        s.block_start += left;
-        len -= left;
-      }
-      if (len) {
-        read_buf(s.strm, s.strm.output, s.strm.next_out, len);
-        s.strm.next_out += len;
-        s.strm.avail_out -= len;
-        s.strm.total_out += len;
-      }
-    } while (last === 0);
-    used -= s.strm.avail_in;
-    if (used) {
-      if (used >= s.w_size) {
-        s.matches = 2;
-        s.window.set(s.strm.input.subarray(s.strm.next_in - s.w_size, s.strm.next_in), 0);
-        s.strstart = s.w_size;
-        s.insert = s.strstart;
-      } else {
-        if (s.window_size - s.strstart <= used) {
-          s.strstart -= s.w_size;
-          s.window.set(s.window.subarray(s.w_size, s.w_size + s.strstart), 0);
-          if (s.matches < 2) {
-            s.matches++;
-          }
-          if (s.insert > s.strstart) {
-            s.insert = s.strstart;
-          }
-        }
-        s.window.set(s.strm.input.subarray(s.strm.next_in - used, s.strm.next_in), s.strstart);
-        s.strstart += used;
-        s.insert += used > s.w_size - s.insert ? s.w_size - s.insert : used;
-      }
-      s.block_start = s.strstart;
-    }
-    if (s.high_water < s.strstart) {
-      s.high_water = s.strstart;
-    }
-    if (last) {
-      return BS_FINISH_DONE;
-    }
-    if (flush !== Z_NO_FLUSH$2 && flush !== Z_FINISH$3 && s.strm.avail_in === 0 && s.strstart === s.block_start) {
-      return BS_BLOCK_DONE;
-    }
-    have = s.window_size - s.strstart;
-    if (s.strm.avail_in > have && s.block_start >= s.w_size) {
-      s.block_start -= s.w_size;
-      s.strstart -= s.w_size;
-      s.window.set(s.window.subarray(s.w_size, s.w_size + s.strstart), 0);
-      if (s.matches < 2) {
-        s.matches++;
-      }
-      have += s.w_size;
-      if (s.insert > s.strstart) {
-        s.insert = s.strstart;
-      }
-    }
-    if (have > s.strm.avail_in) {
-      have = s.strm.avail_in;
-    }
-    if (have) {
-      read_buf(s.strm, s.window, s.strstart, have);
-      s.strstart += have;
-      s.insert += have > s.w_size - s.insert ? s.w_size - s.insert : have;
-    }
-    if (s.high_water < s.strstart) {
-      s.high_water = s.strstart;
-    }
-    have = s.bi_valid + 42 >> 3;
-    have = s.pending_buf_size - have > 65535 ? 65535 : s.pending_buf_size - have;
-    min_block = have > s.w_size ? s.w_size : have;
-    left = s.strstart - s.block_start;
-    if (left >= min_block || (left || flush === Z_FINISH$3) && flush !== Z_NO_FLUSH$2 && s.strm.avail_in === 0 && left <= have) {
-      len = left > have ? have : left;
-      last = flush === Z_FINISH$3 && s.strm.avail_in === 0 && len === left ? 1 : 0;
-      _tr_stored_block(s, s.block_start, len, last);
-      s.block_start += len;
-      flush_pending(s.strm);
-    }
-    return last ? BS_FINISH_STARTED : BS_NEED_MORE;
-  };
-  var deflate_fast = (s, flush) => {
-    let hash_head;
-    let bflush;
-    for (; ; ) {
-      if (s.lookahead < MIN_LOOKAHEAD) {
-        fill_window(s);
-        if (s.lookahead < MIN_LOOKAHEAD && flush === Z_NO_FLUSH$2) {
-          return BS_NEED_MORE;
-        }
-        if (s.lookahead === 0) {
-          break;
-        }
-      }
-      hash_head = 0;
-      if (s.lookahead >= MIN_MATCH) {
-        hash_head = INSERT_STRING(s, s.strstart);
-      }
-      if (hash_head !== 0 && s.strstart - hash_head <= s.w_size - MIN_LOOKAHEAD) {
-        s.match_length = longest_match(s, hash_head);
-      }
-      if (s.match_length >= MIN_MATCH) {
-        bflush = _tr_tally(s, s.strstart - s.match_start, s.match_length - MIN_MATCH);
-        s.lookahead -= s.match_length;
-        if (s.match_length <= s.max_lazy_match && s.lookahead >= MIN_MATCH) {
-          s.match_length--;
-          do {
-            s.strstart++;
-            hash_head = INSERT_STRING(s, s.strstart);
-          } while (--s.match_length !== 0);
-          s.strstart++;
-        } else {
-          s.strstart += s.match_length;
-          s.match_length = 0;
-          if (s.legacy_hash) {
-            s.ins_h = s.window[s.strstart];
-            s.ins_h = HASH(s, s.ins_h, s.window[s.strstart + 1]);
-          }
-        }
-      } else {
-        bflush = _tr_tally(s, 0, s.window[s.strstart]);
-        s.lookahead--;
-        s.strstart++;
-      }
-      if (bflush) {
-        flush_block_only(s, false);
-        if (s.strm.avail_out === 0) {
-          return BS_NEED_MORE;
-        }
-      }
-    }
-    s.insert = s.strstart < MIN_MATCH - 1 ? s.strstart : MIN_MATCH - 1;
-    if (flush === Z_FINISH$3) {
-      flush_block_only(s, true);
-      if (s.strm.avail_out === 0) {
-        return BS_FINISH_STARTED;
-      }
-      return BS_FINISH_DONE;
-    }
-    if (s.sym_next) {
-      flush_block_only(s, false);
-      if (s.strm.avail_out === 0) {
-        return BS_NEED_MORE;
-      }
-    }
-    return BS_BLOCK_DONE;
-  };
-  var deflate_slow = (s, flush) => {
-    let hash_head;
-    let bflush;
-    let max_insert;
-    for (; ; ) {
-      if (s.lookahead < MIN_LOOKAHEAD) {
-        fill_window(s);
-        if (s.lookahead < MIN_LOOKAHEAD && flush === Z_NO_FLUSH$2) {
-          return BS_NEED_MORE;
-        }
-        if (s.lookahead === 0) {
-          break;
-        }
-      }
-      hash_head = 0;
-      if (s.lookahead >= MIN_MATCH) {
-        hash_head = INSERT_STRING(s, s.strstart);
-      }
-      s.prev_length = s.match_length;
-      s.prev_match = s.match_start;
-      s.match_length = MIN_MATCH - 1;
-      if (hash_head !== 0 && s.prev_length < s.max_lazy_match && s.strstart - hash_head <= s.w_size - MIN_LOOKAHEAD) {
-        s.match_length = longest_match(s, hash_head);
-        if (s.match_length <= 5 && (s.strategy === Z_FILTERED || s.match_length === MIN_MATCH && s.strstart - s.match_start > 4096)) {
-          s.match_length = MIN_MATCH - 1;
-        }
-      }
-      if (s.prev_length >= MIN_MATCH && s.match_length <= s.prev_length) {
-        max_insert = s.strstart + s.lookahead - MIN_MATCH;
-        bflush = _tr_tally(s, s.strstart - 1 - s.prev_match, s.prev_length - MIN_MATCH);
-        s.lookahead -= s.prev_length - 1;
-        s.prev_length -= 2;
-        do {
-          if (++s.strstart <= max_insert) {
-            hash_head = INSERT_STRING(s, s.strstart);
-          }
-        } while (--s.prev_length !== 0);
-        s.match_available = 0;
-        s.match_length = MIN_MATCH - 1;
-        s.strstart++;
-        if (bflush) {
-          flush_block_only(s, false);
-          if (s.strm.avail_out === 0) {
-            return BS_NEED_MORE;
-          }
-        }
-      } else if (s.match_available) {
-        bflush = _tr_tally(s, 0, s.window[s.strstart - 1]);
-        if (bflush) {
-          flush_block_only(s, false);
-        }
-        s.strstart++;
-        s.lookahead--;
-        if (s.strm.avail_out === 0) {
-          return BS_NEED_MORE;
-        }
-      } else {
-        s.match_available = 1;
-        s.strstart++;
-        s.lookahead--;
-      }
-    }
-    if (s.match_available) {
-      bflush = _tr_tally(s, 0, s.window[s.strstart - 1]);
-      s.match_available = 0;
-    }
-    s.insert = s.strstart < MIN_MATCH - 1 ? s.strstart : MIN_MATCH - 1;
-    if (flush === Z_FINISH$3) {
-      flush_block_only(s, true);
-      if (s.strm.avail_out === 0) {
-        return BS_FINISH_STARTED;
-      }
-      return BS_FINISH_DONE;
-    }
-    if (s.sym_next) {
-      flush_block_only(s, false);
-      if (s.strm.avail_out === 0) {
-        return BS_NEED_MORE;
-      }
-    }
-    return BS_BLOCK_DONE;
-  };
-  var deflate_rle = (s, flush) => {
-    let bflush;
-    let prev;
-    let scan, strend;
-    const _win = s.window;
-    for (; ; ) {
-      if (s.lookahead <= MAX_MATCH) {
-        fill_window(s);
-        if (s.lookahead <= MAX_MATCH && flush === Z_NO_FLUSH$2) {
-          return BS_NEED_MORE;
-        }
-        if (s.lookahead === 0) {
-          break;
-        }
-      }
-      s.match_length = 0;
-      if (s.lookahead >= MIN_MATCH && s.strstart > 0) {
-        scan = s.strstart - 1;
-        prev = _win[scan];
-        if (prev === _win[++scan] && prev === _win[++scan] && prev === _win[++scan]) {
-          strend = s.strstart + MAX_MATCH;
-          do {
-          } while (prev === _win[++scan] && prev === _win[++scan] && prev === _win[++scan] && prev === _win[++scan] && prev === _win[++scan] && prev === _win[++scan] && prev === _win[++scan] && prev === _win[++scan] && scan < strend);
-          s.match_length = MAX_MATCH - (strend - scan);
-          if (s.match_length > s.lookahead) {
-            s.match_length = s.lookahead;
-          }
-        }
-      }
-      if (s.match_length >= MIN_MATCH) {
-        bflush = _tr_tally(s, 1, s.match_length - MIN_MATCH);
-        s.lookahead -= s.match_length;
-        s.strstart += s.match_length;
-        s.match_length = 0;
-      } else {
-        bflush = _tr_tally(s, 0, s.window[s.strstart]);
-        s.lookahead--;
-        s.strstart++;
-      }
-      if (bflush) {
-        flush_block_only(s, false);
-        if (s.strm.avail_out === 0) {
-          return BS_NEED_MORE;
-        }
-      }
-    }
-    s.insert = 0;
-    if (flush === Z_FINISH$3) {
-      flush_block_only(s, true);
-      if (s.strm.avail_out === 0) {
-        return BS_FINISH_STARTED;
-      }
-      return BS_FINISH_DONE;
-    }
-    if (s.sym_next) {
-      flush_block_only(s, false);
-      if (s.strm.avail_out === 0) {
-        return BS_NEED_MORE;
-      }
-    }
-    return BS_BLOCK_DONE;
-  };
-  var deflate_huff = (s, flush) => {
-    let bflush;
-    for (; ; ) {
-      if (s.lookahead === 0) {
-        fill_window(s);
-        if (s.lookahead === 0) {
-          if (flush === Z_NO_FLUSH$2) {
-            return BS_NEED_MORE;
-          }
-          break;
-        }
-      }
-      s.match_length = 0;
-      bflush = _tr_tally(s, 0, s.window[s.strstart]);
-      s.lookahead--;
-      s.strstart++;
-      if (bflush) {
-        flush_block_only(s, false);
-        if (s.strm.avail_out === 0) {
-          return BS_NEED_MORE;
-        }
-      }
-    }
-    s.insert = 0;
-    if (flush === Z_FINISH$3) {
-      flush_block_only(s, true);
-      if (s.strm.avail_out === 0) {
-        return BS_FINISH_STARTED;
-      }
-      return BS_FINISH_DONE;
-    }
-    if (s.sym_next) {
-      flush_block_only(s, false);
-      if (s.strm.avail_out === 0) {
-        return BS_NEED_MORE;
-      }
-    }
-    return BS_BLOCK_DONE;
-  };
-  function Config(good_length, max_lazy, nice_length, max_chain, func) {
-    this.good_length = good_length;
-    this.max_lazy = max_lazy;
-    this.nice_length = nice_length;
-    this.max_chain = max_chain;
-    this.func = func;
-  }
-  var configuration_table = [
-    /*      good lazy nice chain */
-    new Config(0, 0, 0, 0, deflate_stored),
-    /* 0 store only */
-    new Config(4, 4, 8, 4, deflate_fast),
-    /* 1 max speed, no lazy matches */
-    new Config(4, 5, 16, 8, deflate_fast),
-    /* 2 */
-    new Config(4, 6, 32, 32, deflate_fast),
-    /* 3 */
-    new Config(4, 4, 16, 16, deflate_slow),
-    /* 4 lazy matches */
-    new Config(8, 16, 32, 32, deflate_slow),
-    /* 5 */
-    new Config(8, 16, 128, 128, deflate_slow),
-    /* 6 */
-    new Config(8, 32, 128, 256, deflate_slow),
-    /* 7 */
-    new Config(32, 128, 258, 1024, deflate_slow),
-    /* 8 */
-    new Config(32, 258, 258, 4096, deflate_slow)
-    /* 9 max compression */
-  ];
-  var lm_init = (s) => {
-    s.window_size = 2 * s.w_size;
-    zero(s.head);
-    s.max_lazy_match = configuration_table[s.level].max_lazy;
-    s.good_match = configuration_table[s.level].good_length;
-    s.nice_match = configuration_table[s.level].nice_length;
-    s.max_chain_length = configuration_table[s.level].max_chain;
-    s.strstart = 0;
-    s.block_start = 0;
-    s.lookahead = 0;
-    s.insert = 0;
-    s.match_length = s.prev_length = MIN_MATCH - 1;
-    s.match_available = 0;
-    s.ins_h = 0;
-  };
-  function DeflateState() {
-    this.strm = null;
-    this.status = 0;
-    this.pending_buf = null;
-    this.pending_buf_size = 0;
-    this.pending_out = 0;
-    this.pending = 0;
-    this.wrap = 0;
-    this.gzhead = null;
-    this.gzindex = 0;
-    this.method = Z_DEFLATED$2;
-    this.last_flush = -1;
-    this.w_size = 0;
-    this.w_bits = 0;
-    this.w_mask = 0;
-    this.window = null;
-    this.window_size = 0;
-    this.prev = null;
-    this.head = null;
-    this.ins_h = 0;
-    this.legacy_hash = 0;
-    this.hash_size = 0;
-    this.hash_bits = 0;
-    this.hash_mask = 0;
-    this.hash_shift = 0;
-    this.block_start = 0;
-    this.match_length = 0;
-    this.prev_match = 0;
-    this.match_available = 0;
-    this.strstart = 0;
-    this.match_start = 0;
-    this.lookahead = 0;
-    this.prev_length = 0;
-    this.max_chain_length = 0;
-    this.max_lazy_match = 0;
-    this.level = 0;
-    this.strategy = 0;
-    this.good_match = 0;
-    this.nice_match = 0;
-    this.dyn_ltree = new Uint16Array(HEAP_SIZE * 2);
-    this.dyn_dtree = new Uint16Array((2 * D_CODES + 1) * 2);
-    this.bl_tree = new Uint16Array((2 * BL_CODES + 1) * 2);
-    zero(this.dyn_ltree);
-    zero(this.dyn_dtree);
-    zero(this.bl_tree);
-    this.l_desc = null;
-    this.d_desc = null;
-    this.bl_desc = null;
-    this.bl_count = new Uint16Array(MAX_BITS + 1);
-    this.heap = new Uint16Array(2 * L_CODES + 1);
-    zero(this.heap);
-    this.heap_len = 0;
-    this.heap_max = 0;
-    this.depth = new Uint16Array(2 * L_CODES + 1);
-    zero(this.depth);
-    this.sym_buf = 0;
-    this.lit_bufsize = 0;
-    this.sym_next = 0;
-    this.sym_end = 0;
-    this.opt_len = 0;
-    this.static_len = 0;
-    this.matches = 0;
-    this.insert = 0;
-    this.bi_buf = 0;
-    this.bi_valid = 0;
-  }
-  var deflateStateCheck = (strm) => {
-    if (!strm) {
-      return 1;
-    }
-    const s = strm.state;
-    if (!s || s.strm !== strm || s.status !== INIT_STATE && //#ifdef GZIP
-    s.status !== GZIP_STATE && //#endif
-    s.status !== EXTRA_STATE && s.status !== NAME_STATE && s.status !== COMMENT_STATE && s.status !== HCRC_STATE && s.status !== BUSY_STATE && s.status !== FINISH_STATE) {
-      return 1;
-    }
-    return 0;
-  };
-  var deflateResetKeep = (strm) => {
-    if (deflateStateCheck(strm)) {
-      return err(strm, Z_STREAM_ERROR$2);
-    }
-    strm.total_in = strm.total_out = 0;
-    strm.data_type = Z_UNKNOWN;
-    const s = strm.state;
-    s.pending = 0;
-    s.pending_out = 0;
-    if (s.wrap < 0) {
-      s.wrap = -s.wrap;
-    }
-    s.status = //#ifdef GZIP
-    s.wrap === 2 ? GZIP_STATE : (
-      //#endif
-      s.wrap ? INIT_STATE : BUSY_STATE
-    );
-    strm.adler = s.wrap === 2 ? 0 : 1;
-    s.last_flush = -2;
-    _tr_init(s);
-    return Z_OK$3;
-  };
-  var deflateReset = (strm) => {
-    const ret = deflateResetKeep(strm);
-    if (ret === Z_OK$3) {
-      lm_init(strm.state);
-    }
-    return ret;
-  };
-  var deflateSetHeader = (strm, head) => {
-    if (deflateStateCheck(strm) || strm.state.wrap !== 2) {
-      return Z_STREAM_ERROR$2;
-    }
-    strm.state.gzhead = head;
-    return Z_OK$3;
-  };
-  var deflateInit2 = (strm, level, method, windowBits, memLevel, strategy, legacyHash) => {
-    if (!strm) {
-      return Z_STREAM_ERROR$2;
-    }
-    let wrap = 1;
-    if (level === Z_DEFAULT_COMPRESSION$1) {
-      level = 6;
-    }
-    if (windowBits < 0) {
-      wrap = 0;
-      windowBits = -windowBits;
-    } else if (windowBits > 15) {
-      wrap = 2;
-      windowBits -= 16;
-    }
-    if (memLevel < 1 || memLevel > MAX_MEM_LEVEL || method !== Z_DEFLATED$2 || windowBits < 8 || windowBits > 15 || level < 0 || level > 9 || strategy < 0 || strategy > Z_FIXED || windowBits === 8 && wrap !== 1) {
-      return err(strm, Z_STREAM_ERROR$2);
-    }
-    if (windowBits === 8) {
-      windowBits = 9;
-    }
-    const s = new DeflateState();
-    strm.state = s;
-    s.strm = strm;
-    s.status = INIT_STATE;
-    s.wrap = wrap;
-    s.gzhead = null;
-    s.w_bits = windowBits;
-    s.w_size = 1 << s.w_bits;
-    s.w_mask = s.w_size - 1;
-    s.legacy_hash = legacyHash ? 1 : 0;
-    s.hash_bits = memLevel + 7;
-    if (!s.legacy_hash && s.hash_bits < 15) {
-      s.hash_bits = 15;
-    }
-    s.hash_size = 1 << s.hash_bits;
-    s.hash_mask = s.hash_size - 1;
-    s.hash_shift = ~~((s.hash_bits + MIN_MATCH - 1) / MIN_MATCH);
-    s.window = new Uint8Array(s.w_size * 2);
-    s.head = new Uint16Array(s.hash_size);
-    s.prev = new Uint16Array(s.w_size);
-    s.lit_bufsize = 1 << memLevel + 6;
-    s.pending_buf_size = s.lit_bufsize * 4;
-    s.pending_buf = new Uint8Array(s.pending_buf_size);
-    s.sym_buf = s.lit_bufsize;
-    s.sym_end = (s.lit_bufsize - 1) * 3;
-    s.level = level;
-    s.strategy = strategy;
-    s.method = method;
-    return deflateReset(strm);
-  };
-  var deflateInit = (strm, level) => {
-    return deflateInit2(strm, level, Z_DEFLATED$2, MAX_WBITS$1, DEF_MEM_LEVEL, Z_DEFAULT_STRATEGY$1);
-  };
-  var deflate$2 = (strm, flush) => {
-    if (deflateStateCheck(strm) || flush > Z_BLOCK$1 || flush < 0) {
-      return strm ? err(strm, Z_STREAM_ERROR$2) : Z_STREAM_ERROR$2;
-    }
-    const s = strm.state;
-    if (!strm.output || strm.avail_in !== 0 && !strm.input || s.status === FINISH_STATE && flush !== Z_FINISH$3) {
-      return err(strm, strm.avail_out === 0 ? Z_BUF_ERROR$2 : Z_STREAM_ERROR$2);
-    }
-    const old_flush = s.last_flush;
-    s.last_flush = flush;
-    if (s.pending !== 0) {
-      flush_pending(strm);
-      if (strm.avail_out === 0) {
-        s.last_flush = -1;
-        return Z_OK$3;
-      }
-    } else if (strm.avail_in === 0 && rank(flush) <= rank(old_flush) && flush !== Z_FINISH$3) {
-      return err(strm, Z_BUF_ERROR$2);
-    }
-    if (s.status === FINISH_STATE && strm.avail_in !== 0) {
-      return err(strm, Z_BUF_ERROR$2);
-    }
-    if (s.status === INIT_STATE && s.wrap === 0) {
-      s.status = BUSY_STATE;
-    }
-    if (s.status === INIT_STATE) {
-      let header = Z_DEFLATED$2 + (s.w_bits - 8 << 4) << 8;
-      let level_flags = -1;
-      if (s.strategy >= Z_HUFFMAN_ONLY || s.level < 2) {
-        level_flags = 0;
-      } else if (s.level < 6) {
-        level_flags = 1;
-      } else if (s.level === 6) {
-        level_flags = 2;
-      } else {
-        level_flags = 3;
-      }
-      header |= level_flags << 6;
-      if (s.strstart !== 0) {
-        header |= PRESET_DICT;
-      }
-      header += 31 - header % 31;
-      putShortMSB(s, header);
-      if (s.strstart !== 0) {
-        putShortMSB(s, strm.adler >>> 16);
-        putShortMSB(s, strm.adler & 65535);
-      }
-      strm.adler = 1;
-      s.status = BUSY_STATE;
-      flush_pending(strm);
-      if (s.pending !== 0) {
-        s.last_flush = -1;
-        return Z_OK$3;
-      }
-    }
-    if (s.status === GZIP_STATE) {
-      strm.adler = 0;
-      put_byte(s, 31);
-      put_byte(s, 139);
-      put_byte(s, 8);
-      if (!s.gzhead) {
-        put_byte(s, 0);
-        put_byte(s, 0);
-        put_byte(s, 0);
-        put_byte(s, 0);
-        put_byte(s, 0);
-        put_byte(s, s.level === 9 ? 2 : s.strategy >= Z_HUFFMAN_ONLY || s.level < 2 ? 4 : 0);
-        put_byte(s, OS_CODE);
-        s.status = BUSY_STATE;
-        flush_pending(strm);
-        if (s.pending !== 0) {
-          s.last_flush = -1;
-          return Z_OK$3;
-        }
-      } else {
-        put_byte(
-          s,
-          (s.gzhead.text ? 1 : 0) + (s.gzhead.hcrc ? 2 : 0) + (!s.gzhead.extra ? 0 : 4) + (!s.gzhead.name ? 0 : 8) + (!s.gzhead.comment ? 0 : 16)
-        );
-        put_byte(s, s.gzhead.time & 255);
-        put_byte(s, s.gzhead.time >> 8 & 255);
-        put_byte(s, s.gzhead.time >> 16 & 255);
-        put_byte(s, s.gzhead.time >> 24 & 255);
-        put_byte(s, s.level === 9 ? 2 : s.strategy >= Z_HUFFMAN_ONLY || s.level < 2 ? 4 : 0);
-        put_byte(s, s.gzhead.os & 255);
-        if (s.gzhead.extra && s.gzhead.extra.length) {
-          put_byte(s, s.gzhead.extra.length & 255);
-          put_byte(s, s.gzhead.extra.length >> 8 & 255);
-        }
-        if (s.gzhead.hcrc) {
-          strm.adler = crc32_1(strm.adler, s.pending_buf, s.pending, 0);
-        }
-        s.gzindex = 0;
-        s.status = EXTRA_STATE;
-      }
-    }
-    if (s.status === EXTRA_STATE) {
-      if (s.gzhead.extra) {
-        let beg = s.pending;
-        let left = (s.gzhead.extra.length & 65535) - s.gzindex;
-        while (s.pending + left > s.pending_buf_size) {
-          let copy = s.pending_buf_size - s.pending;
-          s.pending_buf.set(s.gzhead.extra.subarray(s.gzindex, s.gzindex + copy), s.pending);
-          s.pending = s.pending_buf_size;
-          if (s.gzhead.hcrc && s.pending > beg) {
-            strm.adler = crc32_1(strm.adler, s.pending_buf, s.pending - beg, beg);
-          }
-          s.gzindex += copy;
-          flush_pending(strm);
-          if (s.pending !== 0) {
-            s.last_flush = -1;
-            return Z_OK$3;
-          }
-          beg = 0;
-          left -= copy;
-        }
-        let gzhead_extra = new Uint8Array(s.gzhead.extra);
-        s.pending_buf.set(gzhead_extra.subarray(s.gzindex, s.gzindex + left), s.pending);
-        s.pending += left;
-        if (s.gzhead.hcrc && s.pending > beg) {
-          strm.adler = crc32_1(strm.adler, s.pending_buf, s.pending - beg, beg);
-        }
-        s.gzindex = 0;
-      }
-      s.status = NAME_STATE;
-    }
-    if (s.status === NAME_STATE) {
-      if (s.gzhead.name) {
-        let beg = s.pending;
-        let val;
-        do {
-          if (s.pending === s.pending_buf_size) {
-            if (s.gzhead.hcrc && s.pending > beg) {
-              strm.adler = crc32_1(strm.adler, s.pending_buf, s.pending - beg, beg);
-            }
-            flush_pending(strm);
-            if (s.pending !== 0) {
-              s.last_flush = -1;
-              return Z_OK$3;
-            }
-            beg = 0;
-          }
-          if (s.gzindex < s.gzhead.name.length) {
-            val = s.gzhead.name.charCodeAt(s.gzindex++) & 255;
-          } else {
-            val = 0;
-          }
-          put_byte(s, val);
-        } while (val !== 0);
-        if (s.gzhead.hcrc && s.pending > beg) {
-          strm.adler = crc32_1(strm.adler, s.pending_buf, s.pending - beg, beg);
-        }
-        s.gzindex = 0;
-      }
-      s.status = COMMENT_STATE;
-    }
-    if (s.status === COMMENT_STATE) {
-      if (s.gzhead.comment) {
-        let beg = s.pending;
-        let val;
-        do {
-          if (s.pending === s.pending_buf_size) {
-            if (s.gzhead.hcrc && s.pending > beg) {
-              strm.adler = crc32_1(strm.adler, s.pending_buf, s.pending - beg, beg);
-            }
-            flush_pending(strm);
-            if (s.pending !== 0) {
-              s.last_flush = -1;
-              return Z_OK$3;
-            }
-            beg = 0;
-          }
-          if (s.gzindex < s.gzhead.comment.length) {
-            val = s.gzhead.comment.charCodeAt(s.gzindex++) & 255;
-          } else {
-            val = 0;
-          }
-          put_byte(s, val);
-        } while (val !== 0);
-        if (s.gzhead.hcrc && s.pending > beg) {
-          strm.adler = crc32_1(strm.adler, s.pending_buf, s.pending - beg, beg);
-        }
-      }
-      s.status = HCRC_STATE;
-    }
-    if (s.status === HCRC_STATE) {
-      if (s.gzhead.hcrc) {
-        if (s.pending + 2 > s.pending_buf_size) {
-          flush_pending(strm);
-          if (s.pending !== 0) {
-            s.last_flush = -1;
-            return Z_OK$3;
-          }
-        }
-        put_byte(s, strm.adler & 255);
-        put_byte(s, strm.adler >> 8 & 255);
-        strm.adler = 0;
-      }
-      s.status = BUSY_STATE;
-      flush_pending(strm);
-      if (s.pending !== 0) {
-        s.last_flush = -1;
-        return Z_OK$3;
-      }
-    }
-    if (strm.avail_in !== 0 || s.lookahead !== 0 || flush !== Z_NO_FLUSH$2 && s.status !== FINISH_STATE) {
-      let bstate = s.level === 0 ? deflate_stored(s, flush) : s.strategy === Z_HUFFMAN_ONLY ? deflate_huff(s, flush) : s.strategy === Z_RLE ? deflate_rle(s, flush) : configuration_table[s.level].func(s, flush);
-      if (bstate === BS_FINISH_STARTED || bstate === BS_FINISH_DONE) {
-        s.status = FINISH_STATE;
-      }
-      if (bstate === BS_NEED_MORE || bstate === BS_FINISH_STARTED) {
-        if (strm.avail_out === 0) {
-          s.last_flush = -1;
-        }
-        return Z_OK$3;
-      }
-      if (bstate === BS_BLOCK_DONE) {
-        if (flush === Z_PARTIAL_FLUSH) {
-          _tr_align(s);
-        } else if (flush !== Z_BLOCK$1) {
-          _tr_stored_block(s, 0, 0, false);
-          if (flush === Z_FULL_FLUSH$1) {
-            zero(s.head);
-            if (s.lookahead === 0) {
-              s.strstart = 0;
-              s.block_start = 0;
-              s.insert = 0;
-            }
-          }
-        }
-        flush_pending(strm);
-        if (strm.avail_out === 0) {
-          s.last_flush = -1;
-          return Z_OK$3;
-        }
-      }
-    }
-    if (flush !== Z_FINISH$3) {
-      return Z_OK$3;
-    }
-    if (s.wrap <= 0) {
-      return Z_STREAM_END$3;
-    }
-    if (s.wrap === 2) {
-      put_byte(s, strm.adler & 255);
-      put_byte(s, strm.adler >> 8 & 255);
-      put_byte(s, strm.adler >> 16 & 255);
-      put_byte(s, strm.adler >> 24 & 255);
-      put_byte(s, strm.total_in & 255);
-      put_byte(s, strm.total_in >> 8 & 255);
-      put_byte(s, strm.total_in >> 16 & 255);
-      put_byte(s, strm.total_in >> 24 & 255);
-    } else {
-      putShortMSB(s, strm.adler >>> 16);
-      putShortMSB(s, strm.adler & 65535);
-    }
-    flush_pending(strm);
-    if (s.wrap > 0) {
-      s.wrap = -s.wrap;
-    }
-    return s.pending !== 0 ? Z_OK$3 : Z_STREAM_END$3;
-  };
-  var deflateEnd = (strm) => {
-    if (deflateStateCheck(strm)) {
-      return Z_STREAM_ERROR$2;
-    }
-    const status = strm.state.status;
-    strm.state = null;
-    return status === BUSY_STATE ? err(strm, Z_DATA_ERROR$2) : Z_OK$3;
-  };
-  var deflateSetDictionary = (strm, dictionary) => {
-    let dictLength = dictionary.length;
-    if (deflateStateCheck(strm)) {
-      return Z_STREAM_ERROR$2;
-    }
-    const s = strm.state;
-    const wrap = s.wrap;
-    if (wrap === 2 || wrap === 1 && s.status !== INIT_STATE || s.lookahead) {
-      return Z_STREAM_ERROR$2;
-    }
-    if (wrap === 1) {
-      strm.adler = adler32_1(strm.adler, dictionary, dictLength, 0);
-    }
-    s.wrap = 0;
-    if (dictLength >= s.w_size) {
-      if (wrap === 0) {
-        zero(s.head);
-        s.strstart = 0;
-        s.block_start = 0;
-        s.insert = 0;
-      }
-      let tmpDict = new Uint8Array(s.w_size);
-      tmpDict.set(dictionary.subarray(dictLength - s.w_size, dictLength), 0);
-      dictionary = tmpDict;
-      dictLength = s.w_size;
-    }
-    const avail = strm.avail_in;
-    const next = strm.next_in;
-    const input = strm.input;
-    strm.avail_in = dictLength;
-    strm.next_in = 0;
-    strm.input = dictionary;
-    fill_window(s);
-    while (s.lookahead >= MIN_MATCH) {
-      let str = s.strstart;
-      let n = s.lookahead - (MIN_MATCH - 1);
-      do {
-        INSERT_STRING(s, str);
-        str++;
-      } while (--n);
-      s.strstart = str;
-      s.lookahead = MIN_MATCH - 1;
-      fill_window(s);
-    }
-    s.strstart += s.lookahead;
-    s.block_start = s.strstart;
-    s.insert = s.lookahead;
-    s.lookahead = 0;
-    s.match_length = s.prev_length = MIN_MATCH - 1;
-    s.match_available = 0;
-    strm.next_in = next;
-    strm.input = input;
-    strm.avail_in = avail;
-    s.wrap = wrap;
-    return Z_OK$3;
-  };
-  var deflateInit_1 = deflateInit;
-  var deflateInit2_1 = deflateInit2;
-  var deflateReset_1 = deflateReset;
-  var deflateResetKeep_1 = deflateResetKeep;
-  var deflateSetHeader_1 = deflateSetHeader;
-  var deflate_2$1 = deflate$2;
-  var deflateEnd_1 = deflateEnd;
-  var deflateSetDictionary_1 = deflateSetDictionary;
-  var deflateInfo = "pako deflate (from Nodeca project)";
-  var deflate_1$2 = {
-    deflateInit: deflateInit_1,
-    deflateInit2: deflateInit2_1,
-    deflateReset: deflateReset_1,
-    deflateResetKeep: deflateResetKeep_1,
-    deflateSetHeader: deflateSetHeader_1,
-    deflate: deflate_2$1,
-    deflateEnd: deflateEnd_1,
-    deflateSetDictionary: deflateSetDictionary_1,
-    deflateInfo
-  };
-  var _has = (obj, key) => {
-    return Object.prototype.hasOwnProperty.call(obj, key);
-  };
-  var assign = function(obj) {
-    const sources = Array.prototype.slice.call(arguments, 1);
-    while (sources.length) {
-      const source = sources.shift();
-      if (!source) {
-        continue;
-      }
-      if (typeof source !== "object") {
-        throw new TypeError(source + "must be non-object");
-      }
-      for (const p in source) {
-        if (_has(source, p)) {
-          obj[p] = source[p];
-        }
-      }
-    }
-    return obj;
-  };
-  var flattenChunks = (chunks) => {
-    let len = 0;
-    for (let i = 0, l = chunks.length; i < l; i++) {
-      len += chunks[i].length;
-    }
-    const result = new Uint8Array(len);
-    for (let i = 0, pos = 0, l = chunks.length; i < l; i++) {
-      let chunk = chunks[i];
-      result.set(chunk, pos);
-      pos += chunk.length;
-    }
-    return result;
-  };
-  var common = {
-    assign,
-    flattenChunks
-  };
-  var STR_APPLY_UIA_OK = true;
-  try {
-    String.fromCharCode.apply(null, new Uint8Array(1));
-  } catch (__) {
-    STR_APPLY_UIA_OK = false;
-  }
-  var _utf8len = new Uint8Array(256);
-  for (let q = 0; q < 256; q++) {
-    _utf8len[q] = q >= 252 ? 6 : q >= 248 ? 5 : q >= 240 ? 4 : q >= 224 ? 3 : q >= 192 ? 2 : 1;
-  }
-  _utf8len[254] = _utf8len[255] = 1;
-  var string2buf = (str) => {
-    if (typeof TextEncoder === "function" && TextEncoder.prototype.encode) {
-      return new TextEncoder().encode(str);
-    }
-    let buf, c, c2, m_pos, i, str_len = str.length, buf_len = 0;
-    for (m_pos = 0; m_pos < str_len; m_pos++) {
-      c = str.charCodeAt(m_pos);
-      if ((c & 64512) === 55296 && m_pos + 1 < str_len) {
-        c2 = str.charCodeAt(m_pos + 1);
-        if ((c2 & 64512) === 56320) {
-          c = 65536 + (c - 55296 << 10) + (c2 - 56320);
-          m_pos++;
-        }
-      }
-      buf_len += c < 128 ? 1 : c < 2048 ? 2 : c < 65536 ? 3 : 4;
-    }
-    buf = new Uint8Array(buf_len);
-    for (i = 0, m_pos = 0; i < buf_len; m_pos++) {
-      c = str.charCodeAt(m_pos);
-      if ((c & 64512) === 55296 && m_pos + 1 < str_len) {
-        c2 = str.charCodeAt(m_pos + 1);
-        if ((c2 & 64512) === 56320) {
-          c = 65536 + (c - 55296 << 10) + (c2 - 56320);
-          m_pos++;
-        }
-      }
-      if (c < 128) {
-        buf[i++] = c;
-      } else if (c < 2048) {
-        buf[i++] = 192 | c >>> 6;
-        buf[i++] = 128 | c & 63;
-      } else if (c < 65536) {
-        buf[i++] = 224 | c >>> 12;
-        buf[i++] = 128 | c >>> 6 & 63;
-        buf[i++] = 128 | c & 63;
-      } else {
-        buf[i++] = 240 | c >>> 18;
-        buf[i++] = 128 | c >>> 12 & 63;
-        buf[i++] = 128 | c >>> 6 & 63;
-        buf[i++] = 128 | c & 63;
-      }
-    }
-    return buf;
-  };
-  var buf2binstring = (buf, len) => {
-    if (len < 65534) {
-      if (buf.subarray && STR_APPLY_UIA_OK) {
-        return String.fromCharCode.apply(null, buf.length === len ? buf : buf.subarray(0, len));
-      }
-    }
-    let result = "";
-    for (let i = 0; i < len; i++) {
-      result += String.fromCharCode(buf[i]);
-    }
-    return result;
-  };
-  var buf2string = (buf, max) => {
-    const len = max || buf.length;
-    if (typeof TextDecoder === "function" && TextDecoder.prototype.decode) {
-      return new TextDecoder().decode(buf.subarray(0, max));
-    }
-    let i, out;
-    const utf16buf = new Array(len * 2);
-    for (out = 0, i = 0; i < len; ) {
-      let c = buf[i++];
-      if (c < 128) {
-        utf16buf[out++] = c;
-        continue;
-      }
-      let c_len = _utf8len[c];
-      if (c_len > 4) {
-        utf16buf[out++] = 65533;
-        i += c_len - 1;
-        continue;
-      }
-      c &= c_len === 2 ? 31 : c_len === 3 ? 15 : 7;
-      while (c_len > 1 && i < len) {
-        c = c << 6 | buf[i++] & 63;
-        c_len--;
-      }
-      if (c_len > 1) {
-        utf16buf[out++] = 65533;
-        continue;
-      }
-      if (c < 65536) {
-        utf16buf[out++] = c;
-      } else {
-        c -= 65536;
-        utf16buf[out++] = 55296 | c >> 10 & 1023;
-        utf16buf[out++] = 56320 | c & 1023;
-      }
-    }
-    return buf2binstring(utf16buf, out);
-  };
-  var utf8border = (buf, max) => {
-    max = max || buf.length;
-    if (max > buf.length) {
-      max = buf.length;
-    }
-    let pos = max - 1;
-    while (pos >= 0 && (buf[pos] & 192) === 128) {
-      pos--;
-    }
-    if (pos < 0) {
-      return max;
-    }
-    if (pos === 0) {
-      return max;
-    }
-    return pos + _utf8len[buf[pos]] > max ? pos : max;
-  };
-  var strings = {
-    string2buf,
-    buf2string,
-    utf8border
-  };
-  function ZStream() {
-    this.input = null;
-    this.next_in = 0;
-    this.avail_in = 0;
-    this.total_in = 0;
-    this.output = null;
-    this.next_out = 0;
-    this.avail_out = 0;
-    this.total_out = 0;
-    this.msg = "";
-    this.state = null;
-    this.data_type = 2;
-    this.adler = 0;
-  }
-  var zstream = ZStream;
-  var toString$1 = Object.prototype.toString;
-  var {
-    Z_NO_FLUSH: Z_NO_FLUSH$1,
-    Z_SYNC_FLUSH,
-    Z_FULL_FLUSH,
-    Z_FINISH: Z_FINISH$2,
-    Z_OK: Z_OK$2,
-    Z_STREAM_END: Z_STREAM_END$2,
-    Z_DEFAULT_COMPRESSION,
-    Z_DEFAULT_STRATEGY,
-    Z_DEFLATED: Z_DEFLATED$1
-  } = constants$2;
-  var defaultOptions$1 = {
-    level: Z_DEFAULT_COMPRESSION,
-    method: Z_DEFLATED$1,
-    chunkSize: 16384,
-    windowBits: 15,
-    memLevel: 8,
-    strategy: Z_DEFAULT_STRATEGY,
-    legacyHash: true
-  };
-  function Deflate$1(options) {
-    this.options = common.assign({}, defaultOptions$1, options || {});
-    let opt = this.options;
-    if (opt.raw && opt.windowBits > 0) {
-      opt.windowBits = -opt.windowBits;
-    } else if (opt.gzip && opt.windowBits > 0 && opt.windowBits < 16) {
-      opt.windowBits += 16;
-    }
-    this.err = 0;
-    this.msg = "";
-    this.ended = false;
-    this.chunks = [];
-    this.strm = new zstream();
-    this.strm.avail_out = 0;
-    let status = deflate_1$2.deflateInit2(
-      this.strm,
-      opt.level,
-      opt.method,
-      opt.windowBits,
-      opt.memLevel,
-      opt.strategy,
-      opt.legacyHash
-    );
-    if (status !== Z_OK$2) {
-      throw new Error(messages[status]);
-    }
-    if (opt.header) {
-      deflate_1$2.deflateSetHeader(this.strm, opt.header);
-    }
-    if (opt.dictionary) {
-      let dict;
-      if (typeof opt.dictionary === "string") {
-        dict = strings.string2buf(opt.dictionary);
-      } else if (toString$1.call(opt.dictionary) === "[object ArrayBuffer]") {
-        dict = new Uint8Array(opt.dictionary);
-      } else {
-        dict = opt.dictionary;
-      }
-      status = deflate_1$2.deflateSetDictionary(this.strm, dict);
-      if (status !== Z_OK$2) {
-        throw new Error(messages[status]);
-      }
-      this._dict_set = true;
-    }
-  }
-  Deflate$1.prototype.push = function(data, flush_mode) {
-    const strm = this.strm;
-    const chunkSize = this.options.chunkSize;
-    let status, _flush_mode;
-    if (this.ended) {
-      return false;
-    }
-    if (flush_mode === ~~flush_mode) _flush_mode = flush_mode;
-    else _flush_mode = flush_mode === true ? Z_FINISH$2 : Z_NO_FLUSH$1;
-    if (typeof data === "string") {
-      strm.input = strings.string2buf(data);
-    } else if (toString$1.call(data) === "[object ArrayBuffer]") {
-      strm.input = new Uint8Array(data);
-    } else {
-      strm.input = data;
-    }
-    strm.next_in = 0;
-    strm.avail_in = strm.input.length;
-    for (; ; ) {
-      if (strm.avail_out === 0) {
-        strm.output = new Uint8Array(chunkSize);
-        strm.next_out = 0;
-        strm.avail_out = chunkSize;
-      }
-      if ((_flush_mode === Z_SYNC_FLUSH || _flush_mode === Z_FULL_FLUSH) && strm.avail_out <= 6) {
-        this.onData(strm.output.subarray(0, strm.next_out));
-        strm.avail_out = 0;
-        continue;
-      }
-      status = deflate_1$2.deflate(strm, _flush_mode);
-      if (status === Z_STREAM_END$2) {
-        if (strm.next_out > 0) {
-          this.onData(strm.output.subarray(0, strm.next_out));
-        }
-        status = deflate_1$2.deflateEnd(this.strm);
-        this.onEnd(status);
-        this.ended = true;
-        return status === Z_OK$2;
-      }
-      if (strm.avail_out === 0) {
-        this.onData(strm.output);
-        continue;
-      }
-      if (_flush_mode > 0 && strm.next_out > 0) {
-        this.onData(strm.output.subarray(0, strm.next_out));
-        strm.avail_out = 0;
-        continue;
-      }
-      if (strm.avail_in === 0) break;
-    }
-    return true;
-  };
-  Deflate$1.prototype.onData = function(chunk) {
-    this.chunks.push(chunk);
-  };
-  Deflate$1.prototype.onEnd = function(status) {
-    if (status === Z_OK$2) {
-      this.result = common.flattenChunks(this.chunks);
-    }
-    this.chunks = [];
-    this.err = status;
-    this.msg = this.strm.msg;
-  };
-  function deflate$1(input, options) {
-    const deflator = new Deflate$1(options);
-    deflator.push(input, true);
-    if (deflator.err) {
-      throw deflator.msg || messages[deflator.err];
-    }
-    return deflator.result;
-  }
-  function deflateRaw$1(input, options) {
-    options = options || {};
-    options.raw = true;
-    return deflate$1(input, options);
-  }
-  function gzip$1(input, options) {
-    options = options || {};
-    options.gzip = true;
-    return deflate$1(input, options);
-  }
-  var Deflate_1$1 = Deflate$1;
-  var deflate_2 = deflate$1;
-  var deflateRaw_1$1 = deflateRaw$1;
-  var gzip_1$1 = gzip$1;
-  var constants$1 = constants$2;
-  var deflate_1$1 = {
-    Deflate: Deflate_1$1,
-    deflate: deflate_2,
-    deflateRaw: deflateRaw_1$1,
-    gzip: gzip_1$1,
-    constants: constants$1
-  };
-  var BAD$1 = 16209;
-  var TYPE$1 = 16191;
-  var inffast = function inflate_fast(strm, start) {
-    let _in;
-    let last;
-    let _out;
-    let beg;
-    let end;
-    let dmax;
-    let wsize;
-    let whave;
-    let wnext;
-    let s_window;
-    let hold;
-    let bits;
-    let lcode;
-    let dcode;
-    let lmask;
-    let dmask;
-    let here;
-    let op;
-    let len;
-    let dist;
-    let from;
-    let from_source;
-    let input, output;
-    const state = strm.state;
-    _in = strm.next_in;
-    input = strm.input;
-    last = _in + (strm.avail_in - 5);
-    _out = strm.next_out;
-    output = strm.output;
-    beg = _out - (start - strm.avail_out);
-    end = _out + (strm.avail_out - 257);
-    dmax = state.dmax;
-    wsize = state.wsize;
-    whave = state.whave;
-    wnext = state.wnext;
-    s_window = state.window;
-    hold = state.hold;
-    bits = state.bits;
-    lcode = state.lencode;
-    dcode = state.distcode;
-    lmask = (1 << state.lenbits) - 1;
-    dmask = (1 << state.distbits) - 1;
-    top:
-      do {
-        if (bits < 15) {
-          hold += input[_in++] << bits;
-          bits += 8;
-          hold += input[_in++] << bits;
-          bits += 8;
-        }
-        here = lcode[hold & lmask];
-        dolen:
-          for (; ; ) {
-            op = here >>> 24;
-            hold >>>= op;
-            bits -= op;
-            op = here >>> 16 & 255;
-            if (op === 0) {
-              output[_out++] = here & 65535;
-            } else if (op & 16) {
-              len = here & 65535;
-              op &= 15;
-              if (op) {
-                if (bits < op) {
-                  hold += input[_in++] << bits;
-                  bits += 8;
-                }
-                len += hold & (1 << op) - 1;
-                hold >>>= op;
-                bits -= op;
-              }
-              if (bits < 15) {
-                hold += input[_in++] << bits;
-                bits += 8;
-                hold += input[_in++] << bits;
-                bits += 8;
-              }
-              here = dcode[hold & dmask];
-              dodist:
-                for (; ; ) {
-                  op = here >>> 24;
-                  hold >>>= op;
-                  bits -= op;
-                  op = here >>> 16 & 255;
-                  if (op & 16) {
-                    dist = here & 65535;
-                    op &= 15;
-                    if (bits < op) {
-                      hold += input[_in++] << bits;
-                      bits += 8;
-                      if (bits < op) {
-                        hold += input[_in++] << bits;
-                        bits += 8;
-                      }
-                    }
-                    dist += hold & (1 << op) - 1;
-                    if (dist > dmax) {
-                      strm.msg = "invalid distance too far back";
-                      state.mode = BAD$1;
-                      break top;
-                    }
-                    hold >>>= op;
-                    bits -= op;
-                    op = _out - beg;
-                    if (dist > op) {
-                      op = dist - op;
-                      if (op > whave) {
-                        if (state.sane) {
-                          strm.msg = "invalid distance too far back";
-                          state.mode = BAD$1;
-                          break top;
-                        }
-                      }
-                      from = 0;
-                      from_source = s_window;
-                      if (wnext === 0) {
-                        from += wsize - op;
-                        if (op < len) {
-                          len -= op;
-                          do {
-                            output[_out++] = s_window[from++];
-                          } while (--op);
-                          from = _out - dist;
-                          from_source = output;
-                        }
-                      } else if (wnext < op) {
-                        from += wsize + wnext - op;
-                        op -= wnext;
-                        if (op < len) {
-                          len -= op;
-                          do {
-                            output[_out++] = s_window[from++];
-                          } while (--op);
-                          from = 0;
-                          if (wnext < len) {
-                            op = wnext;
-                            len -= op;
-                            do {
-                              output[_out++] = s_window[from++];
-                            } while (--op);
-                            from = _out - dist;
-                            from_source = output;
-                          }
-                        }
-                      } else {
-                        from += wnext - op;
-                        if (op < len) {
-                          len -= op;
-                          do {
-                            output[_out++] = s_window[from++];
-                          } while (--op);
-                          from = _out - dist;
-                          from_source = output;
-                        }
-                      }
-                      while (len > 2) {
-                        output[_out++] = from_source[from++];
-                        output[_out++] = from_source[from++];
-                        output[_out++] = from_source[from++];
-                        len -= 3;
-                      }
-                      if (len) {
-                        output[_out++] = from_source[from++];
-                        if (len > 1) {
-                          output[_out++] = from_source[from++];
-                        }
-                      }
-                    } else {
-                      from = _out - dist;
-                      do {
-                        output[_out++] = output[from++];
-                        output[_out++] = output[from++];
-                        output[_out++] = output[from++];
-                        len -= 3;
-                      } while (len > 2);
-                      if (len) {
-                        output[_out++] = output[from++];
-                        if (len > 1) {
-                          output[_out++] = output[from++];
-                        }
-                      }
-                    }
-                  } else if ((op & 64) === 0) {
-                    here = dcode[(here & 65535) + (hold & (1 << op) - 1)];
-                    continue dodist;
-                  } else {
-                    strm.msg = "invalid distance code";
-                    state.mode = BAD$1;
-                    break top;
-                  }
-                  break;
-                }
-            } else if ((op & 64) === 0) {
-              here = lcode[(here & 65535) + (hold & (1 << op) - 1)];
-              continue dolen;
-            } else if (op & 32) {
-              state.mode = TYPE$1;
-              break top;
-            } else {
-              strm.msg = "invalid literal/length code";
-              state.mode = BAD$1;
-              break top;
-            }
-            break;
-          }
-      } while (_in < last && _out < end);
-    len = bits >> 3;
-    _in -= len;
-    bits -= len << 3;
-    hold &= (1 << bits) - 1;
-    strm.next_in = _in;
-    strm.next_out = _out;
-    strm.avail_in = _in < last ? 5 + (last - _in) : 5 - (_in - last);
-    strm.avail_out = _out < end ? 257 + (end - _out) : 257 - (_out - end);
-    state.hold = hold;
-    state.bits = bits;
-    return;
-  };
-  var MAXBITS = 15;
-  var ENOUGH_LENS$1 = 852;
-  var ENOUGH_DISTS$1 = 592;
-  var CODES$1 = 0;
-  var LENS$1 = 1;
-  var DISTS$1 = 2;
-  var lbase = new Uint16Array([
-    /* Length codes 257..285 base */
-    3,
-    4,
-    5,
-    6,
-    7,
-    8,
-    9,
-    10,
-    11,
-    13,
-    15,
-    17,
-    19,
-    23,
-    27,
-    31,
-    35,
-    43,
-    51,
-    59,
-    67,
-    83,
-    99,
-    115,
-    131,
-    163,
-    195,
-    227,
-    258,
-    0,
-    0
-  ]);
-  var lext = new Uint8Array([
-    /* Length codes 257..285 extra */
-    16,
-    16,
-    16,
-    16,
-    16,
-    16,
-    16,
-    16,
-    17,
-    17,
-    17,
-    17,
-    18,
-    18,
-    18,
-    18,
-    19,
-    19,
-    19,
-    19,
-    20,
-    20,
-    20,
-    20,
-    21,
-    21,
-    21,
-    21,
-    16,
-    199,
-    75
-  ]);
-  var dbase = new Uint16Array([
-    /* Distance codes 0..29 base */
-    1,
-    2,
-    3,
-    4,
-    5,
-    7,
-    9,
-    13,
-    17,
-    25,
-    33,
-    49,
-    65,
-    97,
-    129,
-    193,
-    257,
-    385,
-    513,
-    769,
-    1025,
-    1537,
-    2049,
-    3073,
-    4097,
-    6145,
-    8193,
-    12289,
-    16385,
-    24577,
-    0,
-    0
-  ]);
-  var dext = new Uint8Array([
-    /* Distance codes 0..29 extra */
-    16,
-    16,
-    16,
-    16,
-    17,
-    17,
-    18,
-    18,
-    19,
-    19,
-    20,
-    20,
-    21,
-    21,
-    22,
-    22,
-    23,
-    23,
-    24,
-    24,
-    25,
-    25,
-    26,
-    26,
-    27,
-    27,
-    28,
-    28,
-    29,
-    29,
-    64,
-    64
-  ]);
-  var inflate_table = (type, lens, lens_index, codes, table, table_index, work, opts) => {
-    const bits = opts.bits;
-    let len = 0;
-    let sym = 0;
-    let min = 0, max = 0;
-    let root = 0;
-    let curr = 0;
-    let drop = 0;
-    let left = 0;
-    let used = 0;
-    let huff = 0;
-    let incr;
-    let fill;
-    let low;
-    let mask;
-    let next;
-    let base = null;
-    let match;
-    const count = new Uint16Array(MAXBITS + 1);
-    const offs = new Uint16Array(MAXBITS + 1);
-    let extra = null;
-    let here_bits, here_op, here_val;
-    for (len = 0; len <= MAXBITS; len++) {
-      count[len] = 0;
-    }
-    for (sym = 0; sym < codes; sym++) {
-      count[lens[lens_index + sym]]++;
-    }
-    root = bits;
-    for (max = MAXBITS; max >= 1; max--) {
-      if (count[max] !== 0) {
-        break;
-      }
-    }
-    if (root > max) {
-      root = max;
-    }
-    if (max === 0) {
-      table[table_index++] = 1 << 24 | 64 << 16 | 0;
-      table[table_index++] = 1 << 24 | 64 << 16 | 0;
-      opts.bits = 1;
-      return 0;
-    }
-    for (min = 1; min < max; min++) {
-      if (count[min] !== 0) {
-        break;
-      }
-    }
-    if (root < min) {
-      root = min;
-    }
-    left = 1;
-    for (len = 1; len <= MAXBITS; len++) {
-      left <<= 1;
-      left -= count[len];
-      if (left < 0) {
-        return -1;
-      }
-    }
-    if (left > 0 && (type === CODES$1 || max !== 1)) {
-      return -1;
-    }
-    offs[1] = 0;
-    for (len = 1; len < MAXBITS; len++) {
-      offs[len + 1] = offs[len] + count[len];
-    }
-    for (sym = 0; sym < codes; sym++) {
-      if (lens[lens_index + sym] !== 0) {
-        work[offs[lens[lens_index + sym]]++] = sym;
-      }
-    }
-    if (type === CODES$1) {
-      base = extra = work;
-      match = 20;
-    } else if (type === LENS$1) {
-      base = lbase;
-      extra = lext;
-      match = 257;
-    } else {
-      base = dbase;
-      extra = dext;
-      match = 0;
-    }
-    huff = 0;
-    sym = 0;
-    len = min;
-    next = table_index;
-    curr = root;
-    drop = 0;
-    low = -1;
-    used = 1 << root;
-    mask = used - 1;
-    if (type === LENS$1 && used > ENOUGH_LENS$1 || type === DISTS$1 && used > ENOUGH_DISTS$1) {
-      return 1;
-    }
-    for (; ; ) {
-      here_bits = len - drop;
-      if (work[sym] + 1 < match) {
-        here_op = 0;
-        here_val = work[sym];
-      } else if (work[sym] >= match) {
-        here_op = extra[work[sym] - match];
-        here_val = base[work[sym] - match];
-      } else {
-        here_op = 32 + 64;
-        here_val = 0;
-      }
-      incr = 1 << len - drop;
-      fill = 1 << curr;
-      min = fill;
-      do {
-        fill -= incr;
-        table[next + (huff >> drop) + fill] = here_bits << 24 | here_op << 16 | here_val | 0;
-      } while (fill !== 0);
-      incr = 1 << len - 1;
-      while (huff & incr) {
-        incr >>= 1;
-      }
-      if (incr !== 0) {
-        huff &= incr - 1;
-        huff += incr;
-      } else {
-        huff = 0;
-      }
-      sym++;
-      if (--count[len] === 0) {
-        if (len === max) {
-          break;
-        }
-        len = lens[lens_index + work[sym]];
-      }
-      if (len > root && (huff & mask) !== low) {
-        if (drop === 0) {
-          drop = root;
-        }
-        next += min;
-        curr = len - drop;
-        left = 1 << curr;
-        while (curr + drop < max) {
-          left -= count[curr + drop];
-          if (left <= 0) {
-            break;
-          }
-          curr++;
-          left <<= 1;
-        }
-        used += 1 << curr;
-        if (type === LENS$1 && used > ENOUGH_LENS$1 || type === DISTS$1 && used > ENOUGH_DISTS$1) {
-          return 1;
-        }
-        low = huff & mask;
-        table[low] = root << 24 | curr << 16 | next - table_index | 0;
-      }
-    }
-    if (huff !== 0) {
-      table[next + huff] = len - drop << 24 | 64 << 16 | 0;
-    }
-    opts.bits = root;
-    return 0;
-  };
-  var inftrees = inflate_table;
-  var CODES = 0;
-  var LENS = 1;
-  var DISTS = 2;
-  var {
-    Z_FINISH: Z_FINISH$1,
-    Z_BLOCK,
-    Z_TREES,
-    Z_OK: Z_OK$1,
-    Z_STREAM_END: Z_STREAM_END$1,
-    Z_NEED_DICT: Z_NEED_DICT$1,
-    Z_STREAM_ERROR: Z_STREAM_ERROR$1,
-    Z_DATA_ERROR: Z_DATA_ERROR$1,
-    Z_MEM_ERROR: Z_MEM_ERROR$1,
-    Z_BUF_ERROR: Z_BUF_ERROR$1,
-    Z_DEFLATED
-  } = constants$2;
-  var HEAD = 16180;
-  var FLAGS = 16181;
-  var TIME = 16182;
-  var OS = 16183;
-  var EXLEN = 16184;
-  var EXTRA = 16185;
-  var NAME = 16186;
-  var COMMENT = 16187;
-  var HCRC = 16188;
-  var DICTID = 16189;
-  var DICT = 16190;
-  var TYPE = 16191;
-  var TYPEDO = 16192;
-  var STORED = 16193;
-  var COPY_ = 16194;
-  var COPY = 16195;
-  var TABLE = 16196;
-  var LENLENS = 16197;
-  var CODELENS = 16198;
-  var LEN_ = 16199;
-  var LEN = 16200;
-  var LENEXT = 16201;
-  var DIST = 16202;
-  var DISTEXT = 16203;
-  var MATCH = 16204;
-  var LIT = 16205;
-  var CHECK = 16206;
-  var LENGTH = 16207;
-  var DONE = 16208;
-  var BAD = 16209;
-  var MEM = 16210;
-  var SYNC = 16211;
-  var ENOUGH_LENS = 852;
-  var ENOUGH_DISTS = 592;
-  var MAX_WBITS = 15;
-  var DEF_WBITS = MAX_WBITS;
-  var zswap32 = (q) => {
-    return (q >>> 24 & 255) + (q >>> 8 & 65280) + ((q & 65280) << 8) + ((q & 255) << 24);
-  };
-  function InflateState() {
-    this.strm = null;
-    this.mode = 0;
-    this.last = false;
-    this.wrap = 0;
-    this.havedict = false;
-    this.flags = 0;
-    this.dmax = 0;
-    this.check = 0;
-    this.total = 0;
-    this.head = null;
-    this.wbits = 0;
-    this.wsize = 0;
-    this.whave = 0;
-    this.wnext = 0;
-    this.window = null;
-    this.hold = 0;
-    this.bits = 0;
-    this.length = 0;
-    this.offset = 0;
-    this.extra = 0;
-    this.lencode = null;
-    this.distcode = null;
-    this.lenbits = 0;
-    this.distbits = 0;
-    this.ncode = 0;
-    this.nlen = 0;
-    this.ndist = 0;
-    this.have = 0;
-    this.next = null;
-    this.lens = new Uint16Array(320);
-    this.work = new Uint16Array(288);
-    this.lendyn = null;
-    this.distdyn = null;
-    this.sane = 0;
-    this.back = 0;
-    this.was = 0;
-  }
-  var inflateStateCheck = (strm) => {
-    if (!strm) {
-      return 1;
-    }
-    const state = strm.state;
-    if (!state || state.strm !== strm || state.mode < HEAD || state.mode > SYNC) {
-      return 1;
-    }
-    return 0;
-  };
-  var inflateResetKeep = (strm) => {
-    if (inflateStateCheck(strm)) {
-      return Z_STREAM_ERROR$1;
-    }
-    const state = strm.state;
-    strm.total_in = strm.total_out = state.total = 0;
-    strm.msg = "";
-    if (state.wrap) {
-      strm.adler = state.wrap & 1;
-    }
-    state.mode = HEAD;
-    state.last = 0;
-    state.havedict = 0;
-    state.flags = -1;
-    state.dmax = 32768;
-    state.head = null;
-    state.hold = 0;
-    state.bits = 0;
-    state.lencode = state.lendyn = new Int32Array(ENOUGH_LENS);
-    state.distcode = state.distdyn = new Int32Array(ENOUGH_DISTS);
-    state.sane = 1;
-    state.back = -1;
-    return Z_OK$1;
-  };
-  var inflateReset = (strm) => {
-    if (inflateStateCheck(strm)) {
-      return Z_STREAM_ERROR$1;
-    }
-    const state = strm.state;
-    state.wsize = 0;
-    state.whave = 0;
-    state.wnext = 0;
-    return inflateResetKeep(strm);
-  };
-  var inflateReset2 = (strm, windowBits) => {
-    let wrap;
-    if (inflateStateCheck(strm)) {
-      return Z_STREAM_ERROR$1;
-    }
-    const state = strm.state;
-    if (windowBits < 0) {
-      wrap = 0;
-      windowBits = -windowBits;
-    } else {
-      wrap = (windowBits >> 4) + 5;
-      if (windowBits < 48) {
-        windowBits &= 15;
-      }
-    }
-    if (windowBits && (windowBits < 8 || windowBits > 15)) {
-      return Z_STREAM_ERROR$1;
-    }
-    if (state.window !== null && state.wbits !== windowBits) {
-      state.window = null;
-    }
-    state.wrap = wrap;
-    state.wbits = windowBits;
-    return inflateReset(strm);
-  };
-  var inflateInit2 = (strm, windowBits) => {
-    if (!strm) {
-      return Z_STREAM_ERROR$1;
-    }
-    const state = new InflateState();
-    strm.state = state;
-    state.strm = strm;
-    state.window = null;
-    state.mode = HEAD;
-    const ret = inflateReset2(strm, windowBits);
-    if (ret !== Z_OK$1) {
-      strm.state = null;
-    }
-    return ret;
-  };
-  var inflateInit = (strm) => {
-    return inflateInit2(strm, DEF_WBITS);
-  };
-  var virgin = true;
-  var lenfix;
-  var distfix;
-  var fixedtables = (state) => {
-    if (virgin) {
-      lenfix = new Int32Array(512);
-      distfix = new Int32Array(32);
-      let sym = 0;
-      while (sym < 144) {
-        state.lens[sym++] = 8;
-      }
-      while (sym < 256) {
-        state.lens[sym++] = 9;
-      }
-      while (sym < 280) {
-        state.lens[sym++] = 7;
-      }
-      while (sym < 288) {
-        state.lens[sym++] = 8;
-      }
-      inftrees(LENS, state.lens, 0, 288, lenfix, 0, state.work, { bits: 9 });
-      sym = 0;
-      while (sym < 32) {
-        state.lens[sym++] = 5;
-      }
-      inftrees(DISTS, state.lens, 0, 32, distfix, 0, state.work, { bits: 5 });
-      virgin = false;
-    }
-    state.lencode = lenfix;
-    state.lenbits = 9;
-    state.distcode = distfix;
-    state.distbits = 5;
-  };
-  var updatewindow = (strm, src, end, copy) => {
-    let dist;
-    const state = strm.state;
-    if (state.window === null) {
-      state.window = new Uint8Array(1 << state.wbits);
-    }
-    if (state.wsize === 0) {
-      state.wsize = 1 << state.wbits;
-      state.wnext = 0;
-      state.whave = 0;
-    }
-    if (copy >= state.wsize) {
-      state.window.set(src.subarray(end - state.wsize, end), 0);
-      state.wnext = 0;
-      state.whave = state.wsize;
-    } else {
-      dist = state.wsize - state.wnext;
-      if (dist > copy) {
-        dist = copy;
-      }
-      state.window.set(src.subarray(end - copy, end - copy + dist), state.wnext);
-      copy -= dist;
-      if (copy) {
-        state.window.set(src.subarray(end - copy, end), 0);
-        state.wnext = copy;
-        state.whave = state.wsize;
-      } else {
-        state.wnext += dist;
-        if (state.wnext === state.wsize) {
-          state.wnext = 0;
-        }
-        if (state.whave < state.wsize) {
-          state.whave += dist;
-        }
-      }
-    }
-    return 0;
-  };
-  var inflate$2 = (strm, flush) => {
-    let state;
-    let input, output;
-    let next;
-    let put;
-    let have, left;
-    let hold;
-    let bits;
-    let _in, _out;
-    let copy;
-    let from;
-    let from_source;
-    let here = 0;
-    let here_bits, here_op, here_val;
-    let last_bits, last_op, last_val;
-    let len;
-    let ret;
-    const hbuf = new Uint8Array(4);
-    let opts;
-    let n;
-    const order = (
-      /* permutation of code lengths */
-      new Uint8Array([16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15])
-    );
-    if (inflateStateCheck(strm) || !strm.output || !strm.input && strm.avail_in !== 0) {
-      return Z_STREAM_ERROR$1;
-    }
-    state = strm.state;
-    if (state.mode === TYPE) {
-      state.mode = TYPEDO;
-    }
-    put = strm.next_out;
-    output = strm.output;
-    left = strm.avail_out;
-    next = strm.next_in;
-    input = strm.input;
-    have = strm.avail_in;
-    hold = state.hold;
-    bits = state.bits;
-    _in = have;
-    _out = left;
-    ret = Z_OK$1;
-    inf_leave:
-      for (; ; ) {
-        switch (state.mode) {
-          case HEAD:
-            if (state.wrap === 0) {
-              state.mode = TYPEDO;
-              break;
-            }
-            while (bits < 16) {
-              if (have === 0) {
-                break inf_leave;
-              }
-              have--;
-              hold += input[next++] << bits;
-              bits += 8;
-            }
-            if (state.wrap & 2 && hold === 35615) {
-              if (state.wbits === 0) {
-                state.wbits = 15;
-              }
-              state.check = 0;
-              hbuf[0] = hold & 255;
-              hbuf[1] = hold >>> 8 & 255;
-              state.check = crc32_1(state.check, hbuf, 2, 0);
-              hold = 0;
-              bits = 0;
-              state.mode = FLAGS;
-              break;
-            }
-            if (state.head) {
-              state.head.done = false;
-            }
-            if (!(state.wrap & 1) || /* check if zlib header allowed */
-            (((hold & 255) << 8) + (hold >> 8)) % 31) {
-              strm.msg = "incorrect header check";
-              state.mode = BAD;
-              break;
-            }
-            if ((hold & 15) !== Z_DEFLATED) {
-              strm.msg = "unknown compression method";
-              state.mode = BAD;
-              break;
-            }
-            hold >>>= 4;
-            bits -= 4;
-            len = (hold & 15) + 8;
-            if (state.wbits === 0) {
-              state.wbits = len;
-            }
-            if (len > 15 || len > state.wbits) {
-              strm.msg = "invalid window size";
-              state.mode = BAD;
-              break;
-            }
-            state.dmax = 1 << state.wbits;
-            state.flags = 0;
-            strm.adler = state.check = 1;
-            state.mode = hold & 512 ? DICTID : TYPE;
-            hold = 0;
-            bits = 0;
-            break;
-          case FLAGS:
-            while (bits < 16) {
-              if (have === 0) {
-                break inf_leave;
-              }
-              have--;
-              hold += input[next++] << bits;
-              bits += 8;
-            }
-            state.flags = hold;
-            if ((state.flags & 255) !== Z_DEFLATED) {
-              strm.msg = "unknown compression method";
-              state.mode = BAD;
-              break;
-            }
-            if (state.flags & 57344) {
-              strm.msg = "unknown header flags set";
-              state.mode = BAD;
-              break;
-            }
-            if (state.head) {
-              state.head.text = hold >> 8 & 1;
-            }
-            if (state.flags & 512 && state.wrap & 4) {
-              hbuf[0] = hold & 255;
-              hbuf[1] = hold >>> 8 & 255;
-              state.check = crc32_1(state.check, hbuf, 2, 0);
-            }
-            hold = 0;
-            bits = 0;
-            state.mode = TIME;
-          /* falls through */
-          case TIME:
-            while (bits < 32) {
-              if (have === 0) {
-                break inf_leave;
-              }
-              have--;
-              hold += input[next++] << bits;
-              bits += 8;
-            }
-            if (state.head) {
-              state.head.time = hold;
-            }
-            if (state.flags & 512 && state.wrap & 4) {
-              hbuf[0] = hold & 255;
-              hbuf[1] = hold >>> 8 & 255;
-              hbuf[2] = hold >>> 16 & 255;
-              hbuf[3] = hold >>> 24 & 255;
-              state.check = crc32_1(state.check, hbuf, 4, 0);
-            }
-            hold = 0;
-            bits = 0;
-            state.mode = OS;
-          /* falls through */
-          case OS:
-            while (bits < 16) {
-              if (have === 0) {
-                break inf_leave;
-              }
-              have--;
-              hold += input[next++] << bits;
-              bits += 8;
-            }
-            if (state.head) {
-              state.head.xflags = hold & 255;
-              state.head.os = hold >> 8;
-            }
-            if (state.flags & 512 && state.wrap & 4) {
-              hbuf[0] = hold & 255;
-              hbuf[1] = hold >>> 8 & 255;
-              state.check = crc32_1(state.check, hbuf, 2, 0);
-            }
-            hold = 0;
-            bits = 0;
-            state.mode = EXLEN;
-          /* falls through */
-          case EXLEN:
-            if (state.flags & 1024) {
-              while (bits < 16) {
-                if (have === 0) {
-                  break inf_leave;
-                }
-                have--;
-                hold += input[next++] << bits;
-                bits += 8;
-              }
-              state.length = hold;
-              if (state.head) {
-                state.head.extra_len = hold;
-              }
-              if (state.flags & 512 && state.wrap & 4) {
-                hbuf[0] = hold & 255;
-                hbuf[1] = hold >>> 8 & 255;
-                state.check = crc32_1(state.check, hbuf, 2, 0);
-              }
-              hold = 0;
-              bits = 0;
-            } else if (state.head) {
-              state.head.extra = null;
-            }
-            state.mode = EXTRA;
-          /* falls through */
-          case EXTRA:
-            if (state.flags & 1024) {
-              copy = state.length;
-              if (copy > have) {
-                copy = have;
-              }
-              if (copy) {
-                if (state.head) {
-                  len = state.head.extra_len - state.length;
-                  if (!state.head.extra) {
-                    state.head.extra = new Uint8Array(state.head.extra_len);
-                  }
-                  state.head.extra.set(
-                    input.subarray(
-                      next,
-                      // extra field is limited to 65536 bytes
-                      // - no need for additional size check
-                      next + copy
-                    ),
-                    /*len + copy > state.head.extra_max - len ? state.head.extra_max : copy,*/
-                    len
-                  );
-                }
-                if (state.flags & 512 && state.wrap & 4) {
-                  state.check = crc32_1(state.check, input, copy, next);
-                }
-                have -= copy;
-                next += copy;
-                state.length -= copy;
-              }
-              if (state.length) {
-                break inf_leave;
-              }
-            }
-            state.length = 0;
-            state.mode = NAME;
-          /* falls through */
-          case NAME:
-            if (state.flags & 2048) {
-              if (have === 0) {
-                break inf_leave;
-              }
-              copy = 0;
-              do {
-                len = input[next + copy++];
-                if (state.head && len && state.length < 65536) {
-                  state.head.name += String.fromCharCode(len);
-                }
-              } while (len && copy < have);
-              if (state.flags & 512 && state.wrap & 4) {
-                state.check = crc32_1(state.check, input, copy, next);
-              }
-              have -= copy;
-              next += copy;
-              if (len) {
-                break inf_leave;
-              }
-            } else if (state.head) {
-              state.head.name = null;
-            }
-            state.length = 0;
-            state.mode = COMMENT;
-          /* falls through */
-          case COMMENT:
-            if (state.flags & 4096) {
-              if (have === 0) {
-                break inf_leave;
-              }
-              copy = 0;
-              do {
-                len = input[next + copy++];
-                if (state.head && len && state.length < 65536) {
-                  state.head.comment += String.fromCharCode(len);
-                }
-              } while (len && copy < have);
-              if (state.flags & 512 && state.wrap & 4) {
-                state.check = crc32_1(state.check, input, copy, next);
-              }
-              have -= copy;
-              next += copy;
-              if (len) {
-                break inf_leave;
-              }
-            } else if (state.head) {
-              state.head.comment = null;
-            }
-            state.mode = HCRC;
-          /* falls through */
-          case HCRC:
-            if (state.flags & 512) {
-              while (bits < 16) {
-                if (have === 0) {
-                  break inf_leave;
-                }
-                have--;
-                hold += input[next++] << bits;
-                bits += 8;
-              }
-              if (state.wrap & 4 && hold !== (state.check & 65535)) {
-                strm.msg = "header crc mismatch";
-                state.mode = BAD;
-                break;
-              }
-              hold = 0;
-              bits = 0;
-            }
-            if (state.head) {
-              state.head.hcrc = state.flags >> 9 & 1;
-              state.head.done = true;
-            }
-            strm.adler = state.check = 0;
-            state.mode = TYPE;
-            break;
-          case DICTID:
-            while (bits < 32) {
-              if (have === 0) {
-                break inf_leave;
-              }
-              have--;
-              hold += input[next++] << bits;
-              bits += 8;
-            }
-            strm.adler = state.check = zswap32(hold);
-            hold = 0;
-            bits = 0;
-            state.mode = DICT;
-          /* falls through */
-          case DICT:
-            if (state.havedict === 0) {
-              strm.next_out = put;
-              strm.avail_out = left;
-              strm.next_in = next;
-              strm.avail_in = have;
-              state.hold = hold;
-              state.bits = bits;
-              return Z_NEED_DICT$1;
-            }
-            strm.adler = state.check = 1;
-            state.mode = TYPE;
-          /* falls through */
-          case TYPE:
-            if (flush === Z_BLOCK || flush === Z_TREES) {
-              break inf_leave;
-            }
-          /* falls through */
-          case TYPEDO:
-            if (state.last) {
-              hold >>>= bits & 7;
-              bits -= bits & 7;
-              state.mode = CHECK;
-              break;
-            }
-            while (bits < 3) {
-              if (have === 0) {
-                break inf_leave;
-              }
-              have--;
-              hold += input[next++] << bits;
-              bits += 8;
-            }
-            state.last = hold & 1;
-            hold >>>= 1;
-            bits -= 1;
-            switch (hold & 3) {
-              case 0:
-                state.mode = STORED;
-                break;
-              case 1:
-                fixedtables(state);
-                state.mode = LEN_;
-                if (flush === Z_TREES) {
-                  hold >>>= 2;
-                  bits -= 2;
-                  break inf_leave;
-                }
-                break;
-              case 2:
-                state.mode = TABLE;
-                break;
-              case 3:
-                strm.msg = "invalid block type";
-                state.mode = BAD;
-            }
-            hold >>>= 2;
-            bits -= 2;
-            break;
-          case STORED:
-            hold >>>= bits & 7;
-            bits -= bits & 7;
-            while (bits < 32) {
-              if (have === 0) {
-                break inf_leave;
-              }
-              have--;
-              hold += input[next++] << bits;
-              bits += 8;
-            }
-            if ((hold & 65535) !== (hold >>> 16 ^ 65535)) {
-              strm.msg = "invalid stored block lengths";
-              state.mode = BAD;
-              break;
-            }
-            state.length = hold & 65535;
-            hold = 0;
-            bits = 0;
-            state.mode = COPY_;
-            if (flush === Z_TREES) {
-              break inf_leave;
-            }
-          /* falls through */
-          case COPY_:
-            state.mode = COPY;
-          /* falls through */
-          case COPY:
-            copy = state.length;
-            if (copy) {
-              if (copy > have) {
-                copy = have;
-              }
-              if (copy > left) {
-                copy = left;
-              }
-              if (copy === 0) {
-                break inf_leave;
-              }
-              output.set(input.subarray(next, next + copy), put);
-              have -= copy;
-              next += copy;
-              left -= copy;
-              put += copy;
-              state.length -= copy;
-              break;
-            }
-            state.mode = TYPE;
-            break;
-          case TABLE:
-            while (bits < 14) {
-              if (have === 0) {
-                break inf_leave;
-              }
-              have--;
-              hold += input[next++] << bits;
-              bits += 8;
-            }
-            state.nlen = (hold & 31) + 257;
-            hold >>>= 5;
-            bits -= 5;
-            state.ndist = (hold & 31) + 1;
-            hold >>>= 5;
-            bits -= 5;
-            state.ncode = (hold & 15) + 4;
-            hold >>>= 4;
-            bits -= 4;
-            if (state.nlen > 286 || state.ndist > 30) {
-              strm.msg = "too many length or distance symbols";
-              state.mode = BAD;
-              break;
-            }
-            state.have = 0;
-            state.mode = LENLENS;
-          /* falls through */
-          case LENLENS:
-            while (state.have < state.ncode) {
-              while (bits < 3) {
-                if (have === 0) {
-                  break inf_leave;
-                }
-                have--;
-                hold += input[next++] << bits;
-                bits += 8;
-              }
-              state.lens[order[state.have++]] = hold & 7;
-              hold >>>= 3;
-              bits -= 3;
-            }
-            while (state.have < 19) {
-              state.lens[order[state.have++]] = 0;
-            }
-            state.lencode = state.lendyn;
-            state.lenbits = 7;
-            opts = { bits: state.lenbits };
-            ret = inftrees(CODES, state.lens, 0, 19, state.lencode, 0, state.work, opts);
-            state.lenbits = opts.bits;
-            if (ret) {
-              strm.msg = "invalid code lengths set";
-              state.mode = BAD;
-              break;
-            }
-            state.have = 0;
-            state.mode = CODELENS;
-          /* falls through */
-          case CODELENS:
-            while (state.have < state.nlen + state.ndist) {
-              for (; ; ) {
-                here = state.lencode[hold & (1 << state.lenbits) - 1];
-                here_bits = here >>> 24;
-                here_op = here >>> 16 & 255;
-                here_val = here & 65535;
-                if (here_bits <= bits) {
-                  break;
-                }
-                if (have === 0) {
-                  break inf_leave;
-                }
-                have--;
-                hold += input[next++] << bits;
-                bits += 8;
-              }
-              if (here_val < 16) {
-                hold >>>= here_bits;
-                bits -= here_bits;
-                state.lens[state.have++] = here_val;
-              } else {
-                if (here_val === 16) {
-                  n = here_bits + 2;
-                  while (bits < n) {
-                    if (have === 0) {
-                      break inf_leave;
-                    }
-                    have--;
-                    hold += input[next++] << bits;
-                    bits += 8;
-                  }
-                  hold >>>= here_bits;
-                  bits -= here_bits;
-                  if (state.have === 0) {
-                    strm.msg = "invalid bit length repeat";
-                    state.mode = BAD;
-                    break;
-                  }
-                  len = state.lens[state.have - 1];
-                  copy = 3 + (hold & 3);
-                  hold >>>= 2;
-                  bits -= 2;
-                } else if (here_val === 17) {
-                  n = here_bits + 3;
-                  while (bits < n) {
-                    if (have === 0) {
-                      break inf_leave;
-                    }
-                    have--;
-                    hold += input[next++] << bits;
-                    bits += 8;
-                  }
-                  hold >>>= here_bits;
-                  bits -= here_bits;
-                  len = 0;
-                  copy = 3 + (hold & 7);
-                  hold >>>= 3;
-                  bits -= 3;
-                } else {
-                  n = here_bits + 7;
-                  while (bits < n) {
-                    if (have === 0) {
-                      break inf_leave;
-                    }
-                    have--;
-                    hold += input[next++] << bits;
-                    bits += 8;
-                  }
-                  hold >>>= here_bits;
-                  bits -= here_bits;
-                  len = 0;
-                  copy = 11 + (hold & 127);
-                  hold >>>= 7;
-                  bits -= 7;
-                }
-                if (state.have + copy > state.nlen + state.ndist) {
-                  strm.msg = "invalid bit length repeat";
-                  state.mode = BAD;
-                  break;
-                }
-                while (copy--) {
-                  state.lens[state.have++] = len;
-                }
-              }
-            }
-            if (state.mode === BAD) {
-              break;
-            }
-            if (state.lens[256] === 0) {
-              strm.msg = "invalid code -- missing end-of-block";
-              state.mode = BAD;
-              break;
-            }
-            state.lenbits = 9;
-            opts = { bits: state.lenbits };
-            ret = inftrees(LENS, state.lens, 0, state.nlen, state.lencode, 0, state.work, opts);
-            state.lenbits = opts.bits;
-            if (ret) {
-              strm.msg = "invalid literal/lengths set";
-              state.mode = BAD;
-              break;
-            }
-            state.distbits = 6;
-            state.distcode = state.distdyn;
-            opts = { bits: state.distbits };
-            ret = inftrees(DISTS, state.lens, state.nlen, state.ndist, state.distcode, 0, state.work, opts);
-            state.distbits = opts.bits;
-            if (ret) {
-              strm.msg = "invalid distances set";
-              state.mode = BAD;
-              break;
-            }
-            state.mode = LEN_;
-            if (flush === Z_TREES) {
-              break inf_leave;
-            }
-          /* falls through */
-          case LEN_:
-            state.mode = LEN;
-          /* falls through */
-          case LEN:
-            if (have >= 6 && left >= 258) {
-              strm.next_out = put;
-              strm.avail_out = left;
-              strm.next_in = next;
-              strm.avail_in = have;
-              state.hold = hold;
-              state.bits = bits;
-              inffast(strm, _out);
-              put = strm.next_out;
-              output = strm.output;
-              left = strm.avail_out;
-              next = strm.next_in;
-              input = strm.input;
-              have = strm.avail_in;
-              hold = state.hold;
-              bits = state.bits;
-              if (state.mode === TYPE) {
-                state.back = -1;
-              }
-              break;
-            }
-            state.back = 0;
-            for (; ; ) {
-              here = state.lencode[hold & (1 << state.lenbits) - 1];
-              here_bits = here >>> 24;
-              here_op = here >>> 16 & 255;
-              here_val = here & 65535;
-              if (here_bits <= bits) {
-                break;
-              }
-              if (have === 0) {
-                break inf_leave;
-              }
-              have--;
-              hold += input[next++] << bits;
-              bits += 8;
-            }
-            if (here_op && (here_op & 240) === 0) {
-              last_bits = here_bits;
-              last_op = here_op;
-              last_val = here_val;
-              for (; ; ) {
-                here = state.lencode[last_val + ((hold & (1 << last_bits + last_op) - 1) >> last_bits)];
-                here_bits = here >>> 24;
-                here_op = here >>> 16 & 255;
-                here_val = here & 65535;
-                if (last_bits + here_bits <= bits) {
-                  break;
-                }
-                if (have === 0) {
-                  break inf_leave;
-                }
-                have--;
-                hold += input[next++] << bits;
-                bits += 8;
-              }
-              hold >>>= last_bits;
-              bits -= last_bits;
-              state.back += last_bits;
-            }
-            hold >>>= here_bits;
-            bits -= here_bits;
-            state.back += here_bits;
-            state.length = here_val;
-            if (here_op === 0) {
-              state.mode = LIT;
-              break;
-            }
-            if (here_op & 32) {
-              state.back = -1;
-              state.mode = TYPE;
-              break;
-            }
-            if (here_op & 64) {
-              strm.msg = "invalid literal/length code";
-              state.mode = BAD;
-              break;
-            }
-            state.extra = here_op & 15;
-            state.mode = LENEXT;
-          /* falls through */
-          case LENEXT:
-            if (state.extra) {
-              n = state.extra;
-              while (bits < n) {
-                if (have === 0) {
-                  break inf_leave;
-                }
-                have--;
-                hold += input[next++] << bits;
-                bits += 8;
-              }
-              state.length += hold & (1 << state.extra) - 1;
-              hold >>>= state.extra;
-              bits -= state.extra;
-              state.back += state.extra;
-            }
-            state.was = state.length;
-            state.mode = DIST;
-          /* falls through */
-          case DIST:
-            for (; ; ) {
-              here = state.distcode[hold & (1 << state.distbits) - 1];
-              here_bits = here >>> 24;
-              here_op = here >>> 16 & 255;
-              here_val = here & 65535;
-              if (here_bits <= bits) {
-                break;
-              }
-              if (have === 0) {
-                break inf_leave;
-              }
-              have--;
-              hold += input[next++] << bits;
-              bits += 8;
-            }
-            if ((here_op & 240) === 0) {
-              last_bits = here_bits;
-              last_op = here_op;
-              last_val = here_val;
-              for (; ; ) {
-                here = state.distcode[last_val + ((hold & (1 << last_bits + last_op) - 1) >> last_bits)];
-                here_bits = here >>> 24;
-                here_op = here >>> 16 & 255;
-                here_val = here & 65535;
-                if (last_bits + here_bits <= bits) {
-                  break;
-                }
-                if (have === 0) {
-                  break inf_leave;
-                }
-                have--;
-                hold += input[next++] << bits;
-                bits += 8;
-              }
-              hold >>>= last_bits;
-              bits -= last_bits;
-              state.back += last_bits;
-            }
-            hold >>>= here_bits;
-            bits -= here_bits;
-            state.back += here_bits;
-            if (here_op & 64) {
-              strm.msg = "invalid distance code";
-              state.mode = BAD;
-              break;
-            }
-            state.offset = here_val;
-            state.extra = here_op & 15;
-            state.mode = DISTEXT;
-          /* falls through */
-          case DISTEXT:
-            if (state.extra) {
-              n = state.extra;
-              while (bits < n) {
-                if (have === 0) {
-                  break inf_leave;
-                }
-                have--;
-                hold += input[next++] << bits;
-                bits += 8;
-              }
-              state.offset += hold & (1 << state.extra) - 1;
-              hold >>>= state.extra;
-              bits -= state.extra;
-              state.back += state.extra;
-            }
-            if (state.offset > state.dmax) {
-              strm.msg = "invalid distance too far back";
-              state.mode = BAD;
-              break;
-            }
-            state.mode = MATCH;
-          /* falls through */
-          case MATCH:
-            if (left === 0) {
-              break inf_leave;
-            }
-            copy = _out - left;
-            if (state.offset > copy) {
-              copy = state.offset - copy;
-              if (copy > state.whave) {
-                if (state.sane) {
-                  strm.msg = "invalid distance too far back";
-                  state.mode = BAD;
-                  break;
-                }
-              }
-              if (copy > state.wnext) {
-                copy -= state.wnext;
-                from = state.wsize - copy;
-              } else {
-                from = state.wnext - copy;
-              }
-              if (copy > state.length) {
-                copy = state.length;
-              }
-              from_source = state.window;
-            } else {
-              from_source = output;
-              from = put - state.offset;
-              copy = state.length;
-            }
-            if (copy > left) {
-              copy = left;
-            }
-            left -= copy;
-            state.length -= copy;
-            do {
-              output[put++] = from_source[from++];
-            } while (--copy);
-            if (state.length === 0) {
-              state.mode = LEN;
-            }
-            break;
-          case LIT:
-            if (left === 0) {
-              break inf_leave;
-            }
-            output[put++] = state.length;
-            left--;
-            state.mode = LEN;
-            break;
-          case CHECK:
-            if (state.wrap) {
-              while (bits < 32) {
-                if (have === 0) {
-                  break inf_leave;
-                }
-                have--;
-                hold |= input[next++] << bits;
-                bits += 8;
-              }
-              _out -= left;
-              strm.total_out += _out;
-              state.total += _out;
-              if (state.wrap & 4 && _out) {
-                strm.adler = state.check = /*UPDATE_CHECK(state.check, put - _out, _out);*/
-                state.flags ? crc32_1(state.check, output, _out, put - _out) : adler32_1(state.check, output, _out, put - _out);
-              }
-              _out = left;
-              if (state.wrap & 4 && (state.flags ? hold : zswap32(hold)) !== state.check) {
-                strm.msg = "incorrect data check";
-                state.mode = BAD;
-                break;
-              }
-              hold = 0;
-              bits = 0;
-            }
-            state.mode = LENGTH;
-          /* falls through */
-          case LENGTH:
-            if (state.wrap && state.flags) {
-              while (bits < 32) {
-                if (have === 0) {
-                  break inf_leave;
-                }
-                have--;
-                hold += input[next++] << bits;
-                bits += 8;
-              }
-              if (state.wrap & 4 && hold !== (state.total & 4294967295)) {
-                strm.msg = "incorrect length check";
-                state.mode = BAD;
-                break;
-              }
-              hold = 0;
-              bits = 0;
-            }
-            state.mode = DONE;
-          /* falls through */
-          case DONE:
-            ret = Z_STREAM_END$1;
-            break inf_leave;
-          case BAD:
-            ret = Z_DATA_ERROR$1;
-            break inf_leave;
-          case MEM:
-            return Z_MEM_ERROR$1;
-          case SYNC:
-          /* falls through */
-          default:
-            return Z_STREAM_ERROR$1;
-        }
-      }
-    strm.next_out = put;
-    strm.avail_out = left;
-    strm.next_in = next;
-    strm.avail_in = have;
-    state.hold = hold;
-    state.bits = bits;
-    if (state.wsize || _out !== strm.avail_out && state.mode < BAD && (state.mode < CHECK || flush !== Z_FINISH$1)) {
-      if (updatewindow(strm, strm.output, strm.next_out, _out - strm.avail_out)) ;
-    }
-    _in -= strm.avail_in;
-    _out -= strm.avail_out;
-    strm.total_in += _in;
-    strm.total_out += _out;
-    state.total += _out;
-    if (state.wrap & 4 && _out) {
-      strm.adler = state.check = /*UPDATE_CHECK(state.check, strm.next_out - _out, _out);*/
-      state.flags ? crc32_1(state.check, output, _out, strm.next_out - _out) : adler32_1(state.check, output, _out, strm.next_out - _out);
-    }
-    strm.data_type = state.bits + (state.last ? 64 : 0) + (state.mode === TYPE ? 128 : 0) + (state.mode === LEN_ || state.mode === COPY_ ? 256 : 0);
-    if ((_in === 0 && _out === 0 || flush === Z_FINISH$1) && ret === Z_OK$1) {
-      ret = Z_BUF_ERROR$1;
-    }
-    return ret;
-  };
-  var inflateEnd = (strm) => {
-    if (inflateStateCheck(strm)) {
-      return Z_STREAM_ERROR$1;
-    }
-    let state = strm.state;
-    if (state.window) {
-      state.window = null;
-    }
-    strm.state = null;
-    return Z_OK$1;
-  };
-  var inflateGetHeader = (strm, head) => {
-    if (inflateStateCheck(strm)) {
-      return Z_STREAM_ERROR$1;
-    }
-    const state = strm.state;
-    if ((state.wrap & 2) === 0) {
-      return Z_STREAM_ERROR$1;
-    }
-    state.head = head;
-    head.done = false;
-    return Z_OK$1;
-  };
-  var inflateSetDictionary = (strm, dictionary) => {
-    const dictLength = dictionary.length;
-    let state;
-    let dictid;
-    let ret;
-    if (inflateStateCheck(strm)) {
-      return Z_STREAM_ERROR$1;
-    }
-    state = strm.state;
-    if (state.wrap !== 0 && state.mode !== DICT) {
-      return Z_STREAM_ERROR$1;
-    }
-    if (state.mode === DICT) {
-      dictid = 1;
-      dictid = adler32_1(dictid, dictionary, dictLength, 0);
-      if (dictid !== state.check) {
-        return Z_DATA_ERROR$1;
-      }
-    }
-    ret = updatewindow(strm, dictionary, dictLength, dictLength);
-    if (ret) {
-      state.mode = MEM;
-      return Z_MEM_ERROR$1;
-    }
-    state.havedict = 1;
-    return Z_OK$1;
-  };
-  var inflateReset_1 = inflateReset;
-  var inflateReset2_1 = inflateReset2;
-  var inflateResetKeep_1 = inflateResetKeep;
-  var inflateInit_1 = inflateInit;
-  var inflateInit2_1 = inflateInit2;
-  var inflate_2$1 = inflate$2;
-  var inflateEnd_1 = inflateEnd;
-  var inflateGetHeader_1 = inflateGetHeader;
-  var inflateSetDictionary_1 = inflateSetDictionary;
-  var inflateInfo = "pako inflate (from Nodeca project)";
-  var inflate_1$2 = {
-    inflateReset: inflateReset_1,
-    inflateReset2: inflateReset2_1,
-    inflateResetKeep: inflateResetKeep_1,
-    inflateInit: inflateInit_1,
-    inflateInit2: inflateInit2_1,
-    inflate: inflate_2$1,
-    inflateEnd: inflateEnd_1,
-    inflateGetHeader: inflateGetHeader_1,
-    inflateSetDictionary: inflateSetDictionary_1,
-    inflateInfo
-  };
-  function GZheader() {
-    this.text = 0;
-    this.time = 0;
-    this.xflags = 0;
-    this.os = 0;
-    this.extra = null;
-    this.extra_len = 0;
-    this.name = "";
-    this.comment = "";
-    this.hcrc = 0;
-    this.done = false;
-  }
-  var gzheader = GZheader;
-  var toString = Object.prototype.toString;
-  var {
-    Z_NO_FLUSH,
-    Z_FINISH,
-    Z_OK,
-    Z_STREAM_END,
-    Z_NEED_DICT,
-    Z_STREAM_ERROR,
-    Z_DATA_ERROR,
-    Z_MEM_ERROR,
-    Z_BUF_ERROR
-  } = constants$2;
-  var defaultOptions = {
-    chunkSize: 1024 * 64,
-    windowBits: 15,
-    to: ""
-  };
-  function Inflate$1(options) {
-    this.options = common.assign({}, defaultOptions, options || {});
-    const opt = this.options;
-    if (opt.raw && opt.windowBits >= 0 && opt.windowBits < 16) {
-      opt.windowBits = -opt.windowBits;
-      if (opt.windowBits === 0) {
-        opt.windowBits = -15;
-      }
-    }
-    if (opt.windowBits >= 0 && opt.windowBits < 16 && !(options && options.windowBits)) {
-      opt.windowBits += 32;
-    }
-    if (opt.windowBits > 15 && opt.windowBits < 48) {
-      if ((opt.windowBits & 15) === 0) {
-        opt.windowBits |= 15;
-      }
-    }
-    this.err = 0;
-    this.msg = "";
-    this.ended = false;
-    this.chunks = [];
-    this.strm = new zstream();
-    this.strm.avail_out = 0;
-    let status = inflate_1$2.inflateInit2(
-      this.strm,
-      opt.windowBits
-    );
-    if (status !== Z_OK) {
-      throw new Error(messages[status]);
-    }
-    this.header = new gzheader();
-    inflate_1$2.inflateGetHeader(this.strm, this.header);
-    if (opt.dictionary) {
-      if (typeof opt.dictionary === "string") {
-        opt.dictionary = strings.string2buf(opt.dictionary);
-      } else if (toString.call(opt.dictionary) === "[object ArrayBuffer]") {
-        opt.dictionary = new Uint8Array(opt.dictionary);
-      }
-      if (opt.raw) {
-        status = inflate_1$2.inflateSetDictionary(this.strm, opt.dictionary);
-        if (status !== Z_OK) {
-          throw new Error(messages[status]);
-        }
-      }
-    }
-  }
-  Inflate$1.prototype.push = function(data, flush_mode) {
-    const strm = this.strm;
-    const chunkSize = this.options.chunkSize;
-    const dictionary = this.options.dictionary;
-    let status, _flush_mode, last_avail_out;
-    if (this.ended) return false;
-    if (flush_mode === ~~flush_mode) _flush_mode = flush_mode;
-    else _flush_mode = flush_mode === true ? Z_FINISH : Z_NO_FLUSH;
-    if (toString.call(data) === "[object ArrayBuffer]") {
-      strm.input = new Uint8Array(data);
-    } else {
-      strm.input = data;
-    }
-    strm.next_in = 0;
-    strm.avail_in = strm.input.length;
-    for (; ; ) {
-      if (strm.avail_out === 0) {
-        strm.output = new Uint8Array(chunkSize);
-        strm.next_out = 0;
-        strm.avail_out = chunkSize;
-      }
-      status = inflate_1$2.inflate(strm, _flush_mode);
-      if (status === Z_NEED_DICT && dictionary) {
-        status = inflate_1$2.inflateSetDictionary(strm, dictionary);
-        if (status === Z_OK) {
-          status = inflate_1$2.inflate(strm, _flush_mode);
-        } else if (status === Z_DATA_ERROR) {
-          status = Z_NEED_DICT;
-        }
-      }
-      while (strm.avail_in > 0 && status === Z_STREAM_END && strm.state.wrap & 2 && strm.state.flags !== 0 && strm.input[strm.next_in] !== 0) {
-        inflate_1$2.inflateReset(strm);
-        status = inflate_1$2.inflate(strm, _flush_mode);
-      }
-      switch (status) {
-        case Z_STREAM_ERROR:
-        case Z_DATA_ERROR:
-        case Z_NEED_DICT:
-        case Z_MEM_ERROR:
-          this.onEnd(status);
-          this.ended = true;
-          return false;
-      }
-      last_avail_out = strm.avail_out;
-      if (strm.next_out) {
-        if (strm.avail_out === 0 || status === Z_STREAM_END || _flush_mode > 0) {
-          if (this.options.to === "string") {
-            let next_out_utf8 = strings.utf8border(strm.output, strm.next_out);
-            let tail = strm.next_out - next_out_utf8;
-            let utf8str = strings.buf2string(strm.output, next_out_utf8);
-            strm.next_out = tail;
-            strm.avail_out = chunkSize - tail;
-            if (tail) strm.output.set(strm.output.subarray(next_out_utf8, next_out_utf8 + tail), 0);
-            this.onData(utf8str);
-          } else {
-            this.onData(strm.output.length === strm.next_out ? strm.output : strm.output.subarray(0, strm.next_out));
-            strm.avail_out = 0;
-            strm.next_out = 0;
-          }
-        }
-      }
-      if ((status === Z_OK || status === Z_BUF_ERROR) && last_avail_out === 0) continue;
-      if (status === Z_STREAM_END) {
-        status = inflate_1$2.inflateEnd(this.strm);
-        this.onEnd(status);
-        this.ended = true;
-        return true;
-      }
-      if (strm.avail_in === 0) {
-        if (_flush_mode === Z_FINISH) {
-          status = inflate_1$2.inflateEnd(this.strm);
-          this.onEnd(status === Z_OK ? Z_BUF_ERROR : status);
-          this.ended = true;
-          return false;
-        }
-        break;
-      }
-    }
-    return true;
-  };
-  Inflate$1.prototype.onData = function(chunk) {
-    this.chunks.push(chunk);
-  };
-  Inflate$1.prototype.onEnd = function(status) {
-    if (status === Z_OK) {
-      if (this.options.to === "string") {
-        this.result = this.chunks.join("");
-      } else {
-        this.result = common.flattenChunks(this.chunks);
-      }
-    }
-    this.chunks = [];
-    this.err = status;
-    this.msg = this.strm.msg;
-  };
-  function inflate$1(input, options) {
-    const inflator = new Inflate$1(options);
-    inflator.push(input, true);
-    if (inflator.err) throw inflator.msg || messages[inflator.err];
-    return inflator.result;
-  }
-  function inflateRaw$1(input, options) {
-    options = options || {};
-    options.raw = true;
-    return inflate$1(input, options);
-  }
-  var Inflate_1$1 = Inflate$1;
-  var inflate_2 = inflate$1;
-  var inflateRaw_1$1 = inflateRaw$1;
-  var ungzip$1 = inflate$1;
-  var constants = constants$2;
-  var inflate_1$1 = {
-    Inflate: Inflate_1$1,
-    inflate: inflate_2,
-    inflateRaw: inflateRaw_1$1,
-    ungzip: ungzip$1,
-    constants
-  };
-  var { Deflate, deflate, deflateRaw, gzip } = deflate_1$1;
-  var { Inflate, inflate: inflate2, inflateRaw, ungzip } = inflate_1$1;
-  var Deflate_1 = Deflate;
-  var deflate_1 = deflate;
-  var deflateRaw_1 = deflateRaw;
-  var gzip_1 = gzip;
-  var Inflate_1 = Inflate;
-  var inflate_1 = inflate2;
-  var inflateRaw_1 = inflateRaw;
-  var ungzip_1 = ungzip;
-  var constants_1 = constants$2;
-  var pako = {
-    Deflate: Deflate_1,
-    deflate: deflate_1,
-    deflateRaw: deflateRaw_1,
-    gzip: gzip_1,
-    Inflate: Inflate_1,
-    inflate: inflate_1,
-    inflateRaw: inflateRaw_1,
-    ungzip: ungzip_1,
-    constants: constants_1
-  };
-
   // src/musicSdk/kg/util.js
   var import_buffer6 = __toESM(require_buffer(), 1);
   var enc_key = import_buffer6.Buffer.from([64, 71, 97, 119, 94, 50, 116, 71, 81, 54, 49, 45, 206, 210, 110, 105], "binary");
@@ -12440,7 +10307,7 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
     for (let i = 0, len = buf_str.length; i < len; i++) {
       buf_str[i] = buf_str[i] ^ enc_key[i % 16];
     }
-    const result = pako.inflate(buf_str, { to: "string" });
+    const result = import_buffer6.Buffer.from(inflate(buf_str)).toString("utf8");
     resolve(result);
   });
   var signatureParams = (params, platform = "android", body = "") => {
@@ -12457,8 +10324,8 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
     options.cache = "default";
     try {
       result = await httpFetch(url, options);
-    } catch (err2) {
-      console.log(err2);
+    } catch (err) {
+      console.log(err);
       return createHttpFetch(url, options, ++retryNum);
     }
     if (result.statusCode !== 200 || (result.body.error_code ?? result.body.errcode ?? result.body.err_code) != 0) return createHttpFetch(url, options, ++retryNum);
@@ -12716,8 +10583,8 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
       options.cache = "default";
       try {
         result = await httpFetch(url, options);
-      } catch (err2) {
-        console.log(err2);
+      } catch (err) {
+        console.log(err);
         return this.createHttp(url, options, ++retryNum);
       }
       if (result.statusCode !== 200 || (result.body.error_code !== void 0 ? result.body.error_code : result.body.errcode !== void 0 ? result.body.errcode : result.body.err_code) !== 0) return this.createHttp(url, options, ++retryNum);
@@ -15504,7 +13371,7 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
     76
   ]);
   var handleInflate2 = (data) => new Promise((resolve, reject) => {
-    resolve(inflate_1(data, { finishFlush: constants_1.Z_SYNC_FLUSH }));
+    resolve(inflate(data));
   });
   var decodeQrc = async (hexData) => {
     if (!hexData || hexData.length % 2 !== 0) return "";
@@ -16099,9 +13966,9 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
           const detail = await musicDetail_default.getList(selectedIds.map((trackId) => trackId.id));
           list = detail.list;
           rawCount = detail.rawCount;
-        } catch (err2) {
-          console.log(err2);
-          if (err2.message == "try max num") throw err2;
+        } catch (err) {
+          console.log(err);
+          if (err.message == "try max num") throw err;
           return this.getListDetail(id, page, tryNum + 1);
         }
       }
@@ -16479,9 +14346,9 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
       let resp;
       try {
         resp = await this.getData(bangid, pageSize);
-      } catch (err2) {
-        if (err2.message == "try max num") {
-          throw err2;
+      } catch (err) {
+        if (err.message == "try max num") {
+          throw err;
         } else {
           return this.getList(bangid, page, pageSize, retryNum);
         }
@@ -16490,10 +14357,10 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
       let musicDetail;
       try {
         musicDetail = await musicDetail_default.getList(resp.body.playlist.trackIds.slice(0, pageSize).map((trackId) => trackId.id));
-      } catch (err2) {
-        console.log(err2);
-        if (err2.message == "try max num") {
-          throw err2;
+      } catch (err) {
+        console.log(err);
+        if (err.message == "try max num") {
+          throw err;
         } else {
           return this.getList(bangid, page, pageSize, retryNum);
         }
@@ -16988,8 +14855,8 @@ ${result.lyric}`;
     let result;
     try {
       result = await httpFetch(url, options);
-    } catch (err2) {
-      console.log(err2);
+    } catch (err) {
+      console.log(err);
       return createHttpFetch2(url, options, ++retryNum);
     }
     if (result.statusCode !== 200 || (result.body.code !== void 0 ? result.body.code : result.body.returnCode !== void 0 ? result.body.returnCode : result.body.code) !== "000000") return createHttpFetch2(url, options, ++retryNum);

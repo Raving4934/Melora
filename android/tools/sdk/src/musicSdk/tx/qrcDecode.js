@@ -1,4 +1,4 @@
-import { inflate, constants } from 'pako'
+import { inflate } from 'pako'
 
 /**
  * QRC 歌词解密（3DES-ECB + zlib inflate）
@@ -219,8 +219,7 @@ const QRC_KEY = Buffer.from([
 ])
 
 const handleInflate = (data) => new Promise((resolve, reject) => {
-  // Z_SYNC_FLUSH：容忍尾部不完整的 zlib 流（对应原实现忽略 Z_BUF_ERROR 的行为）
-  resolve(inflate(data, { finishFlush: constants.Z_SYNC_FLUSH }))
+  resolve(inflate(data))
 })
 /**
  * 解密腾讯 QRC 歌词。

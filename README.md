@@ -12,7 +12,7 @@ Self-hosted music streaming service & standalone Android local music player
 [![Platform](https://img.shields.io/badge/Platform-Android%20%7C%20Web%20%7C%20Docker%20%7C%20fnOS-blue?style=flat-square)](packaging/fpk)
 [![Architecture](https://img.shields.io/badge/Design-Neutral%20Architecture-059669?style=flat-square)](DISCLAIMER.md)
 [![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black)](apps/web)
-[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?style=flat-square&logo=go&logoColor=white)](apps/server)
+[![Go](https://img.shields.io/badge/Go-1.27-00ADD8?style=flat-square&logo=go&logoColor=white)](apps/server)
 [![License](https://img.shields.io/badge/License-Non--Commercial-blue?style=flat-square)](LICENSE)
 
 <p align="center">
@@ -172,6 +172,8 @@ To mitigate security risks when running third-party scripts, Melora provides res
 
 ### Web & Server
 
+Build toolchains: Node.js 26.12.1 and Go 1.27.3. The Go module keeps a minimum of Go 1.26 and declares the preferred toolchain in `go.mod`.
+
 ```bash
 # Build frontend
 npm ci
@@ -179,7 +181,7 @@ npm run build
 
 # Build Go server (in apps/server)
 cd apps/server
-go build -o melora-server main.go
+go build -o melora-server ./cmd/melora
 ```
 
 ### Android Client

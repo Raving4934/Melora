@@ -12,7 +12,7 @@
 [![Platform](https://img.shields.io/badge/Platform-Android%20%7C%20Web%20%7C%20Docker%20%7C%20fnOS-blue?style=flat-square)](packaging/fpk)
 [![Architecture](https://img.shields.io/badge/Design-Neutral%20Architecture-059669?style=flat-square)](DISCLAIMER.md)
 [![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black)](apps/web)
-[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?style=flat-square&logo=go&logoColor=white)](apps/server)
+[![Go](https://img.shields.io/badge/Go-1.27-00ADD8?style=flat-square&logo=go&logoColor=white)](apps/server)
 [![License](https://img.shields.io/badge/License-Non--Commercial-blue?style=flat-square)](LICENSE)
 
 <p align="center">
@@ -172,6 +172,8 @@ docker compose up -d
 
 ### Web 与服务端构建
 
+构建工具链：Node.js 26.12.1、Go 1.27.3。Go 模块保留最低 1.26 要求，`go.mod` 已声明推荐工具链。
+
 ```bash
 # 编译前端
 npm ci
@@ -179,7 +181,7 @@ npm run build
 
 # 编译 Go 服务端 (位于 apps/server)
 cd apps/server
-go build -o melora-server main.go
+go build -o melora-server ./cmd/melora
 ```
 
 ### Android 客户端构建

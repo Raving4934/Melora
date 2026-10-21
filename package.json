@@ -6,7 +6,7 @@
     "apps/web"
   ],
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=26.12.1"
   },
   "scripts": {
     "dev": "node scripts/dev.mjs",
@@ -20,13 +20,13 @@
     "test:e2e": "npm run test:e2e --workspace @melora/web",
     "typecheck": "npm run typecheck --workspace @melora/web",
     "vet:server": "cd apps/server && go vet ./...",
-    "vuln:server": "cd apps/server && GOTOOLCHAIN=go1.26.9 go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...",
+    "vuln:server": "cd apps/server && GOTOOLCHAIN=go1.27.3 go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...",
     "check": "npm run format:check && npm run typecheck && npm run test && npm run vet:server && npm run test:packaging && npm run test:release",
     "format": "prettier --write \"apps/web/src/**/*.{ts,tsx,css}\" \"apps/web/tests/**/*.ts\" \"apps/web/*.ts\" \"scripts/*.mjs\"",
     "format:check": "prettier --check \"apps/web/src/**/*.{ts,tsx,css}\" \"apps/web/tests/**/*.ts\" \"apps/web/*.ts\" \"scripts/*.mjs\"",
     "test:release": "python3 -m unittest discover -s scripts/release -p \"test_*.py\" -v"
   },
   "devDependencies": {
-    "prettier": "^3.9.6"
+    "prettier": "^3.9.10"
   }
 }

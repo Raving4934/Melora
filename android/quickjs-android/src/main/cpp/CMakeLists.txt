@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10.2)
-project("quickjs-android")
+project("quickjs-android" C CXX)
 add_subdirectory(./quickjs)
 add_library(
         ${PROJECT_NAME}

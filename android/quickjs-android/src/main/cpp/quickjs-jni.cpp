@@ -131,7 +131,7 @@ bool JS_Equals(JSValue v1, JSValue v2) {
 #if defined(JS_NAN_BOXING)
     return v1 == v2;
 #else
-    return v1.tag == v2.tag && v1.u.int32 == v2.u.int32 && v1.u.float64 == v2.u.float64 && v1.u.ptr == v2.u.ptr;
+    return v1.tag == v2.tag && v1.u.uint64 == v2.u.uint64;
 #endif
 }
 
@@ -142,7 +142,7 @@ JSValue TO_JS_VALUE(JNIEnv *env, jobject object_handle) {
 #else
     JSValue value;
     value.tag = tag;
-    value.u.int32 = env->GetIntField(object_handle, js_value_u_int32_id);
+    value.u.uint64 = static_cast<uint64_t>(env->GetIntField(object_handle, js_value_u_int32_id));
     value.u.float64 = env->GetDoubleField(object_handle, js_value_u_float64_id);
     value.u.ptr = (void *) env->GetLongField(object_handle, js_value_u_ptr_id);
     return value;
@@ -175,7 +175,7 @@ jobject TO_JAVA_OBJECT(JNIEnv *env, JSContext *ctx, JSValue value) {
                                        (jlong) ctx,
                                        type,
                                        value.tag,
-                                       value.u.int32,
+                                       static_cast<jint>(value.u.uint64),
                                        (jdouble) value.u.float64,
                                        (jlong) value.u.ptr);
 #endif
@@ -211,8 +211,6 @@ int GetObjectType(JSContext *ctx, JSValue result) {
         return TYPE_JS_OBJECT;
     } else if (JS_IsString(result)) {
         return TYPE_STRING;
-    } else if (JS_IsBigFloat(result)) {
-        return TYPE_DOUBLE;
     } else if (JS_IsBool(result)) {
         return TYPE_BOOLEAN;
     } else if (JS_IsBigInt(ctx, result)) {
@@ -490,10 +488,13 @@ Java_com_quickjs_QuickJSNativeImpl__1releasePtr(JNIEnv *env, jclass clazz, jlong
 
     JSValue value;
 #if defined(JS_NAN_BOXING)
+    (void) u_int32;
+    (void) u_float64;
+    (void) u_ptr;
     value = tag;
 #else
     value.tag = tag;
-    value.u.int32 = u_int32;
+    value.u.uint64 = static_cast<uint32_t>(u_int32);
     value.u.float64 = u_float64;
     value.u.ptr = (void *) u_ptr;
 #endif
@@ -904,7 +905,7 @@ Java_com_quickjs_QuickJSNativeImpl__1newClass(JNIEnv *env, jobject thiz, jlong c
                                               jint java_caller_id) {
     auto *ctx = reinterpret_cast<JSContext *>(context_ptr);
     JSValue func = JS_NewCFunctionMagic(ctx, js_worker_constructor, "Worker", 1,
-                                        JS_CFUNC_constructor, java_caller_id);
+                                        JS_CFUNC_constructor_magic, java_caller_id);
     JS_SetPropertyStr(ctx, func, "java_caller_id", JS_NewInt32(ctx, java_caller_id));
     return TO_JAVA_OBJECT(env, ctx, func);
 }

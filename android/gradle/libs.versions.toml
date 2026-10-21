@@ -1,7 +1,7 @@
 [versions]
 haze = "2.0.1"
 agp = "9.4.1"
-kotlin = "2.4.20"
+kotlin = "2.4.21"
 coreKtx = "1.19.1"
 activityCompose = "1.13.0"
 lifecycle = "2.11.0"
@@ -10,6 +10,9 @@ media3 = "1.11.1"
 composeBom = "2026.09.00"
 annotation = "1.11.0"
 okhttp = "5.5.0"
+okio = "3.18.2"
+coroutines = "1.11.0"
+serialization = "1.12.0"
 coil = "3.6.3"
 documentfile = "1.1.0"
 junit = "4.13.2"
@@ -26,6 +29,9 @@ junit = { group = "junit", name = "junit", version.ref = "junit" }
 json-test = { group = "org.json", name = "json", version.ref = "json" }
 androidx-annotation = { group = "androidx.annotation", name = "annotation", version.ref = "annotation" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+okio = { group = "com.squareup.okio", name = "okio", version.ref = "okio" }
+kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+kotlinx-serialization-bom = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-bom", version.ref = "serialization" }
 coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
 coil-network-okhttp = { group = "io.coil-kt.coil3", name = "coil-network-okhttp", version.ref = "coil" }
 androidx-documentfile = { group = "androidx.documentfile", name = "documentfile", version.ref = "documentfile" }

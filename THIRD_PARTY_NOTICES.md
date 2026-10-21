@@ -35,7 +35,9 @@ Melora incorporates or interfaces with open-source software packages under their
 ## 2. QuickJS Javascript Engine
 
 - **Upstream Project**: [Bellard / QuickJS](https://bellard.org/quickjs/)
-- **Copyright**: Copyright (c) 2017-2021 Fabrice Bellard, Charlie Gordon
+- **Version**: 2026-06-04 (with Melora's request-scoped job tracking)
+- **Copyright**: Copyright (c) 2017-2025 Fabrice Bellard, Charlie Gordon
+- **Float64 Conversion (dtoa)**: Copyright (c) 2024 Fabrice Bellard
 - **License**: MIT License
 
 ```

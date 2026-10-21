@@ -1,4 +1,4 @@
-const { inflate } = require('pako')
+import { inflate } from 'pako'
 
 const handleInflate = data => new Promise((resolve, reject) => {
   resolve(Buffer.from(inflate(data)))

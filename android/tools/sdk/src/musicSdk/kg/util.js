@@ -1,4 +1,4 @@
-import pako from 'pako'
+import { inflate } from 'pako'
 import { Buffer } from 'buffer'
 import { toMD5 } from '../utils'
 import { httpFetch } from '../../request'
@@ -11,7 +11,8 @@ export const decodeLyric = str => new Promise((resolve, reject) => {
   for (let i = 0, len = buf_str.length; i < len; i++) {
     buf_str[i] = buf_str[i] ^ enc_key[i % 16]
   }
-  const result = pako.inflate(buf_str, { to: 'string' })
+  // pako 3 返回字节；QuickJS 不提供浏览器 TextDecoder，统一由 Buffer 解码 UTF-8。
+  const result = Buffer.from(inflate(buf_str)).toString('utf8')
   resolve(result)
   // (err, result) => {
   //   if (err) return reject(err)

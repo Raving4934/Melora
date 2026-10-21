@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-GO_VERSION = "1.26.9"
+GO_VERSION = "1.27.3"
 WORKFLOW_PATHS = (
     ROOT / ".github/workflows/ci.yml",
     ROOT / ".github/workflows/release.yml",
@@ -15,6 +15,10 @@ WORKFLOW_PATHS = (
 
 
 class GoToolchainContractTest(unittest.TestCase):
+    def test_local_module_prefers_the_same_toolchain_as_ci(self) -> None:
+        module = (ROOT / "apps/server/go.mod").read_text()
+        self.assertRegex(module, rf"(?m)^toolchain go{re.escape(GO_VERSION)}$")
+
     def test_each_setup_go_step_uses_the_pinned_patch(self) -> None:
         for path in WORKFLOW_PATHS:
             with self.subTest(workflow=path.name):
@@ -47,7 +51,7 @@ class GoToolchainContractTest(unittest.TestCase):
         match = re.search(r"(?:^|\s)GOTOOLCHAIN=go([0-9]+\.[0-9]+\.[0-9]+)(?:\s|$)", command)
         self.assertIsNotNone(match, "vuln:server must explicitly pin its Go toolchain")
         self.assertEqual(match.group(1), GO_VERSION)
-        self.assertIn("govulncheck@v1.6.0", command)
+        self.assertIn("govulncheck@v1.9.0", command)
 
 
 if __name__ == "__main__":

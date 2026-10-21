@@ -82,7 +82,7 @@
         "android/app/build.gradle.kts",
         "android/gradle/libs.versions.toml"
       ],
-      "source": "Kotlin / kotlinx POM metadata",
+      "source": "Kotlin 2.4.21 / Coroutines 1.11.0 / Serialization 1.12.0 POM metadata",
       "sourceUrl": "https://kotlinlang.org/",
       "notices": [
         "已核对 Kotlin、Coroutines、Serialization 与 annotations 的实际 POM：许可证为 Apache-2.0；POM 中未提供可统一适用于全部构件的额外版权行，因此不编造版权所有者。"
@@ -108,7 +108,7 @@
       "source": "Actual resolved OkHttp / Okio POM metadata",
       "sourceUrl": "https://github.com/lysine-dev/okhttp",
       "notices": [
-        "OkHttp 5.5.0 与 Okio 3.18.1 的本地 POM 均声明 Apache-2.0，并将 developer metadata 标为 Square, Inc.；未添加 POM 未声明的其他版权所有者。"
+        "OkHttp 5.5.0 与 Okio 3.18.2 的本地 POM 均声明 Apache-2.0，并将 developer metadata 标为 Square, Inc.；未添加 POM 未声明的其他版权所有者。"
       ]
     },
     {
@@ -252,12 +252,16 @@
       ],
       "description": "应用内嵌的 QuickJS C engine 源码。",
       "sourcePaths": [
-        "android/quickjs-android/src/main/cpp/quickjs/quickjs/LICENSE"
+        "android/quickjs-android/src/main/cpp/quickjs/quickjs/LICENSE",
+        "android/quickjs-android/src/main/cpp/quickjs/quickjs/quickjs.c",
+        "android/quickjs-android/src/main/cpp/quickjs/quickjs/dtoa.c"
       ],
-      "source": "Vendored QuickJS source LICENSE",
+      "source": "QuickJS 2026-06-04 vendored source LICENSE; Melora request-scope extension retained",
       "sourceUrl": "https://bellard.org/quickjs/",
       "notices": [
-        "QuickJS Javascript Engine\nCopyright (c) 2017-2021 Fabrice Bellard\nCopyright (c) 2017-2021 Charlie Gordon"
+        "QuickJS LICENSE — Copyright (c) 2017-2021 Fabrice Bellard; Copyright (c) 2017-2021 Charlie Gordon",
+        "QuickJS 2026-06-04 source headers — Copyright (c) 2017-2025 Fabrice Bellard; Copyright (c) 2017-2025 Charlie Gordon",
+        "Tiny float64 printing and parsing library (dtoa.c) — Copyright (c) 2024 Fabrice Bellard"
       ]
     },
     {
@@ -332,7 +336,7 @@
         "android/tools/sdk/package.json",
         "android/tools/sdk/package-lock.json"
       ],
-      "source": "Resolved package-lock.json plus package-local LICENSE-MIT.txt",
+      "source": "he 2.0.0 package-local LICENSE-MIT.txt",
       "notices": [
         "Copyright Mathias Bynens <https://mathiasbynens.be/>"
       ]
@@ -357,10 +361,10 @@
         "android/tools/sdk/package.json",
         "android/tools/sdk/package-lock.json"
       ],
-      "source": "Resolved package-lock.json plus pako LICENSE and lib/zlib/README",
+      "source": "pako 3.0.2 package-local LICENSE and upstream src/zlib/README",
       "notices": [
-        "pako 2.2.0 LICENSE — Copyright (C) 2014-2017 by Vitaly Puzrin and Andrei Tuputcyn",
-        "pako/lib/zlib/README — (C) 1995-2013 Jean-loup Gailly and Mark Adler; (C) 2014-2017 Vitaly Puzrin and Andrey Tupitsin"
+        "pako 3.0.2 LICENSE — Copyright (C) 2014-2017 by Vitaly Puzrin and Andrei Tuputcyn",
+        "pako 3.0.2 src/zlib/README — (C) 1995-2013 Jean-loup Gailly and Mark Adler; (C) 2014-2017 Vitaly Puzrin and Andrey Tupitsin"
       ]
     },
     {
@@ -380,7 +384,7 @@
         "android/tools/sdk/package.json",
         "android/tools/sdk/package-lock.json"
       ],
-      "source": "Resolved package-lock.json plus esbuild LICENSE.md",
+      "source": "esbuild 0.28.2 package-local LICENSE.md (build-time only)",
       "notices": [
         "MIT License — Copyright (c) 2020 Evan Wallace"
       ]
@@ -515,8 +519,8 @@
     "com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava",
     "com.squareup.okhttp3:okhttp-android:5.5.0",
     "com.squareup.okhttp3:okhttp:5.5.0",
-    "com.squareup.okio:okio-jvm:3.18.1",
-    "com.squareup.okio:okio:3.18.1",
+    "com.squareup.okio:okio-jvm:3.18.2",
+    "com.squareup.okio:okio:3.18.2",
     "dev.chrisbanes.haze:haze-android:2.0.1",
     "dev.chrisbanes.haze:haze-blur-android:2.0.1",
     "dev.chrisbanes.haze:haze-blur:2.0.1",
@@ -567,15 +571,15 @@
     "org.jetbrains.compose.ui:ui-util-android:1.12.1",
     "org.jetbrains.compose.ui:ui-util:1.12.1",
     "org.jetbrains.compose.ui:ui:1.12.1",
-    "org.jetbrains.kotlin:kotlin-stdlib-common:2.4.20",
-    "org.jetbrains.kotlin:kotlin-stdlib:2.4.20",
-    "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2",
-    "org.jetbrains.kotlinx:kotlinx-coroutines-bom:1.10.2",
-    "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.10.2",
-    "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2",
-    "org.jetbrains.kotlinx:kotlinx-serialization-bom:1.7.3",
-    "org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.7.3",
-    "org.jetbrains.kotlinx:kotlinx-serialization-core:1.7.3",
+    "org.jetbrains.kotlin:kotlin-stdlib-common:2.4.21",
+    "org.jetbrains.kotlin:kotlin-stdlib:2.4.21",
+    "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0",
+    "org.jetbrains.kotlinx:kotlinx-coroutines-bom:1.11.0",
+    "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.11.0",
+    "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0",
+    "org.jetbrains.kotlinx:kotlinx-serialization-bom:1.12.0",
+    "org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.12.0",
+    "org.jetbrains.kotlinx:kotlinx-serialization-core:1.12.0",
     "org.jetbrains:annotations:23.0.0",
     "org.jspecify:jspecify:1.0.0"
   ]
