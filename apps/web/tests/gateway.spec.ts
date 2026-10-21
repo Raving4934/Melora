@@ -57,24 +57,30 @@ test.beforeEach(async ({ request, baseURL }) => {
   }
 })
 
-test('飞牛网关深层刷新遇到慢会话恢复时也不挂载 Web 登录页', async ({ page }) => {
-  let releaseSession!: () => void
-  const sessionGate = new Promise<void>((resolve) => {
-    releaseSession = resolve
-  })
-  await page.route('**/app/melora/api/v1/auth/session', async (route) => {
-    await sessionGate
-    await route.continue()
-  })
+test.describe('网关会话恢复', () => {
+  test.use({ serviceWorkers: 'block' })
 
-  await page.goto(`${prefix}/library?tab=history`)
-  await expect(page.locator('.app-boot-shell')).toBeVisible()
-  await expect(page.locator('.login-page')).toHaveCount(0)
-  await expect(page.getByLabel('用户名')).toHaveCount(0)
+  test('飞牛网关深层刷新遇到慢会话恢复时只显示中性会话画布', async ({ page }) => {
+    let releaseSession!: () => void
+    const sessionGate = new Promise<void>((resolve) => {
+      releaseSession = resolve
+    })
+    await page.route('**/app/melora/api/v1/auth/session', async (route) => {
+      await sessionGate
+      await route.continue()
+    })
 
-  releaseSession()
-  await expect(page.getByRole('heading', { name: '我的音乐', exact: true })).toBeVisible()
-  await expect(page.locator('.login-page')).toHaveCount(0)
+    await page.goto(`${prefix}/library?tab=history`)
+    await expect(page.locator('.session-pending')).toBeVisible()
+    await expect(page.locator('.app-boot-shell')).toHaveCount(0)
+    await expect(page.locator('.app-header, .app-boot-header, .mini-player, .login-page')).toHaveCount(0)
+    await expect(page.getByLabel('用户名')).toHaveCount(0)
+
+    releaseSession()
+    await expect(page.getByRole('heading', { name: '我的音乐', exact: true })).toBeVisible()
+    await expect(page.locator('.app-boot-shell')).toHaveCount(0)
+    await expect(page.locator('.login-page')).toHaveCount(0)
+  })
 })
 
 test('飞牛同源 iframe 内打开，所有资源和导航保留网关前缀', async ({ page, baseURL }, testInfo) => {

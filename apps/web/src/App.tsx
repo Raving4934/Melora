@@ -136,7 +136,15 @@ function AppBootShell({ immersive, pathname }: { immersive: boolean; pathname: s
   )
 }
 
-// 登录页只在服务端明确确认需要独立登录后挂载；鉴权未知态始终使用应用同构骨架。
+// 会话未知时不猜测登录状态，也不提前挂载应用导航；同构骨架只服务已确认会话的路由加载。
+function SessionPending({ immersive }: { immersive: boolean }) {
+  return (
+    <main className={`session-pending${immersive ? ' app-boot-immersive' : ''}`} aria-busy="true">
+      <LoadingSurface label="正在确认会话…" />
+    </main>
+  )
+}
+
 function LoginFrame({ children }: { children: ReactNode }) {
   return (
     <main className="login-page">
@@ -181,7 +189,7 @@ export default function App() {
     <ErrorBoundary resetKey={location.key}>
       <DocumentSurface immersive={immersiveRoute && !gatewayDenied && !loginRequired && !session.error} />
       {session.isPending ? (
-        <AppBootShell immersive={immersiveRoute} pathname={location.pathname} />
+        <SessionPending immersive={immersiveRoute} />
       ) : (
         <QueryState pending={false} error={session.error} retry={session.refetch}>
           {gatewayDenied ? (

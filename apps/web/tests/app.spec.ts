@@ -57,24 +57,134 @@ test.beforeEach(async ({ request }) => {
   })
   expect(settings.ok()).toBe(true)
 })
-test('鉴权请求延迟时刷新任意页面都不挂载 Web 登录页', async ({ page }) => {
-  let releaseSession!: () => void
-  const sessionGate = new Promise<void>((resolve) => {
-    releaseSession = resolve
-  })
-  await page.route('**/api/v1/auth/session', async (route) => {
-    await sessionGate
-    await route.continue()
+test.describe('会话恢复', () => {
+  test.use({ serviceWorkers: 'block' })
+
+  test('鉴权请求延迟时刷新任意页面只显示中性会话画布', async ({ page }) => {
+    let releaseSession!: () => void
+    const sessionGate = new Promise<void>((resolve) => {
+      releaseSession = resolve
+    })
+    await page.route('**/api/v1/auth/session', async (route) => {
+      await sessionGate
+      await route.continue()
+    })
+
+    await page.goto('/library?tab=history')
+    await expect(page.locator('.session-pending')).toBeVisible()
+    await expect(page.locator('.app-boot-shell')).toHaveCount(0)
+    await expect(page.locator('.app-header, .app-boot-header, .mini-player, .login-page')).toHaveCount(0)
+    await expect(page.getByLabel('用户名')).toHaveCount(0)
+
+    releaseSession()
+    await expect(page.getByRole('heading', { name: '我的音乐', exact: true })).toBeVisible()
+    await expect(page.locator('.app-boot-shell')).toHaveCount(0)
+    await expect(page.locator('.login-page')).toHaveCount(0)
   })
 
-  await page.goto('/library?tab=history')
-  await expect(page.locator('.app-boot-shell')).toBeVisible()
-  await expect(page.locator('.login-page')).toHaveCount(0)
-  await expect(page.getByLabel('用户名')).toHaveCount(0)
+  test('未登录连续刷新不闪顶栏或播放器，确认会话后立即显示登录表单', async ({ page }, testInfo) => {
+    const cdp = await page.context().newCDPSession(page)
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 })
+    await page.addInitScript(() => {
+      const probe = window as Window & { __meloraChromeMounts?: string[] }
+      probe.__meloraChromeMounts = []
+      const record = (root: Document | Element = document) => {
+        for (const selector of ['.app-header', '.app-boot-header', '.mini-player']) {
+          const present = (root instanceof Element && root.matches(selector)) || root.querySelector(selector)
+          if (present && !probe.__meloraChromeMounts!.includes(selector)) {
+            probe.__meloraChromeMounts!.push(selector)
+          }
+        }
+      }
+      record()
+      new MutationObserver((records) => {
+        record()
+        // 即使同一批次插入后立即移除，也检查保留在mutation记录中的节点，不能只看最终DOM。
+        for (const mutation of records) {
+          if (mutation.target instanceof Element) record(mutation.target)
+          for (const node of mutation.addedNodes) if (node instanceof Element) record(node)
+        }
+      }).observe(document, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['class'],
+      })
+      // 旧身份/用户名缓存只允许预填表单，不能替代服务端会话。
+      localStorage.setItem('melora:auth-hint:v1', 'in')
+      localStorage.setItem('melora:login-username:v1', 'cached-owner')
+    })
 
-  releaseSession()
-  await expect(page.getByRole('heading', { name: '我的音乐', exact: true })).toBeVisible()
-  await expect(page.locator('.login-page')).toHaveCount(0)
+    const sessionGate = () => {
+      let release!: () => void
+      const promise = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return { promise, release }
+    }
+    let gate = sessionGate()
+    await page.route('**/api/v1/auth/session', async (route) => {
+      if (route.request().method() !== 'GET') return route.continue()
+      await gate.promise
+      await route.fulfill({
+        json: {
+          required: true,
+          authenticated: false,
+          loginMethod: 'password',
+          deployMode: 'cloud',
+        },
+        headers: { 'Cache-Control': 'no-store' },
+      })
+    })
+
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      if (attempt > 0) gate = sessionGate()
+      await page.emulateMedia({ reducedMotion: attempt === 3 ? 'reduce' : 'no-preference' })
+      if (attempt === 0) await page.goto('/', { waitUntil: 'commit' })
+      else await page.reload({ waitUntil: 'commit' })
+
+      await expect(page.locator('.session-pending')).toBeVisible()
+      await expect(page.locator('.session-pending')).toHaveCount(1)
+      await expect(page.locator('.app-boot-shell')).toHaveCount(0)
+      await expect(page.locator('.app-header, .app-boot-header, .mini-player, .login-page')).toHaveCount(0)
+      await expect(page.getByLabel('用户名')).toHaveCount(0)
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => (window as Window & { __meloraChromeMounts?: string[] }).__meloraChromeMounts ?? null,
+          ),
+        )
+        .toEqual([])
+      await page.waitForLoadState('domcontentloaded')
+      if (attempt === 0) {
+        await page.screenshot({ path: testInfo.outputPath('session-pending.png') })
+      }
+
+      gate.release()
+      await expect(page.locator('.login-page')).toBeVisible()
+      await expect(page.locator('.session-pending')).toHaveCount(0)
+      await expect(page.locator('.app-boot-shell')).toHaveCount(0)
+      await expect(page.locator('.app-header, .app-boot-header, .mini-player')).toHaveCount(0)
+      const form = page.locator('.login-form')
+      await expect(form).toBeVisible()
+      const loginPaint = await form.evaluate((node) => {
+        const style = getComputedStyle(node)
+        return { opacity: style.opacity, animationName: style.animationName }
+      })
+      expect(loginPaint).toEqual({ opacity: '1', animationName: 'none' })
+      await expect(page.getByRole('textbox', { name: '用户名', exact: true })).toHaveValue('cached-owner')
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => (window as Window & { __meloraChromeMounts?: string[] }).__meloraChromeMounts ?? null,
+          ),
+        )
+        .toEqual([])
+      if (attempt === 0) {
+        await page.screenshot({ path: testInfo.outputPath('login-session-ready.png') })
+      }
+    }
+  })
 })
 
 test('Demo 目录 API、全部页面与稳定导航', async ({ page, request }, testInfo) => {

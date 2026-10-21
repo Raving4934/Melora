@@ -14,6 +14,11 @@
       :root {
         background: #f7f8fa;
       }
+      /* 外部CSS已加载、React尚未挂载时仍保持同色画布，避免body白底透出。 */
+      #root:empty {
+        min-height: 100dvh;
+        background: #f7f8fa;
+      }
       /* 画布切换必须同帧完成；也覆盖全局 reduced-motion 的极短 transition-duration。 */
       :root,
       body,

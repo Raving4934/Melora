@@ -1,4 +1,13 @@
-/* 登录与鉴权未知骨架共用外框：浅灰底 + 单侧极淡品牌色，不做复杂渐变。 */
+/* 未确认会话时只保留同色画布，不借用登录页或应用框架。 */
+.session-pending {
+  display: grid;
+  place-items: center;
+  min-height: 100svh;
+}
+.session-pending:not(.app-boot-immersive) {
+  background: var(--surface-subtle);
+}
+/* 登录页沿用浅灰底与单侧品牌色；刷新不重播表单入场动画。 */
 .login-page {
   position: relative;
   display: grid;
@@ -160,22 +169,6 @@
   margin-top: 18px;
   text-align: center;
   color: var(--text-secondary);
-}
-@media (prefers-reduced-motion: no-preference) {
-  /* 动画只作用于卡片内容，面板与品牌列不参与位移，避免刷新时上下抖动。 */
-  .login-form {
-    animation: login-rise 0.24s ease-out both;
-  }
-}
-@keyframes login-rise {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
 }
 @media (max-width: 780px) {
   .login-page {

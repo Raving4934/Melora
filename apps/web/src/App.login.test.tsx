@@ -39,10 +39,10 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-function mount() {
+function mount(pathname = '/') {
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[pathname]}>
         <App />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -105,22 +105,57 @@ it('登录成功后记住用户名，取消勾选则清除', async () => {
   await waitFor(() => expect(window.localStorage.getItem('melora:login-username:v1')).toBeNull())
 })
 
-it('鉴权未知的冷启动默认使用应用同构骨架，不挂载登录页', async () => {
+it('鉴权未知的冷启动只显示中性画布，不预先挂载顶栏、播放器或登录页', async () => {
   mount()
-  expect(document.querySelector('.app-boot-header')).not.toBeNull()
+  expect(document.querySelector('.session-pending')).not.toBeNull()
+  expect(document.querySelector('.app-header, .mini-player')).toBeNull()
   expect(document.querySelector('.login-page')).toBeNull()
-  expect(document.querySelector('.login-boot')).toBeNull()
 
   await screen.findByLabelText('用户名')
-  expect(document.querySelector('.app-boot-header')).toBeNull()
+  expect(document.querySelector('.session-pending, .app-header, .mini-player')).toBeNull()
 })
 
-it('遗留的登出提示也不能让鉴权未知态闪现登录页', async () => {
+it('遗留的登出提示不能让鉴权未知态提前选择登录页或应用框架', async () => {
   window.localStorage.setItem('melora:auth-hint:v1', 'out')
   mount()
-  expect(document.querySelector('.app-boot-header')).not.toBeNull()
+  expect(document.querySelector('.session-pending')).not.toBeNull()
+  expect(document.querySelector('.app-header, .mini-player')).toBeNull()
   expect(document.querySelector('.login-page')).toBeNull()
-  expect(document.querySelector('.login-boot')).toBeNull()
 
   await screen.findByLabelText('用户名')
+})
+
+it('沉浸地址等待会话时保留暗色画布，确认需要登录后才恢复普通画布', async () => {
+  mount('/now-playing')
+  expect(document.querySelector('.session-pending')).toHaveClass('app-boot-immersive')
+  expect(document.documentElement).toHaveAttribute('data-melora-surface', 'immersive')
+  expect(document.querySelector('.app-header, .mini-player, .login-page')).toBeNull()
+
+  await screen.findByLabelText('用户名')
+  expect(document.documentElement).toHaveAttribute('data-melora-surface', 'page')
+  expect(document.querySelector('.session-pending, .app-header, .mini-player')).toBeNull()
+})
+
+it('会话读取失败提供重试，不误挂载登录页或已登录内容', async () => {
+  vi.mocked(fetch).mockImplementation(
+    async () =>
+      new Response(JSON.stringify({ error: { message: '会话连接暂不可用' } }), {
+        status: 503,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+  )
+  mount()
+  expect(document.querySelector('.session-pending')).not.toBeNull()
+  await screen.findByText('会话连接暂不可用', {}, { timeout: 3_000 })
+  const retry = screen.getByRole('button', { name: '重新加载' })
+  expect(retry).toBeInTheDocument()
+  expect(document.querySelector('.app-header, .mini-player, .login-page')).toBeNull()
+  expect(vi.mocked(fetch).mock.calls.every(([input]) => String(input).endsWith('/auth/session'))).toBe(true)
+  vi.mocked(fetch).mockImplementation(
+    async () =>
+      new Response(JSON.stringify(sessionResponse), { headers: { 'Content-Type': 'application/json' } }),
+  )
+  fireEvent.click(retry)
+  await screen.findByLabelText('用户名')
+  expect(document.querySelector('.session-pending, .app-header, .mini-player')).toBeNull()
 })

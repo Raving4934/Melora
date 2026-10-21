@@ -2,6 +2,22 @@ import { test, expect } from '@playwright/test'
 
 const prefixFor = (project: string) => (project.startsWith('fnos-') ? '/app/melora' : '')
 
+test('普通入口CSS先就绪而JS尚未挂载时，空根画布不透出白底或顶栏', async ({ page }, info) => {
+  const prefix = prefixFor(info.project.name)
+  await page.route('**/*', (route) =>
+    route.request().resourceType() === 'script' ? route.abort() : route.continue(),
+  )
+  await page.goto(`${prefix}/`)
+  const root = page.locator('#root')
+  await expect(root).toBeEmpty()
+  await expect(root).toHaveCSS('background-color', 'rgb(247, 248, 250)')
+  const bounds = await root.boundingBox()
+  const viewport = page.viewportSize()!
+  expect(bounds).toMatchObject({ x: 0, y: 0, width: viewport.width })
+  expect(bounds!.height).toBeGreaterThanOrEqual(viewport.height)
+  await expect(page.locator('.app-header, .mini-player, .login-page')).toHaveCount(0)
+})
+
 test('沉浸冷加载：JS和外部CSS不可用时，实际Go入口已提供深色画布且普通页面不误染', async ({
   browser,
   baseURL,
