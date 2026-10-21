@@ -812,6 +812,40 @@ class DeviceWorkflowTest(unittest.TestCase):
             self.assertEqual(logs[f"sdk-install-attempt-{index}.log"],
                              f"SDK install attempt {index}\n{message}\n")
 
+    def test_sdk_install_retries_archive_transfer_failures_without_transport_word_whitelist(self) -> None:
+        # Replay the actual CLI failure: newer SDK clients may expose only "closed".
+        prefix = ("https://dl.google.com/android/repository/sys-img/google_apis/x86_64-35_r09.zip..."
+                  "Failed to download package archive for system-images/android-35/google_apis/x86_64: ")
+        for reason in ("closed", "unexpected EOF", "stream terminated before completing the response"):
+            with self.subTest(reason=reason):
+                result, calls, sleeps, logs = self.run_sdk_install([(1, prefix + reason), (0, "SDK installed")])
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(len(calls), 2)
+                self.assertEqual(sleeps, ["5"])
+                self.assertIn(prefix + reason, logs["sdk-install-attempt-1.log"])
+
+    def test_sdk_install_archive_transfer_retries_remain_bounded(self) -> None:
+        message = "Failed to download package archive for system-images/android-35/google_apis/x86_64: closed"
+        result, calls, sleeps, logs = self.run_sdk_install([(7, message), (23, message), (42, message)])
+        self.assertEqual(result.returncode, 42, result.stdout + result.stderr)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(sleeps, ["5", "10"])
+        self.assertIn(message, logs["sdk-install-attempt-3.log"])
+
+    def test_sdk_install_does_not_retry_permanent_archive_failures(self) -> None:
+        prefix = "Failed to download package archive for system-images/android-35/google_apis/x86_64: "
+        for reason in (
+            "HTTP Error 403: Forbidden", "HTTP 404: Not Found", "Server returned HTTP response code: 401",
+            "certificate verify failed", "unable to find valid certification path",
+            "certificate has expired", "No space left on device", "Permission denied",
+            "SDK licenses have not been accepted", "Failed to find package 'missing'",
+        ):
+            with self.subTest(reason=reason):
+                result, calls, sleeps, _ = self.run_sdk_install([(19, prefix + reason), (0, "SDK installed")])
+                self.assertEqual(result.returncode, 19, result.stdout + result.stderr)
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(sleeps, [])
+
     def test_sdk_install_does_not_retry_permanent_or_unclassified_errors(self) -> None:
         for message in (
             "License for package Android SDK Platform 37.0 not accepted.",
@@ -820,6 +854,7 @@ class DeviceWorkflowTest(unittest.TestCase):
             "Permission denied", "Failed to find package 'unknown'", "Unknown package: missing",
             "Package missing not found", "Malformed repository XML", "Download failed",
             "Server returned HTTP response code: 403", "HTTP 5030",
+            "SDK installation session closed", "Cannot load repository configuration: closed",
         ):
             with self.subTest(message=message):
                 result, calls, sleeps, logs = self.run_sdk_install([(19, message), (0, "SDK installed")])

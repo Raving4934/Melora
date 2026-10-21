@@ -314,11 +314,12 @@ jobs:
             else
               install_status=("${PIPESTATUS[@]}")
             fi
-            # 日志写入失败与 SDK 配置错误立即失败；仅重试可识别的瞬时网络故障。
+            # 包归档传输失败按阶段识别，不能依赖 closed / EOF 等底层错误文案。
+            # 写日志、配置、证书及明确的永久 HTTP 错误仍立即失败；重试不绕过校验。
             if (( install_status[1] != 0 )); then exit "${install_status[1]}"; fi
             if (( attempt == 3 )) ||
-              grep -Eiq 'licenses?.*(not accepted|not been accepted)|no space left on device|not enough (free )?(disk )?space|insufficient (disk )?space|permission denied|failed to find package|unknown package|package.*not found' "$install_log" ||
-              ! grep -Eiq 'peer disconnected|connection reset|connection timed out|read timed out|SocketTimeoutException|temporary failure in name resolution|HTTP (Error |response code: )?(408|429|500|502|503|504)([^0-9]|$)' "$install_log"; then
+              grep -Eiq 'licenses?.*(not accepted|not been accepted)|no space left on device|not enough (free )?(disk )?space|insufficient (disk )?space|permission denied|failed to find package|unknown package|package.*not found|certificate.*(verify failed|has expired)|unable to find valid certification path|HTTP (Error |response code: )?(400|401|403|404|407|410|451)([^0-9]|$)' "$install_log" ||
+              ! grep -Eiq 'failed to download package archive for [^[:space:]]+:|peer disconnected|connection reset|connection timed out|read timed out|SocketTimeoutException|temporary failure in name resolution|HTTP (Error |response code: )?(408|429|500|502|503|504)([^0-9]|$)' "$install_log"; then
               exit "${install_status[0]}"
             fi
             delay=$((attempt * 5))
