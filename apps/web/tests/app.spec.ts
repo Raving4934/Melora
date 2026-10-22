@@ -60,6 +60,68 @@ test.beforeEach(async ({ request }) => {
 test.describe('会话恢复', () => {
   test.use({ serviceWorkers: 'block' })
 
+  test('播放中会话失效会停止真实音频并清除队列，不依赖刷新页面', async ({ page }) => {
+    await page.addInitScript(() => {
+      const probe = window as Window & { __sessionAudio?: HTMLAudioElement[] }
+      probe.__sessionAudio = []
+      window.Audio = new Proxy(window.Audio, {
+        construct(target, args) {
+          const audio = Reflect.construct(target, args) as HTMLAudioElement
+          probe.__sessionAudio!.push(audio)
+          return audio
+        },
+      })
+    })
+    let authenticated = true
+    await page.route('**/api/v1/auth/session', (route) =>
+      route.fulfill({
+        json: { required: true, authenticated, loginMethod: 'password', deployMode: 'cloud' },
+      }),
+    )
+    await page.route('https://upload.wikimedia.org/**', (route) =>
+      route.fulfill({
+        contentType: 'audio/wav',
+        body: silentWav(),
+        headers: { 'Access-Control-Allow-Origin': '*' },
+      }),
+    )
+    await page.goto('/')
+    await openFirstChart(page)
+    await page.getByRole('button', { name: '播放全部', exact: true }).click()
+    await expect(
+      page.locator('.mini-player').getByRole('button', { name: '暂停', exact: true }),
+    ).toBeVisible()
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          (window as Window & { __sessionAudio?: HTMLAudioElement[] }).__sessionAudio?.some(
+            (audio) => !audio.paused,
+          ),
+        ),
+      )
+      .toBe(true)
+
+    authenticated = false
+    await page.route('**/api/v1/search?**', (route) =>
+      route.fulfill({ status: 401, json: { error: { code: 'unauthorized', message: '会话已过期' } } }),
+    )
+    const trigger = page.getByRole('button', { name: '打开搜索', exact: true })
+    if (await trigger.isVisible()) await trigger.click()
+    const field = page.getByRole('textbox', { name: '搜索关键词' })
+    await field.fill('expired-session')
+    await field.press('Enter')
+    await expect(page.locator('.login-page')).toBeVisible()
+    await expect(page.locator('.mini-player')).toHaveCount(0)
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const audios = (window as Window & { __sessionAudio?: HTMLAudioElement[] }).__sessionAudio ?? []
+          return audios.length > 0 && audios.every((audio) => audio.paused && !audio.getAttribute('src'))
+        }),
+      )
+      .toBe(true)
+  })
+
   test('鉴权请求延迟时刷新任意页面只显示中性会话画布', async ({ page }) => {
     let releaseSession!: () => void
     const sessionGate = new Promise<void>((resolve) => {

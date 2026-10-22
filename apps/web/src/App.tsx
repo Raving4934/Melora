@@ -168,11 +168,12 @@ export default function App() {
   const location = useLocation()
   const loginRequired = !!session.data?.required && !session.data.authenticated
   const gatewayDenied = session.data?.authMode === 'fnos' && !session.data.authenticated
+  const accessDenied = loginRequired || gatewayDenied
   const loginMethod = session.data?.loginMethod === 'password' ? 'password' : 'token'
   const cloud = session.data?.deployMode === 'cloud'
   const immersiveRoute = isImmersivePath(location.pathname)
   useEffect(() => {
-    if (gatewayDenied) {
+    if (accessDenied) {
       void queryClient.cancelQueries({ predicate: (query) => query.queryKey[0] !== '/auth/session' })
       queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== '/auth/session' })
       player.stop()
@@ -184,10 +185,10 @@ export default function App() {
         toast: null,
       })
     }
-  }, [gatewayDenied])
+  }, [accessDenied])
   return (
     <ErrorBoundary resetKey={location.key}>
-      <DocumentSurface immersive={immersiveRoute && !gatewayDenied && !loginRequired && !session.error} />
+      <DocumentSurface immersive={immersiveRoute && !accessDenied && !session.error} />
       {session.isPending ? (
         <SessionPending immersive={immersiveRoute} />
       ) : (
@@ -202,7 +203,7 @@ export default function App() {
                 </a>
               }
             />
-          ) : session.data?.required && !session.data.authenticated ? (
+          ) : loginRequired ? (
             <Login method={loginMethod} />
           ) : (
             <SessionProvider session={session.data}>
