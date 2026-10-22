@@ -472,9 +472,6 @@ func (m *Manager) Action(id, action string) (model.DownloadJob, error) {
 	return cloneJob(e.job), nil
 }
 
-// SetWriteMetadata 保留旧调用接口。新任务不再生成用户 JSON；恢复的旧快照仍有效。
-func (m *Manager) SetWriteMetadata(bool) {}
-
 func (m *Manager) Configure(root string, concurrency int) error {
 	n, err := normalizeConcurrency(concurrency)
 	if err != nil {

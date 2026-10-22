@@ -94,7 +94,6 @@ type recordingDownloads struct {
 	created       model.DownloadJob
 }
 
-func (d *recordingDownloads) SetWriteMetadata(enabled bool) { d.writeMetadata = enabled }
 func (d *recordingDownloads) SetOptions(settings model.Settings) error {
 	d.writeMetadata = settings.WriteMetadata
 	return d.Downloads.SetOptions(settings)

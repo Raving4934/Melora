@@ -142,7 +142,6 @@ func run(logger *slog.Logger) error {
 		}
 		settings = updatedSettings
 		defer manager.Close()
-		manager.SetWriteMetadata(false)
 		if err = manager.SetOptions(settings); err != nil {
 			return err
 		}

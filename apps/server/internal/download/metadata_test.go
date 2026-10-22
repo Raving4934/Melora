@@ -181,7 +181,9 @@ func TestSidecarIdentityRejectsSourceSubstitutionAndHardlinks(t *testing.T) {
 func TestNewJobsNeverWriteJSONAfterDeprecatedSetting(t *testing.T) {
 	root := t.TempDir()
 	m := testManager(t, root, func(r *http.Request) (*http.Response, error) { return response(r, 200, audio(2048)), nil }, nil, nil, nil, nil)
-	m.SetWriteMetadata(true)
+	if err := m.SetOptions(model.Settings{WriteMetadata: true}); err != nil {
+		t.Fatal(err)
+	}
 	job := createJob(t, m, "new-json-disabled")
 	done := waitJob(t, m, job.ID, "completed")
 	if job.WriteMetadata || done.WriteMetadata || done.MetadataPath != "" {
@@ -242,7 +244,6 @@ func TestSidecarWarningsPreserveAudioAndRecovery(t *testing.T) {
 					return capacity(1 << 30), nil
 				}
 			})
-			m.SetWriteMetadata(true)
 			track := testTrack("warn")
 			if status == "text" {
 				track.Album = strings.Repeat("a", 4097)
@@ -310,7 +311,6 @@ func TestMetadataRestoreDoesNotTrustLinksOrChangedJSON(t *testing.T) {
 			root := t.TempDir()
 			store := &recordingStore{}
 			m := testManager(t, root, func(r *http.Request) (*http.Response, error) { return response(r, 200, audio(2048)), nil }, nil, store, nil, nil)
-			m.SetWriteMetadata(true)
 			job := legacyMetadataJob(t, m, testTrack("restore"))
 			done := waitJob(t, m, job.ID, "completed")
 			m.Close()
@@ -371,7 +371,6 @@ func TestLegacyJobDoesNotOptInAfterRestart(t *testing.T) {
 		resp.Header.Set("Content-Range", "bytes 1024-2047/2048")
 		return resp, nil
 	}, nil, nil, []model.DownloadJob{legacy}, nil)
-	m.SetWriteMetadata(true)
 	if _, err := m.Action(legacy.ID, "resume"); err != nil {
 		t.Fatal(err)
 	}

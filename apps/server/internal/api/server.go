@@ -56,7 +56,6 @@ type Downloads interface {
 	Action(string, string) (model.DownloadJob, error)
 	Updates() (<-chan []model.DownloadJob, func())
 	Configure(string, int) error
-	SetWriteMetadata(bool)
 }
 
 type Server struct {

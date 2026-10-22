@@ -97,9 +97,6 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
 		s.dbError(w, err)
 		return
 	}
-	if s.downloads != nil {
-		s.downloads.SetWriteMetadata(false)
-	}
 	if s.live != nil {
 		s.live.SetAutoSwitch(next.AutoSwitchSource)
 	}
