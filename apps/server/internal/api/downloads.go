@@ -35,7 +35,7 @@ func (s *Server) downloadListCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		state := r.URL.Query().Get("state")
 		if state != "" {
-			allowed := map[string]bool{"retry_wait": true, "queued": true, "resolving": true, "downloading": true, "paused": true, "waiting_for_url_refresh": true, "verifying": true, "finalizing": true, "completed": true, "failed": true, "cancelled": true}
+			allowed := map[string]bool{"retry_wait": true, "queued": true, "resolving": true, "downloading": true, "paused": true, "waiting_for_url_refresh": true, "verifying": true, "writing_metadata": true, "finalizing": true, "completed": true, "failed": true, "cancelled": true}
 			if !allowed[state] {
 				fail(w, 400, "invalid_download_state", "未知下载状态")
 				return
