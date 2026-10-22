@@ -105,6 +105,7 @@ import com.leyu.melora.ui.common.TextSub
 import com.leyu.melora.ui.common.sourceAliasDisplay
 import com.leyu.melora.ui.common.toUiTracks
 import com.leyu.melora.ui.common.runCatchingCancellable
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 
 data class BoardPlatform(
@@ -125,6 +126,9 @@ private const val BOARD_SONGS_TTL_MS = 15 * 60 * 1000L
 private const val BOARD_PREVIEW_LIMIT = 3
 private fun boardPreviewCacheKey(platform: String, boardId: String) = "boardSongsPreview.$platform.$boardId"
 private fun boardPageCacheKey(platform: String, boardId: String) = "boardSongsPage.$platform.$boardId"
+
+private enum class LeaderboardLoad { Initial, Retry, Refresh }
+private class LeaderboardRequest(val kind: LeaderboardLoad)
 
 /** 详情与播放只使用完整第一页快照，预览使用独立的三首快照，避免内容边界互相污染。 */
 private suspend fun loadBoardFirstPage(context: Context, platform: String, boardId: String) =
@@ -201,66 +205,98 @@ fun LeaderboardScreen(
     primaryHeader: @Composable () -> Unit = {},
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     // 平台切换完全由顶栏"平台筛选"驱动，页面即时跟随设置
     val platformId by MeloraSettings.leaderboardPlatform.collectAsStateWithLifecycle()
     val platform = boardPlatforms.firstOrNull { it.id == platformId } ?: boardPlatforms.first()
-    var refreshing by remember { mutableStateOf(false) }
     val pullEnabled by MeloraSettings.pullToRefresh.collectAsStateWithLifecycle()
 
     val cacheTtl = 15 * 60 * 1000L
     val boardsKey = "boards.${platform.id}"
+    var request by remember(platform.id) { mutableStateOf<LeaderboardRequest?>(LeaderboardRequest(LeaderboardLoad.Initial)) }
+    var error by remember(platform.id) { mutableStateOf<String?>(null) }
+    val refreshing = request?.kind == LeaderboardLoad.Refresh
+    val retrying = request?.kind == LeaderboardLoad.Retry || refreshing
     // 秒开优先：先用已有缓存（哪怕过期）渲染，切换平台不再闪加载，过期数据由后台静默刷新
     var boards by remember(platform.id) {
         mutableStateOf(OnlineCache.peek<List<BoardItem>>(boardsKey).orEmpty())
     }
     var loading by remember(platform.id) { mutableStateOf(boards.isEmpty()) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var retryKey by remember(platform.id) { mutableIntStateOf(0) }
     var selectedBoard by remember { mutableStateOf<BoardItem?>(null) }
     val listState = key(platform.id) { rememberLazyListState() }
     FastScrollToTopEffect(scrollToTopRequest, listState)
 
-    LaunchedEffect(platform.id, retryKey) {
-        if (retryKey == 0 && boards.isEmpty()) {
-            OnlineCache.hydrateBoardList(context, boardsKey)?.let {
-                boards = it
-                loading = false
+    LaunchedEffect(platform.id, request) {
+        val current = request ?: return@LaunchedEffect
+        try {
+            if (current.kind == LeaderboardLoad.Initial && boards.isEmpty()) {
+                OnlineCache.hydrateBoardList(context, boardsKey)?.let {
+                    ensureActive()
+                    if (request !== current) return@LaunchedEffect
+                    boards = it
+                    loading = false
+                }
             }
-        }
-        val fresh = OnlineCache.get<List<BoardItem>>(boardsKey, cacheTtl)
-        if (fresh != null && retryKey == 0) {
-            boards = fresh
-            loading = false
-            error = null
-            return@LaunchedEffect
-        }
-        val hasContent = boards.isNotEmpty()
-        if (!hasContent) loading = true
-        error = null
-        val requestToken = requireNotNull(OnlineCache.capturePageSnapshot(boardsKey))
-        runCatchingCancellable { OnlineRepository.boards(context, platform.id, background = hasContent) }
-            .onSuccess {
-                val writtenAtMs = if (it.isNotEmpty()) {
-                    OnlineCache.putPageIfCurrent(requestToken, boardsKey, it)
+            val fresh = if (current.kind == LeaderboardLoad.Initial) {
+                OnlineCache.get<List<BoardItem>>(boardsKey, cacheTtl)
+            } else {
+                null
+            }
+            if (fresh != null) {
+                ensureActive()
+                boards = fresh
+                loading = false
+                error = null
+                return@LaunchedEffect
+            }
+
+            val hasContent = boards.isNotEmpty()
+            if (!hasContent && current.kind != LeaderboardLoad.Refresh && error == null) {
+                loading = true
+            }
+            val requestToken = requireNotNull(OnlineCache.capturePageSnapshot(boardsKey))
+            val result = runCatchingCancellable {
+                OnlineRepository.boards(
+                    context,
+                    platform.id,
+                    background = hasContent,
+                )
+            }
+            ensureActive()
+            if (request !== current) return@LaunchedEffect
+            result.onSuccess { items ->
+                val writtenAtMs = if (items.isNotEmpty()) {
+                    OnlineCache.putPageIfCurrent(requestToken, boardsKey, items)
                 } else {
                     if (OnlineCache.isPageSnapshotCurrent(requestToken, boardsKey)) 0L else null
                 }
                 if (writtenAtMs == null) return@onSuccess
-                boards = it
+                boards = items
                 loading = false
+                error = null
                 if (writtenAtMs > 0L) {
                     OnlineCache.persistBoardList(
                         context,
                         boardsKey,
-                        it,
+                        items,
                         requestToken,
                         writtenAtMs,
                     )
                 }
+            }.onFailure { failure ->
+                ensureActive()
+                val message = failure.message ?: "榜单加载失败"
+                if (current.kind == LeaderboardLoad.Refresh) {
+                    PlaybackController.postMessage(context, failure.message ?: "榜单同步失败")
+                } else if (boards.isEmpty()) {
+                    error = message
+                }
             }
-            .onFailure { if (boards.isEmpty()) error = it.message ?: "榜单加载失败" }
-        loading = false
+        } finally {
+            if (request === current) {
+                loading = false
+                request = null
+            }
+        }
     }
 
     DetailPageHost(
@@ -283,36 +319,7 @@ fun LeaderboardScreen(
             PullRefreshContainer(
                 enabled = pullEnabled,
                 refreshing = refreshing,
-                onRefresh = {
-                    if (!refreshing) {
-                        refreshing = true
-                        scope.launch {
-                            val requestToken = requireNotNull(OnlineCache.capturePageSnapshot(boardsKey))
-                            runCatchingCancellable { OnlineRepository.boards(context, platform.id) }
-                                .onSuccess {
-                                    val writtenAtMs = if (it.isNotEmpty()) {
-                                        OnlineCache.putPageIfCurrent(requestToken, boardsKey, it)
-                                    } else {
-                                        if (OnlineCache.isPageSnapshotCurrent(requestToken, boardsKey)) 0L else null
-                                    }
-                                    if (writtenAtMs == null) return@onSuccess
-                                    boards = it
-                                    if (writtenAtMs > 0L) {
-                                        OnlineCache.persistBoardList(
-                                            context,
-                                            boardsKey,
-                                            it,
-                                            requestToken,
-                                            writtenAtMs,
-                                        )
-                                    }
-                                    error = null
-                                }
-                                .onFailure { PlaybackController.postMessage(context, it.message ?: "榜单同步失败") }
-                            refreshing = false
-                        }
-                    }
-                },
+                onRefresh = { if (!refreshing) request = LeaderboardRequest(LeaderboardLoad.Refresh) },
                 modifier = Modifier.fillMaxSize(),
             ) {
                 BoxWithConstraints(
@@ -354,7 +361,12 @@ fun LeaderboardScreen(
                         },
                     ) {
                         when {
-                            error != null -> ErrorState(error!!, onRetry = { retryKey++ }, modifier = Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current))
+                            error != null -> ErrorState(
+                                error!!,
+                                onRetry = { request = LeaderboardRequest(LeaderboardLoad.Retry) },
+                                retrying = retrying,
+                                modifier = Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current),
+                            )
                             boards.isEmpty() -> EmptyState("该平台暂无榜单", Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current))
                             else -> LazyColumn(
                                 state = listState,
