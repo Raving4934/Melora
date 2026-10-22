@@ -145,6 +145,32 @@ class PlaybackExitInstrumentedTest {
         }
     }
 
+    @Test fun recreatedSessionDoesNotReuseRemovedNotificationIdentity() {
+        val notifications = context.getSystemService(NotificationManager::class.java)
+        fun mediaNotifications() = notifications.activeNotifications.filter {
+            it.notification.category == Notification.CATEGORY_TRANSPORT
+        }
+        main { controller().volume = 0f; controller().play() }
+        await { controller().isPlaying && mediaNotifications().size == 1 }
+        val previousId = main { mediaNotifications().single().id }
+        main { controller().pause() }
+        await { !controller().isPlaying && mediaNotifications().size == 1 }
+        main { assertEquals("同一会话的通知更新不能换ID", previousId, mediaNotifications().single().id) }
+
+        exitFromNotification()
+        main { PlaybackController.init(context) }
+        await { PlaybackController.state.value.ready }
+        main { controller().volume = 0f; controller().play() }
+        await { controller().isPlaying && mediaNotifications().size == 1 }
+        main {
+            assertNotEquals("旧通知的迟到移除不能命中新会话", previousId, mediaNotifications().single().id)
+            // 旧通知的清理仍只能针对旧键，不能删除新会话的前台通知。
+            notifications.cancel(previousId)
+            assertEquals(1, mediaNotifications().size)
+            assertTrue(controller().isPlaying)
+        }
+    }
+
     @Test fun notificationExitStopsServiceAndReopeningRestoresPausedMiniWithoutSelectingASong() {
         exitFromNotification()
         assertEquals(1, prefs.getInt("index", -1))

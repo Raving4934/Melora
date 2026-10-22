@@ -4,6 +4,7 @@ import android.content.Context
 import android.app.PendingIntent
 import android.content.Intent
 import android.os.Bundle
+import android.os.SystemClock
 import androidx.core.net.toUri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -23,6 +24,7 @@ import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import java.util.concurrent.atomic.AtomicInteger
 import com.leyu.melora.MainActivity
 import com.leyu.melora.R
 import com.leyu.melora.playback.sdk.OnlineSong
@@ -42,6 +44,7 @@ class PlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
     private var playbackProgress: PlaybackProgress? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val notificationId = notificationIds.incrementAndGet()
 
     private val artworkListener: (String, String) -> Unit = { _, _ ->
         serviceScope.launch { refreshNotificationMetadata() }
@@ -51,7 +54,14 @@ class PlaybackService : MediaSessionService() {
         super.onCreate()
         if ((application as? com.leyu.melora.MeloraApplication)?.restoreFailure != null) return
         // 旧版通知默认只读 title；与新版系统媒体卡片的 displayTitle 优先规则保持一致。
-        setMediaNotificationProvider(object : DefaultMediaNotificationProvider(this) {
+        // SystemUI 会异步清理媒体通知；新会话不能复用旧通知键，否则迟到的清理可能 Stop 新播放器。
+        // 同一服务实例始终使用同一个ID，元数据、播放状态和曲目更新仍原位刷新。
+        setMediaNotificationProvider(object : DefaultMediaNotificationProvider(
+            this,
+            { notificationId },
+            DefaultMediaNotificationProvider.DEFAULT_CHANNEL_ID,
+            DefaultMediaNotificationProvider.DEFAULT_CHANNEL_NAME_RESOURCE_ID,
+        ) {
             override fun getNotificationContentTitle(mediaMetadata: MediaMetadata): CharSequence? =
                 notificationContentTitle(mediaMetadata)
         })
@@ -232,6 +242,8 @@ class PlaybackService : MediaSessionService() {
     }
 
     companion object {
+        private val notificationIds = AtomicInteger(SystemClock.elapsedRealtime().toInt() and Int.MAX_VALUE)
+
         @Volatile
         var isRunning = false
             private set
