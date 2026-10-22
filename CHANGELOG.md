@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+## [Web 0.1.2] - 2026-10-22
+
+### Web / NAS、FPK 与 Docker
+
+**界面与播放**
+- 修复刷新登录页时的闪烁和顶栏短暂露出。
+- 登录会话失效后立即停止播放，清理旧队列与私有页面状态。
+- 收藏歌曲、歌单和听书后及时更新按钮与计数，后台刷新失败不再回退到旧状态。
+- 清空播放历史后同步清除各分类记录与计数，避免刷新失败时旧记录重新出现。
+
+**下载与稳定性**
+- 下载入队采用最新设置，同时保留本次请求明确指定的音质和附加文件选项。
+- 修复下载列表筛选无法识别“写入元数据”状态的问题。
+- 完善音源脚本取消与超时处理，统一下载设置入口并保留旧任务恢复能力。
+- 升级 Web、服务端及构建依赖，更新 Node.js、Go 与容器基础镜像。
+
+**安装与升级**
+- Docker 镜像：`ghcr.io/raving4934/melora:0.1.2`，支持 `linux/amd64`、`linux/arm64`。
+- fnOS 安装包：`melora-0.1.2-linux-amd64.fpk`、`melora-0.1.2-linux-arm64.fpk`，附 SHA-256 校验文件。
+- Docker Compose 默认镜像版本同步更新为 `0.1.2`。
+
+### 提交追溯（Web / NAS）
+
+本次仅发布 Web / NAS、FPK 与 Docker；Android 正式版本仍为 0.2.0。
+完整提交区间：[v0.1.1...v0.1.2][Web 0.1.2]；下列内容仅归纳该区间的 Web / NAS 变更。
+
+- 登录页与会话失效收尾：[`cc63eef`](https://github.com/Raving4934/Melora/commit/cc63eef93c79a850b972c5c0a9906bec9262d80c)、[`8530bfc`](https://github.com/Raving4934/Melora/commit/8530bfc67a8e9cdf35083402c1b50c1cc42dd6a0)。
+- 收藏与历史状态一致性：[`190e877`](https://github.com/Raving4934/Melora/commit/190e8776bcdb3e11ba44ab0d5507e8194df4bf2c)、[`b8cdc51`](https://github.com/Raving4934/Melora/commit/b8cdc51843a36a97239bd96e8ea061bd9a6fe040)。
+- 下载设置快照、状态筛选与退役空接口：[`bf3d86d`](https://github.com/Raving4934/Melora/commit/bf3d86d341d85f5caf04aeb42f3d4cee5f515c32)、[`b137e5a`](https://github.com/Raving4934/Melora/commit/b137e5a8354a565341ac6b20fce31b4380a0f642)、[`b757a91`](https://github.com/Raving4934/Melora/commit/b757a916984fcfd5880bd4501110f9920d06fc59)。
+- 音源运行时取消及依赖升级：[`0d6b851`](https://github.com/Raving4934/Melora/commit/0d6b851c8d2fbea7867fe0c078bf1a50d5bfa65f)、[`103b714`](https://github.com/Raving4934/Melora/commit/103b714fb453f38c476209b4d9950d5a8274edd8)。
+
+- 同号版本的通道日志隔离：[`1e22d7d`](https://github.com/Raving4934/Melora/commit/1e22d7d9cd8d0a04eb27e1764a9f13ecea3609d2)。
+
 ## [0.2.0] - 2026-10-16
 
 ### 安卓客户端
@@ -477,13 +510,14 @@
 
 **Docker 镜像：** `ghcr.io/raving4934/melora:0.1.0`（支持 `linux/amd64`、`linux/arm64`）。
 
-[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.0...HEAD
+[Unreleased]: https://github.com/Raving4934/Melora/compare/v0.1.2...HEAD
 [0.2.0]: https://github.com/Raving4934/Melora/compare/android-v0.1.10...android-v0.2.0
 [Android 0.2.0]: https://github.com/Raving4934/Melora/compare/android-v0.1.10...android-v0.2.0
 [0.1.10]: https://github.com/Raving4934/Melora/compare/android-v0.1.9...android-v0.1.10
 [Android 0.1.10]: https://github.com/Raving4934/Melora/compare/android-v0.1.9...android-v0.1.10
 [Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.0...HEAD
-[Web Unreleased]: https://github.com/Raving4934/Melora/compare/v0.1.1...HEAD
+[Web Unreleased]: https://github.com/Raving4934/Melora/compare/v0.1.2...HEAD
+[Web 0.1.2]: https://github.com/Raving4934/Melora/compare/v0.1.1...v0.1.2
 [0.1.9]: https://github.com/Raving4934/Melora/compare/android-v0.1.8...android-v0.1.9
 [Android 0.1.9]: https://github.com/Raving4934/Melora/compare/android-v0.1.8...android-v0.1.9
 [0.1.8]: https://github.com/Raving4934/Melora/compare/android-v0.1.7...android-v0.1.8

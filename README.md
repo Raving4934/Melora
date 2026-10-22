@@ -7,7 +7,7 @@
 Self-hosted music streaming service & standalone Android local music player
 
 [![Android](https://img.shields.io/badge/Android-v0.2.0-3567e8?style=flat-square)](https://github.com/Raving4934/Melora/releases/tag/android-v0.2.0)
-[![Web / NAS](https://img.shields.io/badge/Web%20%2F%20NAS-v0.1.1-3567e8?style=flat-square)](https://github.com/Raving4934/Melora/releases/tag/v0.1.1)
+[![Web / NAS](https://img.shields.io/badge/Web%20%2F%20NAS-v0.1.2-3567e8?style=flat-square)](https://github.com/Raving4934/Melora/releases/tag/v0.1.2)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?style=flat-square&logo=android&logoColor=white)](https://github.com/Raving4934/Melora/releases)
 [![Platform](https://img.shields.io/badge/Platform-Android%20%7C%20Web%20%7C%20Docker%20%7C%20fnOS-blue?style=flat-square)](packaging/fpk)
 [![Architecture](https://img.shields.io/badge/Design-Neutral%20Architecture-059669?style=flat-square)](DISCLAIMER.md)
@@ -96,7 +96,7 @@ Self-hosted music streaming service & standalone Android local music player
 4. **Demo Mode**:
    - Demo mode must be explicitly enabled via `MELORA_DEMO_MODE=1`. An empty source list does not silently activate demo mode.
 5. **Release Channels & Upgrade Notes**:
-   - Android and Web/NAS maintain separate release tags. The current Android baseline is `android-v0.2.0`; the Web/NAS baseline is `v0.1.1`.
+   - Android and Web/NAS maintain separate release tags. The current Android baseline is `android-v0.2.0`; the Web/NAS baseline is `v0.1.2`.
    - The Android production signing key is preserved, and `versionCode` is set to `20`. Install the new APK over an existing installation without clearing data or uninstalling.
 
 ---
@@ -116,8 +116,8 @@ Self-hosted music streaming service & standalone Android local music player
 #### Option A: fnOS (飞牛私有云) Package (Recommended)
 
 1. Download the architecture-specific package from [GitHub Releases](https://github.com/Raving4934/Melora/releases):
-   - x86-64 devices: `melora-0.1.1-linux-amd64.fpk`
-   - ARM64 devices: `melora-0.1.1-linux-arm64.fpk`
+   - x86-64 devices: `melora-0.1.2-linux-amd64.fpk`
+   - ARM64 devices: `melora-0.1.2-linux-arm64.fpk`
 2. Open the fnOS desktop, go to **App Center** → **Manual Install**, and upload the `.fpk` file.
 
 #### Option B: Docker Compose
