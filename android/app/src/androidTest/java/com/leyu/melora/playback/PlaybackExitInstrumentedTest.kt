@@ -182,6 +182,40 @@ class PlaybackExitInstrumentedTest {
         }
     }
 
+    @Test fun nextRequestAfterServiceRecreationKeepsRestoredPositionAndShuffle() {
+        val mode = MeloraSettings.musicPlayMode.value
+        try {
+            main {
+                MeloraSettings.updateMusicPlayMode(PlayMode.Shuffle)
+                PlaybackController.applyMusicPlayMode()
+            }
+            await { controller().shuffleModeEnabled }
+            exitFromNotification()
+            main { PlaybackController.init(context) }
+            await { PlaybackController.state.value.ready }
+            main {
+                assertTrue(controller().isSessionCommandAvailable(PlaybackSessionCallback.QueueNext))
+                repeat(3) { PlaybackController.addToQueueNext(context, checkNotNull(TrackRegistry.get("local_exit_first"))) }
+            }
+            await {
+                val player = controller()
+                player.mediaItemCount == 2 && player.getMediaItemAt(0).mediaId == "local_exit_selected" &&
+                    player.getMediaItemAt(1).mediaId == "local_exit_first" && player.nextMediaItemIndex == 1
+            }
+            main {
+                assertTrue(PlaybackService.isRunning)
+                assertTrue(controller().shuffleModeEnabled)
+                assertEquals("local_exit_selected", controller().currentMediaItem?.mediaId)
+                assertEquals(12_000L, controller().currentPosition)
+                assertFalse(controller().playWhenReady)
+                PlaybackController.next()
+            }
+            await { controller().isPlaying && controller().currentMediaItem?.mediaId == "local_exit_first" }
+        } finally {
+            main { MeloraSettings.updateMusicPlayMode(mode); PlaybackController.applyMusicPlayMode() }
+        }
+    }
+
     @Test fun exitDuringConnectionCannotRestoreOrAutoPlayFromALateCallback() {
         exitFromNotification()
         val savedQueue = prefs.getString("queue", null)

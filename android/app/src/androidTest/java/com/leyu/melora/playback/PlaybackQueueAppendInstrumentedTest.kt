@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.SharedPreferences
 import android.net.Uri
+import android.os.Bundle
 import android.os.SystemClock
 import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
@@ -12,6 +13,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.ShuffleOrder
 import androidx.media3.session.MediaController
+import androidx.media3.session.SessionError
 import androidx.media3.session.MediaSession
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -249,6 +251,191 @@ class PlaybackQueueAppendInstrumentedTest {
             assertEquals("a", player.currentMediaItem?.mediaId)
             assertTrue(player.currentPosition in before..(before + 3_000))
         }
+    }
+
+    @Test fun nextRequestInsertsOnlyOnceAndKeepsPlayingPosition() = withPlayer { player, controller ->
+        main { controller.play() }
+        await { player.isPlaying }
+        val before = main { player.currentPosition }
+        main { repeat(3) { PlaybackController.addToQueueNext(testContext, track("c")) } }
+        await { uids(player) == listOf("a", "c", "b") }
+        main {
+            assertTrue(player.isPlaying)
+            assertEquals("a", player.currentMediaItem?.mediaId)
+            assertTrue(player.currentPosition in before..(before + 3_000))
+            PlaybackController.addToQueueNext(testContext, track("a"))
+        }
+        await { PlaybackController.state.value.message == "歌曲已在当前播放位置" }
+        main { assertEquals(listOf("a", "c", "b"), uids(controller)) }
+        val saved = JSONArray(prefs.getString("queue", "[]"))
+        assertEquals(listOf("a", "c", "b"), (0 until saved.length()).map { saved.getJSONObject(it).getString("uid") })
+    }
+
+    @Test fun nextRequestMovesEarlierAndLaterTracksWithoutSeekingOrDuplicating() = withPlayer { player, controller ->
+        val audioUri = main { player.getMediaItemAt(0).localConfiguration!!.uri }
+        main {
+            TrackRegistry.register(track("c"))
+            controller.addMediaItem(MediaItem.Builder().setMediaId("c").setUri(audioUri).build())
+            controller.seekTo(1, 12_000L)
+        }
+        await { player.currentMediaItem?.mediaId == "b" && player.playbackState == Player.STATE_READY }
+        main { PlaybackController.addToQueueNext(testContext, track("a")) }
+        await { uids(player) == listOf("b", "a", "c") }
+        main {
+            assertEquals("b", player.currentMediaItem?.mediaId)
+            assertEquals(0, player.currentMediaItemIndex)
+            assertTrue(player.currentPosition in 11_800L..12_200L)
+            assertFalse(player.playWhenReady)
+            PlaybackController.addToQueueNext(testContext, track("c"))
+            PlaybackController.addToQueueNext(testContext, track("c"))
+        }
+        await { uids(player) == listOf("b", "c", "a") }
+        main {
+            assertEquals("b", player.currentMediaItem?.mediaId)
+            assertTrue(player.currentPosition in 11_800L..12_200L)
+            assertFalse(player.playWhenReady)
+        }
+        assertEquals(0, prefs.getInt("index", -1))
+    }
+
+    @Test fun nextRequestRestoresSavedQueueBeforeMovingWithoutAutoplay() = withPlayer(empty = true, listen = true) { player, _ ->
+        writeQueueSnapshot(listOf(track("saved-a"), track("saved-b")), index = 1, positionMs = 12_000L)
+        main { PlaybackController.addToQueueNext(testContext, track("saved-a")) }
+        await { uids(player) == listOf("saved-b", "saved-a") }
+        main {
+            assertEquals("saved-b", player.currentMediaItem?.mediaId)
+            assertEquals(0, player.currentMediaItemIndex)
+            assertFalse(player.playWhenReady)
+            assertEquals(Player.STATE_IDLE, player.playbackState)
+        }
+    }
+
+    @Test fun nextRequestInEmptyQueueDoesNotAutoplayOrReportSuccessWhenDisconnected() = withPlayer(empty = true) { player, _ ->
+        main {
+            repeat(2) { PlaybackController.addToQueueNext(testContext, track("new")) }
+        }
+        await { player.mediaItemCount == 1 }
+        main {
+            assertEquals(listOf("new"), uids(player))
+            assertFalse(player.playWhenReady)
+            assertEquals(Player.STATE_IDLE, player.playbackState)
+            field("controller").set(PlaybackController, null)
+            PlaybackController.addToQueueNext(testContext, track("not-added"))
+            assertEquals("播放服务尚未就绪，请稍后重试", PlaybackController.state.value.message)
+        }
+    }
+
+    @Test fun nextRequestUnderShuffleChangesTheActualSuccessorNotOnlyTheRawList() = withPlayer(listen = true) { player, controller ->
+        val previousMode = main { MeloraSettings.musicPlayMode.value }
+        try {
+            val audioUri = main { player.getMediaItemAt(0).localConfiguration!!.uri }
+            main {
+                val ids = listOf("a", "b", "c", "d")
+                TrackRegistry.registerAll(ids.map(::track))
+                controller.setMediaItems(ids.map { MediaItem.Builder().setMediaId(it).setUri(audioUri).build() }, 0, 12_000L)
+                MeloraSettings.updateMusicPlayMode(PlayMode.Shuffle)
+                PlaybackController.applyMusicPlayMode()
+            }
+            await { player.mediaItemCount == 4 && controller.mediaItemCount == 4 && controller.shuffleModeEnabled }
+            main { player.setShuffleOrder(ShuffleOrder.DefaultShuffleOrder(intArrayOf(0, 2, 1, 3), 7L)) }
+            await { controller.mediaItemCount == 4 && controller.shuffleModeEnabled && controller.nextMediaItemIndex == 2 }
+            main {
+                PlaybackController.consumeMessage()
+                PlaybackController.addToQueueNext(testContext, track("b"))
+            }
+            await { PlaybackController.state.value.message == "已设为下一首播放" && controller.nextMediaItemIndex == 1 }
+            main {
+                assertTrue("不能靠关闭随机模式绕过下一首语义", controller.shuffleModeEnabled)
+                assertEquals("a", controller.currentMediaItem?.mediaId)
+                assertTrue(controller.currentPosition in 11_800L..12_200L)
+                assertFalse(controller.playWhenReady)
+                PlaybackController.next()
+            }
+            await { player.currentMediaItem?.mediaId != "a" && player.isPlaying }
+            main { assertEquals("指定B后，真实下一次播放应为B", "b", player.currentMediaItem?.mediaId) }
+        } finally { main { MeloraSettings.updateMusicPlayMode(previousMode) } }
+    }
+
+    @Test fun shuffleNextMovesEarlierTrackAndPreservesOthersThroughAutomaticTransition() = withPlayer { player, controller ->
+        setShuffleFixture(player, controller, current = 2, order = intArrayOf(0, 3, 1, 2))
+        main { repeat(3) { PlaybackController.addToQueueNext(testContext, track("a")) } }
+        await { uids(player) == listOf("b", "c", "a", "d") && controller.nextMediaItemIndex == 2 }
+        main {
+            assertEquals("c", player.currentMediaItem?.mediaId)
+            assertEquals(listOf("d", "b", "c", "a"), player.playbackQueueOrder().map { player.getMediaItemAt(it).mediaId })
+            assertTrue(player.shuffleModeEnabled)
+            assertTrue(player.currentPosition in 11_800L..12_200L)
+            assertFalse(player.playWhenReady)
+            // 不是只验证列表/手动跳转：接近静音文件末尾，让真实引擎自然播完。
+            controller.seekTo(59_600L)
+            controller.play()
+        }
+        await { player.currentMediaItem?.mediaId != "c" && player.isPlaying }
+        main { assertEquals("a", player.currentMediaItem?.mediaId) }
+    }
+
+    @Test fun shuffleNextInsertsOnceAndSerialRequestsKeepTheLastChoiceNext() = withPlayer { player, controller ->
+        setShuffleFixture(player, controller, current = 0, order = intArrayOf(2, 0, 3, 1))
+        main { repeat(3) { PlaybackController.addToQueueNext(testContext, track("new-shuffle")) } }
+        await { player.mediaItemCount == 5 && controller.nextMediaItemIndex == 1 }
+        main {
+            assertEquals(listOf("c", "a", "new-shuffle", "d", "b"), player.playbackQueueOrder().map { player.getMediaItemAt(it).mediaId })
+            PlaybackController.addToQueueNext(testContext, track("d"))
+            PlaybackController.addToQueueNext(testContext, track("b"))
+        }
+        await { uids(player) == listOf("a", "b", "d", "new-shuffle", "c") && controller.nextMediaItemIndex == 1 }
+        main {
+            assertEquals(listOf("c", "a", "b", "d", "new-shuffle"), player.playbackQueueOrder().map { player.getMediaItemAt(it).mediaId })
+            assertEquals("a", player.currentMediaItem?.mediaId)
+            assertTrue(player.currentPosition in 11_800L..12_200L)
+            assertFalse(player.playWhenReady)
+            assertTrue(player.shuffleModeEnabled)
+        }
+    }
+
+    @Test fun leavingBookQueueAppliesSavedShuffleBeforeChoosingNext() = withPlayer(listen = true) { player, controller ->
+        setShuffleFixture(player, controller, current = 0, order = intArrayOf(0, 2, 1, 3))
+        val book = main { field("bookQueue").get(PlaybackController) as BookPlaybackQueue }
+        main { book.start("queue-next-fixture") }
+        await { !player.shuffleModeEnabled && !controller.shuffleModeEnabled }
+        // d不在原始下一首位置，退出听书后必须按恢复的音乐随机模式设置真正后继。
+        main { PlaybackController.addToQueueNext(testContext, track("d")) }
+        await { player.shuffleModeEnabled && controller.shuffleModeEnabled && controller.nextMediaItemIndex == 1 }
+        main {
+            assertNull(book.albumId)
+            assertEquals("d", player.getMediaItemAt(player.nextMediaItemIndex).mediaId)
+            assertEquals("a", player.currentMediaItem?.mediaId)
+            assertTrue(player.currentPosition in 11_800L..12_200L)
+            assertFalse(player.playWhenReady)
+        }
+    }
+
+    @Test fun nextCommandRejectsUnknownTrackWithoutEditingQueue() = withPlayer { player, controller ->
+        val future = main {
+            controller.sendCustomCommand(PlaybackSessionCallback.QueueNext, Bundle().apply {
+                putString(PlaybackSessionCallback.TRACK_UID, "unknown-${System.nanoTime()}")
+            })
+        }
+        assertEquals(SessionError.ERROR_BAD_VALUE, future.get(5, TimeUnit.SECONDS).resultCode)
+        main {
+            assertEquals(listOf("a", "b"), uids(player))
+            assertEquals("a", player.currentMediaItem?.mediaId)
+            assertTrue(player.currentPosition in 11_800L..12_200L)
+        }
+    }
+
+    private fun setShuffleFixture(player: ExoPlayer, controller: MediaController, current: Int, order: IntArray) {
+        val audioUri = main { player.getMediaItemAt(0).localConfiguration!!.uri }
+        main {
+            val ids = listOf("a", "b", "c", "d")
+            TrackRegistry.registerAll(ids.map(::track))
+            controller.setMediaItems(ids.map { MediaItem.Builder().setMediaId(it).setUri(audioUri).build() }, current, 12_000L)
+            controller.shuffleModeEnabled = true
+            controller.repeatMode = Player.REPEAT_MODE_ALL
+        }
+        await { player.mediaItemCount == 4 && player.currentMediaItemIndex == current && player.shuffleModeEnabled }
+        main { player.setShuffleOrder(ShuffleOrder.DefaultShuffleOrder(order, 7L)) }
+        await { controller.playbackQueueOrder() == order.toList() && controller.currentMediaItemIndex == current }
     }
 
     @Test fun emptyQueueAppendNeverStartsPlaybackAndKeepsDifferentIdentities() = withPlayer(empty = true) { player, _ ->
@@ -875,7 +1062,7 @@ class PlaybackQueueAppendInstrumentedTest {
     private fun restoreQueue(controller: MediaController, autoPlay: Boolean) {
         main {
             PlaybackController.javaClass
-                .getDeclaredMethod("restoreQueue", MediaController::class.java, Boolean::class.javaPrimitiveType!!)
+                .getDeclaredMethod("restoreQueue", Player::class.java, Boolean::class.javaPrimitiveType!!)
                 .apply { isAccessible = true }
                 .invoke(PlaybackController, controller, autoPlay)
         }
@@ -938,7 +1125,10 @@ class PlaybackQueueAppendInstrumentedTest {
     private fun withPlayer(empty: Boolean = false, listen: Boolean = false, test: (ExoPlayer, MediaController) -> Unit) {
         val audio = silentWav()
         val player = main { ExoPlayer.Builder(context).build().apply { volume = 0f } }
-        val session = main { MediaSession.Builder(context, player).setId("append-${System.nanoTime()}").build() }
+        val session = main {
+            MediaSession.Builder(context, player).setId("append-${System.nanoTime()}")
+                .setCallback(PlaybackSessionCallback(onFavorite = {}, onExit = {})).build()
+        }
         val controller = main {
             MediaController.Builder(context, session.token)
                 .setListener(field("controllerListener").get(PlaybackController) as MediaController.Listener)

@@ -19,6 +19,7 @@ import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
@@ -45,9 +46,6 @@ class PlaybackService : MediaSessionService() {
     private val artworkListener: (String, String) -> Unit = { _, _ ->
         serviceScope.launch { refreshNotificationMetadata() }
     }
-
-    private val favoriteCommand = SessionCommand(ACTION_FAVORITE, Bundle.EMPTY)
-    private val exitCommand = SessionCommand(ACTION_EXIT, Bundle.EMPTY)
 
     override fun onCreate() {
         super.onCreate()
@@ -100,46 +98,11 @@ class PlaybackService : MediaSessionService() {
         )
         mediaSession = MediaSession.Builder(this, player)
             .setSessionActivity(sessionActivity)
-            .setCallback(object : MediaSession.Callback {
-                override fun onConnect(
-                    session: MediaSession,
-                    controller: MediaSession.ControllerInfo,
-                ): MediaSession.ConnectionResult {
-                    val result = super.onConnect(session, controller)
-                    if (!canUsePrivateMediaCommands(controller.uid, android.os.Process.myUid(), controller.isTrusted)) return result
-                    return MediaSession.ConnectionResult.AcceptedResultBuilder(session, controller)
-                        .setAvailableSessionCommands(
-                            result.availableSessionCommands.buildUpon()
-                                .add(favoriteCommand)
-                                .add(exitCommand)
-                                .build(),
-                        )
-                        .build()
-                }
-
-                override fun onCustomCommand(
-                    session: MediaSession,
-                    controller: MediaSession.ControllerInfo,
-                    customCommand: SessionCommand,
-                    args: Bundle,
-                ): ListenableFuture<SessionResult> {
-                    if (!canUsePrivateMediaCommands(controller.uid, android.os.Process.myUid(), controller.isTrusted)) {
-                        return Futures.immediateFuture(SessionResult(androidx.media3.session.SessionError.ERROR_PERMISSION_DENIED))
-                    }
-                    when (customCommand.customAction) {
-                        ACTION_FAVORITE -> {
-                            toggleFavorite()
-                            return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
-                        }
-                        ACTION_EXIT -> {
-                            // 先让Media3答复本次命令，再释放session；否则命令仍在途，绑定会等30秒超时。
-                            serviceScope.launch { exitPlayback() }
-                            return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
-                        }
-                    }
-                    return super.onCustomCommand(session, controller, customCommand, args)
-                }
-            })
+            .setCallback(PlaybackSessionCallback(
+                onFavorite = ::toggleFavorite,
+                // 先答复命令再释放session，避免在途命令等待绑定超时。
+                onExit = { serviceScope.launch { exitPlayback() } },
+            ))
             .build()
 
         player.addListener(object : Player.Listener {
@@ -213,13 +176,13 @@ class PlaybackService : MediaSessionService() {
                 CommandButton.Builder(
                     if (favorite) CommandButton.ICON_HEART_FILLED else CommandButton.ICON_HEART_UNFILLED,
                 )
-                    .setSessionCommand(favoriteCommand)
+                    .setSessionCommand(PlaybackSessionCallback.Favorite)
                     .setDisplayName("收藏")
                     .setCustomIconResId(if (favorite) R.drawable.ic_media_fav_on else R.drawable.ic_media_fav)
                     .setSlots(CommandButton.SLOT_BACK_SECONDARY)
                     .build(),
                 CommandButton.Builder(CommandButton.ICON_STOP)
-                    .setSessionCommand(exitCommand)
+                    .setSessionCommand(PlaybackSessionCallback.Exit)
                     .setDisplayName("退出")
                     .setCustomIconResId(R.drawable.ic_media_exit)
                     .setSlots(CommandButton.SLOT_FORWARD_SECONDARY)
@@ -269,12 +232,74 @@ class PlaybackService : MediaSessionService() {
     }
 
     companion object {
-        private const val ACTION_FAVORITE = "com.leyu.melora.action.FAVORITE"
-        private const val ACTION_EXIT = "com.leyu.melora.action.EXIT"
-
         @Volatile
         var isRunning = false
             private set
+    }
+}
+
+/** 队列编辑在会话的实际播放器上串行完成，不能用控制器的异步投影编辑随机后继。 */
+@androidx.annotation.OptIn(UnstableApi::class)
+internal class PlaybackSessionCallback(
+    private val onFavorite: () -> Unit,
+    private val onExit: () -> Unit,
+) : MediaSession.Callback {
+    override fun onConnect(
+        session: MediaSession,
+        controller: MediaSession.ControllerInfo,
+    ): MediaSession.ConnectionResult {
+        val result = super.onConnect(session, controller)
+        if (!canUsePrivateMediaCommands(controller.uid, android.os.Process.myUid(), controller.isTrusted)) return result
+        val commands = result.availableSessionCommands.buildUpon().add(Favorite).add(Exit)
+        // UID对应本进程的TrackRegistry，不向外部媒体控制器开放此编辑入口。
+        if (controller.uid == android.os.Process.myUid()) commands.add(QueueNext)
+        return MediaSession.ConnectionResult.AcceptedResultBuilder(session, controller)
+            .setAvailableSessionCommands(commands.build())
+            .build()
+    }
+
+    override fun onCustomCommand(
+        session: MediaSession,
+        controller: MediaSession.ControllerInfo,
+        customCommand: SessionCommand,
+        args: Bundle,
+    ): ListenableFuture<SessionResult> {
+        if (!canUsePrivateMediaCommands(controller.uid, android.os.Process.myUid(), controller.isTrusted)) {
+            return Futures.immediateFuture(SessionResult(SessionError.ERROR_PERMISSION_DENIED))
+        }
+        val result = when (customCommand.customAction) {
+            Favorite.customAction -> {
+                onFavorite()
+                SessionResult(SessionResult.RESULT_SUCCESS)
+            }
+            Exit.customAction -> {
+                onExit()
+                SessionResult(SessionResult.RESULT_SUCCESS)
+            }
+            QueueNext.customAction -> {
+                if (controller.uid != android.os.Process.myUid()) {
+                    SessionResult(SessionError.ERROR_PERMISSION_DENIED)
+                } else {
+                    val player = session.player as? ExoPlayer
+                    val uid = args.getString(TRACK_UID)
+                    val message = if (player != null && !uid.isNullOrBlank()) {
+                        PlaybackController.applyQueueNext(player, uid)
+                    } else null
+                    if (message == null) SessionResult(SessionError.ERROR_BAD_VALUE)
+                    else SessionResult(SessionResult.RESULT_SUCCESS, Bundle().apply { putString(MESSAGE, message) })
+                }
+            }
+            else -> return super.onCustomCommand(session, controller, customCommand, args)
+        }
+        return Futures.immediateFuture(result)
+    }
+
+    companion object {
+        val Favorite = SessionCommand("com.leyu.melora.action.FAVORITE", Bundle.EMPTY)
+        val Exit = SessionCommand("com.leyu.melora.action.EXIT", Bundle.EMPTY)
+        val QueueNext = SessionCommand("com.leyu.melora.action.QUEUE_NEXT", Bundle.EMPTY)
+        const val TRACK_UID = "uid"
+        const val MESSAGE = "message"
     }
 }
 

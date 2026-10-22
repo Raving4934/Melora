@@ -3,6 +3,7 @@ package com.leyu.melora.playback
 import android.content.ComponentName
 import android.content.Context
 import android.database.ContentObserver
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
@@ -20,6 +21,9 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.ShuffleOrder
+import androidx.media3.session.SessionResult
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
@@ -971,14 +975,57 @@ object PlaybackController {
 
     fun addToQueueNext(context: Context, track: UiTrack) {
         appContext = context.applicationContext
-        val player = controller ?: return
-        bookQueue?.stop()
-        TrackRegistry.register(track)
-        val at = (player.currentMediaItemIndex + 1).coerceIn(0, player.mediaItemCount)
-        player.addMediaItem(at, buildItem(track))
-        saveQueue(force = true)
-        _state.value = _state.value.copy(message = "已设为下一首播放")
-        publish()
+        val player = controller
+        if (player == null || !player.isSessionCommandAvailable(PlaybackSessionCallback.QueueNext)) {
+            _state.value = _state.value.copy(message = "播放服务尚未就绪，请稍后重试")
+            return
+        }
+        if (TrackRegistry.get(track.uid) == null) TrackRegistry.register(track)
+        val result = player.sendCustomCommand(
+            PlaybackSessionCallback.QueueNext,
+            Bundle().apply { putString(PlaybackSessionCallback.TRACK_UID, track.uid) },
+        )
+        result.addListener({
+            scope.launch {
+                if (controller !== player) return@launch
+                val response = runCatching { result.get() }.getOrNull()
+                _state.value = _state.value.copy(message =
+                    if (response?.resultCode == SessionResult.RESULT_SUCCESS) {
+                        response.extras.getString(PlaybackSessionCallback.MESSAGE)
+                    } else "设置下一首失败，请重试",
+                )
+                publish()
+            }
+        }, MoreExecutors.directExecutor())
+    }
+
+    /** 只由本应用的会话命令调用；原始队列与随机后继必须在同一个实际播放器上同步修改。 */
+    @androidx.annotation.OptIn(UnstableApi::class)
+    internal fun applyQueueNext(player: ExoPlayer, uid: String): String? {
+        if (TrackRegistry.get(uid) == null) return null
+        // 冷恢复也在服务端同步完成，避免custom command越过控制器尚未提交的setMediaItems。
+        restoreQueue(player, autoPlay = false)
+        if (player.currentMediaItem?.mediaId == uid) return "歌曲已在当前播放位置"
+        val target = nextTrackQueueTarget(
+            (0 until player.mediaItemCount).map { player.getMediaItemAt(it).mediaId },
+            player.currentMediaItemIndex,
+            uid,
+        )
+        if (target.fromIndex == target.toIndex &&
+            (!player.shuffleModeEnabled || player.nextMediaItemIndex == target.toIndex)
+        ) return "已设为下一首播放"
+        // 听书退出时也直接恢复实际播放器的音乐模式，不能等异步控制器命令回来才开启随机。
+        bookQueue?.stop(player)
+        val shuffleOrder = if (player.shuffleModeEnabled) {
+            nextTrackShuffleOrder(player.playbackQueueOrder(), player.currentMediaItemIndex, target)
+        } else null
+        if (target.fromIndex < 0) player.addMediaItem(target.toIndex, buildItem(checkNotNull(TrackRegistry.get(uid))))
+        else if (target.fromIndex != target.toIndex) player.moveMediaItem(target.fromIndex, target.toIndex)
+        if (shuffleOrder != null && player.playbackQueueOrder() != shuffleOrder) {
+            player.setShuffleOrder(ShuffleOrder.DefaultShuffleOrder(shuffleOrder.toIntArray(), System.nanoTime()))
+        }
+        saveQueue(force = true, player = player)
+        return "已设为下一首播放"
     }
 
     /** 删除确认后的唯一收尾入口；不启动播放服务，冷态队列也同步清理。 */
@@ -1350,10 +1397,10 @@ object PlaybackController {
     }
 
     /** 冷启动恢复上次队列（不自动播放时保持暂停，仅让 mini 播放条出现）。 */
-    private fun restoreQueue(player: MediaController, autoPlay: Boolean = MeloraSettings.autoPlayOnStart.value) {
+    private fun restoreQueue(player: Player, autoPlay: Boolean = MeloraSettings.autoPlayOnStart.value) {
         if (player.mediaItemCount > 0) {
             // 重连仍存活的服务时先恢复听书上下文，再应用音乐偏好，不能把章节改为随机播放。
-            if (bookQueue?.albumId == null) player.bookAlbumId(TrackRegistry::get)?.let { bookQueue?.start(it) }
+            if (bookQueue?.albumId == null) player.bookAlbumId(TrackRegistry::get)?.let { bookQueue?.start(it, player) }
             return
         }
         val prefs = queuePrefs() ?: return
@@ -1377,7 +1424,7 @@ object PlaybackController {
             prefs.getLong(KEY_QUEUE_POSITION, C.TIME_UNSET).let { if (it >= 0) it else C.TIME_UNSET }
         } else C.TIME_UNSET
         player.setMediaItems(tracks.map(::buildItem), index, position)
-        if (bookId != null) bookQueue?.start(bookId)
+        if (bookId != null) bookQueue?.start(bookId, player)
         if (autoPlay) {
             player.prepareAndPlay()
         }
@@ -1458,4 +1505,36 @@ internal fun singleTrackQueueTarget(queueUids: List<String>, currentIndex: Int, 
     val existing = queueUids.indexOf(uid)
     return if (existing >= 0) SingleTrackQueueTarget(existing, insert = false)
     else SingleTrackQueueTarget((currentIndex + 1).coerceIn(0, queueUids.size), insert = true)
+}
+
+/** fromIndex=-1 表示新增；已有项只移动，不重建当前曲目或清理队列中原有的重复项。 */
+internal data class NextTrackQueueTarget(val fromIndex: Int, val toIndex: Int)
+
+internal fun nextTrackQueueTarget(queueUids: List<String>, currentIndex: Int, uid: String): NextTrackQueueTarget {
+    val next = (currentIndex + 1).coerceIn(0, queueUids.size)
+    val existing = when {
+        queueUids.getOrNull(currentIndex) == uid -> currentIndex
+        queueUids.getOrNull(next) == uid -> next
+        else -> queueUids.indexOf(uid)
+    }
+    // 将前面的歌曲移走后，当前项会左移一位；目标须使用移除后的索引。
+    val target = if (existing >= 0 && existing <= currentIndex) next - 1 else next
+    return NextTrackQueueTarget(existing, target)
+}
+
+/** 先映射原始索引移动，再指定后继；不能把Media3移动后的索引次序当作原歌曲次序。 */
+internal fun nextTrackShuffleOrder(order: List<Int>, currentIndex: Int, target: NextTrackQueueTarget): List<Int> {
+    fun remap(index: Int): Int = when {
+        index == target.fromIndex -> target.toIndex
+        target.fromIndex < 0 && index >= target.toIndex -> index + 1
+        target.fromIndex >= 0 && index in (target.fromIndex + 1)..target.toIndex -> index - 1
+        target.fromIndex >= 0 && index in target.toIndex until target.fromIndex -> index + 1
+        else -> index
+    }
+    val mapped = order.map(::remap).toMutableList()
+    val current = if (currentIndex >= 0) remap(currentIndex) else -1
+    if (current == target.toIndex && target.fromIndex >= 0) return mapped
+    mapped.remove(target.toIndex)
+    mapped.add(mapped.indexOf(current) + 1, target.toIndex)
+    return mapped
 }

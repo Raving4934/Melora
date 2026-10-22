@@ -108,8 +108,8 @@ internal class BookPlaybackQueue(
         }
     }
 
-    fun start(id: String) {
-        stop()
+    fun start(id: String, player: Player = this.player) {
+        stop(player)
         albumId = id
         musicRepeat = player.repeatMode
         musicShuffle = player.shuffleModeEnabled
@@ -118,10 +118,11 @@ internal class BookPlaybackQueue(
             ?.let(trackFor)?.raw?.let(OnlineSong::from)
         player.repeatMode = Player.REPEAT_MODE_OFF
         player.shuffleModeEnabled = false
-        check()
+        // 服务端同步恢复时，控制器仍可能是旧时间线；后续onEvents再启动预取。
+        if (player === this.player) check()
     }
 
-    fun stop() {
+    fun stop(player: Player = this.player) {
         job?.cancel()
         job = null
         val wasActive = albumId != null
