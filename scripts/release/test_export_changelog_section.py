@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import tempfile
@@ -15,6 +16,51 @@ SCRIPT = ROOT / "scripts" / "release" / "export-changelog-section.sh"
 
 
 class ChangelogExporterTest(unittest.TestCase):
+    def test_same_number_web_and_android_releases_stay_separate(self) -> None:
+        changelog = """## [Web 0.1.20] - 2026-11-01
+### Web / NAS、FPK 与 Docker
+- Other version.
+## [Web 0.1.2] - 2026-10-22
+### Web / NAS、FPK 与 Docker
+- New Web release.
+### 提交追溯（Web / NAS）
+- Web commit metadata.
+## [0.1.2] - 2026-09-21
+### 安卓客户端
+- Original Android release.
+### 提交追溯（安卓版）
+- Original Android metadata.
+"""
+        for section, expected in (("Web / NAS、FPK 与 Docker", "- New Web release.\n"),
+                                  ("安卓客户端", "- Original Android release.\n")):
+            with self.subTest(section=section), tempfile.TemporaryDirectory() as temp:
+                source = Path(temp) / "CHANGELOG.md"
+                output = Path(temp) / "notes.md"
+                source.write_text(changelog, encoding="utf-8")
+                result = subprocess.run(
+                    [str(SCRIPT), "--version", "0.1.2", "--section", section,
+                     "--changelog", str(source), "--output", str(output)],
+                    cwd=ROOT, text=True, capture_output=True, check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(output.read_text(encoding="utf-8"), expected)
+
+    def test_repository_changelog_exports_the_declared_web_version(self) -> None:
+        version = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"]
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / "notes.md"
+            result = subprocess.run(
+                [str(SCRIPT), "--version", version, "--section", "Web / NAS、FPK 与 Docker",
+                 "--output", str(output)], cwd=ROOT, text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            notes = output.read_text(encoding="utf-8")
+            self.assertIn(f"ghcr.io/raving4934/melora:{version}", notes)
+            for arch in ("amd64", "arm64"):
+                self.assertIn(f"melora-{version}-linux-{arch}.fpk", notes)
+            self.assertNotIn("安卓客户端", notes)
+            self.assertNotIn("提交追溯", notes)
+
     def test_exports_only_the_requested_channel_section(self) -> None:
         changelog = """# Changelog
 

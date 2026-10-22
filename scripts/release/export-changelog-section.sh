@@ -9,6 +9,7 @@ Usage:
 Extract only the body of one level-3 release-note section from CHANGELOG.md.
 Keep the body formatting; omit channel headings and generated export metadata.
 The section heading is supplied without the leading "### ".
+Web releases may use "## [Web VERSION]" to avoid Android version collisions.
 HELP
 }
 
@@ -62,14 +63,16 @@ mkdir -p -- "$(dirname -- "$OUTPUT")"
 TMP_OUTPUT="$(mktemp "${OUTPUT}.tmp.XXXXXX")"
 trap 'rm -f -- "$TMP_OUTPUT"' EXIT
 
-if awk -v version="[${VERSION}]" -v section="### ${SECTION}" '
+if awk -v version="[${VERSION}]" -v web_version="[Web ${VERSION}]" -v section="### ${SECTION}" '
   BEGIN {
     in_release = 0
     in_section = 0
     found_release = 0
     found_section = 0
   }
-  substr($0, 1, length("## " version)) == "## " version {
+  substr($0, 1, length("## " version)) == "## " version ||
+    (section == "### Web / NAS、FPK 与 Docker" &&
+     substr($0, 1, length("## " web_version)) == "## " web_version) {
     in_release = 1
     found_release = 1
     next
