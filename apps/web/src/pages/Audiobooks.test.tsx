@@ -398,6 +398,36 @@ describe('听书专辑页', () => {
     expect(await screen.findByRole('button', { name: '已收藏' })).toBeInTheDocument()
   })
 
+  it('收藏写入成功但刷新失败时仍保留已提交状态，下一次点击执行取消', async () => {
+    queryClient.setQueryData([`${albumPath}?page=1`], album)
+    queryClient.setQueryData(['/library/favorites/playlists'], [])
+    const mutations: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).includes('/library/favorites/playlists')) {
+          if (init?.method === 'POST' || init?.method === 'DELETE') {
+            mutations.push(init.method)
+            return new Response('{"ok":true}', { headers: { 'Content-Type': 'application/json' } })
+          }
+          return new Response('{"error":{"code":"unavailable","message":"刷新失败"}}', {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+        return new Response('[]', { headers: { 'Content-Type': 'application/json' } })
+      }),
+    )
+    renderAlbum()
+    fireEvent.click(await screen.findByRole('button', { name: '收藏专辑' }))
+    const liked = await screen.findByRole('button', { name: '已收藏' })
+    await waitFor(() => expect(liked).toBeEnabled())
+    fireEvent.click(liked)
+    await waitFor(() => expect(mutations).toEqual(['POST', 'DELETE']))
+    expect(await screen.findByRole('button', { name: '收藏专辑' })).toBeInTheDocument()
+    expect(queryClient.getQueryData(['/library/favorites/playlists'])).toEqual([])
+  })
+
   it('深链页码超过实际页数时归一到最后一页', () => {
     queryClient.setQueryData([`${albumPath}?page=50`], { ...album, page: 50, tracks: [] })
     renderAlbum(`${albumPath}?page=50`)

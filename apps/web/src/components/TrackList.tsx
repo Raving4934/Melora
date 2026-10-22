@@ -1,6 +1,7 @@
 import { memo, useCallback, useMemo, useState, type ReactNode } from 'react'
 import { Download, Heart, ListMusic, ListPlus, LoaderCircle, MoreHorizontal, Pause, Play } from 'lucide-react'
-import { useAPI, send, idPath, invalidate, useCloudDeploy } from '../lib/api'
+import { useAPI, useCloudDeploy } from '../lib/api'
+import { setFavorite } from '../lib/favorites'
 import { errorMessage, formatTime } from '../lib/format'
 import { guardOnlineOperation } from '../lib/source-state'
 import type { Track } from '../lib/types'
@@ -23,11 +24,12 @@ const FavoriteControl = memo(function FavoriteControl({
 }) {
   const [pending, setPending] = useState(false)
   const toggle = async () => {
+    if (pending || loading) return
     setPending(true)
     try {
-      await send(`${favoritesPath}/${idPath(track.id)}`, liked ? 'DELETE' : 'POST')
-      await Promise.all([invalidate(favoritesPath), invalidate('/library/summary')])
-      notify(liked ? '已取消收藏' : '已添加到喜欢的音乐', 'success')
+      if (await setFavorite('tracks', track, !liked)) {
+        notify(liked ? '已取消收藏' : '已添加到喜欢的音乐', 'success')
+      }
     } catch (error) {
       notify(errorMessage(error), 'error')
     } finally {

@@ -27,16 +27,8 @@ import {
   X,
 } from 'lucide-react'
 import { Link, useParams, useSearchParams } from 'react-router'
-import {
-  APIError,
-  api,
-  idPath,
-  invalidate,
-  queryClient,
-  send,
-  useAPI,
-  useCatalogPagination,
-} from '../lib/api'
+import { APIError, api, idPath, queryClient, useAPI, useCatalogPagination } from '../lib/api'
+import { setFavorite } from '../lib/favorites'
 import type { Collection, DiscoveryFeed, Track } from '../lib/types'
 import {
   CollectionGrid,
@@ -1443,11 +1435,12 @@ export function PlaylistDetailPage() {
   const pending = result.isPending || result.isPlaceholderData
   const liked = favorites.data?.some((item) => item.id === id)
   const toggleFavorite = async () => {
+    if (!current || saving) return
     setSaving(true)
     try {
-      await send(`/library/favorites/playlists/${idPath(id)}`, liked ? 'DELETE' : 'POST')
-      await Promise.all([invalidate('/library/favorites/playlists'), invalidate('/library/summary')])
-      notify(liked ? '已取消收藏歌单' : '已收藏歌单', 'success')
+      if (await setFavorite('playlists', current, !liked)) {
+        notify(liked ? '已取消收藏歌单' : '已收藏歌单', 'success')
+      }
     } catch (error) {
       notify(errorMessage(error), 'error')
     } finally {

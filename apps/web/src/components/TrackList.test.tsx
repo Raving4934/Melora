@@ -12,7 +12,13 @@ const mocks = vi.hoisted(() => ({
   coverRender: vi.fn(),
   useCloudDeploy: vi.fn(() => false),
   APIError: class APIError extends Error {},
-  queryClient: { getQueryData: vi.fn(), getQueryState: vi.fn() },
+  queryClient: {
+    getQueryData: vi.fn(),
+    getQueryState: vi.fn(),
+    setQueryData: vi.fn(),
+    getQueryCache: () => ({ find: () => undefined }),
+    cancelQueries: vi.fn().mockResolvedValue(undefined),
+  },
 }))
 
 vi.mock('../lib/api', () => ({

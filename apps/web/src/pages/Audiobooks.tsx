@@ -10,7 +10,8 @@ import {
   RefreshCw,
 } from 'lucide-react'
 import { Link, useParams, useSearchParams } from 'react-router'
-import { api, idPath, invalidate, queryClient, send, useAPI } from '../lib/api'
+import { api, idPath, queryClient, useAPI } from '../lib/api'
+import { setFavorite } from '../lib/favorites'
 import type { BookAlbum, BookHome, BookRankResult, BookSection, Collection } from '../lib/types'
 import {
   CollectionGrid,
@@ -463,11 +464,12 @@ export function AudiobookAlbumPage() {
   const [saving, setSaving] = useState(false)
   const liked = favorites.data?.some((item) => item.id === id) || false
   const toggleFavorite = async () => {
+    if (!album || saving) return
     setSaving(true)
     try {
-      await send(`/library/favorites/playlists/${idPath(id)}`, liked ? 'DELETE' : 'POST')
-      await Promise.all([invalidate('/library/favorites/playlists'), invalidate('/library/summary')])
-      notify(liked ? '已取消收藏听书专辑' : '已收藏听书专辑', 'success')
+      if (await setFavorite('playlists', album, !liked)) {
+        notify(liked ? '已取消收藏听书专辑' : '已收藏听书专辑', 'success')
+      }
     } catch (error) {
       notify(errorMessage(error), 'error')
     } finally {
