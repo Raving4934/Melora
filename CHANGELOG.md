@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-22
+
+### 安卓客户端
+
+【大屏适配】
+- 优化超大屏车机和平板的界面比例，让文字、侧栏和播放控件大小更协调。
+- 调整卡片网格、排行榜及设置页布局，改善窗口缩放时的内容对齐和浏览位置保持。
+- 统一大屏弹窗与底部抽屉的尺寸和手势响应。
+
+【播放与队列】
+- “下一首播放”重复操作不再重复添加歌曲，队列中已有歌曲会移至下一首。
+- 修复随机播放、播放服务重建及听书切换后指定下一首失效的问题，保留当前进度与播放状态。
+
+【在线内容】
+- 修复排行榜切换音源时旧结果、加载状态或错误提示覆盖新页面的问题。
+- 发现页推荐内容为空时提供提示和重试入口，关闭下拉刷新后仍可重试。
+
+【兼容性改进】
+- 升级客户端依赖与音源脚本运行环境，完善歌词解码兼容性。
+
+### 提交追溯（不进入应用内日志）
+
+本次仅更新 Android 客户端，版本号 0.2.1 / versionCode 21，沿用正式签名。Web / NAS、FPK 与 Docker 保持 0.1.2。
+完整提交区间：[android-v0.2.0...android-v0.2.1][Android 0.2.1]；正文仅归纳该区间的 Android 变更。
+
+- 大屏布局、窗口缩放与弹层适配：[`f483b9f`](https://github.com/Raving4934/Melora/commit/f483b9f7bb88ff7a36fec32005a90609af423be9)、[`c795bc8`](https://github.com/Raving4934/Melora/commit/c795bc8d23070ef2a298ef3e478feadbc860b2f3)。
+- 下一首幂等编辑、随机顺序与恢复：[`e7b4924`](https://github.com/Raving4934/Melora/commit/e7b4924f6da457da7c0fe9322f75b274808a81f7)。
+- 排行榜请求隔离与发现页空态：[`c6616fb`](https://github.com/Raving4934/Melora/commit/c6616fb6f4e4e86e52e97b0fa2399e504b3a29cf)、[`926bbdd`](https://github.com/Raving4934/Melora/commit/926bbdd94b26dbcd89791212f38147ebf9e20f3a)。
+- 依赖升级及运行时兼容迁移：[`103b714`](https://github.com/Raving4934/Melora/commit/103b714fb453f38c476209b4d9950d5a8274edd8)。
+- 设备测试与 SDK、网络前置检查：[`87b8342`](https://github.com/Raving4934/Melora/commit/87b834277ab993e5a8d486da10970156a41e3367)、[`79350bc`](https://github.com/Raving4934/Melora/commit/79350bc760d583689eeab84bd31c9c85b3ca8978)、[`b44772d`](https://github.com/Raving4934/Melora/commit/b44772d4bd36d8e0e7ef26b5b6582d2580501f2d)、[`dae07ff`](https://github.com/Raving4934/Melora/commit/dae07ff09c6ba866eac4ab371bb0ed3e668f0f28)。
+
 ## [Web 0.1.2] - 2026-10-22
 
 ### Web / NAS、FPK 与 Docker
@@ -510,12 +541,14 @@
 
 **Docker 镜像：** `ghcr.io/raving4934/melora:0.1.0`（支持 `linux/amd64`、`linux/arm64`）。
 
-[Unreleased]: https://github.com/Raving4934/Melora/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.1...HEAD
+[0.2.1]: https://github.com/Raving4934/Melora/compare/android-v0.2.0...android-v0.2.1
+[Android 0.2.1]: https://github.com/Raving4934/Melora/compare/android-v0.2.0...android-v0.2.1
 [0.2.0]: https://github.com/Raving4934/Melora/compare/android-v0.1.10...android-v0.2.0
 [Android 0.2.0]: https://github.com/Raving4934/Melora/compare/android-v0.1.10...android-v0.2.0
 [0.1.10]: https://github.com/Raving4934/Melora/compare/android-v0.1.9...android-v0.1.10
 [Android 0.1.10]: https://github.com/Raving4934/Melora/compare/android-v0.1.9...android-v0.1.10
-[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.0...HEAD
+[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.1...HEAD
 [Web Unreleased]: https://github.com/Raving4934/Melora/compare/v0.1.2...HEAD
 [Web 0.1.2]: https://github.com/Raving4934/Melora/compare/v0.1.1...v0.1.2
 [0.1.9]: https://github.com/Raving4934/Melora/compare/android-v0.1.8...android-v0.1.9
