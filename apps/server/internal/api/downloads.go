@@ -85,12 +85,12 @@ func (s *Server) downloadListCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	s.settingsMu.Lock()
 	defer s.settingsMu.Unlock()
-	if s.live == nil {
-		settings, err = s.store.Settings(r.Context())
-		if err != nil {
-			s.dbError(w, err)
-			return
-		}
+	// 目录查询可能耗时；入队必须与设置保存串行，并在此固化当前配置，
+	// 不能把查询前的选项与已经重新配置的下载目录/管理器混用。
+	settings, err = s.store.Settings(r.Context())
+	if err != nil {
+		s.dbError(w, err)
+		return
 	}
 	if body.Quality == "" {
 		body.Quality = settings.DefaultQuality
