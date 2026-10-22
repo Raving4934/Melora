@@ -63,6 +63,7 @@ import com.leyu.melora.playback.sdk.Recommender
 import com.leyu.melora.ui.common.CardPlayButton
 import com.leyu.melora.ui.common.ChromeScaffold
 import com.leyu.melora.ui.common.DetailPageHost
+import com.leyu.melora.ui.common.ErrorState
 import com.leyu.melora.ui.common.FastScrollToTopEffect
 import com.leyu.melora.ui.common.chromeContentPadding
 import com.leyu.melora.ui.common.OnlineSongsPage
@@ -145,6 +146,12 @@ fun DiscoverScreen(
     var millionDetail by remember { mutableStateOf<Unit?>(null) }
     var refreshTick by remember { mutableIntStateOf(0) }
     var refreshing by remember { mutableStateOf(false) }
+    val refresh = {
+        if (!refreshing) {
+            refreshing = true
+            refreshTick++
+        }
+    }
     val pullEnabled by MeloraSettings.pullToRefresh.collectAsStateWithLifecycle()
     // 推荐位例外：无论单曲封面开关如何，始终加载卡片封面。
     val dailyArtwork = rememberOnlineSongCover(dailySong, enabled = true)
@@ -338,10 +345,7 @@ fun DiscoverScreen(
                         enabled = pullEnabled,
                         refreshing = refreshing,
                         canPull = !listState.canScrollBackward,
-                        onRefresh = {
-                            refreshing = true
-                            refreshTick++
-                        },
+                        onRefresh = refresh,
                         modifier = Modifier.fillMaxSize(),
                     ) {
                         Column(
@@ -492,7 +496,7 @@ fun DiscoverScreen(
                                         Spacer(Modifier.height(12.dp))
 
                                         SkeletonCrossfade(
-                                            visible = playlists.isEmpty() && playlistsLoading,
+                                            visible = playlists.isEmpty() && playlistsLoading && !refreshing,
                                             skeleton = {
                                                 Row(
                                                     modifier = Modifier
@@ -505,9 +509,7 @@ fun DiscoverScreen(
                                             },
                                         ) {
                                         if (playlists.isEmpty()) {
-                                            Box(Modifier.fillMaxWidth().height(136.dp), contentAlignment = Alignment.Center) {
-                                                Text("暂未获取精选歌单，可下拉重试", fontSize = 12.sp, color = TextSub)
-                                            }
+                                            ErrorState("暂未获取精选歌单", onRetry = refresh, retrying = refreshing)
                                         }
                                         Row(
                                             modifier = Modifier
@@ -653,7 +655,7 @@ fun DiscoverScreen(
                                             modifier = Modifier.fillMaxWidth(),
                                         ) {
                                             SkeletonCrossfade(
-                                                visible = audiobooks.isEmpty() && audiobooksLoading,
+                                                visible = audiobooks.isEmpty() && audiobooksLoading && !refreshing,
                                                 skeleton = {
                                                     Column {
                                                         repeat(6) { index ->
@@ -689,6 +691,9 @@ fun DiscoverScreen(
                                                 },
                                             ) {
                                             Column {
+                                                if (audiobooks.isEmpty()) {
+                                                    ErrorState("暂未获取听书推荐", onRetry = refresh, retrying = refreshing)
+                                                }
                                                 audiobooks.forEachIndexed { index, book ->
                                                     Row(
                                                         modifier = Modifier
