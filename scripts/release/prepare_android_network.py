@@ -48,8 +48,10 @@ def ready_network(snapshot: str) -> str | None:
             break
         if "NetworkAgentInfo{" not in line or f"network{{{active[1]}}}" not in line:
             continue
+        transports = re.search(r"nc\{\[\s*Transports: ([A-Z_&|]+)", line)
         caps = re.search(r"nc\{\[.*?Capabilities: ([A-Z_&|]+)", line)
-        if caps and {"INTERNET", "NOT_METERED", "VALIDATED"} <= set(re.split(r"[&|]", caps[1])):
+        if (transports and "WIFI" in re.split(r"[&|]", transports[1]) and caps and
+                {"INTERNET", "NOT_METERED", "VALIDATED"} <= set(re.split(r"[&|]", caps[1]))):
             return line.strip()
     return None
 
@@ -79,29 +81,17 @@ def prepare_network(serial: str, log_dir: Path, *, timeout: float = 240) -> None
             time.sleep(1)
         raise RuntimeError("Emulator network prerequisite failed: " + label)
 
-    def subscription_ready() -> bool:
-        sim = read("sim-before-tests.log", "getprop", "gsm.sim.state")
-        sub = read("subscription-before-tests.log", "settings", "get", "global", "multi_sim_data_call")
-        return bool({"READY", "LOADED"} & set(sim.split(","))) and sub.isdigit()
+    # 测试只要求真实的非计费Wi-Fi；SIM/旧订阅设置键不是联网前提。
+    # 不重置已可用的网络，也不依赖关闭蜂窝成功；最终必须由Wi-Fi成为默认网络。
+    shell(serial, "svc", "wifi", "enable")
 
-    # svc data 的 shell 退出码不会反映无有效订阅时的失败。先等订阅，再读回设置。
-    await_state(subscription_ready, "Default data subscription ready")
-    shell(serial, "svc", "data", "disable")
-    await_state(lambda: read("mobile-data-before-tests.log", "settings", "get", "global", "mobile_data") == "0",
-                "Mobile data disabled")
-    shell(serial, "svc", "wifi", "disable")
-
-    def disconnected() -> bool:
+    def wifi_ready() -> bool:
         wifi = read("wifi-before-tests.log", "dumpsys", "wifi")
         network = read("connectivity-before-tests.log", "dumpsys", "connectivity")
-        # default none 也可能意味着尚未初始化，必须同时确认 Wi-Fi 服务已完成关闭。
-        return bool(re.search(r"(?m)^Wi-Fi is disabled\s*$", wifi) and
-                    re.search(r"(?m)^Active default network: none\s*$", network))
+        # svc返回0不能证明启用成功，更不能用历史Wi-Fi能力或当前蜂窝网络放行。
+        return bool(re.search(r"(?m)^Wi-Fi is enabled\s*$", wifi) and ready_network(network))
 
-    await_state(disconnected, "Wi-Fi disabled and previous default network disconnected")
-    shell(serial, "svc", "wifi", "enable")
-    await_state(lambda: ready_network(read("connectivity-before-tests.log", "dumpsys", "connectivity")),
-                "Verified active unmetered Internet network")
+    await_state(wifi_ready, "Verified active unmetered Wi-Fi Internet network")
 
 
 if __name__ == "__main__":

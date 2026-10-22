@@ -21,9 +21,9 @@ CONNECTIVITY = ("dumpsys", "connectivity")
 NO_NETWORK = "Active default network: none\nCurrent Networks:\n"
 
 
-def connected(capabilities="INTERNET&NOT_METERED&VALIDATED"):
+def connected(capabilities="INTERNET&NOT_METERED&VALIDATED", transport="WIFI"):
     return ("Active default network: 100\nCurrent Networks:\n"
-            "  NetworkAgentInfo{network{100} nc{[ Transports: WIFI Capabilities: "
+            "  NetworkAgentInfo{network{100} nc{[ Transports: " + transport + " Capabilities: "
             + capabilities + " ]}}\n")
 
 
@@ -59,9 +59,10 @@ class NetworkPreparationTest(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.logs = Path(self.directory.name)
         self.now = 0
+        # 失败CI的真实前置：SIM已加载，旧全局订阅键仍为null，但Wi-Fi可联网。
         self.responses = {
-            SIM: ["LOADED"], SUB: ["1"], DATA: ["0"],
-            WIFI: ["Wi-Fi is disabled"], CONNECTIVITY: [NO_NETWORK, connected()],
+            SIM: ["LOADED"], SUB: ["null"], DATA: ["1"],
+            WIFI: ["Wi-Fi is enabled"], CONNECTIVITY: [connected()],
         }
 
     def shell(self, serial, *args):
@@ -87,52 +88,74 @@ class NetworkPreparationTest(unittest.TestCase):
                 network.prepare_network(SERIAL, self.logs, timeout=4)
             return shell.call_args_list
 
-    def test_waits_for_subscription_before_disabling_data_and_reads_back_result(self):
-        self.responses[SIM] = ["NOT_READY", "LOADED", "LOADED"]
-        self.responses[SUB] = ["-1", "-1", "1"]
-        self.responses[DATA] = ["1", "0"]
+    def test_ready_wifi_does_not_depend_on_legacy_subscription_or_mobile_data(self):
         calls = self.run_prepare()
-        disable = call(SERIAL, "svc", "data", "disable")
-        self.assertEqual(3, calls[:calls.index(disable)].count(call(SERIAL, *SUB)))
-        wifi_disable = call(SERIAL, "svc", "wifi", "disable")
-        self.assertEqual(2, calls[:calls.index(wifi_disable)].count(call(SERIAL, *DATA)))
-        self.assertEqual("0\n", (self.logs / "mobile-data-before-tests.log").read_text())
+        self.assertEqual([
+            call(SERIAL, "svc", "wifi", "enable"),
+            call(SERIAL, *WIFI), call(SERIAL, *CONNECTIVITY),
+        ], calls)
+        self.assertEqual("Wi-Fi is enabled\n", (self.logs / "wifi-before-tests.log").read_text())
+        self.assertIn("VALIDATED", (self.logs / "connectivity-before-tests.log").read_text())
 
-    def test_initial_none_does_not_mean_wifi_has_finished_disabling(self):
-        self.responses[WIFI] = ["Wi-Fi is disabling", "Wi-Fi is disabled"]
-        self.responses[CONNECTIVITY] = [NO_NETWORK, NO_NETWORK, connected()]
+    def test_sim_absent_or_subscription_unset_does_not_block_valid_wifi(self):
+        for sim, sub in (("ABSENT", "-1"), ("NOT_READY", "null"), ("", "")):
+            with self.subTest(sim=sim, sub=sub):
+                self.responses[SIM] = [sim]
+                self.responses[SUB] = [sub]
+                calls = self.run_prepare()
+                self.assertNotIn(call(SERIAL, *SUB), calls)
+                self.assertNotIn(call(SERIAL, "svc", "data", "disable"), calls)
+
+    def test_waits_for_wifi_to_replace_cellular_default_without_disabling_data(self):
+        self.responses[WIFI] = ["Wi-Fi is enabling", "Wi-Fi is enabled"]
+        self.responses[CONNECTIVITY] = [connected(transport="CELLULAR"), connected()]
         calls = self.run_prepare()
-        enabled_at = calls.index(call(SERIAL, "svc", "wifi", "enable"))
-        self.assertEqual(2, calls[:enabled_at].count(call(SERIAL, *WIFI)))
-
-    def test_zero_exit_from_data_command_without_effect_fails(self):
-        self.responses[DATA] = ["1"]
-        calls = self.run_prepare("Mobile data disabled")
-        self.assertNotIn(call(SERIAL, "svc", "wifi", "enable"), calls)
-
-    def test_missing_subscription_never_sends_data_command(self):
-        self.responses[SUB] = ["-1"]
-        calls = self.run_prepare("subscription ready")
+        self.assertEqual(2, calls.count(call(SERIAL, *CONNECTIVITY)))
         self.assertNotIn(call(SERIAL, "svc", "data", "disable"), calls)
+        self.assertNotIn(call(SERIAL, "svc", "wifi", "disable"), calls)
 
-    def test_missing_wifi_service_does_not_pass_on_initial_none(self):
+    def test_initial_none_waits_for_an_actual_validated_network(self):
+        self.responses[CONNECTIVITY] = [NO_NETWORK, connected("INTERNET&NOT_METERED"), connected()]
+        calls = self.run_prepare()
+        self.assertEqual(3, calls.count(call(SERIAL, *CONNECTIVITY)))
+
+    def test_zero_exit_from_wifi_command_without_effect_fails(self):
+        self.responses[WIFI] = ["Wi-Fi is disabled"]
+        self.run_prepare("Verified active unmetered")
+        self.assertEqual("Wi-Fi is disabled\n", (self.logs / "wifi-before-tests.log").read_text())
+
+    def test_missing_wifi_service_cannot_pass_even_with_stale_capabilities(self):
         self.responses[WIFI] = ["Can't find service: wifi"]
-        self.responses[CONNECTIVITY] = [NO_NETWORK]
-        calls = self.run_prepare("Wi-Fi disabled")
-        self.assertNotIn(call(SERIAL, "svc", "wifi", "enable"), calls)
+        self.run_prepare("Verified active unmetered")
 
-    def test_metered_or_unvalidated_default_fails_and_keeps_diagnostics(self):
-        for caps in ("INTERNET&VALIDATED", "INTERNET&NOT_METERED"):
+    def test_cellular_or_ethernet_default_cannot_pass_even_if_unmetered_and_validated(self):
+        for transport in ("CELLULAR", "ETHERNET", "VPN"):
+            with self.subTest(transport=transport):
+                self.now = 0
+                self.responses[CONNECTIVITY] = [connected(transport=transport)]
+                self.run_prepare("Verified active unmetered")
+
+    def test_metered_unvalidated_or_offline_default_fails_and_keeps_diagnostics(self):
+        for caps in ("INTERNET&VALIDATED", "INTERNET&NOT_METERED", "NOT_METERED&VALIDATED"):
             with self.subTest(caps=caps):
                 self.now = 0
-                self.responses[CONNECTIVITY] = [NO_NETWORK, connected(caps)]
+                self.responses[CONNECTIVITY] = [connected(caps)]
                 self.run_prepare("Verified active unmetered")
                 self.assertIn(caps, (self.logs / "connectivity-before-tests.log").read_text())
 
+    def test_network_never_becomes_ready_uses_bounded_timeout(self):
+        self.responses[CONNECTIVITY] = [NO_NETWORK]
+        calls = self.run_prepare("Verified active unmetered")
+        self.assertEqual(4, self.now)
+        self.assertEqual(4, calls.count(call(SERIAL, *CONNECTIVITY)))
+
     def test_adb_failure_is_not_suppressed_or_retried(self):
-        self.responses[SIM] = [subprocess.TimeoutExpired("adb", 15)]
-        with self.assertRaises(subprocess.TimeoutExpired):
-            self.run_prepare()
+        for command in (("svc", "wifi", "enable"), WIFI, CONNECTIVITY):
+            with self.subTest(command=command):
+                self.responses[command] = [subprocess.TimeoutExpired("adb", 15)]
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    self.run_prepare()
+                self.responses.pop(command)
 
     def test_physical_device_is_never_modified(self):
         with patch.object(network, "shell") as shell:

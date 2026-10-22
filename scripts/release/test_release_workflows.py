@@ -468,6 +468,7 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertIn("python3 -B scripts/release/test_prepare_android_network.py", self.android)
         source = (ROOT / "scripts/release/prepare_android_network.py").read_text()
         self.assertIn("connectivity-before-tests.log", source)
+        self.assertNotIn("multi_sim_data_call", source)
         self.assertNotIn("captive_portal_mode", source)
         self.assertNotIn("|| true", script)
         self.assertNotIn("assumeTrue", source)
@@ -492,6 +493,12 @@ class ReleaseWorkflowTest(unittest.TestCase):
                   "network{100} nethandle{123} lp{} "
                   "nc{[ Transports: WIFI Capabilities: INTERNET&NOT_METERED&VALIDATED ]} Score{60} }")
         self.assertEqual(legacy.strip(), ready("Active default network: 100\nCurrent Networks:\n" + legacy))
+        for transport in ("CELLULAR", "ETHERNET", "VPN"):
+            with self.subTest(transport=transport):
+                current = network(101, valid).replace("Transports: WIFI", f"Transports: {transport}")
+                # 即使另一Wi-Fi和当前蜂窝都已验证且非计费，当前默认传输也必须是Wi-Fi。
+                self.assertIsNone(ready("Active default network: 101\nCurrent Networks:\n" +
+                                        network(100, valid) + "\n" + current))
         for capabilities in ("INTERNET&VALIDATED", "NOT_METERED&VALIDATED",
                              "INTERNET&NOT_METERED", "INTERNET&NOT_METERED&NOT_VALIDATED"):
             with self.subTest(capabilities=capabilities):
