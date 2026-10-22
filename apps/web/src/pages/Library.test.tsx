@@ -1,10 +1,21 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router'
 import { queryClient } from '../lib/api'
 import type { Collection, HistoryEntry, Track } from '../lib/types'
 import { LibraryPage } from './Library'
+
+// 只替换 jsdom 未实现的原生 dialog；页面、查询缓存和请求逻辑保持真实。
+vi.mock('../components/UI', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../components/UI')>()),
+  Modal: ({ title, children }: { title: string; children: ReactNode }) => (
+    <section role="dialog" aria-label={title}>
+      {children}
+    </section>
+  ),
+}))
 
 const track: Track = {
   id: 'demo:history-one',
@@ -107,6 +118,71 @@ afterEach(() => {
 })
 
 describe('我的音乐库', () => {
+  it('清空确认成功后即使重新读取失败也移除各分类旧记录和计数', async () => {
+    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) =>
+      init?.method === 'DELETE'
+        ? new Response(null, { status: 204 })
+        : Response.json({ error: { message: '刷新失败' } }, { status: 503 }),
+    )
+    vi.stubGlobal('fetch', fetch)
+    renderLibrary('/library?tab=history')
+    fireEvent.click(screen.getByRole('button', { name: '清空记录' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认清空' }))
+    expect(await screen.findByText('暂无播放记录')).toBeVisible()
+    for (const kind of ['', '?kind=track', '?kind=playlist', '?kind=audiobook']) {
+      expect(queryClient.getQueryData([`/library/history/entries${kind}`])).toEqual([])
+    }
+    expect(queryClient.getQueryData(['/library/summary'])).toMatchObject({
+      history: 0,
+      historyTracks: 0,
+      historyPlaylists: 0,
+      historyAudiobooks: 0,
+      favoritePlaylists: 2,
+    })
+    expect(fetch.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(1)
+  })
+
+  it('清空写入失败保留记录与确认入口，不伪造空态', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ error: { message: '写入失败' } }, { status: 503 })),
+    )
+    renderLibrary('/library?tab=history')
+    fireEvent.click(screen.getByRole('button', { name: '清空记录' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认清空' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '确认清空' })).toBeEnabled())
+    expect(queryClient.getQueryData(['/library/history/entries'])).toEqual(history)
+    expect(queryClient.getQueryData(['/library/summary'])).toMatchObject({ history: 3 })
+  })
+
+  it('会话已切换时，旧清空请求的迟到确认不抹掉新历史', async () => {
+    let resolve!: (response: Response) => void
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Promise<Response>((done) => {
+            resolve = done
+          }),
+      ),
+    )
+    renderLibrary('/library?tab=history')
+    fireEvent.click(screen.getByRole('button', { name: '清空记录' }))
+    fireEvent.click(screen.getByRole('button', { name: '确认清空' }))
+    const nextHistory = [{ ...history[0], track: { ...track, id: 'new-session' } }]
+    await act(async () => {
+      queryClient.removeQueries({
+        predicate: (query) => String(query.queryKey[0]).startsWith('/library/history'),
+      })
+      queryClient.setQueryData(['/library/history/entries'], nextHistory)
+      queryClient.setQueryData(['/library/summary'], { history: 1 })
+      resolve(new Response(null, { status: 204 }))
+    })
+    await waitFor(() => expect(screen.getByRole('button', { name: '确认清空' })).toBeEnabled())
+    expect(queryClient.getQueryData(['/library/history/entries'])).toEqual(nextHistory)
+    expect(queryClient.getQueryData(['/library/summary'])).toEqual({ history: 1 })
+  })
+
   it('收藏按歌单与听书专辑分组，专辑链接进入听书页', () => {
     renderLibrary('/library?tab=playlists')
     expect(screen.getByRole('heading', { name: '收藏歌单' })).toBeVisible()

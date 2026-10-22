@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
+import type { Query } from '@tanstack/react-query'
 import { Play, Plus } from 'lucide-react'
 import { Link, useSearchParams, useNavigate } from 'react-router'
-import { useAPI, send, invalidate, idPath } from '../lib/api'
+import { useAPI, send, invalidate, idPath, queryClient } from '../lib/api'
 import type { Collection, HistoryEntry, HistoryKind, LibrarySummary, Track, UserPlaylist } from '../lib/types'
 import {
   CollectionGrid,
@@ -21,6 +22,9 @@ import { isAudiobookCollection } from '../lib/history-kind'
 import { pausePlayOutcomeDelivery } from '../lib/play-outcome'
 const libraryTabs = new Set(['tracks', 'created', 'playlists', 'history'])
 const historyKinds = new Set(['track', 'playlist', 'audiobook'])
+const historyQueries = {
+  predicate: (query: Query) => String(query.queryKey[0]).startsWith('/library/history'),
+}
 const historyKindLabels: Record<HistoryKind, string> = {
   track: '单曲',
   playlist: '歌单',
@@ -76,14 +80,32 @@ export function LibraryPage() {
   const favoriteLink = (item: Collection) =>
     isAudiobookCollection(item.id) ? `/audiobooks/albums/${idPath(item.id)}` : `/playlists/${idPath(item.id)}`
   const clear = async () => {
+    if (clearing) return
     setClearing(true)
+    const cache = queryClient.getQueryCache()
+    const filter = { queryKey: [historyPath], exact: true }
+    const owner = cache.find(filter)
     const resumeOutcomeDelivery = pausePlayOutcomeDelivery()
     let cleared = false
     try {
       await send('/library/history', 'DELETE')
       cleared = true
+      if (cache.find(filter) !== owner) return
+      await Promise.all([
+        queryClient.cancelQueries(historyQueries),
+        queryClient.cancelQueries({ queryKey: ['/library/summary'], exact: true }),
+      ])
+      if (cache.find(filter) !== owner) return
       player.historyCleared()
+      // 删除已获确认；后续刷新失败也不能让旧记录/分类计数重新出现。
+      queryClient.setQueriesData(historyQueries, [])
+      queryClient.setQueryData<LibrarySummary>(['/library/summary'], (current) =>
+        current
+          ? { ...current, history: 0, historyTracks: 0, historyPlaylists: 0, historyAudiobooks: 0 }
+          : current,
+      )
       await Promise.all([invalidate('/library/history'), invalidate('/library/summary')])
+      if (cache.find(filter) !== owner) return
       setConfirm(false)
       notify('播放记录已清空，下载文件不会受影响。', 'success')
     } catch (error) {
