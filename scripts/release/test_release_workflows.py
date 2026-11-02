@@ -98,6 +98,19 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertIn("        default: ''\n", dispatch)
         self.assertIn("android-v*", self.android)
 
+    def test_web_release_name_uses_all_channels_and_verified_version(self) -> None:
+        publish = job(self.web, "publish")
+        release = re.search(
+            r"(?ms)^      - uses: softprops/action-gh-release@[^\n]+\n(.*?)(?=^      - |\Z)",
+            publish,
+        )
+        self.assertIsNotNone(release)
+        self.assertIn(
+            "        with:\n"
+            "          name: Melora Web / FPK / Docker v${{ needs.verify.outputs.version }}\n",
+            release.group(1),
+        )
+
     def run_prepare(self, *, event: str, ref_type: str, ref_name: str, sha: str,
                     input_tag: str = "", input_run: str = "") -> tuple[subprocess.CompletedProcess[str], dict[str, str]]:
         script = shell_script(step(self.android, "解析检查与发布目标"))

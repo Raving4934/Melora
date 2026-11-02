@@ -188,6 +188,7 @@ jobs:
             --output artifacts/RELEASE_NOTES.md
       - uses: softprops/action-gh-release@v3.0.3
         with:
+          name: Melora Web / FPK / Docker v${{ needs.verify.outputs.version }}
           files: |-
             artifacts/*.fpk
             artifacts/*.sha256
