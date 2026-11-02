@@ -16,6 +16,26 @@ const fixture = () => {
 }
 const tick = () => new Promise(resolve => setImmediate(resolve))
 
+test('LX preserves optional business error codes for synchronous and asynchronous failures', async () => {
+  for (const async of [false, true]) {
+    for (const code of ['MUSIC_UNAVAILABLE', 'UNKNOWN', undefined, 42]) {
+      const context = vm.createContext({ __lxNative: {}, console, fixtureCode: code, fixtureAsync: async })
+      vm.runInContext(shim, context)
+      vm.runInContext(`lx.on('request', () => {
+        const error = new Error('not available');
+        error.code = fixtureCode;
+        if (fixtureAsync) return Promise.reject(error);
+        throw error;
+      });`, context)
+      context.__lxInvoke('{}')
+      await tick()
+      assert.deepEqual(JSON.parse(context.__lxTakeResult()), {
+        ok: false, error: 'not available', ...(typeof code === 'string' ? { errorCode: code } : {}),
+      })
+    }
+  }
+})
+
 test('late success and failure from a retired LX invocation cannot overwrite the current result', async () => {
   for (const fail of [false, true]) {
     const context = fixture()

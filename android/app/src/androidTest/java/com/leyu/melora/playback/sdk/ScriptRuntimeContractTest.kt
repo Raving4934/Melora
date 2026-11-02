@@ -4,6 +4,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import android.util.Log
 import com.leyu.melora.playback.lx.LxScriptEngine
+import com.leyu.melora.playback.lx.LxScriptRequestException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -31,6 +32,31 @@ import kotlin.concurrent.thread
 /** 只执行无网络的通用脚本，验证真实QuickJS桥接；不加载用户源/设置/播放队列。 */
 @RunWith(AndroidJUnit4::class)
 class ScriptRuntimeContractTest {
+    @Test fun requestErrorCodesSurviveSyncAndAsyncQuickJsFailures() {
+        LxScriptEngine(InstrumentationRegistry.getInstrumentation().targetContext).use { engine ->
+            engine.load("""
+                lx.on('request', ({info}) => {
+                  const error = new Error('single song unavailable');
+                  if (info.code) error.code = info.code;
+                  if (info.async) return Promise.reject(error);
+                  throw error;
+                });
+            """.trimIndent(), "error-code.js")
+            for (async in listOf(false, true)) {
+                for (code in listOf("MUSIC_UNAVAILABLE", "UNKNOWN", "")) {
+                    val error = runCatching {
+                        engine.request("kw", "musicUrl", JSONObject().put("async", async).put("code", code), 2_000)
+                    }.exceptionOrNull()
+                    assertTrue("error must keep its structured script failure", error is LxScriptRequestException)
+                    val failure = error as LxScriptRequestException
+                    assertEquals("single song unavailable", failure.message)
+                    assertEquals(code.takeIf(String::isNotBlank), failure.code)
+                    assertEquals(code == "MUSIC_UNAVAILABLE", failure.isMediaUnavailable)
+                }
+            }
+        }
+    }
+
     @Test fun structuredResultKeepsActualQualityAndMatchedMetadataThroughQuickJs() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         LxScriptEngine(context).use { engine ->

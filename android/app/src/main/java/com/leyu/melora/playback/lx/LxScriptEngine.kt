@@ -16,6 +16,11 @@ import kotlinx.coroutines.coroutineScope
 private class LxScriptTimeoutException(message: String, cause: Throwable? = null) :
     IllegalStateException(message, cause)
 
+/** 脚本明确声明的单曲不可用不代表整个引擎失效；不靠错误文案猜测分类。 */
+internal class LxScriptRequestException(message: String, val code: String?) : IllegalStateException(message) {
+    val isMediaUnavailable: Boolean get() = code == "MUSIC_UNAVAILABLE"
+}
+
 // 每个实例对应一个音源脚本的沙箱上下文；所有调用串行执行，Promise 由原生任务泵驱动。
 class LxScriptEngine(private val context: Context) : Closeable {
     private val quickJs: QuickJS
@@ -177,7 +182,10 @@ class LxScriptEngine(private val context: Context) : Closeable {
         ))
         ensureActive(token)
         if (!parsed.optBoolean("ok", false)) {
-            throw IllegalStateException(parsed.optString("error", "脚本执行失败"))
+            throw LxScriptRequestException(
+                parsed.optString("error", "脚本执行失败"),
+                parsed.optString("errorCode").takeIf(String::isNotBlank),
+            )
         }
         parsed.opt("data") ?: ""
     }

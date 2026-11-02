@@ -366,6 +366,13 @@
   // 只检查事件是否注册；导入检查不调用请求处理器，也不解析音频地址。
   globalThis.__lxHasRequestHandler = () => typeof handlers.request === 'function'
 
+  // 单曲不可用和脚本/网络故障分开传递；旧脚本不带 code 时保持原错误行为。
+  const requestFailure = (error) => JSON.stringify({
+    ok: false,
+    error: String((error && error.message) || error),
+    errorCode: error && typeof error.code === 'string' ? error.code : undefined,
+  })
+
   globalThis.__lxInvoke = (payloadJson) => {
     // 同一引擎超时后会被下一档/下一首复用；旧Promise晚到不能冒充新请求的结果。
     const generation = ++invokeGeneration
@@ -384,11 +391,11 @@
         },
         (error) => {
           if (generation !== invokeGeneration) return
-          invokeResult = JSON.stringify({ ok: false, error: String((error && error.message) || error) })
+          invokeResult = requestFailure(error)
         },
       )
     } catch (error) {
-      invokeResult = JSON.stringify({ ok: false, error: String((error && error.message) || error) })
+      invokeResult = requestFailure(error)
     }
   }
 

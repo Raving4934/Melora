@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.leyu.melora.playback.lx.LxScript
 import com.leyu.melora.playback.lx.LxScriptEngine
+import com.leyu.melora.playback.lx.LxScriptRequestException
 import com.leyu.melora.playback.lx.LxScriptStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -483,6 +484,7 @@ object LxScriptPool {
         val results = Channel<ScriptResult>(Channel.UNLIMITED)
         val attempted = ConcurrentHashMap.newKeySet<String>()
         val healthy = ConcurrentHashMap.newKeySet<String>()
+        val failed = ConcurrentHashMap.newKeySet<String>()
         val producer = launch {
             try {
                 coroutineScope {
@@ -490,14 +492,10 @@ object LxScriptPool {
                     withContext(dispatcher) {
                         val sourceStore = store(context)
                         val installed = scriptsInScope(sourceStore.list(), scope)
-                        val available = installed.filterNot { isBlocked(it.id) }.ifEmpty { installed }
-                        val eligible = available.mapTo(hashSetOf()) { it.id }
-                        fun ready(entry: Entry) {
-                            if (entry.script.id !in eligible) return
-                            if (entry.retired || sourceStore.revision(entry.script.id) != entry.revision) return
-                            val support = entry.sources[source] ?: return
-                            if ("musicUrl" !in support.actions) return
-                            val spec = request(entry.script, support) ?: return
+                        val eligible = installed.mapTo(hashSetOf()) { it.id }
+                        val blocked = linkedMapOf<String, Pair<Entry, ScriptRequest>>()
+                        var hasHealthyCandidate = false
+                        fun dispatch(entry: Entry, spec: ScriptRequest) {
                             if (!attempted.add(entry.script.id)) return
                             requestsScope.launch(Dispatchers.IO) {
                                 try {
@@ -513,21 +511,40 @@ object LxScriptPool {
                                     val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L
                                     val result = ScriptResult(spec.requestId, entry.script.id, data, elapsedMs)
                                     if (SourceResolver.extractUrl(data) != null) healthy.add(entry.script.id)
+                                    else failed.add(entry.script.id)
                                     if (accept(result)) results.trySend(result)
                                 } catch (cancelled: CancellationException) {
                                     throw cancelled
                                 } catch (error: Throwable) {
+                                    if (error !is LxScriptRequestException || !error.isMediaUnavailable) {
+                                        failed.add(entry.script.id)
+                                    }
                                     Log.d(TAG, "音源未果(${entry.script.id}/${spec.requestId}): ${error.javaClass.simpleName}")
                                 }
+                            }
+                        }
+                        fun ready(entry: Entry) {
+                            if (entry.script.id !in eligible) return
+                            if (entry.retired || sourceStore.revision(entry.script.id) != entry.revision) return
+                            val support = entry.sources[source] ?: return
+                            if ("musicUrl" !in support.actions) return
+                            val spec = request(entry.script, support) ?: return
+                            // 先确认平台、动作和档位可用；无关平台的健康脚本不能阻止兜底。
+                            if (isBlocked(entry.script.id)) {
+                                blocked[entry.script.id] = entry to spec
+                            } else {
+                                hasHealthyCandidate = true
+                                dispatch(entry, spec)
                             }
                         }
                         val listener: (Entry) -> Unit = ::ready
                         readyListeners.add(listener)
                         try {
-                            available.forEach { script ->
+                            installed.forEach { script ->
                                 entries[script.id]?.let(listener)
                             }
                             ensureLoaded(context, scope, initTimeoutMs = timeoutMs, onReady = listener)
+                            if (!hasHealthyCandidate) blocked.values.forEach { (entry, spec) -> dispatch(entry, spec) }
                         } finally { readyListeners.remove(listener) }
                     }
                 }
@@ -540,7 +557,8 @@ object LxScriptPool {
             withTimeoutOrNull(timeoutMs) { results.receiveCatching().getOrNull() }.also { winner ->
                 healthy.forEach(::markSuccess)
                 winner?.let { recordHit(it.scriptId, it.elapsedMs) }
-                if (winner == null) (attempted - healthy).forEach(::markFailure)
+                // 只统计实际返回的故障；还在排队或被竞速取消的请求不能被推断为坏源。
+                if (winner == null) failed.forEach(::markFailure)
             }
         } finally {
             producer.cancel()

@@ -126,6 +126,79 @@ class LxScriptPoolLifecycleInstrumentedTest {
         assertFalse(runtime(before).isReleased)
     }
 
+    @Test(timeout = 10_000) fun singleTrackUnavailableDoesNotBlockTheSourceForOtherSongs() = runBlocking {
+        prepareHealthFixture("MUSIC_UNAVAILABLE")
+        repeat(3) { assertNull(healthRace(fail = true)) }
+        assertEquals("https://example.test/available.mp3", healthRace(fail = false)?.data)
+    }
+
+    @Test(timeout = 10_000) fun unexpectedScriptErrorsStillTripTheCircuitBreaker() = runBlocking {
+        prepareHealthFixture("UNEXPECTED_ERROR")
+        repeat(3) { assertNull(healthRace(fail = true)) }
+        // B 也是合适的健康源，因此不能为了 A 恢复而绕过有效的熔断。
+        assertNull(healthRace(fail = false))
+    }
+
+    @Test(timeout = 10_000) fun queuedRequestsCancelledByTheRaceDoNotTripTheCircuitBreaker() = runBlocking {
+        prepareHealthFixture("UNEXPECTED_ERROR")
+        val lock = withContext(dispatcher) { field(entries().getValue("a.js"), "lock") as Mutex }
+        lock.lock()
+        try {
+            repeat(3) { assertNull(healthRace(fail = false, timeoutMs = 150)) }
+        } finally {
+            lock.unlock()
+        }
+        assertEquals("https://example.test/available.mp3", healthRace(fail = false)?.data)
+    }
+
+    @Test(timeout = 10_000) fun unrelatedPlatformDoesNotPreventBlockedSourceFallback() = runBlocking {
+        assertCompatibleFallback("tx", "musicUrl", "320k")
+    }
+
+    @Test(timeout = 10_000) fun unrelatedActionDoesNotPreventBlockedSourceFallback() = runBlocking {
+        assertCompatibleFallback("kw", "lyric", "320k")
+    }
+
+    @Test(timeout = 10_000) fun unsupportedQualityDoesNotPreventBlockedSourceFallback() = runBlocking {
+        assertCompatibleFallback("kw", "musicUrl", "128k")
+    }
+
+    private suspend fun assertCompatibleFallback(platform: String, action: String, quality: String) {
+        prepareHealthFixture("UNEXPECTED_ERROR", platform, action, quality)
+        repeat(3) { assertNull(healthRace(fail = true)) }
+        assertEquals("https://example.test/available.mp3", healthRace(fail = false)?.data)
+    }
+
+    private suspend fun prepareHealthFixture(
+        errorCode: String,
+        platform: String = "kw",
+        action: String = "musicUrl",
+        quality: String = "320k",
+    ) {
+        store.import("a.js", """
+            lx.send('inited', {sources:{kw:{actions:['musicUrl'],qualitys:['320k']}}});
+            lx.on('request', ({info}) => {
+              if (info.fail) throw Object.assign(new Error('fixture unavailable'), {code:'$errorCode'});
+              return 'https://example.test/available.mp3';
+            });
+        """.trimIndent())
+        store.import("b.js", """
+            lx.send('inited', {sources:{'$platform':{actions:['$action'],qualitys:['$quality']}}});
+            lx.on('request', () => 'https://example.test/not-selected.mp3');
+        """.trimIndent())
+        LxScriptPool.reload(context)
+    }
+
+    private suspend fun healthRace(fail: Boolean, timeoutMs: Long = 2_000) = LxScriptPool.race(
+        context, "kw", LxScriptPool.ScriptScope.ALL, timeoutMs,
+        request = { script, support ->
+            SourceResolver.selectQuality("320k", support.qualitys)?.let { quality ->
+                LxScriptPool.ScriptRequest(quality, script.id, "kw", "musicUrl", JSONObject().put("fail", fail), 1_000)
+            }
+        },
+        accept = { it.scriptId == "a.js" },
+    )
+
     @Suppress("UNCHECKED_CAST")
     private fun entries() = field(LxScriptPool, "entries") as Map<String, Any>
     private fun runtime(entry: Any): QuickJS = field(field(entry, "engine") as LxScriptEngine, "quickJs") as QuickJS
