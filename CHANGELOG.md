@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-02
+
+### 安卓客户端
+
+【播放与听书】
+- 歌单、专辑和听书详情页的播放按钮跟随播放状态：正在播放时可直接暂停，暂停后继续播放，不再从第一首重播。
+- 听书详情页有收听记录时显示“继续收听”，从上次的章节和位置接着听，不再跳回第一章。
+- 侧栏“退出乐屿”现在会停止播放、移除通知，并从最近任务中关闭应用。
+
+【音源稳定性】
+- 单曲在某个音源不可用时，不再误判整个音源故障；候选音源全部暂时受限时仍会继续尝试。
+
+【兼容性改进】
+- 升级构建工具、网络组件和音源脚本运行环境依赖。
+
+### 提交追溯（不进入应用内日志）
+
+本次仅更新 Android 客户端，版本号 0.2.2 / versionCode 22，沿用正式签名。Web / NAS、FPK 与 Docker 同日单独发布 0.1.3。
+完整提交区间：[android-v0.2.1...android-v0.2.2][Android 0.2.2]；正文仅归纳该区间的 Android 变更。
+
+- 详情页播放按钮与听书续听：[`3fff531`](https://github.com/Raving4934/Melora/commit/3fff5316b38c81de9cf3fa52bee762c71762239e)。
+- 应用退出链路统一：[`3f030c5`](https://github.com/Raving4934/Melora/commit/3f030c5402813173d8aa183ae3975d0f448daaf0)。
+- 单曲不可用与音源故障区分、候选熔断修正：[`04f4479`](https://github.com/Raving4934/Melora/commit/04f4479e36b0dc2d7c5d0b1c9c159032c214157a)。
+- 依赖与构建工具链升级：[`504c293`](https://github.com/Raving4934/Melora/commit/504c293613998531aaead548082b736a5b2df091)。
+
 ## [Web 0.1.3] - 2026-11-02
 
 ### Web / NAS、FPK 与 Docker
@@ -565,14 +590,16 @@
 
 **Docker 镜像：** `ghcr.io/raving4934/melora:0.1.0`（支持 `linux/amd64`、`linux/arm64`）。
 
-[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.1...HEAD
+[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.2...HEAD
+[0.2.2]: https://github.com/Raving4934/Melora/compare/android-v0.2.1...android-v0.2.2
+[Android 0.2.2]: https://github.com/Raving4934/Melora/compare/android-v0.2.1...android-v0.2.2
 [0.2.1]: https://github.com/Raving4934/Melora/compare/android-v0.2.0...android-v0.2.1
 [Android 0.2.1]: https://github.com/Raving4934/Melora/compare/android-v0.2.0...android-v0.2.1
 [0.2.0]: https://github.com/Raving4934/Melora/compare/android-v0.1.10...android-v0.2.0
 [Android 0.2.0]: https://github.com/Raving4934/Melora/compare/android-v0.1.10...android-v0.2.0
 [0.1.10]: https://github.com/Raving4934/Melora/compare/android-v0.1.9...android-v0.1.10
 [Android 0.1.10]: https://github.com/Raving4934/Melora/compare/android-v0.1.9...android-v0.1.10
-[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.1...HEAD
+[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.2...HEAD
 [Web Unreleased]: https://github.com/Raving4934/Melora/compare/v0.1.3...HEAD
 [Web 0.1.3]: https://github.com/Raving4934/Melora/compare/v0.1.2...v0.1.3
 [Web 0.1.2]: https://github.com/Raving4934/Melora/compare/v0.1.1...v0.1.2
