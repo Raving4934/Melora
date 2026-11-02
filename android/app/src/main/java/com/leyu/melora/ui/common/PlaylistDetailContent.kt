@@ -425,6 +425,21 @@ fun PlaylistDetailContent(
                 PlaybackController.playQueue(context, songs.toUiTracks(), 0, "playlist.${playlist.source}.${playlist.id}")
             }
         }
+        // 与 playBook/卡片按钮同一队列身份；听书有断点时续听，不再跳回第一章。
+        val playQueueId = remember(playlist.source, playlist.id, isBook) {
+            collectionQueueId(playlist.source, playlist.id, isBook)
+        }
+        val (queueActive, queuePlaying) = rememberQueuePlayback(playQueueId)
+        val resumePoint = if (isBook) rememberBookAlbumResumePoint(playlist.source, playlist.id).first else null
+        val playButton = collectionPlayButton(queueActive, queuePlaying, resumePoint != null,
+            resumeLabel = if (isBook) "继续收听" else "继续播放")
+        val onPlayButton: () -> Unit = {
+            when (playButton.intent) {
+                CollectionPlayIntent.Toggle -> PlaybackController.toggle()
+                CollectionPlayIntent.Resume -> resumePoint?.let { PlaybackController.resumeBook(context, it.song) }
+                CollectionPlayIntent.PlayAll -> playAll()
+            }
+        }
 
         ChromeScaffold(
             modifier = modifier,
@@ -493,9 +508,11 @@ fun PlaylistDetailContent(
             // 初次加载与真实内容使用同一行布局，避免维护另一套失配的操作栏骨架。
             val collectionActions: @Composable () -> Unit = {
                 CollectionActionsRow(
-                    canPlay = songs.isNotEmpty(),
+                    canPlay = songs.isNotEmpty() || playButton.intent != CollectionPlayIntent.PlayAll,
                     favorite = isFav,
-                    onPlay = playAll,
+                    onPlay = onPlayButton,
+                    playLabel = playButton.label,
+                    playPause = playButton.pause,
                     onFavorite = { UserLibrary.toggleFavoritePlaylist(detailPlaylist) },
                     onSelect = selection::start,
                     loading = loading && songs.isEmpty(),

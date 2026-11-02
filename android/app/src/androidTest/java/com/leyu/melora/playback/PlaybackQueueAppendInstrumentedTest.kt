@@ -19,6 +19,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.google.common.util.concurrent.Futures
 import com.leyu.melora.playback.sdk.OnlineCache
+import com.leyu.melora.playback.sdk.KwBookApi
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.sdk.SourceResolver
 import java.io.File
@@ -26,9 +27,15 @@ import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -487,6 +494,131 @@ class PlaybackQueueAppendInstrumentedTest {
         main { PlaybackController.addToQueue(testContext, listOf(track("new"))) }
         await { player.mediaItemCount == 1 }
         main { assertEquals(listOf("new"), uids(player)) }
+    }
+
+    @Test fun removingEveryPlaylistItemThenAppendingDoesNotReusePlaylistIdentity() =
+        withPlayer(listen = true) { player, controller ->
+            main {
+                field("currentQueueId").set(PlaybackController, "user_playlist.A")
+                PlaybackController.addToQueue(testContext, listOf(track("c")))
+                assertEquals("user_playlist.A", PlaybackController.state.value.queueId)
+                assertEquals("user_playlist.A", prefs.getString("queueId", null))
+            }
+            await { player.mediaItemCount == 3 && controller.mediaItemCount == 3 }
+
+            for (remaining in 2 downTo 0) {
+                main { PlaybackController.removeFromQueue(remaining) }
+                await {
+                    player.mediaItemCount == remaining && controller.mediaItemCount == remaining &&
+                        PlaybackController.state.value.queue.size == remaining
+                }
+            }
+            main {
+                assertNull(PlaybackController.state.value.queueId)
+                assertFalse(prefs.contains("queue"))
+                assertFalse(prefs.contains("queueId"))
+                PlaybackController.addToQueue(testContext, listOf(track("B")))
+            }
+            await {
+                uids(player) == listOf("B") && uids(controller) == listOf("B") &&
+                    PlaybackController.state.value.queue.map { it.uid } == listOf("B")
+            }
+            main {
+                assertNull("逐首移空后追加B不能恢复歌单A的内存身份", PlaybackController.state.value.queueId)
+                assertNull("新队列的持久化身份不能仍为歌单A", prefs.getString("queueId", null))
+                val saved = JSONArray(prefs.getString("queue", "[]"))
+                assertEquals(1, saved.length())
+                assertEquals("B", saved.getJSONObject(0).getString("uid"))
+            }
+        }
+
+    @Test fun externalPlaylistTimelineClearThenAppendingDoesNotReusePlaylistIdentity() =
+        withPlayer(listen = true) { player, controller ->
+            main {
+                field("currentQueueId").set(PlaybackController, "user_playlist.A")
+                PlaybackController.addToQueue(testContext, listOf(track("c")))
+                assertEquals("user_playlist.A", PlaybackController.state.value.queueId)
+                assertEquals("user_playlist.A", prefs.getString("queueId", null))
+            }
+            await { player.mediaItemCount == 3 && controller.mediaItemCount == 3 }
+
+            main { player.clearMediaItems() }
+            await {
+                player.mediaItemCount == 0 && controller.mediaItemCount == 0 &&
+                    PlaybackController.state.value.queue.isEmpty() && !prefs.contains("queue")
+            }
+            main {
+                assertNull(PlaybackController.state.value.queueId)
+                assertFalse(prefs.contains("queueId"))
+                PlaybackController.addToQueue(testContext, listOf(track("B")))
+            }
+            await {
+                uids(player) == listOf("B") && uids(controller) == listOf("B") &&
+                    PlaybackController.state.value.queue.map { it.uid } == listOf("B")
+            }
+            main {
+                assertNull("外部清空后追加B不能恢复歌单A的内存身份", PlaybackController.state.value.queueId)
+                assertNull("新队列的持久化身份不能仍为歌单A", prefs.getString("queueId", null))
+                val saved = JSONArray(prefs.getString("queue", "[]"))
+                assertEquals(1, saved.length())
+                assertEquals("B", saved.getJSONObject(0).getString("uid"))
+            }
+        }
+
+    @Test fun endedBookToggleContinuesListeningInsteadOfPausingTheFinishedChapter() = withPlayer { player, controller ->
+        val albumId = "toggle-ended-${System.nanoTime()}"
+        val song = OnlineSong(JSONObject().put("source", "kw").put("songmid", "b")
+            .put("name", "末章").put("albumId", albumId).put("isBookChapter", true)
+            .put("bookPage", 1).put("bookPageEnd", false).put("bookHasMore", false))
+        val previousTrack = TrackRegistry.get("b")
+        @Suppress("UNCHECKED_CAST")
+        val state = field("_state").get(PlaybackController) as MutableStateFlow<PlayerUiState>
+        val requests = AtomicInteger()
+        val response = JSONObject().put("code", 200).put("data", JSONObject()
+            .put("albumid", albumId).put("album", "测试书").put("total", 1)
+            .put("musicList", JSONArray().put(JSONObject().put("rid", "b").put("name", "末章").put("duration", 60))))
+        // 续听会重新校验目录；在HTTP传输处提供受控响应，仍走真正的API解析，绝不访问外网。
+        val clientField = KwBookApi.javaClass.getDeclaredField("client\$delegate").apply { isAccessible = true }
+        val clientDelegate = clientField.get(KwBookApi) as Lazy<*>
+        val previousClient = clientDelegate.value
+        val clientValue = clientDelegate.javaClass.getDeclaredField("_value").apply { isAccessible = true }
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            assertEquals("wapi.kuwo.cn", chain.request().url.host)
+            assertEquals(albumId, chain.request().url.queryParameter("albumId"))
+            requests.incrementAndGet()
+            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body(response.toString().toResponseBody("application/json".toMediaType())).build()
+        }.build()
+        clientValue.set(clientDelegate, client)
+        try {
+            main {
+                TrackRegistry.register(track("b").copy(raw = song.raw))
+                field("bookQueue").set(PlaybackController, null)
+                field("currentQueueId").set(PlaybackController, bookQueueId(albumId))
+                state.value = state.value.copy(message = null, pendingQueueId = null)
+                controller.repeatMode = Player.REPEAT_MODE_OFF
+                controller.seekTo(1, 59_900L)
+                controller.play()
+            }
+            await { player.playbackState == Player.STATE_ENDED && controller.playbackState == Player.STATE_ENDED }
+            main {
+                assertTrue("自然结束仍保留播放意图，不能据此执行pause", controller.playWhenReady)
+                PlaybackController.toggle()
+                assertTrue("继续收听不能变成暂停", controller.playWhenReady)
+            }
+            await { state.value.message == "这本书已听完" && state.value.pendingQueueId == null }
+            main {
+                assertEquals("结束提示不应重播末章", Player.STATE_ENDED, player.playbackState)
+                assertEquals("b", player.currentMediaItem?.mediaId)
+                assertEquals("必须实际进入续听目录校验", 1, requests.get())
+                assertNull(field("queueLoadJob").get(PlaybackController))
+            }
+        } finally {
+            main { previousTrack?.let(TrackRegistry::register) }
+            clientValue.set(clientDelegate, previousClient)
+            client.connectionPool.evictAll()
+            client.dispatcher.executorService.shutdownNow()
+        }
     }
 
     @Test fun serviceExitPersistsQueueIndexAndPositionWithoutUiControllerAndIsIdempotent() =

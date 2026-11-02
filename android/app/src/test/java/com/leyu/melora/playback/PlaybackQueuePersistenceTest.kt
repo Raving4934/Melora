@@ -136,6 +136,26 @@ class PlaybackQueuePersistenceTest {
     }
 
     @Test
+    fun clearingSavedQueueAlsoRetiresTheCollectionIdentity() {
+        val owner = PlaybackController
+        val queueId = owner.javaClass.getDeclaredField("currentQueueId").apply { isAccessible = true }
+        val savedQueue = owner.javaClass.getDeclaredField("lastSavedQueue").apply { isAccessible = true }
+        val previous = queueId.get(owner)
+        val previousSaved = savedQueue.get(owner)
+        val clear = owner.javaClass.getDeclaredMethod("clearSavedQueue").apply { isAccessible = true }
+        try {
+            queueId.set(owner, "user_playlist.A")
+            clear.invoke(owner)
+            assertNull("移空后的新内容不能继承旧歌单身份", queueId.get(owner))
+            clear.invoke(owner)
+            assertNull(queueId.get(owner))
+        } finally {
+            queueId.set(owner, previous)
+            savedQueue.set(owner, previousSaved)
+        }
+    }
+
+    @Test
     fun clearAndExitCancelPendingPlaybackAndLyricsEvenBeforeControllerConnects() {
         // 直接构造冷连接待处理状态，不为测试向生产入口增加适配器或setter。
         val owner = PlaybackController

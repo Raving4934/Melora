@@ -1141,6 +1141,16 @@ object PlaybackController {
     fun toggle() {
         interruptRecovery()
         val player = controller ?: return
+        // ENDED仍可能保留playWhenReady=true；继续收听必须查下一章，而不是误执行pause。
+        if (player.playbackState == Player.STATE_ENDED) {
+            val chapter = player.currentMediaItem?.mediaId?.let(TrackRegistry::get)?.raw
+                ?.let(OnlineSong::from)?.takeIf { it.bookId() != null }
+            val context = appContext
+            if (chapter != null && context != null) {
+                resumeBook(context, chapter)
+                return
+            }
+        }
         // 缓冲/解析/音频焦点暂时受限时isPlaying为false，但用户仍能暂停等待播放。
         if (player.playWhenReady) {
             player.pause()
@@ -1247,7 +1257,6 @@ object PlaybackController {
             editingQueue = false
             clearSavedQueue()
         }
-        currentQueueId = null
         errorRecovery.reset()
         consecutiveErrors = 0
         clearCurrentTrackLyrics()
@@ -1399,6 +1408,8 @@ object PlaybackController {
     }
 
     private fun clearSavedQueue() {
+        // 队列真正移空后，后续追加内容不能继承已不存在的集合来源。
+        currentQueueId = null
         queuePrefs()?.edit { clear() }
         lastSavedQueue = null
     }

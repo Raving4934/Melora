@@ -8,6 +8,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -20,11 +21,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
+import com.leyu.melora.playback.PlaybackController
+import com.leyu.melora.playback.PlayerUiState
+import com.leyu.melora.playback.bookQueueId
+import com.leyu.melora.playback.canonicalBookId
 import com.leyu.melora.playback.sdk.AlbumProfile
 import com.leyu.melora.playback.sdk.ArtistProfile
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.ui.theme.MeloraAppearance
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 
 /** 歌单、专辑和艺术家共用信息区；头像没有真实结果时用人物占位，不冒用歌曲封面。 */
 @Composable
@@ -65,6 +73,36 @@ internal fun CollectionInfoHeader(
     }
 }
 
+/** 详情页的队列身份必须与卡片/playBook 一致，否则无法识别“本集合正在播放”。 */
+internal fun collectionQueueId(source: String, id: String, isBook: Boolean): String =
+    canonicalBookId(source, id)?.takeIf { isBook }?.let(::bookQueueId) ?: "playlist.$source.$id"
+
+internal enum class CollectionPlayIntent { PlayAll, Resume, Toggle }
+
+internal data class CollectionPlayButton(val label: String, val pause: Boolean, val intent: CollectionPlayIntent)
+
+/** 详情页主按钮与卡片播放钮同义：本队列已在播放器中只继续/暂停，不从头重建队列。 */
+internal fun collectionPlayButton(
+    active: Boolean,
+    playing: Boolean,
+    canResume: Boolean,
+    resumeLabel: String,
+): CollectionPlayButton = when {
+    active && playing -> CollectionPlayButton("暂停播放", pause = true, CollectionPlayIntent.Toggle)
+    active -> CollectionPlayButton(resumeLabel, pause = false, CollectionPlayIntent.Toggle)
+    canResume -> CollectionPlayButton(resumeLabel, pause = false, CollectionPlayIntent.Resume)
+    else -> CollectionPlayButton("播放全部", pause = false, CollectionPlayIntent.PlayAll)
+}
+
+/** 只订阅队列身份与播放意图，避免进度刷新重组整页。返回 (本队列活动, 本队列播放中)。 */
+@Composable
+internal fun rememberQueuePlayback(queueId: String): Pair<Boolean, Boolean> {
+    fun project(state: PlayerUiState) = (state.queueId == queueId) to (state.queueId == queueId && state.playing)
+    val initial = remember(queueId) { project(PlaybackController.state.value) }
+    val flow = remember(queueId) { PlaybackController.state.map(::project).distinctUntilChanged() }
+    return flow.collectAsStateWithLifecycle(initialValue = initial).value
+}
+
 /** 只负责统一布局；收藏对象、队列与分页由调用页持有，不另建数据链路。 */
 @Composable
 internal fun CollectionActionsRow(
@@ -75,6 +113,8 @@ internal fun CollectionActionsRow(
     onSelect: () -> Unit,
     modifier: Modifier = Modifier,
     loading: Boolean = false,
+    playLabel: String = "播放全部",
+    playPause: Boolean = false,
     middleActions: (@Composable RowScope.() -> Unit)? = null,
 ) {
     val playColor = if (canPlay) MeloraAppearance.brand else MeloraAppearance.textMuted
@@ -82,11 +122,12 @@ internal fun CollectionActionsRow(
         ChromeActionSurface(onClick = onPlay, enabled = canPlay && !loading, shape = RoundedCornerShape(17.dp), modifier = Modifier.height(34.dp)) {
             Row(Modifier.padding(end = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (loading) ShimmerBox(Modifier.size(16.dp), cornerRadius = 4.dp)
-                else Icon(Icons.Rounded.PlayArrow, null, tint = playColor, modifier = Modifier.size(16.dp))
+                else Icon(if (playPause) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, null,
+                    tint = playColor, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(4.dp))
-                if (loading) ShimmerTextLine("播放全部", fontSize = 12.5.sp,
+                if (loading) ShimmerTextLine(playLabel, fontSize = 12.5.sp,
                     modifier = Modifier.width(IntrinsicSize.Max), fontWeight = FontWeight.SemiBold)
-                else Text("播放全部", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = playColor)
+                else Text(playLabel, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = playColor)
             }
         }
         if (middleActions != null) middleActions() else Spacer(Modifier.weight(1f))

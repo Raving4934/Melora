@@ -150,6 +150,9 @@ import com.leyu.melora.ui.common.SongSelectionTopBar
 import com.leyu.melora.ui.common.SongSelectionState
 import com.leyu.melora.ui.common.AddToPlaylistSheet
 import com.leyu.melora.ui.common.ChromeActionSurface
+import com.leyu.melora.ui.common.CollectionPlayIntent
+import com.leyu.melora.ui.common.collectionPlayButton
+import com.leyu.melora.ui.common.rememberQueuePlayback
 import com.leyu.melora.ui.common.ChromeScaffold
 import com.leyu.melora.ui.common.rememberFastScrollToTop
 import com.leyu.melora.ui.common.titleScrollToTop
@@ -2653,7 +2656,7 @@ private fun UserPlaylistsPage(
             onDismiss = { moreTarget = null },
             onPlayAll = {
                 if (target.songs.isNotEmpty()) {
-                    PlaybackController.playQueue(context, target.songs.toUiTracks(), 0)
+                    PlaybackController.playQueue(context, target.songs.toUiTracks(), 0, userPlaylistQueueId(target.id))
                 }
             },
             onAddToQueue = { PlaybackController.addToQueue(context, target.songs.toUiTracks()) },
@@ -2683,6 +2686,9 @@ private fun PlayAllPill(onClick: () -> Unit) {
 
 // ---------- 自建歌单详情 ----------
 
+/** 自建歌单整单播放的队列身份，供详情页识别“本歌单正在播放”。 */
+private fun userPlaylistQueueId(id: String) = "user_playlist.$id"
+
 @Composable
 private fun UserPlaylistDetail(
     playlist: UserLibrary.UserPlaylist,
@@ -2699,6 +2705,9 @@ private fun UserPlaylistDetail(
     val scrollToTop = rememberFastScrollToTop(listState)
     var moreSong by remember { mutableStateOf<OnlineSong?>(null) }
     var showMoreMenu by remember { mutableStateOf(false) }
+    val queueId = userPlaylistQueueId(current.id)
+    val (queueActive, queuePlaying) = rememberQueuePlayback(queueId)
+    val playButton = collectionPlayButton(queueActive, queuePlaying, canResume = false, resumeLabel = "继续播放")
     // 系统返回手势先退出二级歌单页，而不是直接退出应用
     BackHandler(onBack = onBack)
 
@@ -2735,7 +2744,8 @@ private fun UserPlaylistDetail(
                 if (songs.isNotEmpty()) {
                     ChromeActionSurface(
                         onClick = {
-                            PlaybackController.playQueue(context, songs.toUiTracks(), 0)
+                            if (playButton.intent == CollectionPlayIntent.Toggle) PlaybackController.toggle()
+                            else PlaybackController.playQueue(context, songs.toUiTracks(), 0, queueId)
                         },
                         shape = RoundedCornerShape(16.dp),
                         modifier = Modifier.padding(end = 4.dp),
@@ -2745,14 +2755,14 @@ private fun UserPlaylistDetail(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Icon(
-                                Icons.Rounded.PlayArrow,
+                                if (playButton.pause) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                                 contentDescription = null,
                                 tint = BrandBlue,
                                 modifier = Modifier.size(15.dp),
                             )
                             Spacer(Modifier.width(3.dp))
                             Text(
-                                "播放全部",
+                                playButton.label,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = BrandBlue,
@@ -2795,7 +2805,7 @@ private fun UserPlaylistDetail(
             onDismiss = { showMoreMenu = false },
             onPlayAll = {
                 if (songs.isNotEmpty()) {
-                    PlaybackController.playQueue(context, songs.toUiTracks(), 0)
+                    PlaybackController.playQueue(context, songs.toUiTracks(), 0, queueId)
                 }
             },
             onAddToQueue = { PlaybackController.addToQueue(context, songs.toUiTracks()) },

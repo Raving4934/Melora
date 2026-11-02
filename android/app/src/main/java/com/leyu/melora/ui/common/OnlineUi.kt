@@ -429,9 +429,9 @@ internal fun rememberBookResumePoint(song: OnlineSong): BookResumePoint {
     return remember(song.uid, revision, enabled) { BookListeningProgress.read(context, song) }
 }
 
-/** 最近与收藏听书只读已有元数据/断点，不为展示卡片发起网络请求。 */
+/** 整书续听点：专辑断点优先，旧记录回退到最近收听章节；只读本地数据，不发网络请求。 */
 @Composable
-internal fun rememberBookAlbumSubtitle(source: String, albumId: String, author: String, total: Int = 0): String {
+internal fun rememberBookAlbumResumePoint(source: String, albumId: String): Pair<BookResumePoint?, OnlineSong?> {
     val context = LocalContext.current
     val revision by BookListeningProgress.updates.collectAsStateWithLifecycle()
     val enabled by MeloraSettings.rememberProgress.collectAsStateWithLifecycle()
@@ -440,11 +440,21 @@ internal fun rememberBookAlbumSubtitle(source: String, albumId: String, author: 
     val recentChapter = remember(source, id, recents) {
         if (id == null) null else recents.firstOrNull { BookListeningProgress.bookIdentity(it) == (source to id) }
     }
-    return remember(source, id, author, total, revision, enabled, recentChapter) {
-        val point = if (!enabled || id == null) null else {
+    val point = remember(source, id, revision, enabled, recentChapter) {
+        if (!enabled || id == null) null else {
             BookListeningProgress.readAlbum(context, source, id)
                 ?: recentChapter?.let { BookListeningProgress.read(context, it) }
         }
+    }
+    return point to recentChapter
+}
+
+/** 最近与收藏听书只读已有元数据/断点，不为展示卡片发起网络请求。 */
+@Composable
+internal fun rememberBookAlbumSubtitle(source: String, albumId: String, author: String, total: Int = 0): String {
+    val (point, recentChapter) = rememberBookAlbumResumePoint(source, albumId)
+    val id = remember(source, albumId) { canonicalBookId(source, albumId) }
+    return remember(source, id, author, total, point, recentChapter) {
         val metadata = if (source == "kw" && id != null) {
             OnlineCache.peek<KwBookApi.BookChapters>("playlistDetail.book.book_album_$id")?.metadata
         } else null
