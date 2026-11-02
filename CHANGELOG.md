@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+## [Web 0.1.3] - 2026-11-02
+
+### Web / NAS、FPK 与 Docker
+
+**播放与下载**
+- 修复部分音源返回较长播放地址时无法播放或下载的问题。
+
+**依赖与运行环境**
+- 升级 Web 与服务端依赖，更新 Node.js 26.13.0 与 Alpine 3.24.3 容器基础镜像。
+
+**安装与升级**
+- Docker 镜像：`ghcr.io/raving4934/melora:0.1.3`，支持 `linux/amd64`、`linux/arm64`。
+- fnOS 安装包：`melora-0.1.3-linux-amd64.fpk`、`melora-0.1.3-linux-arm64.fpk`，附 SHA-256 校验文件。
+- Docker Compose 默认镜像版本同步更新为 `0.1.3`。
+
+### 提交追溯（Web / NAS）
+
+本次仅发布 Web / NAS、FPK 与 Docker；Android 客户端单独发布。
+完整提交区间：[v0.1.2...v0.1.3][Web 0.1.3]；下列内容仅归纳该区间的 Web / NAS 变更。
+
+- 服务端接受有界长资源标识并保留完整哈希身份：[`cd00c65`](https://github.com/Raving4934/Melora/commit/cd00c652896f2a890ea7f021f1eef501a8242a05)。
+- Web、服务端依赖与构建工具链升级：[`504c293`](https://github.com/Raving4934/Melora/commit/504c293613998531aaead548082b736a5b2df091)。
+
 ## [0.2.1] - 2026-10-22
 
 ### 安卓客户端
@@ -550,7 +573,8 @@
 [0.1.10]: https://github.com/Raving4934/Melora/compare/android-v0.1.9...android-v0.1.10
 [Android 0.1.10]: https://github.com/Raving4934/Melora/compare/android-v0.1.9...android-v0.1.10
 [Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.1...HEAD
-[Web Unreleased]: https://github.com/Raving4934/Melora/compare/v0.1.2...HEAD
+[Web Unreleased]: https://github.com/Raving4934/Melora/compare/v0.1.3...HEAD
+[Web 0.1.3]: https://github.com/Raving4934/Melora/compare/v0.1.2...v0.1.3
 [Web 0.1.2]: https://github.com/Raving4934/Melora/compare/v0.1.1...v0.1.2
 [0.1.9]: https://github.com/Raving4934/Melora/compare/android-v0.1.8...android-v0.1.9
 [Android 0.1.9]: https://github.com/Raving4934/Melora/compare/android-v0.1.8...android-v0.1.9
