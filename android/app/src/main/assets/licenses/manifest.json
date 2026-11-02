@@ -108,7 +108,7 @@
       "source": "Actual resolved OkHttp / Okio POM metadata",
       "sourceUrl": "https://github.com/lysine-dev/okhttp",
       "notices": [
-        "OkHttp 5.5.0 与 Okio 3.18.2 的本地 POM 均声明 Apache-2.0，并将 developer metadata 标为 Square, Inc.；未添加 POM 未声明的其他版权所有者。"
+        "OkHttp 5.5.1 与 Okio 3.18.2 的本地 POM 均声明 Apache-2.0，并将 developer metadata 标为 Square, Inc.；未添加 POM 未声明的其他版权所有者。"
       ]
     },
     {
@@ -361,10 +361,10 @@
         "android/tools/sdk/package.json",
         "android/tools/sdk/package-lock.json"
       ],
-      "source": "pako 3.0.2 package-local LICENSE and upstream src/zlib/README",
+      "source": "pako 3.0.3 package-local LICENSE and upstream src/zlib/README",
       "notices": [
-        "pako 3.0.2 LICENSE — Copyright (C) 2014-2017 by Vitaly Puzrin and Andrei Tuputcyn",
-        "pako 3.0.2 src/zlib/README — (C) 1995-2013 Jean-loup Gailly and Mark Adler; (C) 2014-2017 Vitaly Puzrin and Andrey Tupitsin"
+        "pako 3.0.3 LICENSE — Copyright (C) 2014-2017 by Vitaly Puzrin and Andrei Tuputcyn",
+        "pako 3.0.3 src/zlib/README — (C) 1995-2013 Jean-loup Gailly and Mark Adler; (C) 2014-2017 Vitaly Puzrin and Andrey Tupitsin"
       ]
     },
     {
@@ -517,8 +517,8 @@
     "com.google.guava:failureaccess:1.0.2",
     "com.google.guava:guava:33.3.1-android",
     "com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava",
-    "com.squareup.okhttp3:okhttp-android:5.5.0",
-    "com.squareup.okhttp3:okhttp:5.5.0",
+    "com.squareup.okhttp3:okhttp-android:5.5.1",
+    "com.squareup.okhttp3:okhttp:5.5.1",
     "com.squareup.okio:okio-jvm:3.18.2",
     "com.squareup.okio:okio:3.18.2",
     "dev.chrisbanes.haze:haze-android:2.0.1",

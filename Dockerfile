@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM node:26.12.1-bookworm-slim AS web
+FROM node:26.13.0-bookworm-slim AS web
 WORKDIR /src
 COPY package.json package-lock.json ./
 COPY apps/web/package.json apps/web/
@@ -18,7 +18,7 @@ COPY package.json /version-package.json
 RUN VERSION=$(sed -nE 's/^[[:space:]]*"version":[[:space:]]*"([^"]+)".*/\1/p' /version-package.json | head -n1) && \
     CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X melora/internal/version.Value=${VERSION:-dev}" -o /out/melora ./cmd/melora
 
-FROM alpine:3.24.2
+FROM alpine:3.24.3
 LABEL org.opencontainers.image.source="https://github.com/Raving4934/Melora" \
       org.opencontainers.image.description="Melora self-hosted music web application"
 RUN apk add --no-cache ca-certificates tzdata && adduser -D -u 10001 melora

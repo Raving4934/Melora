@@ -6299,7 +6299,7 @@
   var hashSHA1 = (text) => native4.hash("sha1", import_buffer5.Buffer.from(String(text), "utf8").toString("base64"));
 
   // node_modules/pako/dist/pako.mjs
-  var Z_FIXED = 4;
+  var Z_FIXED$1 = 4;
   var Z_BINARY = 0;
   var Z_TEXT = 1;
   var Z_UNKNOWN = 2;
@@ -6771,10 +6771,10 @@
       max_blindex = build_bl_tree(s);
       opt_lenb = s.opt_len + 3 + 7 >>> 3;
       static_lenb = s.static_len + 3 + 7 >>> 3;
-      if (static_lenb <= opt_lenb || s.strategy === Z_FIXED) opt_lenb = static_lenb;
+      if (static_lenb <= opt_lenb || s.strategy === Z_FIXED$1) opt_lenb = static_lenb;
     } else opt_lenb = static_lenb = stored_len + 5;
     if (stored_len + 4 <= opt_lenb && buf !== -1) _tr_stored_block(s, buf, stored_len, last);
-    else if (s.strategy === Z_FIXED || static_lenb === opt_lenb) {
+    else if (s.strategy === Z_FIXED$1 || static_lenb === opt_lenb) {
       send_bits(s, (STATIC_TREES << 1) + (last ? 1 : 0), 3);
       compress_block(s, static_ltree, static_dtree);
     } else {
@@ -6813,20 +6813,33 @@
     return s1 | s2 << 16 | 0;
   };
   var makeTable = () => {
-    let c, table = [];
-    for (var n = 0; n < 256; n++) {
+    const table = new Uint32Array(256 * 8);
+    let c;
+    for (let n = 0; n < 256; n++) {
       c = n;
-      for (var k = 0; k < 8; k++) c = c & 1 ? 3988292384 ^ c >>> 1 : c >>> 1;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 3988292384 ^ c >>> 1 : c >>> 1;
       table[n] = c;
+    }
+    for (let n = 0; n < 256; n++) {
+      c = table[n];
+      for (let k = 256; k < 256 * 8; k += 256) {
+        c = table[c & 255] ^ c >>> 8;
+        table[k + n] = c;
+      }
     }
     return table;
   };
-  var crcTable = new Uint32Array(makeTable());
+  var crcTable = makeTable();
   var crc32 = (crc, buf, len, pos) => {
     const t = crcTable;
     const end = pos + len;
+    let i = pos;
     crc ^= -1;
-    for (let i = pos; i < end; i++) crc = crc >>> 8 ^ t[(crc ^ buf[i]) & 255];
+    for (const end8 = end - 7; i < end8; i += 8) {
+      crc ^= buf[i] | buf[i + 1] << 8 | buf[i + 2] << 16 | buf[i + 3] << 24;
+      crc = t[1792 + (crc & 255)] ^ t[1536 + (crc >>> 8 & 255)] ^ t[1280 + (crc >>> 16 & 255)] ^ t[1024 + (crc >>> 24)] ^ t[768 + buf[i + 4]] ^ t[512 + buf[i + 5]] ^ t[256 + buf[i + 6]] ^ t[buf[i + 7]];
+    }
+    for (; i < end; i++) crc = crc >>> 8 ^ t[(crc ^ buf[i]) & 255];
     return crc ^ -1;
   };
   var messages_default = {
@@ -8086,7 +8099,10 @@
           copy = 0;
           do {
             len = input[next + copy++];
-            if (state.head && len && state.length < 65536) state.head.name += String.fromCharCode(len);
+            if (state.head && len && state.length < 65536) {
+              state.head.name += String.fromCharCode(len);
+              state.length++;
+            }
           } while (len && copy < have);
           if (state.flags & 512 && state.wrap & 4) state.check = crc32(state.check, input, copy, next);
           have -= copy;
@@ -8101,7 +8117,10 @@
           copy = 0;
           do {
             len = input[next + copy++];
-            if (state.head && len && state.length < 65536) state.head.comment += String.fromCharCode(len);
+            if (state.head && len && state.length < 65536) {
+              state.head.comment += String.fromCharCode(len);
+              state.length++;
+            }
           } while (len && copy < have);
           if (state.flags & 512 && state.wrap & 4) state.check = crc32(state.check, input, copy, next);
           have -= copy;

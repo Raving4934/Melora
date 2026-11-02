@@ -9,7 +9,7 @@
   "dependencies": {
     "buffer": "^6.0.3",
     "he": "^2.0.0",
-    "pako": "^3.0.2"
+    "pako": "^3.0.3"
   },
   "scripts": {
     "build": "node build.mjs",
