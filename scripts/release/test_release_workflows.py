@@ -474,8 +474,9 @@ class ReleaseWorkflowTest(unittest.TestCase):
         self.assertNotIn("|| true", script)
         self.assertNotIn("assumeTrue", source)
         self.assertIn('os.environ["ANDROID_SERIAL"]', source)
-        self.assertIn('prepare_android_network.py --host-dns', self.android)
-        self.assertIn('-dns-server "$dns_servers"', self.android)
+        launcher = (ROOT / "scripts/release/start-android-emulator.sh").read_text()
+        self.assertIn('prepare_android_network.py --host-dns', launcher)
+        self.assertIn('-dns-server "$dns_servers"', launcher)
         self.assertIn('netsim_${stream}.log', self.android)
         self.assertIn('host-dns.log', self.android)
 
@@ -671,7 +672,8 @@ class DeviceWorkflowTest(unittest.TestCase):
         for unsafe in ("-read-only", "-initdata", " -data ", "userdata", "emulator-runner", "avd-cache"):
             self.assertNotIn(unsafe, self.job)
         self.assertEqual(set(re.findall(r"uses: ([^@\s]+)@", self.job)), {
-            "actions/checkout", "actions/setup-java", "android-actions/setup-android", "actions/upload-artifact",
+            "actions/checkout", "actions/setup-java", "android-actions/setup-android", "actions/cache",
+            "actions/upload-artifact",
         })
 
     def run_sdk_package_preflight(
@@ -964,119 +966,103 @@ class DeviceWorkflowTest(unittest.TestCase):
     def test_emulator_boot_is_bounded_and_checks_runtime_api_and_abi(self) -> None:
         start = step(self.workflow, "启动独立模拟器")
         boot = step(self.workflow, "等待并校验模拟器就绪")
+        launcher = (ROOT / "scripts/release/start-android-emulator.sh").read_text()
         self.assertIn('adb -s "$ANDROID_SERIAL" shell settings put secure show_ime_with_hard_keyboard 1', boot)
         for required in ("timeout 360 bash -c", "getprop sys.boot_completed", "getprop ro.build.version.sdk",
                          '= "$API_LEVEL"', "getprop ro.product.cpu.abi", "= x86_64", 'adb -s "$ANDROID_SERIAL"',
                          'settings put global "$scale" 1'):
             self.assertIn(required, boot)
-        flags = re.search(r"(?m)^      EMULATOR_FLAGS: (.+)$", self.job).group(1).split()
-        for required in ("-port", "5554", "-no-snapshot", "-gpu", "swangle", "-accel", "on"):
-            self.assertIn(required, flags)
+        for required in ("-port 5554", "-no-snapshot", "-gpu swangle", "-accel on", '"$@"',
+                         'echo $! > "$DEVICE_LOG_DIR/emulator.pid"'):
+            self.assertIn(required, launcher)
         for disabled_animation in (
             "settings put global window_animation_scale 0",
             "settings put global transition_animation_scale 0",
             "settings put global animator_duration_scale 0",
         ):
             self.assertNotIn(disabled_animation, self.job)
-        launch = 'nohup "$ANDROID_HOME/emulator/emulator" $EMULATOR_FLAGS -dns-server'
-        self.assertIn('echo $! > "$DEVICE_LOG_DIR/emulator.pid"', start)
         self.assertIn('command -v adb', start)
         self.assertIn('$ANDROID_HOME/platform-tools/adb', start)
         self.assertIn('ADB_TRACE=transport,auth adb start-server', start)
-        self.assertLess(start.index('adb start-server'), start.index(launch))
-        # 首次启动与唯一一次重试共用同一组参数。
-        self.assertEqual(self.job.count(launch), 2)
-        self.assertEqual(boot.count(launch), 1)
-        self.assertEqual(boot.count('-wipe-data > "$DEVICE_LOG_DIR/emulator-retry.log"'), 1)
+        self.assertLess(start.index('adb start-server'),
+                        start.index('bash scripts/release/start-android-emulator.sh emulator.log'))
+        # 只允许一次冷启动重试，且重试仍走同一启动脚本。
+        self.assertEqual(self.job.count("start-android-emulator.sh"), 2)
+        self.assertEqual(boot.count("start-android-emulator.sh emulator-retry.log -wipe-data"), 1)
 
-    def test_device_job_only_runs_scripts_present_in_released_tags(self) -> None:
-        # 手动发布旧标签时 job 检出的是标签提交；新增仓库脚本会在旧标签上找不到（曾导致 exit 127）。
-        self.assertEqual(
-            set(re.findall(r"scripts/release/[\w.-]+", self.job)),
-            {"scripts/release/prepare_android_network.py", "scripts/release/prepare_android_ui.py"},
-        )
-
-    def run_start_emulator(self) -> tuple[subprocess.CompletedProcess, list[str], str]:
-        script = shell_script(step(self.workflow, "启动独立模拟器"))
-        flags = re.search(r"(?m)^      EMULATOR_FLAGS: (.+)$", self.job).group(1)
-        with tempfile.TemporaryDirectory(prefix="melora start ") as directory:
+    def test_emulator_launcher_passes_fixed_flags_and_retry_arguments(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="melora launcher ") as directory:
             root = Path(directory)
-            for folder in ("bin", "sdk/platform-tools", "sdk/emulator", "scripts/release"):
-                (root / folder).mkdir(parents=True)
-            tools = {
-                "sdk/platform-tools/adb": 'echo "$*" >> "$DEVICE_LOG_DIR/adb-calls.log"\n',
-                "bin/python3": 'echo "10.0.0.53"\n',
-                "sdk/emulator/emulator": 'printf "%s\\n" "$@" > "$DEVICE_LOG_DIR/emulator-args"\n',
-            }
-            for name, body in tools.items():
-                (root / name).write_text("#!/bin/bash\n" + body)
-                (root / name).chmod(0o755)
-            env = {**os.environ, "ANDROID_HOME": str(root / "sdk"), "DEVICE_LOG_DIR": directory,
-                   "EMULATOR_FLAGS": flags,
-                   "PATH": os.pathsep.join([str(root / "sdk/platform-tools"), str(root / "bin"), os.environ["PATH"]])}
-            result = subprocess.run(["bash", "-euc", script], cwd=root, capture_output=True, text=True, env=env)
+            (root / "bin").mkdir()
+            (root / "sdk/emulator").mkdir(parents=True)
+            fake_python = root / "bin/python3"
+            fake_python.write_text('#!/bin/bash\necho "10.0.0.53"\n')
+            fake_emulator = root / "sdk/emulator/emulator"
+            fake_emulator.write_text('#!/bin/bash\nprintf "%s\\n" "$@" > "$DEVICE_LOG_DIR/emulator-args"\n')
+            for tool in (fake_python, fake_emulator):
+                tool.chmod(0o755)
+            env = {**os.environ, "PATH": f"{root / 'bin'}{os.pathsep}{os.environ['PATH']}",
+                   "ANDROID_HOME": str(root / "sdk"), "DEVICE_LOG_DIR": directory}
+            result = subprocess.run(
+                ["bash", "scripts/release/start-android-emulator.sh", "emulator-retry.log", "-wipe-data"],
+                cwd=ROOT, capture_output=True, text=True, env=env,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((root / "emulator.pid").read_text().strip().isdigit())
             # 模拟器在后台写参数；最多等 5 秒，避免读取竞争。
             for _ in range(50):
                 if (root / "emulator-args").exists():
                     break
                 time.sleep(0.1)
-            args = (root / "emulator-args").read_text().split() if (root / "emulator-args").exists() else []
-            return result, args, (root / "emulator-dns.log").read_text()
-
-    def test_start_step_launches_emulator_in_background_with_fixed_flags(self) -> None:
-        result, args, dns = self.run_start_emulator()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(args[:2], ["-avd", "melora-ci"])
-        self.assertEqual(args[-2:], ["-dns-server", "10.0.0.53"])
-        self.assertNotIn("-wipe-data", args)
-        self.assertEqual(dns, "10.0.0.53\n")
+            args = (root / "emulator-args").read_text().split()
+            self.assertEqual(args[:2], ["-avd", "melora-ci"])
+            self.assertEqual(args[-3:], ["-dns-server", "10.0.0.53", "-wipe-data"])
+            for flag in ("-no-snapshot", "-gpu", "swangle", "-accel", "on", "-no-window"):
+                self.assertIn(flag, args)
+            self.assertTrue((root / "emulator-retry.log").exists())
+            self.assertEqual((root / "emulator-dns.log").read_text(), "10.0.0.53\n")
 
     def run_boot_wait(self, boot_plan: str) -> tuple[subprocess.CompletedProcess, list[str], int, str]:
         script = shell_script(step(self.workflow, "等待并校验模拟器就绪"))
-        flags = re.search(r"(?m)^      EMULATOR_FLAGS: (.+)$", self.job).group(1)
         missing_pid = Path("/proc/sys/kernel/pid_max").read_text().strip()
         with tempfile.TemporaryDirectory(prefix="melora boot ") as directory:
             root = Path(directory)
             (root / "bin").mkdir()
-            (root / "sdk/emulator").mkdir(parents=True)
+            (root / "scripts/release").mkdir(parents=True)
             (root / "emulator.pid").write_text(missing_pid)
-            (root / "emulator-dns.log").write_text("10.0.0.53\n")
             tools = {
                 # 只有 360s 启动等待按计划返回；其余 timeout 调用照常执行命令。
-                "bin/timeout": (
-                    'duration=$1; shift\n'
+                "timeout": (
+                    '#!/bin/bash\nduration=$1; shift\n'
                     'if [[ "$duration" == 360 ]]; then\n'
                     '  n=$(( $(cat "$DEVICE_LOG_DIR/boot-count" 2>/dev/null || echo 0) + 1 ))\n'
                     '  echo "$n" > "$DEVICE_LOG_DIR/boot-count"\n'
                     '  code=$(cut -d, -f"$n" <<< "$BOOT_PLAN"); exit "${code:-124}"\nfi\nexec "$@"\n'
                 ),
-                "bin/adb": (
-                    'echo "$*" >> "$DEVICE_LOG_DIR/adb-calls.log"\n'
+                "adb": (
+                    '#!/bin/bash\necho "$*" >> "$DEVICE_LOG_DIR/adb-calls.log"\n'
                     'case "$*" in\n'
                     '  *ro.build.version.sdk*) echo 35 ;;\n'
                     '  *ro.product.cpu.abi*) echo x86_64 ;;\n'
                     '  devices) printf "List of devices attached\\nemulator-5554\\tdevice\\n" ;;\n'
                     'esac\n'
                 ),
-                "sdk/emulator/emulator": 'echo "$*" >> "$DEVICE_LOG_DIR/emulator-calls.log"\n',
             }
             for name, body in tools.items():
-                (root / name).write_text("#!/bin/bash\n" + body)
-                (root / name).chmod(0o755)
+                (root / "bin" / name).write_text(body)
+                (root / "bin" / name).chmod(0o755)
+            (root / "scripts/release/start-android-emulator.sh").write_text(
+                'echo "$*" >> "$DEVICE_LOG_DIR/launcher-calls.log"\n'
+                f'echo {missing_pid} > "$DEVICE_LOG_DIR/emulator.pid"\n'
+            )
             result = subprocess.run(
                 ["bash", "-euc", script], cwd=root, capture_output=True, text=True,
                 env={**os.environ, "PATH": f"{root / 'bin'}{os.pathsep}{os.environ['PATH']}",
-                     "ANDROID_HOME": str(root / "sdk"), "EMULATOR_FLAGS": flags,
                      "DEVICE_LOG_DIR": directory, "ANDROID_SERIAL": "emulator-5554", "API_LEVEL": "35",
                      "BOOT_PLAN": boot_plan},
             )
-            # 重试的模拟器在后台记录参数；最多等 5 秒。
-            launches = root / "emulator-calls.log"
-            for _ in range(50 if "124" in boot_plan else 0):
-                if launches.exists():
-                    break
-                time.sleep(0.1)
-            calls = launches.read_text().splitlines() if launches.exists() else []
+            launcher = root / "launcher-calls.log"
+            calls = launcher.read_text().splitlines() if launcher.exists() else []
             waits = int((root / "boot-count").read_text())
             adb_calls = (root / "adb-calls.log").read_text() if (root / "adb-calls.log").exists() else ""
             return result, calls, waits, adb_calls
@@ -1091,10 +1077,7 @@ class DeviceWorkflowTest(unittest.TestCase):
     def test_boot_timeout_cold_restarts_exactly_once_then_keeps_checks(self) -> None:
         result, calls, waits, adb_calls = self.run_boot_wait("124,0")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(waits, 2)
-        self.assertEqual(len(calls), 1)
-        self.assertTrue(calls[0].startswith("-avd melora-ci "))
-        self.assertTrue(calls[0].endswith("-dns-server 10.0.0.53 -wipe-data"))
+        self.assertEqual((calls, waits), (["emulator-retry.log -wipe-data"], 2))
         self.assertIn("::warning::Emulator did not finish booting", result.stdout)
         self.assertEqual(adb_calls.count("emu kill"), 1)
         self.assertLess(adb_calls.index("emu kill"), adb_calls.index("ro.build.version.sdk"))
@@ -1102,8 +1085,29 @@ class DeviceWorkflowTest(unittest.TestCase):
     def test_boot_timeout_after_retry_fails_without_further_attempts(self) -> None:
         result, calls, waits, adb_calls = self.run_boot_wait("124,124")
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual((len(calls), waits), (1, 2))
+        self.assertEqual((calls, waits), (["emulator-retry.log -wipe-data"], 2))
         self.assertNotIn("ro.build.version.sdk", adb_calls)
+
+    def test_sdk_cache_matches_installed_packages_and_skips_release_build(self) -> None:
+        android = (WORKFLOWS / "android-ci.yml").read_text()
+        for name in ("verify", "device-regression"):
+            with self.subTest(job=name):
+                body = job(android, name)
+                cache = body.split("uses: actions/cache@", 1)[1].split("\n      - ", 1)[0]
+                self.assertLess(body.index("uses: actions/cache@"), body.index("sdkmanager 'platforms;android-37.0'")
+                                if name == "verify" else body.index("sdkmanager --channel=0 'platforms"))
+                packages = re.findall(r"'(platforms;android-[^']+|ndk;[^']+|cmake;[^']+)'", body)
+                self.assertEqual(len(packages), 3)
+                for package in packages:
+                    kind, version = package.split(";")
+                    self.assertIn(f"${{{{ env.ANDROID_HOME }}}}/{kind}/{version}", cache)
+                    self.assertIn(version, cache.split("key:", 1)[1])
+        device_cache = job(android, "device-regression").split("uses: actions/cache@", 1)[1]
+        self.assertIn("/system-images/android-${{ matrix.api == 37 && '37.0' || matrix.api }}/google_apis/x86_64",
+                      device_cache)
+        self.assertIn("image-${{ matrix.api }}-google_apis-x86_64", device_cache)
+        self.assertNotIn("actions/cache", job(android, "release-build"))
+        self.assertNotIn("/emulator\n", device_cache.split("key:", 1)[0])
 
     def test_device_ui_is_ready_before_installing_or_running_app_tests(self) -> None:
         ready = step(self.workflow, "验证模拟器桌面窗口可交互")

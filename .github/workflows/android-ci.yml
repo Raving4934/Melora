@@ -164,6 +164,14 @@ jobs:
           cmdline-tools-version: '16111833'
           packages: platform-tools
           log-accepted-android-sdk-licenses: false
+      # CI 检查可复用版本化 SDK 包；release-build 仍每次从官方源全新安装。
+      - uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ${{ env.ANDROID_HOME }}/platforms/android-37.0
+            ${{ env.ANDROID_HOME }}/ndk/30.0.16248370
+            ${{ env.ANDROID_HOME }}/cmake/4.1.2
+          key: android-sdk-v1-${{ runner.os }}-android-37.0-ndk-30.0.16248370-cmake-4.1.2
       - name: 安装项目声明的 Android SDK 与 NDK
         shell: bash
         run: |
@@ -258,9 +266,6 @@ jobs:
       TEST_SHARD_COUNT: 2
       ANDROID_SERIAL: emulator-5554
       CI_GRADLE_JVM_ARGS: -Xmx4G -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256m -XX:+HeapDumpOnOutOfMemoryError -XX:ActiveProcessorCount=2 -Dfile.encoding=UTF-8
-      # 首次启动与超时重试共用同一组参数，重试只追加 -wipe-data。保留真实 GLES 渲染与动画，
-      # 改走 ANGLE，避开已复现的直接 SwiftShader GLES ColorBuffer/纹理绑定异常。
-      EMULATOR_FLAGS: -avd melora-ci -port 5554 -no-window -no-audio -no-boot-anim -no-snapshot -gpu swangle -accel on -cores 2 -memory 2048
     steps:
       - name: 初始化设备诊断目录
         run: |
@@ -286,6 +291,15 @@ jobs:
           cmdline-tools-version: '16111833'
           packages: platform-tools
           log-accepted-android-sdk-licenses: false
+      # 只缓存下方 sdkmanager 显式安装的版本化包；AVD 每次全新创建，模拟器程序沿用 runner 预装并由 sdkmanager 校正。
+      - uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ${{ env.ANDROID_HOME }}/platforms/android-37.0
+            ${{ env.ANDROID_HOME }}/ndk/30.0.16248370
+            ${{ env.ANDROID_HOME }}/cmake/4.1.2
+            ${{ env.ANDROID_HOME }}/system-images/android-${{ matrix.api == 37 && '37.0' || matrix.api }}/google_apis/x86_64
+          key: android-sdk-v1-${{ runner.os }}-android-37.0-ndk-30.0.16248370-cmake-4.1.2-image-${{ matrix.api }}-google_apis-x86_64
       - name: 准备设备 SDK 与全新 AVD
         run: |
           set -euo pipefail
@@ -345,13 +359,8 @@ jobs:
           adb version | tee "$DEVICE_LOG_DIR/adb-version.log"
           ADB_TRACE=transport,auth adb start-server
           adb server-status > "$DEVICE_LOG_DIR/adb-server-status.log"
-          # 手动发布旧标签时检出的是标签提交，启动逻辑必须留在 workflow 内，不能依赖之后新增的仓库脚本。
-          dns_servers="$(python3 -B scripts/release/prepare_android_network.py --host-dns)"
-          printf '%s\n' "$dns_servers" | tee "$DEVICE_LOG_DIR/emulator-dns.log"
           # 冷启动与 APK 构建并行，就绪校验放到构建之后。
-          nohup "$ANDROID_HOME/emulator/emulator" $EMULATOR_FLAGS -dns-server "$dns_servers" \
-            > "$DEVICE_LOG_DIR/emulator.log" 2>&1 &
-          echo $! > "$DEVICE_LOG_DIR/emulator.pid"
+          bash scripts/release/start-android-emulator.sh emulator.log
       - name: 构建设备测试 APK
         working-directory: android
         run: |
@@ -381,9 +390,7 @@ jobs:
               sleep 1
             done
             if kill -0 "$pid" 2>/dev/null; then kill -KILL "$pid" 2>/dev/null || true; fi
-            nohup "$ANDROID_HOME/emulator/emulator" $EMULATOR_FLAGS -dns-server "$(cat "$DEVICE_LOG_DIR/emulator-dns.log")" \
-              -wipe-data > "$DEVICE_LOG_DIR/emulator-retry.log" 2>&1 &
-            echo $! > "$DEVICE_LOG_DIR/emulator.pid"
+            bash scripts/release/start-android-emulator.sh emulator-retry.log -wipe-data
             wait_for_boot
           fi
           test "$(adb -s "$ANDROID_SERIAL" shell getprop ro.build.version.sdk | tr -d '\r')" = "$API_LEVEL"
