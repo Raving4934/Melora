@@ -19,6 +19,7 @@ import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Job
 import androidx.media3.session.SessionResult
 import org.json.JSONObject
 import org.junit.After
@@ -195,6 +196,44 @@ class PlaybackExitInstrumentedTest {
         }
     }
 
+    @Test fun appExitStopsPlayingServiceThroughTheNotificationExitChain() {
+        main { controller().volume = 0f; controller().play() }
+        await { controller().isPlaying }
+        main { PlaybackController.requestExit() }
+        awaitExited()
+        assertEquals(1, prefs.getInt("index", -1))
+        assertTrue("应用内退出必须保留真实断点", prefs.getLong("positionMs", -1) >= 12_000L)
+        assertTrue(prefs.contains("queue"))
+        main {
+            assertNull(PlaybackController.state.value.current)
+            assertFalse(PlaybackController.state.value.playing)
+            // 已退出后再次点击：没有控制器，不能重新拉起服务。
+            PlaybackController.requestExit()
+        }
+        Thread.sleep(300)
+        instrumentation.waitForIdleSync()
+        assertFalse(main { PlaybackService.isRunning })
+    }
+
+    @Test fun appExitWhileReconnectingStopsTheExistingServicePlayer() {
+        main { controller().volume = 0f; controller().play() }
+        await { controller().isPlaying }
+        main {
+            // 模拟控制器重连窗口：真实服务仍在播放，不能只解除新连接而遗留后台声音。
+            PlaybackController.javaClass.getDeclaredMethod("releaseController").apply { isAccessible = true }
+                .invoke(PlaybackController)
+            assertNull(controllerOrNull())
+            assertTrue(PlaybackService.isRunning)
+            PlaybackController.init(context)
+            assertNull("异步连接必须尚未完成", controllerOrNull())
+            PlaybackController.requestExit()
+        }
+        awaitExited()
+        assertEquals(1, prefs.getInt("index", -1))
+        assertTrue("重连中退出也必须保存服务端实际位置", prefs.getLong("positionMs", -1) >= 12_000L)
+        assertTrue(prefs.contains("queue"))
+    }
+
     @Test fun notificationExitDoesNotAutoRestartUntilReopenAndThenHonorsAutoPlay() {
         main { MeloraSettings.autoPlayOnStart.value = true }
         exitFromNotification()
@@ -246,10 +285,22 @@ class PlaybackExitInstrumentedTest {
         exitFromNotification()
         val savedQueue = prefs.getString("queue", null)
         assertNotNull(savedQueue)
+        val pendingJob = Job()
+        val pendingField = PlaybackController.javaClass.getDeclaredField("pendingPlayback").apply { isAccessible = true }
+        val futureField = PlaybackController.javaClass.getDeclaredField("controllerFuture").apply { isAccessible = true }
         main {
             MeloraSettings.autoPlayOnStart.value = true
             PlaybackController.init(context)
-            PlaybackController.exitPlayback()
+            assertNull(controllerOrNull())
+            assertNotNull(futureField.get(PlaybackController))
+            PlaybackController.javaClass.getDeclaredField("queueLoadJob").apply { isAccessible = true }
+                .set(PlaybackController, pendingJob)
+            pendingField.set(PlaybackController, PendingPlaybackSelection(emptyList()))
+            PlaybackController.requestExit()
+            PlaybackController.requestExit()
+            assertTrue(pendingJob.isCancelled)
+            assertNull(futureField.get(PlaybackController))
+            assertNull(pendingField.get(PlaybackController))
         }
         Thread.sleep(600)
         instrumentation.waitForIdleSync()
@@ -259,6 +310,13 @@ class PlaybackExitInstrumentedTest {
             assertFalse(PlaybackController.state.value.playing)
             assertEquals(savedQueue, prefs.getString("queue", null))
             assertEquals(12_000L, prefs.getLong("positionMs", -1))
+        }
+        awaitExited()
+        main { MeloraSettings.autoPlayOnStart.value = false; PlaybackController.init(context) }
+        await { PlaybackController.state.value.current?.uid == "local_exit_selected" }
+        main {
+            assertFalse("显式重新进入仍可恢复暂停队列", controller().playWhenReady)
+            assertEquals(12_000L, controller().currentPosition)
         }
     }
 
@@ -314,6 +372,10 @@ class PlaybackExitInstrumentedTest {
         val result = main { controller().sendCustomCommand(SessionCommand("com.leyu.melora.action.EXIT", Bundle.EMPTY), Bundle.EMPTY) }
         assertEquals("退出命令必须完成，不能靠Media3的30秒解绑超时", SessionResult.RESULT_SUCCESS,
             result.get(3, TimeUnit.SECONDS).resultCode)
+        awaitExited()
+    }
+
+    private fun awaitExited() {
         await {
             !PlaybackService.isRunning && controllerOrNull() == null &&
                 context.getSystemService(NotificationManager::class.java).activeNotifications.none {

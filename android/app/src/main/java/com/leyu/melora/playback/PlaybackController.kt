@@ -1267,6 +1267,13 @@ object PlaybackController {
         releaseController()
     }
 
+    /** 与通知统一由实际服务保存断点并退出；连接尚未完成时也必须退役在途播放。 */
+    @androidx.annotation.MainThread
+    @androidx.annotation.OptIn(UnstableApi::class)
+    fun requestExit() {
+        if (!PlaybackService.exitIfRunning()) exitPlayback(player = null)
+    }
+
     private fun releaseController() {
         cancelSleepTimer()
         val previousController = controller

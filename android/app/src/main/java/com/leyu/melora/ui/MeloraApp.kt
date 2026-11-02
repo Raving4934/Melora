@@ -331,7 +331,12 @@ fun MeloraApp(initialTab: Int = 5) {
     val imeVisible = WindowInsets.isImeVisible
     androidx.compose.runtime.SideEffect { if (imeVisible) resetRootBack() }
     val showExitButton by MeloraSettings.showExitButton.collectAsStateWithLifecycle()
-    val exitApp = { (context as? android.app.Activity)?.finishAffinity(); Unit }
+    val exitApp = {
+        PlaybackController.requestExit()
+        // 先退役播放和在途连接，再离开最近任务，避免页面关闭后晚到回调恢复播放。
+        (context as? android.app.Activity)?.finishAndRemoveTask()
+        Unit
+    }
 
     // 当前选中的 Tab，默认停留在“本地歌曲” (索引 5)
     var currentTab by rememberSaveable { mutableIntStateOf(initialTab.coerceIn(0, tabs.lastIndex)) }

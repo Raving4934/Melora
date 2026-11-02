@@ -137,7 +137,7 @@ internal fun BasicSettingsSubPage(onBack: () -> Unit) {
                 }
                 SettingsDivider(Modifier.padding(horizontal = 14.dp))
 
-                SwitchItem("显示退出按钮", "在侧栏底部显示退出按钮", showExitButton) {
+                SwitchItem("显示退出按钮", "在侧栏底部显示退出按钮，点击后停止播放并关闭乐屿", showExitButton) {
                     MeloraSettings.updateShowExit(it)
                 }
                 SettingsDivider(Modifier.padding(horizontal = 14.dp))

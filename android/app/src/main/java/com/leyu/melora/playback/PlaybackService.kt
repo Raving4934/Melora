@@ -66,7 +66,7 @@ class PlaybackService : MediaSessionService() {
                 notificationContentTitle(mediaMetadata)
         })
         // 播放与下载共享唯一音频缓存，避免同一首歌重复联网与缓存目录多实例冲突。
-        isRunning = true
+        activeService = this
         val cacheDataSourceFactory = AudioCacheStore.playbackDataSourceFactory(this)
 
         val effects = PcmEffectsAudioProcessor(
@@ -170,9 +170,10 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun exitPlayback() {
+        val session = mediaSession ?: return
         // 在stop/release之前记录真实断点，退出不删除队列。
         playbackProgress?.checkpoint()
-        PlaybackController.exitPlayback(mediaSession?.player)
+        PlaybackController.exitPlayback(session.player)
         releaseSession()
         stopSelf()
     }
@@ -226,7 +227,7 @@ class PlaybackService : MediaSessionService() {
         PlaybackController.saveQueue(player = mediaSession?.player)
         releaseSession()
         AudioEffects.resetState()
-        isRunning = false
+        activeService = null
         super.onDestroy()
     }
 
@@ -245,8 +246,17 @@ class PlaybackService : MediaSessionService() {
         private val notificationIds = AtomicInteger(SystemClock.elapsedRealtime().toInt() and Int.MAX_VALUE)
 
         @Volatile
-        var isRunning = false
-            private set
+        private var activeService: PlaybackService? = null
+
+        val isRunning: Boolean get() = activeService != null
+
+        /** 同进程调用不依赖MediaController握手；没有服务时绝不为退出重新启动服务。 */
+        @androidx.annotation.MainThread
+        internal fun exitIfRunning(): Boolean {
+            val service = activeService?.takeIf { it.mediaSession != null } ?: return false
+            service.exitPlayback()
+            return true
+        }
     }
 }
 
