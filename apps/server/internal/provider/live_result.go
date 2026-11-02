@@ -274,7 +274,8 @@ func basicLossyMIME(quality string) string {
 }
 
 func validResourceID(value string) bool {
-	if value == "" || len(value) > 512 || !utf8.ValidString(value) {
+	// 允许格式前缀与完整的 8192 字节 URL；有界输入仍完整参与后续 SHA-256。
+	if value == "" || len(value) > 16<<10 || !utf8.ValidString(value) {
 		return false
 	}
 	for _, c := range value {
