@@ -402,6 +402,19 @@ private fun BoxScope.ChromeMaterial(
             Brush.composite(fade, edge, BlendMode.DstIn) to Brush.composite(veil, edge, BlendMode.DstIn)
         }
     }
+    // Haze 2.1 自定义样式按身份比较；仅在背景色或遮罩改变时更新，避免重组使模糊层重复失效。
+    val blurStyle = remember(canvas, materialMask) {
+        HazeBlurStyle {
+            backgroundColor(canvas)
+            colorEffects(emptyList())
+            blurRadius(20.dp)
+            noiseFactor(0f)
+            fallbackColorEffect(HazeColorEffect.tint(canvas))
+            // 使用系统高斯与渐隐遮罩，不引入可变半径内核。
+            progressive(null)
+            mask(materialMask)
+        }
+    }
     Box(
         Modifier.matchParentSize()
             .layout { measurable, constraints ->
@@ -413,16 +426,7 @@ private fun BoxScope.ChromeMaterial(
             .clipToBounds()
             .hazeBlur(
                 input = HazeInput.Sources(state, retention = HazeSourceRetention.ClearWhenUnavailable),
-                style = HazeBlurStyle {
-                    backgroundColor(canvas)
-                    colorEffects(emptyList())
-                    blurRadius(20.dp)
-                    noiseFactor(0f)
-                    fallbackColorEffect(HazeColorEffect.tint(canvas))
-                    // 使用系统高斯与渐隐遮罩，不引入可变半径内核。
-                    progressive(null)
-                    mask(materialMask)
-                },
+                style = blurStyle,
                 // 对应原全分辨率采样，避免降采样改变渐变末端的边缘与细节。
                 performanceMode = HazePerformanceMode.Quality,
             ).drawBehind { drawRect(materialVeil) },
