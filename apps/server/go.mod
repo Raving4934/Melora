@@ -5,9 +5,9 @@ go 1.26.0
 toolchain go1.27.3
 
 require (
-	github.com/dop251/goja v0.0.0-20261105002551-2413f2132ac8
+	github.com/dop251/goja v0.0.0-20261107161106-d6eaa50db8bc
 	golang.org/x/sys v0.49.0
-	modernc.org/sqlite v1.61.1
+	modernc.org/sqlite v1.62.0
 )
 
 require (
