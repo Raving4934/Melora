@@ -7,6 +7,7 @@ import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.ExoPlaybackException
 import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.audio.AudioOffloadSupport
 import androidx.media3.exoplayer.audio.AudioRendererEventListener
@@ -16,6 +17,7 @@ import androidx.media3.exoplayer.audio.ForwardingAudioSink
 import androidx.media3.exoplayer.audio.MediaCodecAudioRenderer
 import androidx.media3.exoplayer.mediacodec.DefaultMediaCodecAdapterFactory
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import androidx.media3.exoplayer.source.MediaSource
 
 /** 即时解码唤醒与位置采样共用一条播放循环，不以关闭动态调度换取歌词刷新。 */
 @androidx.annotation.OptIn(UnstableApi::class)
@@ -23,6 +25,8 @@ internal class PlaybackRenderersFactory(
     context: Context,
     private val effects: PcmEffectsAudioProcessor,
 ) : DefaultRenderersFactory(context) {
+    val outputProbe = AudioOutputProbe()
+
     override fun buildAudioRenderers(
         context: Context,
         extensionRendererMode: Int,
@@ -38,10 +42,34 @@ internal class PlaybackRenderersFactory(
             DefaultMediaCodecAdapterFactory(context).forceEnableAsynchronous()
         } else getCodecAdapterFactory()
         // 应用只使用平台音频解码器，与原factory默认的EXTENSION_RENDERER_MODE_OFF一致。
-        out.add(object : MediaCodecAudioRenderer(
+        val renderer = object : MediaCodecAudioRenderer(
             context, audioCodecFactory, mediaCodecSelector, enableDecoderFallback,
             eventHandler, eventListener, audioSink,
         ) {
+            override fun onStreamChanged(formats: Array<Format>, startPositionUs: Long, offsetUs: Long,
+                mediaPeriodId: MediaSource.MediaPeriodId) {
+                outputProbe.reset()
+                super.onStreamChanged(formats, startPositionUs, offsetUs, mediaPeriodId)
+            }
+
+            override fun handleMessage(messageType: Int, message: Any?) {
+                if (messageType != AudioOutputProbe.CHECK_OUTPUT) {
+                    super.handleMessage(messageType, message)
+                    return
+                }
+                val failure = message as AudioOutputProbe.Failure
+                // 时钟可能已切到standalone，先在播放线程复查sink，避免把尚未采样的恢复误判为故障。
+                audioSink.getCurrentPositionUs(isEnded)
+                // 有效播放令牌由主线程暂停/切项时取消；renderer提前disabled本身可能就是故障，不能永久排除。
+                if (outputProbe.stillStalled(failure)) {
+                    // 这是当前播放项的健康错误；TYPE_RENDERER会被SDK归因到预读项并强制跳集。
+                    throw ExoPlaybackException.createForUnexpected(
+                        IllegalStateException("Playback position advanced without audio output"),
+                        ERROR_CODE_AUDIO_OUTPUT_STALLED,
+                    )
+                }
+            }
+
             override fun getDurationToProgressUs(
                 positionUs: Long,
                 elapsedRealtimeUs: Long,
@@ -51,7 +79,9 @@ internal class PlaybackRenderersFactory(
                 started = state == Renderer.STATE_STARTED,
                 ended = isEnded,
             )
-        })
+        }
+        outputProbe.renderer = renderer
+        out.add(renderer)
     }
 
     override fun buildAudioSink(
@@ -66,6 +96,19 @@ internal class PlaybackRenderersFactory(
             .setAudioProcessors(arrayOf(effects))
             .build(),
     ) {
+        override fun getCurrentPositionUs(sourceEnded: Boolean): Long =
+            super.getCurrentPositionUs(sourceEnded).also(outputProbe::position)
+
+        override fun flush() {
+            outputProbe.reset()
+            super.flush()
+        }
+
+        override fun reset() {
+            outputProbe.reset()
+            super.reset()
+        }
+
         override fun supportsFormat(format: Format): Boolean = getFormatSupport(format) != AudioSink.SINK_FORMAT_UNSUPPORTED
         override fun getFormatSupport(format: Format): Int =
             if (format.sampleMimeType == MimeTypes.AUDIO_RAW) super.getFormatSupport(format)

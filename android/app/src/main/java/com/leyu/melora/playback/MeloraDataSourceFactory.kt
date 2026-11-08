@@ -6,6 +6,7 @@ import androidx.core.net.toUri
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.ResolvingDataSource
 import com.leyu.melora.playback.local.LocalMediaIoCoordinator
 import com.leyu.melora.playback.local.LocalMediaStore
@@ -101,15 +102,22 @@ class MeloraDataSourceFactory(context: Context, base: DataSource.Factory) : Data
     private val appContext = context.applicationContext
     private val baseFactory = base
 
-    override fun createDataSource(): DataSource = ResolvingDataSource(
-        // 本地 file/content 读租约覆盖 open→close；http 仍直接走网络缓存链路。
-        LocalMediaIoCoordinator.wrap(
-            DefaultDataSource(appContext, baseFactory.createDataSource()),
-            appContext,
-        ),
-    ) { dataSpec ->
+    override fun createDataSource(): DataSource {
+        lateinit var diagnostics: PlaybackDataDiagnostics
+        val resolving = ResolvingDataSource(
+            // 本地 file/content 读租约覆盖 open→close；http 仍直接走网络缓存链路。
+            LocalMediaIoCoordinator.wrap(
+                DefaultDataSource(appContext, baseFactory.createDataSource()),
+                appContext,
+            ),
+        ) { dataSpec -> resolve(dataSpec).also(diagnostics::resolved) }
+        diagnostics = PlaybackDataDiagnostics(resolving)
+        return diagnostics
+    }
+
+    private fun resolve(dataSpec: DataSpec): DataSpec {
         val uri = dataSpec.uri
-        if (uri.scheme != "melora") return@ResolvingDataSource dataSpec
+        if (uri.scheme != "melora") return dataSpec
         val uid = uri.pathSegments.lastOrNull() ?: throw IOException("无效曲目地址")
         val track = TrackRegistry.get(uid) ?: throw IOException("曲目信息缺失")
 
@@ -119,7 +127,7 @@ class MeloraDataSourceFactory(context: Context, base: DataSource.Factory) : Data
             val localUri = local?.uri ?: track.raw?.optString("localUri")?.takeIf(String::isNotBlank)
                 ?: throw FileNotFoundException("本地文件不存在或索引已失效")
             TrackRegistry.notifyResolved(uid, local?.playbackQuality ?: "local", "localmedia", localFile = local)
-            return@ResolvingDataSource dataSpec.buildUpon().setUri(localUri.toUri()).setKey(null).build()
+            return dataSpec.buildUpon().setUri(localUri.toUri()).setKey(null).build()
         }
 
         val savedDownload = DownloadCenter.saved(uid)
@@ -128,7 +136,7 @@ class MeloraDataSourceFactory(context: Context, base: DataSource.Factory) : Data
         if (savedDownload == null) {
             localMatch?.let { local ->
                 TrackRegistry.notifyResolved(uid, local.playbackQuality, "localmedia", localFile = local)
-                return@ResolvingDataSource dataSpec.buildUpon().setUri(local.uri.toUri()).setKey(null).build()
+                return dataSpec.buildUpon().setUri(local.uri.toUri()).setKey(null).build()
             }
         }
         // 下载记录不再无条件压过本地文件：只有下载规格已知且本地规格明确更高才切本地。
@@ -136,7 +144,7 @@ class MeloraDataSourceFactory(context: Context, base: DataSource.Factory) : Data
             savedDownload.audioSpec?.let { LocalMediaStore.isHigherQuality(localMatch, it) } == true
         ) {
             TrackRegistry.notifyResolved(uid, localMatch.playbackQuality, "localmedia", localFile = localMatch)
-            return@ResolvingDataSource dataSpec.buildUpon().setUri(localMatch.uri.toUri()).setKey(null).build()
+            return dataSpec.buildUpon().setUri(localMatch.uri.toUri()).setKey(null).build()
         }
         if (savedDownload != null) {
             // 读取失败也必须保留原地址，播放错误处理才能区分永久删除与目录暂时失权。
@@ -147,7 +155,7 @@ class MeloraDataSourceFactory(context: Context, base: DataSource.Factory) : Data
                 throw FileNotFoundException("本地文件不存在或目录权限已失效，请检查下载目录")
             }
             TrackRegistry.notifyResolved(uid, "local", "local", localFile = LocalMediaStore.findByUri(local.toString()), downloadUri = local.toString())
-            return@ResolvingDataSource dataSpec.buildUpon().setUri(local).setKey(null).build()
+            return dataSpec.buildUpon().setUri(local).setKey(null).build()
         }
         val song = OnlineSong.from(track.raw) ?: throw IOException("曲目信息缺失")
         // 兼容旧队列的q参数，但不再让它覆盖用户当前设置。
@@ -155,7 +163,7 @@ class MeloraDataSourceFactory(context: Context, base: DataSource.Factory) : Data
 
         AudioCacheStore.cachedPlaybackResource(appContext, song, preferredQuality)?.let { cached ->
             TrackRegistry.notifyResolved(uid, cached.actualQuality, audioResourceId(cached.key), preferredQuality, cached.sourceIdentity.substringBefore('_'), fromCompleteCache = true)
-            return@ResolvingDataSource AudioCacheStore.applyToDataSpec(cached, dataSpec)
+            return AudioCacheStore.applyToDataSpec(cached, dataSpec)
         }
 
         // 确认本次未命中缓存后再撤销历史结果；不在切歌时清空已预加载的来源。
@@ -171,6 +179,6 @@ class MeloraDataSourceFactory(context: Context, base: DataSource.Factory) : Data
         }
         TrackRegistry.notifyResolved(uid, resolved.quality, resolved.resourceId, preferredQuality, resolved.song.source)
         val resource = AudioCacheStore.registerResolved(appContext, uid, preferredQuality, resolved)
-        AudioCacheStore.applyToDataSpec(resource, dataSpec)
+        return AudioCacheStore.applyToDataSpec(resource, dataSpec)
     }
 }

@@ -106,8 +106,15 @@ internal class RebufferRecovery {
 internal class PlaybackErrorRecovery {
     private val attempted = mutableSetOf<String>()
     private var startedAtMs: Long? = null
+    private var outputRestarted = false
 
-    fun reset() { attempted.clear(); startedAtMs = null }
+    fun reset() { attempted.clear(); startedAtMs = null; outputRestarted = false }
+
+    /** 首次无输出先重建同一资源，不能凭缺少输出就认定磁盘缓存损坏。 */
+    fun allowOutputRestart(): Boolean = if (outputRestarted) false else {
+        outputRestarted = true
+        true
+    }
 
     fun allowRetry(resourceId: String, nowMs: Long, autoSwitch: Boolean): Boolean {
         val started = startedAtMs ?: nowMs.also { startedAtMs = it }

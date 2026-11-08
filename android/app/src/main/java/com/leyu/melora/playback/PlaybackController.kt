@@ -248,7 +248,6 @@ object PlaybackController {
                     publish(resetPosition = positionDiscontinuity)
                     positionDiscontinuity = false
                     updateRecentPlayback(player)
-                    if (player.playbackState == Player.STATE_READY) consecutiveErrors = 0
                     val timelineChanged = events.contains(Player.EVENT_TIMELINE_CHANGED)
                     if (timelineChanged) previousMediaId = player.currentMediaItem?.mediaId
                     if (timelineChanged || events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED)) {
@@ -527,6 +526,11 @@ object PlaybackController {
         }
     }
 
+    /** READY只能证明准备完成；真正持续输出后才清除连续失败，避免静音章节耗尽整个队列。 */
+    internal fun onAudioOutputProgress(uid: String) {
+        if (controller?.currentMediaItem?.mediaId == uid) consecutiveErrors = 0
+    }
+
     private fun handlePlayerError(error: PlaybackException) {
         interruptRecovery()
         val player = controller ?: return
@@ -560,6 +564,12 @@ object PlaybackController {
             // 已暂停时仍可能收到在途读取的错误；不能因重试/跳曲覆盖用户刚发出的暂停。
             if (!player.playWhenReady) {
                 _state.value = _state.value.copy(message = "加载失败，点击播放重试")
+                return@launch
+            }
+            if (error.errorCode == ERROR_CODE_AUDIO_OUTPUT_STALLED && errorRecovery.allowOutputRestart()) {
+                // 健康检查已通过renderer报错进入IDLE；prepare会真正重建，且保留队列、位置与播放意图。
+                _state.value = _state.value.copy(message = "音频输出未启动，正在重新准备播放…")
+                player.prepare()
                 return@launch
             }
             val snapshot = _state.value

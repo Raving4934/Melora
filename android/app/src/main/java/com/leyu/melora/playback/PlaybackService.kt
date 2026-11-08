@@ -43,6 +43,7 @@ import kotlinx.coroutines.launch
 class PlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
     private var playbackProgress: PlaybackProgress? = null
+    private var audioOutputMonitor: AudioOutputMonitor? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val notificationId = notificationIds.incrementAndGet()
 
@@ -73,13 +74,21 @@ class PlaybackService : MediaSessionService() {
             initialPreset = AudioEffects.preset(MeloraSettings.audioEffectPreset.value),
             report = AudioEffects::report,
         )
-        val player = ExoPlayer.Builder(this, PlaybackRenderersFactory(this, effects))
+        val renderers = PlaybackRenderersFactory(this, effects)
+        val player = ExoPlayer.Builder(this, renderers)
             // 接收解码就绪的即时唤醒；renderer同时保留10ms进度采样，避免逐字歌词抢跑/回退。
             .experimentalSetDynamicSchedulingEnabled(true)
             .setLoadControl(playbackLoadControl())
             .setMediaSourceFactory(DefaultMediaSourceFactory(cacheDataSourceFactory))
             .setHandleAudioBecomingNoisy(true)
             .build()
+        audioOutputMonitor = AudioOutputMonitor(player, renderers.outputProbe)
+        serviceScope.launch {
+            while (isActive) {
+                delay(500)
+                audioOutputMonitor?.check()
+            }
+        }
         player.followAudioFocusSettings(serviceScope)
         PlaybackController.sleepTimer.attach(player)
         player.applyPlayMode(MeloraSettings.musicPlayMode.value)
@@ -232,6 +241,8 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun releaseSession() {
+        audioOutputMonitor?.close()
+        audioOutputMonitor = null
         PlaybackController.sleepTimer.attach(null)
         playbackProgress?.close()
         playbackProgress = null

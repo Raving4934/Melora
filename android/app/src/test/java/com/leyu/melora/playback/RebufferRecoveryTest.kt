@@ -7,6 +7,18 @@ import org.junit.Test
 import com.leyu.melora.playback.RebufferRecovery.Action.*
 
 class RebufferRecoveryTest {
+    @Test fun missingOutputGetsOneSameResourceRestartBeforeUsingTheExistingResourceBudget() {
+        val errors = PlaybackErrorRecovery()
+        assertTrue(errors.allowOutputRestart())
+        assertFalse(errors.allowOutputRestart())
+        assertTrue(errors.allowRetry("A", 0, true))
+        assertFalse(errors.allowRetry("A", 100, true))
+        assertTrue(errors.allowRetry("B", 200, true))
+        assertFalse(errors.allowRetry("C", 300, true))
+        errors.reset()
+        assertTrue(errors.allowOutputRestart())
+    }
+
     private val policy = RebufferRecovery()
     private fun tick(time: Long, uid: String? = "song", playing: Boolean = false,
         intent: Boolean = true, buffering: Boolean = true, online: Boolean = true, switch: Boolean = true) =
