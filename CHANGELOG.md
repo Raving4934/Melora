@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-11-08
+
+### 安卓客户端
+
+【播放稳定性】
+- 修复偶发的“进度条在走却没有声音，需要切歌才恢复”：播放中持续无音频输出时会自动恢复当前曲目，保留播放进度与队列。
+
+【兼容性改进】
+- 升级构建工具与界面模糊效果组件依赖。
+
+### 提交追溯（不进入应用内日志）
+
+本次仅更新 Android 客户端，版本号 0.2.3 / versionCode 23，沿用正式签名。Web / NAS、FPK 与 Docker 本次不发布。
+完整提交区间：[android-v0.2.2...android-v0.2.3][Android 0.2.3]；正文仅归纳该区间的 Android 变更。
+
+- 静音空跑检测与音频输出恢复：[`a22a736`](https://github.com/Raving4934/Melora/commit/a22a736a723924f035f00ec02522d1f754b3e7b4)。
+- 依赖升级与 Haze 样式复用：[`ca18405`](https://github.com/Raving4934/Melora/commit/ca1840589b921d5634b7a0395d5fbfe5aa3fd637)、[`9fb67c5`](https://github.com/Raving4934/Melora/commit/9fb67c59a2d9f95aa3fd882debb74935a7ae31a0)。
+
 ## [0.2.2] - 2026-11-02
 
 ### 安卓客户端
@@ -590,7 +608,9 @@
 
 **Docker 镜像：** `ghcr.io/raving4934/melora:0.1.0`（支持 `linux/amd64`、`linux/arm64`）。
 
-[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.2...HEAD
+[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.3...HEAD
+[0.2.3]: https://github.com/Raving4934/Melora/compare/android-v0.2.2...android-v0.2.3
+[Android 0.2.3]: https://github.com/Raving4934/Melora/compare/android-v0.2.2...android-v0.2.3
 [0.2.2]: https://github.com/Raving4934/Melora/compare/android-v0.2.1...android-v0.2.2
 [Android 0.2.2]: https://github.com/Raving4934/Melora/compare/android-v0.2.1...android-v0.2.2
 [0.2.1]: https://github.com/Raving4934/Melora/compare/android-v0.2.0...android-v0.2.1
@@ -599,7 +619,7 @@
 [Android 0.2.0]: https://github.com/Raving4934/Melora/compare/android-v0.1.10...android-v0.2.0
 [0.1.10]: https://github.com/Raving4934/Melora/compare/android-v0.1.9...android-v0.1.10
 [Android 0.1.10]: https://github.com/Raving4934/Melora/compare/android-v0.1.9...android-v0.1.10
-[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.2...HEAD
+[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.3...HEAD
 [Web Unreleased]: https://github.com/Raving4934/Melora/compare/v0.1.3...HEAD
 [Web 0.1.3]: https://github.com/Raving4934/Melora/compare/v0.1.2...v0.1.3
 [Web 0.1.2]: https://github.com/Raving4934/Melora/compare/v0.1.1...v0.1.2
