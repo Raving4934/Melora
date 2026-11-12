@@ -62,7 +62,7 @@ jobs:
           cache: npm
       - uses: actions/setup-go@v7.0.0
         with:
-          go-version: '1.27.3'
+          go-version: '1.27.4'
           cache-dependency-path: apps/server/go.sum
       - uses: actions/setup-python@v7.1.0
         with:
@@ -107,7 +107,7 @@ jobs:
           cache: npm
       - uses: actions/setup-go@v7.0.0
         with:
-          go-version: '1.27.3'
+          go-version: '1.27.4'
           cache-dependency-path: apps/server/go.sum
       - run: npm ci
       - run: npx playwright install --with-deps chromium

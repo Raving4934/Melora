@@ -89,8 +89,8 @@ object CacheManager {
         CoverLoader.clear()
         val loader = SingletonImageLoader.get(context)
         clearCacheGroups(
-            "图片内存" to { loader.memoryCache?.clear(); Unit },
-            "图片磁盘" to { loader.diskCache?.clear(); Unit },
+            "图片内存" to { loader.memoryCache?.clear() },
+            "图片磁盘" to { loader.diskCache?.clear() },
             "本地封面" to { LocalTagReader.clearCoverCache(context) },
         )
     }

@@ -219,7 +219,7 @@ internal fun ApkUpdatePanel(
     val transferring = phase == ApkUpdatePhase.Downloading || phase == ApkUpdatePhase.Verifying
     val busy = transferring || phase == ApkUpdatePhase.Checking || phase == ApkUpdatePhase.PermissionRequired || phase == ApkUpdatePhase.InstallRequested
     val title = when {
-        hasUpdate -> "发现新版本 ${release?.latestVersion.orEmpty().removePrefix("android-")}"
+        hasUpdate -> "发现新版本 ${release.latestVersion.removePrefix("android-")}"
         phase == ApkUpdatePhase.Checking -> "正在检查更新"
         phase == ApkUpdatePhase.Failed -> "检查更新失败"
         release?.message == "尚未找到Android发布版本" -> "尚未找到 Android 发布版本"
@@ -257,7 +257,7 @@ internal fun ApkUpdatePanel(
                 Text(if (hasUpdate) "更新日志" else "Android 更新", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = SettingsTextMain)
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    if (hasUpdate) release?.releaseNotes.orEmpty().ifBlank { "暂无更新说明" }
+                    if (hasUpdate) release.releaseNotes.ifBlank { "暂无更新说明" }
                     else when (phase) {
                         ApkUpdatePhase.Checking -> "正在连接 GitHub 检查最新 Android 发布…"
                         ApkUpdatePhase.Failed -> "未能完成版本检查，请重试。"

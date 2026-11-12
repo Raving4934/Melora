@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-GO_VERSION = "1.27.3"
+GO_VERSION = "1.27.4"
 WORKFLOW_PATHS = (
     ROOT / ".github/workflows/ci.yml",
     ROOT / ".github/workflows/release.yml",

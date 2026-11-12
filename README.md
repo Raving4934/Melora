@@ -172,7 +172,7 @@ To mitigate security risks when running third-party scripts, Melora provides res
 
 ### Web & Server
 
-Build toolchains: Node.js 26.13.0 and Go 1.27.3. The Go module keeps a minimum of Go 1.26 and declares the preferred toolchain in `go.mod`.
+Build toolchains: Node.js 26.13.0 and Go 1.27.4. The Go module keeps a minimum of Go 1.26 and declares the preferred toolchain in `go.mod`.
 
 ```bash
 # Build frontend

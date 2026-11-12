@@ -96,7 +96,7 @@ import com.leyu.melora.playback.canonicalBookId
 import com.leyu.melora.playback.DownloadCenter
 import androidx.compose.material.icons.outlined.Replay
 import androidx.compose.material.icons.outlined.PlayArrow
-import androidx.compose.material.icons.outlined.MenuBook
+import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import com.leyu.melora.playback.MeloraSettings
@@ -648,7 +648,7 @@ fun SongMoreSheet(
                         closeSheet { onDismiss(); PlaybackController.restartBookChapter(context, song) }
                     }
                     if (book != null && onOpenBookAlbum != null) {
-                        SheetAction(Icons.Outlined.MenuBook, BrandBlue, "查看专辑") {
+                        SheetAction(Icons.AutoMirrored.Outlined.MenuBook, BrandBlue, "查看专辑") {
                             closeSheet { onDismiss(); onOpenBookAlbum(book) }
                         }
                     }

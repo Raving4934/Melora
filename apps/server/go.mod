@@ -2,11 +2,11 @@ module melora
 
 go 1.26.0
 
-toolchain go1.27.3
+toolchain go1.27.4
 
 require (
-	github.com/dop251/goja v0.0.0-20261107161106-d6eaa50db8bc
-	golang.org/x/sys v0.49.0
+	github.com/dop251/goja v0.0.0-20261110204830-f493a2b600d6
+	golang.org/x/sys v0.50.0
 	modernc.org/sqlite v1.62.0
 )
 

@@ -135,7 +135,7 @@ private fun mp3PrefixAudioSpec(prefix: ByteArray): AudioSpecification? {
         if (!extractor.sniff(input)) return null
         input.resetPeekPosition()
         val position = PositionHolder()
-        while (format == null && extractor.read(input, position) == Extractor.RESULT_CONTINUE) Unit
+        while (format == null && extractor.read(input, position) == Extractor.RESULT_CONTINUE) {}
     } catch (_: java.io.IOException) {
         // 有界前缀耗尽不等于网络读取失败；真正的输入异常已在读取前缀时原样抛出。
     } finally { extractor.release() }

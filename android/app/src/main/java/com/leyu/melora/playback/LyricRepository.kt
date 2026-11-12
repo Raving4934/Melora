@@ -445,11 +445,8 @@ private fun decodeWords(array: JSONArray?): List<LyricWord> {
 
 private fun optionalLong(obj: JSONObject, key: String): Long? {
     if (!obj.has(key) || obj.isNull(key)) return null
-    return when (val value = obj.opt(key)) {
-        is Number -> value.toLong()
-        is String -> value.trim().toLongOrNull()
-        else -> null
-    }
+    val value = obj.opt(key)
+    return (value as? Number)?.toLong() ?: (value as? String)?.trim()?.toLongOrNull()
 }
 
 private fun optionalText(obj: JSONObject, key: String): String? =
