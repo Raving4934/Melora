@@ -16,6 +16,8 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.text.TextLayoutResult
@@ -53,14 +55,31 @@ class PlaylistEditSheetTest {
             }
         }
         val entry = compose.onNodeWithText("从链接导入")
-        compose.awaitIme(entry)
+        val input = compose.onNode(hasSetTextAction())
+        // 此处验证真实键盘下的标题布局与点击，自动聚焦时序由单独用例检查。
+        compose.awaitStable(input)
+        input.performClick()
+        try {
+            compose.awaitIme(input)
+        } catch (timeout: ComposeTimeoutException) {
+            val node = runCatching { input.fetchSemanticsNode() }.getOrNull()
+            val view = (node?.root as? ViewRootForTest)?.view
+            val window = compose.runOnIdle {
+                val insets = view?.let(ViewCompat::getRootWindowInsets)
+                "windowFocused=${view?.hasWindowFocus()}, imeVisible=${insets?.isVisible(WindowInsetsCompat.Type.ime())}, " +
+                    "imeInsets=${insets?.getInsets(WindowInsetsCompat.Type.ime())}"
+            }
+            val focused = node?.config?.getOrNull(SemanticsProperties.Focused)
+            val visible = compose.onNodeWithText("新建歌单").isDisplayed()
+            throw AssertionError("真实键盘未出现。$window, inputFocused=$focused, sheetVisible=$visible", timeout)
+        }
         compose.awaitStable(entry)
         compose.onAllNodesWithText("从链接导入").assertCountEquals(1)
         compose.onNodeWithText("从链接导入歌单").assertDoesNotExist()
         compose.onNodeWithText("为喜欢的音乐留一个位置").assertIsDisplayed().assert(hasNoClickAction())
         entry.assertHasClickAction().assertTouchHeightIsEqualTo(48.dp)
         val (title, action, field) = compose.boundsInSameFrame(
-            compose.onNodeWithText("新建歌单"), entry, compose.onNode(hasSetTextAction()),
+            compose.onNodeWithText("新建歌单"), entry, input,
         )
         assertTrue("入口应位于标题右侧、名称输入框之上", action.left >= title.right && action.bottom <= field.top)
         assertEquals("入口与标题应在同一行居中对齐", title.center.y, action.center.y, 1f)
