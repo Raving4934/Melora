@@ -107,6 +107,7 @@ import com.leyu.melora.ui.common.DividerSoft
 import com.leyu.melora.ui.common.MusicShuffleIcon
 import com.leyu.melora.ui.common.PullRefreshContainer
 import com.leyu.melora.ui.common.LocalSongListState
+import com.leyu.melora.ui.common.SongPlaybackPrefix
 import com.leyu.melora.ui.common.SongMoreSheet
 import com.leyu.melora.ui.common.SongSelectionButton
 import com.leyu.melora.ui.common.SongSelectionState
@@ -693,6 +694,7 @@ internal fun LocalSongRow(
                 .padding(end = 12.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                SongPlaybackPrefix(isCurrent)
                 Text(
                     text = song.title,
                     fontSize = 15.sp,

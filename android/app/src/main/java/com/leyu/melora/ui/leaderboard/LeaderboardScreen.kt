@@ -99,9 +99,11 @@ import com.leyu.melora.ui.common.SkeletonPreviewRows
 import com.leyu.melora.ui.common.SkeletonSongList
 import com.leyu.melora.ui.common.OnlineSongRow
 import com.leyu.melora.ui.common.SongMoreSheet
+import com.leyu.melora.ui.common.SongPlaybackPrefix
 import com.leyu.melora.ui.common.TextMain
 import com.leyu.melora.ui.common.TextMuted
 import com.leyu.melora.ui.common.TextSub
+import com.leyu.melora.ui.common.isCurrentListSong
 import com.leyu.melora.ui.common.sourceAliasDisplay
 import com.leyu.melora.ui.common.toUiTracks
 import com.leyu.melora.ui.common.runCatchingCancellable
@@ -814,6 +816,7 @@ private fun BoardPeekCard(
                                             color = if (index == 0) badgeColor else TextMuted,
                                             modifier = Modifier.width(18.dp),
                                         )
+                                        SongPlaybackPrefix(isCurrentListSong(song.uid))
                                         Text(
                                             text = song.name,
                                             fontSize = 13.sp,

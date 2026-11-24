@@ -59,7 +59,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.State
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -224,6 +223,7 @@ internal class SongListState(
     val localSongs: State<List<LocalSong>>,
     val showCovers: State<Boolean>,
     val currentTrack: State<UiTrack?>,
+    val advancing: State<Boolean> = mutableStateOf(false),
 )
 
 internal val LocalSongListState = staticCompositionLocalOf<SongListState> {
@@ -234,13 +234,17 @@ internal val LocalSongListState = staticCompositionLocalOf<SongListState> {
 internal fun SongListStateProvider(content: @Composable () -> Unit) {
     val songs = LocalMediaStore.songs.collectAsStateWithLifecycle()
     val covers = MeloraSettings.showSongCovers.collectAsStateWithLifecycle()
-    val initialTrack = remember { PlaybackController.state.value.current }
+    val (initialTrack, initiallyAdvancing) = remember {
+        PlaybackController.state.value.let { it.current to it.positionAdvancing }
+    }
     val currentTrack = remember {
         PlaybackController.state.map { it.current }.distinctUntilChanged { old, new ->
             old?.uid == new?.uid && old?.artwork == new?.artwork
         }
     }.collectAsStateWithLifecycle(initialValue = initialTrack)
-    val state = remember(songs, covers, currentTrack) { SongListState(songs, covers, currentTrack) }
+    val advancing = remember { PlaybackController.state.map { it.positionAdvancing }.distinctUntilChanged() }
+        .collectAsStateWithLifecycle(initialValue = initiallyAdvancing)
+    val state = remember(songs, covers, currentTrack, advancing) { SongListState(songs, covers, currentTrack, advancing) }
     CompositionLocalProvider(LocalSongListState provides state, content = content)
 }
 
@@ -270,9 +274,7 @@ fun OnlineSongRow(
     // 本地命中后只显示本地实测徽标；位深未知时保持空白，不能拿网络目录能力冒充实测。
     val qualityBadge = if (matchedLocal != null) matchedLocal.audioSpecification.qualityBadge else song.bestQualityBadge
     val artwork = rememberOnlineSongCover(song, enabled = showCovers)
-    val highlighted by remember(isCurrent, song.uid, shared.currentTrack) {
-        derivedStateOf { isCurrent ?: (shared.currentTrack.value?.uid == song.uid) }
-    }
+    val highlighted = isCurrent ?: isCurrentListSong(song.uid)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -291,6 +293,7 @@ fun OnlineSongRow(
                 .padding(end = 12.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                SongPlaybackPrefix(highlighted)
                 Text(
                     text = song.name,
                     fontSize = 15.sp,

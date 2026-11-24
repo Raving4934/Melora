@@ -32,7 +32,9 @@ import com.leyu.melora.playback.sdk.BoardItem
 import com.leyu.melora.playback.sdk.OnlineCache
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.sdk.SongPage
+import com.leyu.melora.ui.awaitStable
 import com.leyu.melora.ui.common.SkeletonLeaderboard
+import com.leyu.melora.ui.common.SongListStateProvider
 import com.leyu.melora.ui.theme.MeloraTheme
 import org.json.JSONObject
 import org.junit.After
@@ -159,7 +161,7 @@ class LeaderboardResponsiveLayoutInstrumentedTest {
                         .padding(start = sidebarWidth.value)) {
                         if (visible.value) {
                             // 骨架只叠层测量，循环切换时保留真实页面及已加载的数据。
-                            LeaderboardScreen()
+                            SongListStateProvider { LeaderboardScreen() }
                             if (skeleton.value) {
                                 BoxWithConstraints(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
                                     SkeletonLeaderboard(
@@ -189,11 +191,15 @@ class LeaderboardResponsiveLayoutInstrumentedTest {
     }
 
     private fun assertThirdFeaturedBoardStaysAnchored(itemIndex: Int, resize: () -> Unit) {
-        compose.onNode(hasScrollToIndexAction()).performScrollToIndex(itemIndex)
+        val list = compose.onNode(hasScrollToIndexAction())
         val preview = compose.onNodeWithText(songTitle(2, 0), useUnmergedTree = true)
+        list.performScrollToIndex(itemIndex)
+        compose.awaitStable(preview)
         val before = preview.assertIsDisplayed().layoutBoundsInRootPx()
+        val listWidth = list.layoutBoundsInRootPx().width
         compose.runOnIdle(resize)
-        compose.waitForIdle()
+        compose.waitUntil(5_000) { list.layoutBoundsInRootPx().width != listWidth }
+        compose.awaitStable(preview)
         val after = preview.assertIsDisplayed().layoutBoundsInRootPx()
         assertEquals("变列后第三张主榜仍应停留在相同视口位置，不能跳到垂类榜单", before.top, after.top, 1f)
     }
@@ -220,7 +226,7 @@ class LeaderboardResponsiveLayoutInstrumentedTest {
     /** 滚动视口和系统区会裁切 boundsInRoot；几何对比必须使用完整布局边界，单位仍为 px。 */
     private fun SemanticsNodeInteraction.layoutBoundsInRootPx(): Rect {
         val node = fetchSemanticsNode()
-        return Rect(node.positionInRoot, node.size.toSize())
+        return compose.runOnIdle { Rect(node.positionInRoot, node.size.toSize()) }
     }
 
     private fun songTitle(board: Int, song: Int) = "预览$board-$song" + "很长的歌曲名称".repeat(10)

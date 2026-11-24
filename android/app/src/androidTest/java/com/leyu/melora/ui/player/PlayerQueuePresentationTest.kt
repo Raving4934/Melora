@@ -12,6 +12,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.leyu.melora.playback.PlayMode
 import com.leyu.melora.playback.PlayerUiState
 import com.leyu.melora.playback.UiTrack
+import com.leyu.melora.ui.boundsInSameFrame
 import com.leyu.melora.ui.theme.MeloraTheme
 import org.junit.Assert.*
 import org.junit.Rule
@@ -46,15 +47,23 @@ class PlayerQueuePresentationTest {
 
     private fun row(index: Int) = compose.onNodeWithTag("queue-track-$index")
     private fun list() = compose.onNodeWithTag("playback-queue-list")
-    private fun bounds(node: SemanticsNodeInteraction): Rect = node.fetchSemanticsNode().boundsInRoot
+    private fun offsetFromListTop(index: Int): Float {
+        val (listBounds, rowBounds) = compose.boundsInSameFrame(list(), row(index))
+        return rowBounds.top - listBounds.top
+    }
+
     private fun select(index: Int) {
         state.value = state.value.copy(current = state.value.queue[index], currentIndex = index)
     }
     private fun assertCurrentAtTop(index: Int) {
         row(index).assertIsDisplayed().assertIsSelected()
-        assertEquals("当前项应位于列表可见顶部", bounds(list()).top, bounds(row(index)).top, 1f)
+        assertEquals("当前项应位于列表可见顶部", 0f, offsetFromListTop(index), 1f)
     }
-    private fun scrollValue(): Float = list().fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
+
+    private fun scrollValue(): Float {
+        val range = list().fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+        return compose.runOnIdle { range.value() }
+    }
 
     @Test fun firstOpenLargeQueueShowsCurrentInsteadOfQueueBeginning() {
         show(index = 330)
@@ -66,15 +75,14 @@ class PlayerQueuePresentationTest {
     @Test fun nextSongScrollsContinuouslyRatherThanJumpingOrReplacingTheList() {
         show()
         assertCurrentAtTop(30)
-        val startTop = bounds(row(31)).top
+        val startOffset = offsetFromListTop(31)
         compose.mainClock.autoAdvance = false
         try {
             compose.runOnUiThread { select(31) }
             compose.mainClock.advanceTimeBy(96)
-            val middleTop = bounds(row(31)).top
-            val targetTop = bounds(list()).top
-            assertTrue("中间帧必须向上移动: start=$startTop middle=$middleTop", middleTop < startTop - 1f)
-            assertTrue("中间帧尚未瞬移到终点: middle=$middleTop target=$targetTop", middleTop > targetTop + 1f)
+            val middleOffset = offsetFromListTop(31)
+            assertTrue("中间帧必须向上移动: start=$startOffset middle=$middleOffset", middleOffset < startOffset - 1f)
+            assertTrue("中间帧尚未瞬移到终点: middle=$middleOffset", middleOffset > 1f)
             compose.mainClock.advanceTimeBy(1_000)
             assertCurrentAtTop(31)
         } finally {
@@ -158,7 +166,8 @@ class PlayerQueuePresentationTest {
         }
         assertCurrentAtTop(30)
         compose.onNodeWithText("559 / 589").assertIsDisplayed()
-        assertTrue(bounds(row(29)).top > bounds(row(30)).top)
+        val (shuffledCurrent, shuffledNext) = compose.boundsInSameFrame(row(30), row(29))
+        assertTrue(shuffledNext.top > shuffledCurrent.top)
         row(29).performClick()
         compose.runOnIdle { assertEquals("必须传媒体索引，不能传展示行559", 29, selectedIndex) }
         compose.onNodeWithTag("queue-remove-29").performClick()
@@ -166,7 +175,8 @@ class PlayerQueuePresentationTest {
         compose.runOnIdle { state.value = state.value.copy(mode = PlayMode.List, queueOrder = tracks.indices.toList()) }
         assertCurrentAtTop(30)
         compose.onNodeWithText("31 / 589").assertIsDisplayed()
-        assertTrue(bounds(row(31)).top > bounds(row(30)).top)
+        val (orderedCurrent, orderedNext) = compose.boundsInSameFrame(row(30), row(31))
+        assertTrue(orderedNext.top > orderedCurrent.top)
     }
 
     @Test fun removingAnEarlierSongKeepsCurrentIdentityAndViewport() {
@@ -182,15 +192,39 @@ class PlayerQueuePresentationTest {
 
     @Test fun repeatedTrackIdsRemainDistinctClickableQueueEntries() {
         val duplicate = UiTrack("repeated", "同一歌曲", "测试歌手", "专辑")
-        show(index = 0, queue = listOf(duplicate, duplicate, tracks[2]))
+        val currentBars = hasContentDescription("当前曲目")
+        val playingBars = hasContentDescription("正在播放")
+        fun marker(index: Int, status: SemanticsMatcher) =
+            compose.onNode(status and hasAnyAncestor(hasTestTag("queue-track-$index")), useUnmergedTree = true)
+        fun markerBoundsInRow(index: Int, status: SemanticsMatcher): Rect {
+            val (rowBounds, markerBounds) = compose.boundsInSameFrame(row(index), marker(index, status).assertIsDisplayed())
+            return markerBounds.translate(-rowBounds.left, -rowBounds.top)
+        }
+
+        show(index = 0, motion = false, queue = listOf(duplicate, duplicate, tracks[2]))
         row(0).assertIsSelected()
         row(1).assertIsNotSelected().performClick()
         compose.runOnIdle { assertEquals(1, selectedIndex) }
         compose.onNodeWithTag("queue-remove-1").performClick()
         compose.runOnIdle { assertEquals(1, removedIndex) }
+
+        val markerBounds = markerBoundsInRow(0, currentBars)
+        compose.runOnIdle { state.value = state.value.copy(playing = true, buffering = true) }
+        marker(0, currentBars).assertIsDisplayed()
+        marker(0, playingBars).assertDoesNotExist()
+        compose.runOnIdle { state.value = state.value.copy(buffering = false, positionAdvancing = true) }
+        assertEquals(markerBounds, markerBoundsInRow(0, playingBars))
+        compose.onAllNodes(currentBars or playingBars, useUnmergedTree = true).assertCountEquals(1)
+
         compose.runOnIdle { select(1) }
         row(1).assertIsDisplayed().assertIsSelected()
         row(0).assertIsNotSelected()
+        marker(1, playingBars).assertIsDisplayed()
+        marker(0, currentBars or playingBars).assertDoesNotExist()
+
+        compose.runOnIdle { state.value = state.value.copy(playing = false, positionAdvancing = false) }
+        marker(1, currentBars).assertIsDisplayed()
+        marker(1, playingBars).assertDoesNotExist()
     }
 
     @Test fun disabledMotionSnapsToCurrentAndHiddenChangesAreAlignedOnEntry() {

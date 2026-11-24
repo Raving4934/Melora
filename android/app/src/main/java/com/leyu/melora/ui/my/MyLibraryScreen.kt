@@ -170,12 +170,14 @@ import com.leyu.melora.ui.common.PlaylistDetailContent
 import com.leyu.melora.ui.common.SheetAction
 import com.leyu.melora.ui.common.SongArtwork
 import com.leyu.melora.ui.common.SongMoreSheet
+import com.leyu.melora.ui.common.SongPlaybackPrefix
 import com.leyu.melora.ui.leaderboard.BoardDetailContent
 import com.leyu.melora.ui.leaderboard.boardPlatforms
 import com.leyu.melora.ui.common.TextMain
 import com.leyu.melora.ui.common.TextTabs
 import com.leyu.melora.ui.common.TextMuted
 import com.leyu.melora.ui.common.TextSub
+import com.leyu.melora.ui.common.isCurrentListSong
 import com.leyu.melora.ui.common.rememberOnlineSongCover
 import com.leyu.melora.ui.common.toUiTracks
 import com.leyu.melora.ui.player.SongsCollection
@@ -993,6 +995,7 @@ private fun PlaylistListRow(
     seed: String,
     fallback: ImageVector,
     onClick: () -> Unit,
+    titlePrefix: @Composable () -> Unit = {},
     trailing: (@Composable () -> Unit)? = null,
 ) {
     Row(
@@ -1017,14 +1020,17 @@ private fun PlaylistListRow(
         }
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                name,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                color = TextMain,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                titlePrefix()
+                Text(
+                    name,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = TextMain,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             Text(
                 meta,
                 fontSize = 11.sp,
@@ -1518,6 +1524,7 @@ private fun BookProgramRow(
         seed = song.uid,
         fallback = Icons.Outlined.Headphones,
         onClick = onClick,
+        titlePrefix = { SongPlaybackPrefix(isCurrentListSong(song.uid)) },
         trailing = {
             IconButton(onClick = onMore, modifier = Modifier.size(34.dp)) {
                 Icon(Icons.Outlined.MoreVert, contentDescription = "更多", tint = TextMuted, modifier = Modifier.size(18.dp))

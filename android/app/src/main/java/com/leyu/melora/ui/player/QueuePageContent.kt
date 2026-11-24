@@ -13,6 +13,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -65,6 +66,7 @@ import androidx.compose.ui.unit.sp
 import com.leyu.melora.playback.PlayMode
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.PlayerUiState
+import com.leyu.melora.ui.common.PlaybackBars
 import com.leyu.melora.ui.common.SongArtwork
 
 // 表头和单曲行共享右侧操作槽，清除文字与移除图标中心保持同轴。
@@ -273,9 +275,9 @@ fun QueuePageContent(
             ) {
                 items(displayOrder, key = { rowKeys[it] }) { index ->
                     val track = state.queue[index]
-                    val isPlaying = index == state.currentIndex
+                    val isCurrent = index == state.currentIndex
                     val selectionColor by animateColorAsState(
-                        if (isPlaying) LocalPlayerColors.current.queueSelected else Color.Transparent,
+                        if (isCurrent) LocalPlayerColors.current.queueSelected else Color.Transparent,
                         if (motionEnabled) tween(160) else snap(), label = "queueSelection",
                     )
                     Surface(
@@ -289,20 +291,32 @@ fun QueuePageContent(
                                 fadeOutSpec = if (motionEnabled) tween(100) else null,
                             )
                             .testTag("queue-track-$index")
-                            .semantics { selected = isPlaying },
+                            .semantics { selected = isCurrent },
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = QueueContentInset, vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = track.title,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = FullPlayerTextPrimary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    if (isCurrent) {
+                                        PlaybackBars(
+                                            advancing = state.positionAdvancing,
+                                            color = LocalPlayerColors.current.accentSoft,
+                                            motionEnabled = isVisible && motionEnabled,
+                                        )
+                                    }
+                                    Text(
+                                        text = track.title,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = FullPlayerTextPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
                                 Text(
                                     text = track.artist,
                                     style = MaterialTheme.typography.bodySmall,

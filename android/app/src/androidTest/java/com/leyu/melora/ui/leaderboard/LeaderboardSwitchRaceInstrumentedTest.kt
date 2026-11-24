@@ -16,6 +16,7 @@ import com.leyu.melora.playback.sdk.BoardItem
 import com.leyu.melora.playback.sdk.MusicSdkEngine
 import com.leyu.melora.playback.sdk.OnlineCache
 import com.leyu.melora.playback.sdk.SlotLoadBalancer
+import com.leyu.melora.ui.common.SongListStateProvider
 import com.leyu.melora.ui.theme.MeloraTheme
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -104,7 +105,7 @@ class LeaderboardSwitchRaceInstrumentedTest {
 
                 compose.setContent {
                     MeloraTheme {
-                        if (visible.value) LeaderboardScreen()
+                        if (visible.value) SongListStateProvider { LeaderboardScreen() }
                     }
                 }
 
