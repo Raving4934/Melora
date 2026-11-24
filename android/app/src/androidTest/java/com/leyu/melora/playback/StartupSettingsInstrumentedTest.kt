@@ -145,13 +145,13 @@ class StartupSettingsInstrumentedTest {
         assertEquals(StartupPage.LocalSongs, MeloraSettings.startupPage.value)
         MeloraSettings.updateLastTab(7)
         MeloraSettings.updateRestoreLastPage(false)
-        MeloraSettings.updateStartupPage(StartupPage.Audiobooks)
-        assertEquals(4, context.settingsPrefs.getInt(MeloraSettings.KEY_STARTUP_TAB, -1))
+        MeloraSettings.updateStartupPage(StartupPage.Discover)
+        assertEquals(2, context.settingsPrefs.getInt(MeloraSettings.KEY_STARTUP_TAB, -1))
         MeloraSettings.startupPage.value = StartupPage.LocalSongs
         initializedField.setBoolean(null, false)
         MeloraSettings.init(context)
-        assertEquals(StartupPage.Audiobooks, MeloraSettings.startupPage.value)
-        assertEquals(4, initialTab(hasSavedState = false))
+        assertEquals(StartupPage.Discover, MeloraSettings.startupPage.value)
+        assertEquals(2, initialTab(hasSavedState = false))
         assertEquals(7, initialTab(hasSavedState = true))
     }
 

@@ -33,7 +33,7 @@ class StartupPageSettingInstrumentedTest {
 
     private fun hasRadioRole() = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.RadioButton)
 
-    @Test fun menuShowsAllSixPagesAndPersistsTheChosenPage() {
+    @Test fun menuShowsAllStartupPagesAndKeepsDiscoverSelected() {
         val selected = mutableStateOf(StartupPage.LocalSongs)
         compose.setContent {
             MeloraTheme {
@@ -44,18 +44,18 @@ class StartupPageSettingInstrumentedTest {
         }
         fun open() {
             compose.onNodeWithText("启动页面").performSemanticsAction(SemanticsActions.OnClick)
-            compose.waitUntil { compose.onAllNodes(hasText("听书") and hasRadioRole()).fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil { compose.onAllNodes(hasText("发现") and hasRadioRole()).fetchSemanticsNodes().isNotEmpty() }
         }
-        compose.onNodeWithText("听书").assertDoesNotExist()
+        compose.onNodeWithText("发现").assertDoesNotExist()
         open()
         StartupPage.entries.forEach { page ->
             compose.onNode(hasText(page.label) and hasRadioRole()).assertIsDisplayed()
         }
         compose.onNode(hasText("本地歌曲") and isSelected()).assertIsSelected()
-        compose.onNode(hasText("听书") and hasRadioRole()).performSemanticsAction(SemanticsActions.OnClick)
-        compose.waitUntil { selected.value == StartupPage.Audiobooks && compose.onAllNodes(hasRadioRole()).fetchSemanticsNodes().isEmpty() }
+        compose.onNode(hasText("发现") and hasRadioRole()).performSemanticsAction(SemanticsActions.OnClick)
+        compose.waitUntil { selected.value == StartupPage.Discover && compose.onAllNodes(hasRadioRole()).fetchSemanticsNodes().isEmpty() }
         open()
-        compose.onNode(hasText("听书") and isSelected()).assertIsSelected()
+        compose.onNode(hasText("发现") and isSelected()).assertIsSelected()
     }
 
     @Test fun menuOpensOnTheAvailableSideAndBackDismissesIt() {

@@ -3,6 +3,7 @@ package com.leyu.melora.startup
 internal enum class StartupPage(val tab: Int, val label: String) {
     Search(0, "搜索"),
     Rankings(1, "排行榜"),
+    Discover(2, "发现"),
     Playlists(3, "歌单"),
     Audiobooks(4, "听书"),
     LocalSongs(5, "本地歌曲"),
