@@ -49,34 +49,27 @@ object DownloadCenter {
         _records.value = retainActiveAndRecentFinished(loaded.map(::restoreInterrupted))
     }
 
-    fun start(song: OnlineSong, detail: String) = begin(song.uid, song, detail)
-
     /** 任务 ID 与解析后的歌曲快照分离；本地歌曲匹配在线资源后仍保持同一条下载记录。 */
-    fun start(id: String, song: OnlineSong, detail: String, upgradeFrom: LocalSong? = null) =
-        begin(id, song, detail, upgradeFrom = upgradeFrom)
-
-    /** 由下载工作协程调用：先持久化排队状态，再等待并发许可。 */
-    fun queued(id: String, song: OnlineSong, detail: String = "等待下载…") = begin(id, song, detail)
-
-    private fun begin(id: String, song: OnlineSong, detail: String, upgradeFrom: LocalSong? = null) = update(persist = true) { list ->
+    fun start(song: OnlineSong, detail: String, id: String = song.uid, upgradeFrom: LocalSong? = null) = update(persist = true) { list ->
         val previous = list.firstOrNull { it.id == id }
         val saved = previous?.takeIf { it.hasSavedResource && hasResourceAddress(it.fileName, it.savedUri) }
-        listOf(
-            Record(
-                id = id,
-                name = song.name,
-                song = song,
-                status = Status.Downloading,
-                percent = 0,
-                detail = detail,
-                fileName = saved?.fileName,
-                updatedAt = System.currentTimeMillis(),
-                savedUri = saved?.savedUri,
-                hasSavedResource = saved != null,
-                audioSpec = saved?.audioSpec,
-                upgradeFrom = upgradeFrom,
-            ),
-        ) + list.filterNot { it.id == id }
+        val record = Record(
+            id = id,
+            name = song.name,
+            song = song,
+            status = Status.Downloading,
+            percent = 0,
+            detail = detail,
+            fileName = saved?.fileName,
+            updatedAt = previous?.updatedAt ?: 0L,
+            savedUri = saved?.savedUri,
+            hasSavedResource = saved != null,
+            audioSpec = saved?.audioSpec,
+            upgradeFrom = upgradeFrom,
+        )
+        // 已在准备阶段且歌曲未变，避免仅因时钟推进而改写整个记录文件。
+        if (record == previous) list
+        else listOf(record.copy(updatedAt = System.currentTimeMillis())) + list.filterNot { it.id == id }
     }
 
     /** 返回仍有已保存资源地址的记录；任务失败/中断不影响本地资源可读性。 */

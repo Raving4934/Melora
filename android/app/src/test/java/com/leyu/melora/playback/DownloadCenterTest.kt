@@ -16,6 +16,38 @@ import org.junit.Test
 
 class DownloadCenterTest {
     @Test
+    fun repeatedPreparationDoesNotWriteOrReorderAnotherActiveTask() {
+        val directory = Files.createTempDirectory("melora-download-prepare").toFile()
+        val fileField = DownloadCenter.javaClass.getDeclaredField("file").apply { isAccessible = true }
+        val records = DownloadCenter.records as MutableStateFlow<List<DownloadCenter.Record>>
+        val previousRecords = records.value
+        val previousFile = fileField.get(DownloadCenter)
+        val storage = File(directory, "downloads.json")
+        val song = OnlineSong(songJson(null))
+        val other = OnlineSong(songJson(null).put("songmid", "another"))
+        try {
+            records.value = emptyList()
+            fileField.set(DownloadCenter, storage)
+            assertTrue(DownloadCenter.start(song, "等待下载…"))
+            assertTrue(DownloadCenter.start(song, "准备下载…"))
+            assertTrue(DownloadCenter.start(other, "等待下载…"))
+            val previous = records.value
+            val saved = storage.readText()
+            val backup = File(directory, "downloads.json.bak").readText()
+            assertTrue(File(directory, "downloads.json.tmp").mkdir())
+
+            assertTrue(DownloadCenter.start(song, "准备下载…"))
+            assertSame(previous, records.value)
+            assertEquals(saved, storage.readText())
+            assertEquals(backup, File(directory, "downloads.json.bak").readText())
+        } finally {
+            fileField.set(DownloadCenter, previousFile)
+            records.value = previousRecords
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun failedDoneCommitKeepsPreviousRecordAcrossRestartAndCanBeRetried() {
         val directory = Files.createTempDirectory("melora-download-record-commit").toFile()
         val fileField = DownloadCenter.javaClass.getDeclaredField("file").apply { isAccessible = true }
@@ -32,9 +64,9 @@ class DownloadCenterTest {
         try {
             records.value = emptyList()
             fileField.set(DownloadCenter, storage)
-            DownloadCenter.start(id, song, "旧文件")
+            DownloadCenter.start(song, "旧文件", id = id)
             DownloadCenter.done(id, "旧文件完成", oldAudio.name, oldUri)
-            DownloadCenter.start(id, song, "升级中")
+            DownloadCenter.start(song, "升级中", id = id)
             val inFlight = DownloadCenter.records.value.single { it.id == id }
             val durableInFlight = storage.readText()
 
@@ -118,14 +150,14 @@ class DownloadCenterTest {
             1000, 1000, "audio/flac", 44100, -1, 0, 0, folder = "/fixture", bitDepth = 16)
         val taskId = "upgrade-record-test"
         try {
-            DownloadCenter.start(taskId, OnlineSong(songJson(null)), "下载", local)
+            DownloadCenter.start(OnlineSong(songJson(null)), "下载", id = taskId, upgradeFrom = local)
             DownloadCenter.paused(taskId)
             val record = DownloadCenter.records.value.first { it.id == taskId }
             val restored = DownloadCenter.recordFromJson(DownloadCenter.recordToJson(record))!!
             assertEquals(taskId, restored.id)
             assertEquals(local, restored.upgradeFrom)
             assertEquals(DownloadCenter.Status.Paused, restored.status)
-            DownloadCenter.start(taskId, OnlineSong(songJson(null)), "普通下载")
+            DownloadCenter.start(OnlineSong(songJson(null)), "普通下载", id = taskId)
             assertNull(DownloadCenter.records.value.first { it.id == taskId }.upgradeFrom)
         } finally { DownloadCenter.remove(taskId) }
     }
@@ -134,11 +166,11 @@ class DownloadCenterTest {
         val id = "upgrade-restore-test"
         val otherId = "upgrade-restore-other"
         try {
-            DownloadCenter.start(id, OnlineSong(songJson(null)), "旧记录")
+            DownloadCenter.start(OnlineSong(songJson(null)), "旧记录", id = id)
             DownloadCenter.done(id, "完成", "old.flac", "file:///fixture/old.flac")
             val old = DownloadCenter.records.value.first { it.id == id }
-            DownloadCenter.start(id, OnlineSong(songJson(null)), "本次任务")
-            DownloadCenter.start(otherId, OnlineSong(songJson(null)), "另一首")
+            DownloadCenter.start(OnlineSong(songJson(null)), "本次任务", id = id)
+            DownloadCenter.start(OnlineSong(songJson(null)), "另一首", id = otherId)
             DownloadCenter.restoreRecord(id, old)
             assertEquals(old, DownloadCenter.records.value.first { it.id == id })
             assertTrue(DownloadCenter.records.value.any { it.id == otherId })
@@ -153,7 +185,7 @@ class DownloadCenterTest {
         val taskId = "local_task-download-center"
         val resolved = OnlineSong(songJson(null).put("source", "kw").put("songmid", "resolved-online"))
         try {
-            DownloadCenter.start(taskId, resolved, "等待下载…")
+            DownloadCenter.start(resolved, "等待下载…", id = taskId)
             DownloadCenter.progress(taskId, 38)
             DownloadCenter.paused(taskId, "已暂停")
 
@@ -177,11 +209,11 @@ class DownloadCenterTest {
         fun song(id: String) = OnlineSong(songJson(null).put("songmid", id))
 
         try {
-            DownloadCenter.start(activeId, song(activeId), "等待下载…")
-            DownloadCenter.start(pausedId, song(pausedId), "等待下载…")
+            DownloadCenter.start(song(activeId), "等待下载…", id = activeId)
+            DownloadCenter.start(song(pausedId), "等待下载…", id = pausedId)
             DownloadCenter.paused(pausedId, "已暂停")
             finishedIds.forEach { id ->
-                DownloadCenter.start(id, song(id), "下载")
+                DownloadCenter.start(song(id), "下载", id = id)
                 DownloadCenter.done(id, "完成")
             }
 
@@ -208,10 +240,10 @@ class DownloadCenterTest {
         fun song(id: String) = OnlineSong(songJson(null).put("songmid", id))
 
         try {
-            activeIds.forEach { id -> DownloadCenter.start(id, song(id), "等待下载…") }
+            activeIds.forEach { id -> DownloadCenter.start(song(id), "等待下载…", id = id) }
             pausedIds.forEach { id -> DownloadCenter.paused(id, "已暂停") }
             finishedIds.forEach { id ->
-                DownloadCenter.start(id, song(id), "下载")
+                DownloadCenter.start(song(id), "下载", id = id)
                 DownloadCenter.done(id, "完成")
             }
 
@@ -230,7 +262,7 @@ class DownloadCenterTest {
             assertTrue(restored.all { it.status == DownloadCenter.Status.Paused })
 
             val resumed = pausedIds.first()
-            DownloadCenter.start(resumed, song(resumed), "继续下载")
+            DownloadCenter.start(song(resumed), "继续下载", id = resumed)
             assertEquals(DownloadCenter.Status.Downloading, DownloadCenter.records.value.first { it.id == resumed }.status)
             assertEquals(205, DownloadCenter.records.value.count { it.id in activeIds })
         } finally {

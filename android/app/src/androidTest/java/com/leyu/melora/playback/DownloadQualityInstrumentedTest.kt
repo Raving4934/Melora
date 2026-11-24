@@ -234,7 +234,7 @@ class DownloadQualityInstrumentedTest {
     @Test fun pauseDuringFinalRegistrationCannotLeaveAnIndexForADeletedFile() = runBlocking<Unit> {
         seed("128k", "fixture-128.mp3")
         MeloraSettings.downloadQuality.value = "128k"
-        DownloadCenter.start(song.uid, song, "等待下载")
+        DownloadCenter.start(song, "等待下载", id = song.uid)
         val record = DownloadCenter.records.value.first { it.id == song.uid }
         val indexLock = requireNotNull(
             LocalMediaStore.javaClass.getDeclaredField("lock").apply { isAccessible = true }.get(LocalMediaStore),
@@ -597,7 +597,7 @@ class DownloadQualityInstrumentedTest {
         val published = requireNotNull(DownloadCenter.saved(song.uid))
         // 保留已发布文件，但回到写文件后、完成记录提交前的持久化状态。
         DownloadCenter.remove(song.uid)
-        DownloadCenter.start(song.uid, song, "升级下载", local)
+        DownloadCenter.start(song, "升级下载", id = song.uid, upgradeFrom = local)
         DownloadCenter.paused(song.uid)
         val interrupted = DownloadCenter.records.value.first { it.id == song.uid }
         assertFalse(interrupted.hasSavedResource)
@@ -705,7 +705,7 @@ class DownloadQualityInstrumentedTest {
         val local = localFixture("fixture-128.mp3")
         val id = "local_upgrade-retry"
         try {
-            DownloadCenter.start(id, song, "升级下载", local)
+            DownloadCenter.start(song, "升级下载", id = id, upgradeFrom = local)
             DownloadCenter.paused(id)
             val record = DownloadCenter.records.value.first { it.id == id }
             seed("flac24bit", "fixture-24.flac")

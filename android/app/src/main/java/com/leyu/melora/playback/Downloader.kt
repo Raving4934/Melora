@@ -277,7 +277,7 @@ object Downloader {
     ): Result<String> = runCatching {
         if (request.upgradeFrom == null) {
             val queued = updateCurrent(taskId, token) {
-                check(DownloadCenter.queued(taskId, original)) { "无法保存下载记录" }
+                check(DownloadCenter.start(original, "等待下载…", id = taskId)) { "无法保存下载记录" }
             }
             if (!queued) throw CancellationException("下载已取消")
         }
@@ -293,7 +293,9 @@ object Downloader {
         }
         slots.acquire()
         try {
-            if (localSpec == null) updateCurrent(taskId, token) { check(DownloadCenter.start(taskId, original, "准备下载…")) { "无法保存下载记录" } }
+            if (localSpec == null) updateCurrent(taskId, token) {
+                check(DownloadCenter.start(original, "准备下载…", id = taskId)) { "无法保存下载记录" }
+            }
             if (original.source == LocalSong.SOURCE) check(com.leyu.melora.playback.sdk.LxScriptPool.hasEnabledScripts(context)) {
                 SourceResolver.NO_SOURCE_MESSAGE
             }
@@ -303,7 +305,7 @@ object Downloader {
             }
             ensureCurrent(taskId, token)
             if (localSpec == null) updateCurrent(taskId, token) {
-                check(DownloadCenter.start(taskId, song, "准备下载…")) { "无法保存下载记录" }
+                check(DownloadCenter.start(song, "准备下载…", id = taskId)) { "无法保存下载记录" }
             }
             downloadToTarget(context, song, taskId, request, token, localSpec)
         } finally {
@@ -529,7 +531,7 @@ object Downloader {
                     ensureCurrent(recordId, token)
                     if (baseline != null) updateCurrent(recordId, token) {
                         tasks.getValue(recordId).recordStarted = true
-                        check(DownloadCenter.start(recordId, song, "已确认更高音质，开始下载…", request.upgradeFrom)) { "无法保存下载记录" }
+                        check(DownloadCenter.start(song, "已确认更高音质，开始下载…", id = recordId, upgradeFrom = request.upgradeFrom)) { "无法保存下载记录" }
                     }
                     updateCurrent(recordId, token) {
                         DownloadNotifications.progress(context, notificationId, baseName, null)
