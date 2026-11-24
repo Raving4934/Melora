@@ -101,7 +101,7 @@ class BookPlaybackInstrumentedTest {
             main {
                 controller.setMediaItem(item(track(100)))
                 queue.start("fixture")
-                assertTrue(queue.next())
+                assertTrue(queue.requestContinuation())
                 controller.play()
             }
             response.complete(page(2))

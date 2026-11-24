@@ -138,7 +138,9 @@ class BookPlaybackQueueTest {
         coroutineContext[Job]!!.children.toList().forEach { it.join() }
         repeat(100) { manager.check() }
         assertEquals(1, calls)
-        assertTrue(manager.next())
+        assertFalse(manager.requestContinuation { error("已确认末集，不能再次发起自动续播") })
+        assertEquals(1, calls)
+        assertTrue(manager.requestContinuation())
         await { queue.index == 1 }
         assertEquals("kw_chapter_238", queue.items[queue.index].mediaId)
         manager.stop()
@@ -293,11 +295,69 @@ class BookPlaybackQueueTest {
         val manager = manager(queue, this) { _, _ -> started.complete(Unit); response.await() }
         manager.start("fixture")
         started.await()
-        assertTrue(manager.next())
+        assertTrue(manager.requestContinuation())
         assertEquals(0, queue.index)
         response.complete(page(2))
         await { queue.index == 1 }
         assertEquals("kw_chapter_101", queue.items[1].mediaId)
+        manager.stop()
+    }
+
+    @Test fun automaticAdvanceUsesThePendingPageWhenItContainsASuccessor() = runBlocking {
+        val started = CompletableDeferred<Unit>()
+        val response = CompletableDeferred<KwBookApi.BookChapters>()
+        val queue = Queue(chapter(100))
+        val manager = manager(queue, this) { _, _ -> started.complete(Unit); response.await() }
+        manager.start("fixture")
+        started.await()
+
+        assertTrue(manager.requestContinuation { error("目录有下一章，应继续播放") })
+        assertEquals(0, queue.index)
+        response.complete(page(2))
+        await { queue.index == 1 }
+        assertEquals("kw_chapter_101", queue.items[queue.index].mediaId)
+        manager.stop()
+    }
+
+    @Test fun automaticAdvanceStopsOnceOnRealEndOrCatalogFailure() = runBlocking {
+        for (failed in listOf(false, true)) {
+            val started = CompletableDeferred<Unit>()
+            val response = CompletableDeferred<KwBookApi.BookChapters>()
+            val queue = Queue(chapter(237, end = true, more = false))
+            var unavailable = 0
+            var calls = 0
+            val manager = manager(queue, this) { _, _ -> calls++; started.complete(Unit); response.await() }
+            manager.start("fixture")
+            started.await()
+            assertTrue(manager.requestContinuation { unavailable++ })
+            val result = if (failed) KwBookApi.BookChapters(emptyList(), false) else terminalPage(3, 237)
+            response.complete(result)
+            await { unavailable == 1 }
+            repeat(3) { manager.check() }
+            assertFalse(manager.requestContinuation { unavailable++ })
+            assertEquals(1, unavailable)
+            assertEquals(1, calls)
+            assertEquals(0, queue.index)
+            manager.stop()
+        }
+    }
+
+    @Test fun pausingCancelsAutomaticAdvanceWithoutDiscardingLoadedChapters() = runBlocking {
+        val started = CompletableDeferred<Unit>()
+        val response = CompletableDeferred<KwBookApi.BookChapters>()
+        val queue = Queue(chapter(100))
+        val manager = manager(queue, this) { _, _ -> started.complete(Unit); response.await() }
+        manager.start("fixture")
+        started.await()
+        assertTrue(manager.requestContinuation { error("暂停后不应继续处理旧错误") })
+        queue.playWhenReady = false
+        manager.check()
+
+        response.complete(page(2))
+        await { queue.items.size == 101 }
+        queue.playWhenReady = true
+        manager.check()
+        assertEquals(0, queue.index)
         manager.stop()
     }
 

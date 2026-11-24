@@ -93,9 +93,9 @@ internal class BookPlaybackQueue(
         private set
     private var tail: OnlineSong? = null
     private var job: Job? = null
-    private var failed = false
-    private var exhausted = false
-    private var advanceFrom: String? = null
+    private var canAppend = true
+    private data class Advance(val from: String, val onUnavailable: (() -> Unit)?)
+    private var advance: Advance? = null
     private var musicRepeat = Player.REPEAT_MODE_ALL
     private var musicShuffle = false
 
@@ -128,9 +128,8 @@ internal class BookPlaybackQueue(
         val wasActive = albumId != null
         albumId = null
         tail = null
-        failed = false
-        exhausted = false
-        advanceFrom = null
+        canAppend = true
+        advance = null
         if (wasActive) {
             player.repeatMode = musicRepeat
             player.shuffleModeEnabled = musicShuffle
@@ -138,45 +137,52 @@ internal class BookPlaybackQueue(
     }
 
     fun retry() {
-        failed = false
-        exhausted = false
+        canAppend = true
         check()
     }
 
-    /** 末尾目录尚未回来时保留“下一集”意图，不从当前章节开头重播。 */
-    fun next(): Boolean {
-        if (albumId == null || player.hasNextMediaItem()) return false
-        advanceFrom = player.currentMediaItem?.mediaId
+    /** 已无队列后继时等待目录；只有用户主动请求才重查已知末页或此前失败的目录。 */
+    fun requestContinuation(onUnavailable: (() -> Unit)? = null): Boolean {
+        val current = player.currentMediaItem ?: return false
+        if (tail == null || (onUnavailable != null && !canAppend)) return false
+        advance = Advance(current.mediaId, onUnavailable)
         retry()
         return true
     }
 
+    fun cancelErrorAdvance() {
+        advance = advance?.takeIf { it.onUnavailable == null }
+    }
+
     fun check() {
-        val id = albumId ?: return
-        if (player.mediaItemCount == 0) {
-            stop()
-            return
-        }
-        val current = player.currentMediaItem?.mediaId
-        if (advanceFrom != null && advanceFrom != current) advanceFrom = null
+        if (albumId == null) return
+        if (player.mediaItemCount == 0) return stop()
+        advance = advance?.takeIf { it.from == player.currentMediaItem?.mediaId }
+        if (!player.playWhenReady) cancelErrorAdvance()
         if (player.playWhenReady && player.hasNextMediaItem() &&
-            (player.playbackState == Player.STATE_ENDED || advanceFrom == current)
+            (player.playbackState == Player.STATE_ENDED || advance != null)
         ) {
             // MediaController追加目录后，“下一集”命令可用性会晚于本地时间线同步；
             // 已知是顺序队列，直接定位真实下标，避免请求被静默忽略。
             player.seekToDefaultPosition(player.currentMediaItemIndex + 1)
-            advanceFrom = null
+            advance = null
             if (player.playbackState == Player.STATE_IDLE) player.prepare()
         }
-        if (failed || exhausted || job != null || player.mediaItemCount - player.currentMediaItemIndex > 4) return
+        if (!canAppend) {
+            val unavailable = advance?.onUnavailable ?: return
+            cancelErrorAdvance()
+            return unavailable()
+        }
+        if (job != null || player.mediaItemCount - player.currentMediaItemIndex > 4) return
         val from = tail ?: return
         job = scope.launch(start = CoroutineStart.LAZY) {
+            val thisRequest = coroutineContext[Job]
             try {
                 val following = withContext(Dispatchers.IO) { followingBookChapters(from, loadPage) }
-                if (job !== currentCoroutineContext()[Job] || albumId != id) return@launch
+                if (job !== thisRequest) return@launch
                 if (following.isEmpty()) {
-                    exhausted = true
-                    advanceFrom = null
+                    canAppend = false
+                    advance = advance?.takeIf { it.onUnavailable != null }
                     return@launch
                 }
                 val existing = (0 until player.mediaItemCount).map { player.getMediaItemAt(it).mediaId }.toSet()
@@ -190,12 +196,12 @@ internal class BookPlaybackQueue(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                if (job === currentCoroutineContext()[Job]) {
-                    failed = true
-                    reportError(error.message ?: "后续章节加载失败，请重试")
+                if (job === thisRequest) {
+                    canAppend = false
+                    if (advance?.onUnavailable == null) reportError(error.message ?: "后续章节加载失败，请重试")
                 }
             } finally {
-                if (job === currentCoroutineContext()[Job]) {
+                if (job === thisRequest) {
                     job = null
                     // 若这一页只有少量章节，继续补到安全余量；失败不自动循环请求。
                     check()

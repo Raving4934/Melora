@@ -73,8 +73,32 @@ class PlaybackResourceRecoveryInstrumentedTest {
         assertEquals(1, source.failedOpens.get())
     }
 
-    private fun withPlayer(failures: Int, repeatResource: Boolean = false, holdFailure: Boolean = false,
-                           test: (ExoPlayer, MediaController, Resources, String) -> Unit) {
+    @Test fun exhaustedLastTrackStopsWithoutRestartingTheFailedItem() =
+        assertRecoveryStopsWithoutSuccessor(Player.REPEAT_MODE_OFF)
+
+    @Test fun exhaustedSingleItemLoopDoesNotTreatItselfAsASuccessor() =
+        assertRecoveryStopsWithoutSuccessor(Player.REPEAT_MODE_ALL)
+
+    private fun assertRecoveryStopsWithoutSuccessor(repeatMode: Int) =
+        withPlayer(failures = 10, includeSuccessor = false, repeatMode = repeatMode) { player, controller, source, uid ->
+            main { controller.prepare(); controller.play() }
+            await { !player.playWhenReady && player.playerError != null }
+            main {
+                assertEquals(uid, player.currentMediaItem?.mediaId)
+                assertEquals(1, player.mediaItemCount)
+                assertEquals("播放失败（音源无法访问），点击播放重试", PlaybackController.state.value.message)
+            }
+            assertEquals("初次加载及两个不同资源的重试", 3, source.failedOpens.get())
+        }
+
+    private fun withPlayer(
+        failures: Int,
+        repeatResource: Boolean = false,
+        holdFailure: Boolean = false,
+        includeSuccessor: Boolean = true,
+        repeatMode: Int = Player.REPEAT_MODE_OFF,
+        test: (ExoPlayer, MediaController, Resources, String) -> Unit,
+    ) {
         val song = OnlineSong(JSONObject().put("source", "kw").put("songmid", "recovery-${System.nanoTime()}")
             .put("name", "Fixture").put("singer", "Fixture Artist"))
         val track = UiTrack.fromOnline(song)
@@ -109,11 +133,13 @@ class PlaybackResourceRecoveryInstrumentedTest {
                             .apply { isAccessible = true }.invoke(PlaybackController, error)
                     }
                 })
-                player.setMediaSources(listOf(track.uid, "next").map { id ->
+                player.repeatMode = repeatMode
+                val queue = if (includeSuccessor) listOf(track.uid, "next") else listOf(track.uid)
+                player.setMediaSources(queue.map { id ->
                     factory.createMediaSource(MediaItem.Builder().setMediaId(id).setUri("fixture://audio/$id").build())
                 })
             }
-            await { controller.mediaItemCount == 2 }
+            await { controller.mediaItemCount == player.mediaItemCount && controller.repeatMode == repeatMode }
             test(player, controller, resources, track.uid)
         } finally {
             resources.release.countDown()
