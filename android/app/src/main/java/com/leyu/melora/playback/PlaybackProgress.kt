@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import androidx.core.content.edit
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import com.leyu.melora.playback.sdk.OnlineSong
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -58,6 +59,14 @@ internal class PlaybackProgress(
                 val duration = knownDuration(item)
                 persist(item, newPosition.positionMs, duration)
             }
+        }
+        if (changedWindow && reason == Player.DISCONTINUITY_REASON_AUTO_TRANSITION && MeloraSettings.autoClearPlayed.value) {
+            // 同一首歌可在队列中出现多次，使用实际播放器的窗口身份核对离场项。
+            val previousIndex = oldPosition.mediaItemIndex
+            val timeline = player.currentTimeline
+            if (previousIndex in 0 until timeline.windowCount &&
+                timeline.getWindow(previousIndex, Timeline.Window()).uid == oldPosition.windowUid
+            ) player.removeMediaItem(previousIndex)
         }
     }
 

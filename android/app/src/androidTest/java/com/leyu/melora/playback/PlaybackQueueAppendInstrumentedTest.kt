@@ -9,6 +9,7 @@ import android.os.SystemClock
 import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.ShuffleOrder
@@ -1035,6 +1036,48 @@ class PlaybackQueueAppendInstrumentedTest {
             }
         }
 
+    @Test fun autoClearRemovesOnlyTheFinishedOccurrenceOfADuplicateTrack() =
+        assertPlaybackAutoClear(listOf("a", "b", "a", "c"), startIndex = 2, remaining = listOf("a", "b", "c"), nextIndex = 2)
+
+    @Test fun autoClearRemovesFinishedTrackWhenNextTrackHasTheSameMediaId() =
+        assertPlaybackAutoClear(listOf("a", "a", "b"), startIndex = 0, remaining = listOf("a", "b"), nextIndex = 0)
+
+    private fun assertPlaybackAutoClear(
+        queued: List<String>,
+        startIndex: Int,
+        remaining: List<String>,
+        nextIndex: Int,
+    ) =
+        withPlayer(listen = true) { player, controller ->
+            val previousAutoClear = main { MeloraSettings.autoClearPlayed.value }
+            try {
+                main {
+                    MeloraSettings.autoClearPlayed.value = true
+                    val uri = player.getMediaItemAt(0).localConfiguration!!.uri
+                    TrackRegistry.registerAll(queued.distinct().map(::track))
+                    controller.repeatMode = Player.REPEAT_MODE_OFF
+                    controller.setMediaItems(queued.map { MediaItem.Builder().setMediaId(it).setUri(uri).build() })
+                    controller.seekTo(startIndex, 59_000L)
+                }
+                await {
+                    player.playbackState == Player.STATE_READY &&
+                        player.currentMediaItemIndex == startIndex && player.currentPosition >= 59_000L
+                }
+                val successor = main {
+                    assertEquals(queued, uids(player))
+                    val window = player.currentTimeline.getWindow(startIndex + 1, Timeline.Window()).uid
+                    controller.play()
+                    window
+                }
+                await {
+                    uids(player) == remaining && player.currentMediaItemIndex == nextIndex &&
+                        player.currentTimeline.getWindow(nextIndex, Timeline.Window()).uid == successor
+                }
+            } finally {
+                main { MeloraSettings.autoClearPlayed.value = previousAutoClear }
+            }
+        }
+
     @Test fun autoClearRemovesLastTrackWhenRepeatAllWrapsToFirst() =
         withPlayer(listen = true) { player, controller ->
             val previousAutoClear = main {
@@ -1257,6 +1300,10 @@ class PlaybackQueueAppendInstrumentedTest {
     private fun withPlayer(empty: Boolean = false, listen: Boolean = false, test: (ExoPlayer, MediaController) -> Unit) {
         val audio = silentWav()
         val player = main { ExoPlayer.Builder(context).build().apply { volume = 0f } }
+        val progress = main {
+            // 与服务一样在实际播放器接收切换事件。队列夹具不读写历史断点。
+            PlaybackProgress(player, testContext.getSharedPreferences("melora-progress", 0), isEnabled = { false })
+        }
         val session = main {
             MediaSession.Builder(context, player).setId("append-${System.nanoTime()}")
                 .setCallback(PlaybackSessionCallback(onFavorite = {}, onExit = {})).build()
@@ -1317,7 +1364,7 @@ class PlaybackQueueAppendInstrumentedTest {
                     PlaybackController.javaClass.getDeclaredMethod("attach", MediaController::class.java)
                         .apply { isAccessible = true }.invoke(PlaybackController, previousController)
                 }
-                controller.release(); session.release(); player.release()
+                controller.release(); session.release(); progress.close(); player.release()
             }
             prefs.edit().clear().apply {
                 savedPreferences.forEach { (key, value) -> when (value) {

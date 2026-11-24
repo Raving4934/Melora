@@ -203,8 +203,6 @@ object PlaybackController {
             changed = { saveQueue(force = true); publish() },
             reportError = { _state.value = _state.value.copy(message = it) },
         )
-        // 以当前控制器为边界维护上一首身份，避免旧 MediaController 的索引泄漏到新控制器。
-        var previousMediaId = player.currentMediaItem?.mediaId
         var positionDiscontinuity = false
         player.addListener(
             object : Player.Listener {
@@ -215,17 +213,6 @@ object PlaybackController {
                     if (urlPrefetchUid != mediaItem?.mediaId) urlPrefetchJob?.cancel()
                     errorRecovery.reset()
                     confirmedAudio = null
-                    val currentMediaId = mediaItem?.mediaId
-                    if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO &&
-                        MeloraSettings.autoClearPlayed.value &&
-                        previousMediaId != null && previousMediaId != currentMediaId
-                    ) {
-                        val previousIndex = (0 until player.mediaItemCount).firstOrNull { index ->
-                            player.getMediaItemAt(index).mediaId == previousMediaId
-                        }
-                        if (previousIndex != null) player.removeMediaItem(previousIndex)
-                    }
-                    previousMediaId = currentMediaId
                     publish(resetPosition = true)
                     saveQueue()
                 }
@@ -249,7 +236,6 @@ object PlaybackController {
                     positionDiscontinuity = false
                     updateRecentPlayback(player)
                     val timelineChanged = events.contains(Player.EVENT_TIMELINE_CHANGED)
-                    if (timelineChanged) previousMediaId = player.currentMediaItem?.mediaId
                     if (timelineChanged || events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED)) {
                         // 删除最后一首/外部清空也同步落盘，不能等下一次点歌时复活旧队列。
                         saveQueue(force = timelineChanged && player.mediaItemCount == 0)
