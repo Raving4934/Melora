@@ -1,5 +1,11 @@
 package com.leyu.melora.ui.player
 
+import android.content.pm.PackageManager
+import android.content.res.Configuration
+import android.os.Build
+import android.util.DisplayMetrics
+import android.view.Display
+import android.view.WindowManager
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -7,6 +13,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.ViewConfiguration
 import androidx.compose.ui.unit.dp
@@ -96,6 +106,37 @@ internal fun playerUsesExpandedLayout(widthDp: Float, heightDp: Float): Boolean 
 /** 只有高度受限的横屏才用手机紧凑双栏；中等宽度分屏不能仅因宽大于高就降为单行歌词。 */
 internal fun playerUsesTwoPanes(widthDp: Float, heightDp: Float): Boolean =
     playerUsesExpandedLayout(widthDp, heightDp) || (heightDp < 480f && widthDp > heightDp)
+
+internal fun playerUsesCompactPhoneLandscape(widthDp: Float, heightDp: Float, deviceShortSideDp: Float): Boolean =
+    widthDp > heightDp && heightDp < 480f && deviceShortSideDp > 0f && deviceShortSideDp < 600f
+
+/** 用设备全屏短边识别手机，分屏窗口和应用内的缩放不参与设备判断。 */
+@Composable
+internal fun isCompactPhonePlayerLandscape(width: Dp, height: Dp): Boolean {
+    val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val display = LocalView.current.display
+    val systemDensity = LocalResources.current.displayMetrics.density
+    val deviceShortSideDp = remember(context, configuration, display, systemDensity) {
+        val mode = configuration.uiMode and Configuration.UI_MODE_TYPE_MASK
+        val ordinaryMode = mode == Configuration.UI_MODE_TYPE_NORMAL || mode == Configuration.UI_MODE_TYPE_UNDEFINED
+        if (display == null || display.displayId != Display.DEFAULT_DISPLAY || !ordinaryMode ||
+            context.packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE) ||
+            context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
+        ) {
+            0f
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val bounds = context.getSystemService(WindowManager::class.java)?.maximumWindowMetrics?.bounds
+            bounds?.let { minOf(it.width(), it.height()) / systemDensity } ?: 0f
+        } else {
+            // 旧系统的分屏任务可覆盖 Configuration，直接读取该屏的完整尺寸。
+            @Suppress("DEPRECATION")
+            val metrics = DisplayMetrics().also { display.getRealMetrics(it) }
+            minOf(metrics.widthPixels, metrics.heightPixels) / metrics.density
+        }
+    }
+    return playerUsesCompactPhoneLandscape(width.value, height.value, deviceShortSideDp)
+}
 
 /** 翻页视口和单页始终等宽，内距只用于页内内容；横屏内侧由两栏间距负责。 */
 internal fun playerPaneContentPadding(twoPanes: Boolean, controls: Boolean): PaddingValues = PaddingValues(

@@ -9,6 +9,7 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.snap
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.only
@@ -111,6 +112,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -330,22 +332,25 @@ internal fun FullPlayerPageContent(
     ) {
         val expandedLayout = playerUsesExpandedLayout(maxWidth.value, maxHeight.value)
         val twoPanes = playerUsesTwoPanes(maxWidth.value, maxHeight.value)
+        val phoneLandscape = isCompactPhonePlayerLandscape(maxWidth, maxHeight)
         val pages = remember(expandedLayout) { if (expandedLayout) listOf(2, 0) else listOf(0, 1, 2) }
         val coverPagerState = key(expandedLayout) {
             rememberPagerState(initialPage = pages.indexOf(selectedPage).coerceAtLeast(0), pageCount = { pages.size })
         }
         val currentPage = pages[coverPagerState.currentPage]
+        val phoneQueueOpen = phoneLandscape && queuePagerState.targetPage == 1
+        val coverPageVisible = (expandedLayout || currentPage == 1) && !phoneQueueOpen
         LaunchedEffect(coverPagerState) {
             snapshotFlow { pages[coverPagerState.currentPage] }.collect { selectedPage = it }
         }
-        LaunchedEffect(track?.uid, currentPage, expandedLayout, isVisible) {
-            if (isVisible && (expandedLayout || currentPage == 1)) PlaybackController.ensureCurrentArtwork()
+        LaunchedEffect(track?.uid, currentPage, expandedLayout, isVisible, phoneQueueOpen) {
+            if (isVisible && coverPageVisible) PlaybackController.ensureCurrentArtwork()
         }
         // 播放分页是同级视图，不消费返回；仅沉浸态先退出，再由外层收起播放器。
         BackHandler(enabled = isVisible && immersive) { onImmersiveChange(false) }
-        LaunchedEffect(detailTarget != null, coverPagerState.currentPage, coverPagerState.isScrollInProgress, pageIsLight, immersive, expandedLayout) {
+        LaunchedEffect(detailTarget != null, currentPage, coverPagerState.isScrollInProgress, pageIsLight, immersive, expandedLayout, phoneQueueOpen) {
             onPageVisualChanged(
-                !immersive && detailTarget == null && (expandedLayout || (currentPage == 1 && !coverPagerState.isScrollInProgress)),
+                !immersive && detailTarget == null && coverPageVisible && (expandedLayout || !coverPagerState.isScrollInProgress),
                 pageIsLight,
                 // 宽屏封面区允许下拉；右侧阅读区在自己的边界消费剩余滚动。
                 detailTarget != null || (!expandedLayout && currentPage == 2),
@@ -363,13 +368,17 @@ internal fun FullPlayerPageContent(
             playing = state.positionAdvancing, motionEnabled = motionEnabled && isVisible,
             modifier = Modifier.fillMaxSize().testTag("immersive-title-watermark"),
         )
-        val pagePadding = if (expandedLayout) PaddingValues(horizontal = 20.dp) else playerPaneContentPadding(twoPanes, controls = false)
+        val pagePadding = when {
+            phoneLandscape -> PaddingValues(start = 16.dp, end = 4.dp)
+            expandedLayout -> PaddingValues(horizontal = 20.dp)
+            else -> playerPaneContentPadding(twoPanes, controls = false)
+        }
         val controlsPadding = playerPaneContentPadding(twoPanes, controls = true)
         val heading: @Composable (Modifier) -> Unit = { headingModifier ->
             Row(
                 modifier = headingModifier
                     .fillMaxWidth()
-                    .padding(top = 10.dp),
+                    .padding(top = if (phoneLandscape) 0.dp else 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (expandedLayout) IconButton(onClick = onCollapse, modifier = Modifier.testTag("player-collapse")) {
@@ -410,7 +419,7 @@ internal fun FullPlayerPageContent(
                 }
                 IconButton(
                     onClick = { showSystemOutputSwitcher(context) },
-                    modifier = Modifier.offset(x = 13.dp),
+                    modifier = if (phoneLandscape) Modifier else Modifier.offset(x = 13.dp),
                 ) {
                     Icon(
                         Icons.Outlined.Sensors,
@@ -426,10 +435,11 @@ internal fun FullPlayerPageContent(
             PlayerCoverPage(
                 state = state, onOpenCoverPicker = { showCoverPicker = true }, immersive = immersive, immersion = immersion,
                 onImmersiveChange = onImmersiveChange,
-                isVisible = isVisible && (expandedLayout || currentPage == 1),
+                isVisible = isVisible && coverPageVisible,
                 track = track, lyrics = lyricLines,
-                retryArtwork = isVisible && (expandedLayout || currentPage == 1),
+                retryArtwork = isVisible && coverPageVisible,
                 compact = twoPanes && !expandedLayout, lyricsInCover = !expandedLayout,
+                phoneLandscape = phoneLandscape,
                 largePortrait = !twoPanes && maxWidth >= 600.dp,
                 miniLyricsEnabled = miniLyricsEnabled, coverStyle = coverStyle,
                 artworkAlpha = artworkAlpha, artworkRotation = artworkRotation,
@@ -598,15 +608,19 @@ internal fun FullPlayerPageContent(
                 onCycleMode = { PlaybackController.cycleMode() },
                 onShowTimer = { showTimerSettings = true },
                 onOpenEffects = { showAudioEffects = true },
-                onOpenQueue = onOpenQueue,
+                onOpenQueue = if (phoneQueueOpen) onCloseQueue else onOpenQueue,
+                queueOpen = phoneQueueOpen,
+                modifier = if (phoneLandscape) Modifier.widthIn(max = 272.dp).fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()).widthIn(min = 240.dp) else Modifier,
                 onShowMore = { showMoreActions = true },
             )
         }
-        // 同一份队列页：竖屏接管整页，横屏只接管右侧控制区。
+        // 手机横屏的队列和阅读内容共用左栏，歌词和信息优先消费自己的纵向滚动。
         val viewConfiguration = LocalViewConfiguration.current
         val verticalViewConfiguration = rememberPlayerVerticalViewConfiguration()
         val queueGestureEnabled by rememberUpdatedState(
-            LocalPageActive.current && !immersive && !expandedLayout && detailTarget == null,
+            LocalPageActive.current && !immersive && !expandedLayout && detailTarget == null &&
+                (!phoneLandscape || currentPage == 1 || queuePagerState.currentPage == 1 || queuePagerState.isScrollInProgress),
         )
         val queueFling = PagerDefaults.flingBehavior(queuePagerState, snapAnimationSpec = PlayerPageSnapSpec)
         val defaultQueueScroll = PagerDefaults.pageNestedScrollConnection(queuePagerState, Orientation.Vertical)
@@ -651,7 +665,12 @@ internal fun FullPlayerPageContent(
                                 isVisible = !isCollapsed && (queuePagerState.currentPage == 1 || queuePagerState.targetPage == 1),
                                 motionEnabled = queueMotionEnabled,
                                 horizontalPadding = if (twoPanes) 0.dp else 18.dp,
-                                modifier = if (twoPanes) Modifier.padding(controlsPadding) else Modifier,
+                                modifier = when {
+                                    phoneLandscape -> Modifier.padding(pagePadding)
+                                    twoPanes -> Modifier.padding(controlsPadding)
+                                    else -> Modifier
+                                },
+                                besideTransport = phoneLandscape,
                             )
                         }
                     }
@@ -696,6 +715,41 @@ internal fun FullPlayerPageContent(
                             }
                         }
                         pane(Modifier.fillMaxWidth().weight(1f))
+                    }
+                }
+            }
+        } else if (phoneLandscape) {
+            Row(
+                Modifier.fillMaxSize().windowInsetsPadding(playerInsets).padding(top = playerTopInset)
+                    .testTag("player-phone-landscape"),
+                horizontalArrangement = Arrangement.spacedBy((16f * (1f - t)).dp),
+            ) {
+                playerAndQueue(Modifier.weight(1.05f + 0.95f * t).fillMaxHeight().testTag("player-compact-content")) {
+                    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+                        if (t < 0.999f) {
+                            CompactPlayerTabs(pages, currentPage, Modifier.padding(pagePadding).immersionChrome(immersion)) { index ->
+                                scope.launch { coverPagerState.animateScrollToPage(index, animationSpec = PlayerPageSnapSpec) }
+                            }
+                        }
+                        pane(Modifier.fillMaxWidth().weight(1f))
+                    }
+                }
+                if (t < 0.999f) {
+                    Box(
+                        Modifier.weight(0.95f * (1f - t)).fillMaxHeight().clipToBounds()
+                            .graphicsLayer { alpha = 1f - immersion.value }
+                            .then(if (immersive) Modifier.clearAndSetSemantics {} else Modifier)
+                            .testTag("player-compact-controls").padding(start = 4.dp, end = 20.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Column(
+                            Modifier.widthIn(max = 336.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(vertical = 8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            heading(Modifier.testTag("player-heading"))
+                            Spacer(Modifier.height(8.dp))
+                            transport()
+                        }
                     }
                 }
             }
@@ -1297,6 +1351,27 @@ internal fun SongsCollectionPage(
     moreSong?.let { song -> SongMoreSheet(song) { moreSong = null } }
 }
 
+@Composable
+private fun CompactPlayerTabs(pages: List<Int>, selectedPage: Int, modifier: Modifier, onSelect: (Int) -> Unit) {
+    Row(modifier.selectableGroup(), horizontalArrangement = Arrangement.Center) {
+        pages.forEachIndexed { index, page ->
+            val active = selectedPage == page
+            val title = when (page) { 0 -> "信息"; 1 -> "封面"; else -> "歌词" }
+            Box(
+                Modifier.height(48.dp).widthIn(min = 54.dp).testTag("player-compact-tab-$page")
+                    .selectable(selected = active, role = Role.Tab, onClick = { onSelect(index) })
+                    .padding(horizontal = 8.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(title, fontSize = 13.sp, maxLines = 1, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (active) FullPlayerTextPrimary else FullPlayerTextMuted)
+                if (active) Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 6.dp)
+                    .size(width = 16.dp, height = 2.dp).background(FullPlayerTextPrimary, CircleShape))
+            }
+        }
+    }
+}
+
 // 封面与歌词使用同一个约束计算宽度，不依赖测量回调后二次改布局。
 internal fun playerCoverSideDp(width: Float, height: Float, lyricAreaHeight: Float): Float =
     minOf(width, (height - lyricAreaHeight).coerceAtLeast(0f), if (width >= 600f) 480f else width) * 0.92f
@@ -1314,6 +1389,7 @@ private fun PlayerCoverPage(
     lyrics: List<LyricLine>,
     retryArtwork: Boolean,
     compact: Boolean,
+    phoneLandscape: Boolean,
     miniLyricsEnabled: Boolean,
     lyricsInCover: Boolean = true,
     largePortrait: Boolean = false,
@@ -1346,7 +1422,7 @@ private fun PlayerCoverPage(
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val squareSide = minOf(maxWidth, (maxHeight - normalLyricsHeight).coerceAtLeast(0.dp), if (maxWidth >= 600.dp) 480.dp else maxWidth)
         val circleSide = playerCoverSideDp(maxWidth.value, maxHeight.value, normalLyricsHeight.value).dp
-        val normalSide = squareSide * (1f - c) + circleSide * c
+        val normalSide = (squareSide * (1f - c) + circleSide * c) * if (phoneLandscape) 0.9f else 1f
         val floatingSide = if (lyricsInCover) minOf(maxWidth * 0.75f, maxHeight * 0.40f)
             else minOf(maxWidth * 0.85f, maxHeight * 0.70f, 420.dp)
         val side = normalSide * (1f - t) + floatingSide * t
@@ -1354,7 +1430,7 @@ private fun PlayerCoverPage(
         // 普通态留白只能由普通态封面计算；用插值中的 side 会把缩小释放的空间再次加到顶部，导致先下沉再上移。
         val remaining = (maxHeight - normalSide - normalBelowCover).coerceAtLeast(0.dp)
         // 与歌词共用外层窗口判定，不能用扣除页内边距后的宽度再次判断断点。无歌词时也居中。
-        val centering = if (!normalLyricsVisible || largePortrait) 1f else c
+        val centering = if (!normalLyricsVisible || largePortrait || phoneLandscape) 1f else c
         val roomyLyrics = largePortrait && normalLyricsVisible
         val normalTop = if (roomyLyrics) minOf(12.dp, remaining) else remaining * (1f - centering * 0.5f)
         val normalLyricHeight = if (roomyLyrics) (maxHeight - normalSide - normalTop - 20.dp).coerceAtLeast(0.dp) else previewHeight
@@ -1420,7 +1496,7 @@ private fun PlayerCoverPage(
                     lines = lines, position = position,
                     config = LyricsUiConfig(fontSizeSp = miniFontSize),
                     mini = !immersive, immersive = immersive,
-                    frameState = frame, motionEnabled = motionEnabled, centered = centered || largePortrait,
+                    frameState = frame, motionEnabled = motionEnabled, centered = (centered && (!phoneLandscape || immersive)) || largePortrait,
                     modifier = Modifier.width(lyricWidth)
                         .height(lyricHeight).testTag("player-mini-lyrics")
                         .then(if (immersive || roomyLyrics) Modifier.lyricViewportFade() else Modifier)

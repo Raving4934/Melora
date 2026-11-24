@@ -295,6 +295,17 @@ class PlayerSheetMotionTest {
     }
 
     @Test
+    fun compactPhoneLandscapeRequiresBothAHandheldDisplayAndALowLandscapeWindow() {
+        assertTrue(playerUsesCompactPhoneLandscape(800f, 360f, 393f))
+        assertTrue(playerUsesCompactPhoneLandscape(540f, 320f, 320f))
+        assertFalse(playerUsesCompactPhoneLandscape(360f, 800f, 393f))
+        assertFalse(playerUsesCompactPhoneLandscape(800f, 480f, 393f))
+        assertFalse(playerUsesCompactPhoneLandscape(800f, 360f, 600f))
+        assertFalse(playerUsesCompactPhoneLandscape(800f, 360f, 800f))
+        assertFalse(playerUsesCompactPhoneLandscape(800f, 360f, 0f))
+    }
+
+    @Test
     fun expandedPlayerDependsOnAvailableWindowNotDeviceOrientation() {
         assertTrue(playerUsesExpandedLayout(1280f, 800f))
         assertTrue(playerUsesExpandedLayout(900f, 1280f))

@@ -142,6 +142,7 @@ internal fun ContinuousPlayerSheet(
     BoxWithConstraints(modifier.fillMaxSize().clipToBounds()) {
         val twoPanes = playerUsesTwoPanes(maxWidth.value, maxHeight.value)
         val expandedLayout = playerUsesExpandedLayout(maxWidth.value, maxHeight.value)
+        val compactPhoneLandscape = isCompactPhonePlayerLandscape(maxWidth, maxHeight)
         val screenHeightPx = with(density) { maxHeight.toPx() }
         val screenWidthPx = with(density) { maxWidth.toPx() }
         val miniBarContentHeight = 64.dp
@@ -172,8 +173,13 @@ internal fun ContinuousPlayerSheet(
             { sheetState.offset.takeIf(Float::isFinite)?.coerceIn(0f, travel) ?: travel }
         }
         val progress = remember(offset, travel) { { playerSheetProgress(offset(), travel) } }
-        val playbackPage = remember(verticalPagerState, twoPanes, expandedLayout) {
-            { (twoPanes && !expandedLayout) || (verticalPagerState.currentPage == 0 && abs(verticalPagerState.currentPageOffsetFraction) < 0.001f) }
+        val coverPersistsAcrossQueue = twoPanes && !expandedLayout && !compactPhoneLandscape
+        val playbackPage = remember(verticalPagerState, coverPersistsAcrossQueue) {
+            {
+                // 手机横屏队列会占用封面的位置；只有封面归位后才允许拉动整张播放页。
+                coverPersistsAcrossQueue ||
+                    (verticalPagerState.currentPage == 0 && abs(verticalPagerState.currentPageOffsetFraction) < 0.001f)
+            }
         }
         val expanded by remember(progress) { derivedStateOf { progress() >= 0.99f } }
         val collapsed by remember(progress, sheetState) {

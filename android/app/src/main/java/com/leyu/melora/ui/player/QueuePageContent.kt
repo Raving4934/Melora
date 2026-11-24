@@ -31,6 +31,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Repeat
 import androidx.compose.material.icons.rounded.RepeatOne
@@ -84,6 +85,7 @@ fun QueuePageContent(
     motionEnabled: Boolean = true,
     onSelect: (Int) -> Unit = PlaybackController::jumpTo,
     onRemove: (Int) -> Unit = PlaybackController::removeFromQueue,
+    besideTransport: Boolean = false,
 ) {
     val current = state.current
     var showClearConfirm by remember { mutableStateOf(false) }
@@ -137,11 +139,11 @@ fun QueuePageContent(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .statusBarsPadding()
+            .then(if (besideTransport) Modifier else Modifier.statusBarsPadding())
             .padding(horizontal = horizontalPadding),
     ) {
         // 顶部返回提示
-        Text(
+        if (!besideTransport) Text(
             text = "收起播放队列",
             style = MaterialTheme.typography.labelSmall,
             color = FullPlayerTextMuted,
@@ -157,7 +159,7 @@ fun QueuePageContent(
         )
 
         // 当前播放曲目卡片
-        if (current != null) {
+        if (current != null && !besideTransport) {
             Surface(
                 shape = RoundedCornerShape(16.dp),
                 color = FullPlayerCardSurface,
@@ -203,7 +205,7 @@ fun QueuePageContent(
             }
         }
 
-        Spacer(Modifier.height(14.dp))
+        if (!besideTransport) Spacer(Modifier.height(14.dp))
 
         // 两侧等宽，队列数量变化时标题不会横向移动。
         Row(
@@ -212,14 +214,19 @@ fun QueuePageContent(
                 .padding(horizontal = QueueContentInset),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = "${(currentRow + 1).coerceAtLeast(0)} / ${state.queue.size}",
-                style = MaterialTheme.typography.bodySmall,
-                color = FullPlayerTextMuted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                if (besideTransport) IconButton(onClick = onClose, modifier = Modifier.size(QueueActionSize)) {
+                    Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = "收起播放队列", tint = FullPlayerTextMuted)
+                }
+                Text(
+                    text = "${(currentRow + 1).coerceAtLeast(0)} / ${state.queue.size}",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FullPlayerTextMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             Text(
                 text = "播放队列",
                 style = MaterialTheme.typography.titleMedium,
@@ -345,7 +352,7 @@ fun QueuePageContent(
         Spacer(Modifier.height(10.dp))
 
         // 底部循环模式胶囊
-        Box(
+        if (!besideTransport) Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()

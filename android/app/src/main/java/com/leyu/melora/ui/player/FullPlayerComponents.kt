@@ -393,9 +393,11 @@ internal fun FullPlayerSecondaryControls(
     onOpenEffects: () -> Unit,
     onOpenQueue: () -> Unit,
     onShowMore: () -> Unit,
+    modifier: Modifier = Modifier,
+    queueOpen: Boolean = false,
 ) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -432,8 +434,8 @@ internal fun FullPlayerSecondaryControls(
         IconButton(onClick = onOpenQueue) {
             Icon(
                 Icons.AutoMirrored.Rounded.FormatListBulleted,
-                contentDescription = "播放队列",
-                tint = FullPlayerTextMuted,
+                contentDescription = if (queueOpen) "收起播放队列" else "播放队列",
+                tint = if (queueOpen) FullPlayerTextPrimary else FullPlayerTextMuted,
                 modifier = Modifier.size(22.dp),
             )
         }
