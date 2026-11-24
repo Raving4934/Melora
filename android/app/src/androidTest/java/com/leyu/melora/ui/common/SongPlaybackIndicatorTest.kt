@@ -14,6 +14,7 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasAnyAncestor
@@ -30,6 +31,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.leyu.melora.playback.UiTrack
 import com.leyu.melora.playback.local.LocalSong
 import com.leyu.melora.playback.sdk.OnlineSong
+import com.leyu.melora.ui.awaitStable
 import com.leyu.melora.ui.boundsInSameFrame
 import com.leyu.melora.ui.local.LocalSongRow
 import com.leyu.melora.ui.theme.MeloraAppearance
@@ -140,6 +142,59 @@ class SongPlaybackIndicatorTest {
             // 切歌后旧标识消失，上一首的标题恢复到原位置。
             assertEquals(initialOnline, relativeBounds(onlineRow, onlineTitle).single())
             assertEquals(initialLocal.top, shiftedLocal.top, 0.5f)
+        } finally {
+            compose.mainClock.autoAdvance = true
+        }
+    }
+
+    @Test
+    fun moreMenuShowsTheCurrentSongIndicatorAndStopsItWhenPaused() {
+        val song = OnlineSong(JSONObject().put("source", "kw").put("songmid", "more-menu-current")
+            .put("name", "歌曲更多操作").put("singer", "测试歌手").put("img", "file:///more-menu-current.jpg"))
+        val track = UiTrack.fromOnline(song)
+        val current = mutableStateOf<UiTrack?>(track)
+        val advancing = mutableStateOf(false)
+        val shared = SongListState(mutableStateOf(emptyList()), mutableStateOf(false), current, advancing)
+        compose.setContent {
+            MeloraTheme {
+                CompositionLocalProvider(LocalSongListState provides shared) {
+                    SongMoreSheet(song, allowDownload = false, onDismiss = {})
+                }
+            }
+        }
+
+        val title = compose.onNodeWithText(song.name, useUnmergedTree = true)
+        val playing = compose.onNodeWithContentDescription("正在播放", useUnmergedTree = true)
+        val paused = compose.onNodeWithContentDescription("当前曲目", useUnmergedTree = true)
+        compose.awaitStable(title)
+        paused.assertIsDisplayed()
+        compose.mainClock.autoAdvance = false
+        try {
+            compose.runOnIdle { advancing.value = true }
+            compose.mainClock.advanceTimeBy(128)
+            val (barsBounds, titleBounds) = compose.boundsInSameFrame(playing.assertIsDisplayed(), title)
+            assertTrue("音柱应显示在更多菜单的歌曲标题左侧", barsBounds.right <= titleBounds.left)
+            val activeFrame = playing.barHeights()
+            compose.mainClock.advanceTimeBy(240)
+            assertTrue("播放时更多菜单的音柱应跳动",
+                activeFrame.zip(playing.barHeights()).any { (a, b) -> abs(a - b) > 1 })
+
+            compose.runOnIdle { advancing.value = false }
+            compose.mainClock.advanceTimeByFrame()
+            playing.assertDoesNotExist()
+            assertEquals(listOf(barsBounds, titleBounds), compose.boundsInSameFrame(paused.assertIsDisplayed(), title))
+            val pausedFrame = paused.barHeights()
+            compose.mainClock.advanceTimeBy(240)
+            assertEquals("暂停时更多菜单的音柱应保持静止", pausedFrame, paused.barHeights())
+
+            compose.runOnIdle {
+                current.value = track.copy(uid = "kw_other-menu-song")
+                advancing.value = true
+            }
+            compose.mainClock.advanceTimeByFrame()
+            playing.assertDoesNotExist()
+            paused.assertDoesNotExist()
+            title.assertIsDisplayed()
         } finally {
             compose.mainClock.autoAdvance = true
         }

@@ -4,6 +4,8 @@ import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -12,8 +14,10 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.leyu.melora.playback.PlayMode
 import com.leyu.melora.playback.PlayerUiState
 import com.leyu.melora.playback.UiTrack
+import com.leyu.melora.ui.awaitStable
 import com.leyu.melora.ui.boundsInSameFrame
 import com.leyu.melora.ui.theme.MeloraTheme
+import kotlin.math.abs
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -26,6 +30,7 @@ class PlayerQueuePresentationTest {
     private val tracks = (0 until 589).map { UiTrack("queue-$it", "歌曲 $it", "歌手 $it", "专辑") }
     private val state = mutableStateOf(PlayerUiState())
     private val visible = mutableStateOf(true)
+    private val artworkTone = mutableStateOf<Color?>(null)
     private var selectedIndex = -1
     private var removedIndex = -1
 
@@ -33,7 +38,7 @@ class PlayerQueuePresentationTest {
         state.value = PlayerUiState(ready = true, queue = queue, current = queue[index], currentIndex = index)
         compose.setContent {
             MeloraTheme {
-                PlayerAppearanceProvider(dark = true) {
+                PlayerAppearanceProvider(dark = true, artworkColor = artworkTone.value) {
                     QueuePageContent(
                         state = state.value, onClose = {}, isVisible = visible.value, motionEnabled = motion,
                         onSelect = { selectedIndex = it }, onRemove = { removedIndex = it },
@@ -42,7 +47,7 @@ class PlayerQueuePresentationTest {
                 }
             }
         }
-        compose.waitForIdle()
+        compose.awaitStable(list())
     }
 
     private fun row(index: Int) = compose.onNodeWithTag("queue-track-$index")
@@ -56,7 +61,9 @@ class PlayerQueuePresentationTest {
         state.value = state.value.copy(current = state.value.queue[index], currentIndex = index)
     }
     private fun assertCurrentAtTop(index: Int) {
-        row(index).assertIsDisplayed().assertIsSelected()
+        // 固定动画时钟后仍需等待 Android 完成这一帧的测量和绘制。
+        compose.waitUntil(5_000) { row(index).isDisplayed() }
+        row(index).assertIsSelected()
         assertEquals("当前项应位于列表可见顶部", 0f, offsetFromListTop(index), 1f)
     }
 
@@ -225,6 +232,34 @@ class PlayerQueuePresentationTest {
         compose.runOnIdle { state.value = state.value.copy(playing = false, positionAdvancing = false) }
         marker(1, currentBars).assertIsDisplayed()
         marker(1, playingBars).assertDoesNotExist()
+    }
+
+    @Test fun currentQueueBarsMatchTheTitleAcrossArtworkColors() {
+        val tones = listOf(Color(0xFFCE4B3E), Color(0xFF3672C8))
+        val expectedInks = tones.map { playerColorsFor(dark = true, artworkColor = it).textPrimary }
+        assertNotEquals(expectedInks[0], expectedInks[1])
+        show(index = 0, motion = false, queue = tracks.take(3))
+        compose.runOnIdle { state.value = state.value.copy(playing = true, positionAdvancing = true) }
+        val currentRow = hasAnyAncestor(hasTestTag("queue-track-0"))
+        val bars = compose.onNode(currentRow and hasContentDescription("正在播放"), useUnmergedTree = true)
+        val title = compose.onNode(currentRow and hasText(tracks.first().title), useUnmergedTree = true)
+
+        fun SemanticsNodeInteraction.draws(ink: Color): Boolean {
+            val pixels = assertIsDisplayed().captureToImage().toPixelMap()
+            return (0 until pixels.height).any { y ->
+                (0 until pixels.width).any { x ->
+                    val pixel = pixels[x, y]
+                    abs(pixel.red - ink.red) < 0.025f && abs(pixel.green - ink.green) < 0.025f &&
+                        abs(pixel.blue - ink.blue) < 0.025f
+                }
+            }
+        }
+
+        tones.zip(expectedInks).forEach { (tone, ink) ->
+            compose.runOnIdle { artworkTone.value = tone }
+            assertTrue("current title should use the artwork color for $tone", title.draws(ink))
+            assertTrue("playback bars should match the current title for $tone", bars.draws(ink))
+        }
     }
 
     @Test fun disabledMotionSnapsToCurrentAndHiddenChangesAreAlignedOnEntry() {

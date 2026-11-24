@@ -522,6 +522,8 @@ fun SongMoreSheet(
     val currentLocalId = remember(currentTrack?.uid, currentTrack?.artwork, localSongs) {
         currentTrack?.let(LocalMediaStore::matchTrack)?.id
     }
+    val isCurrentSong = currentTrack?.uid == song.uid ||
+        (song.source == LocalSong.SOURCE && currentLocalId == song.songmid)
     val playbackCover = currentTrack?.artwork?.takeIf {
         currentTrack?.uid == song.uid || (matchedLocal != null && currentLocalId == matchedLocal.id)
     }
@@ -612,14 +614,18 @@ fun SongMoreSheet(
                 )
                 Spacer(Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = if (isBook) song.albumName.ifBlank { song.name } else song.name,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = TextMain,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SongPlaybackPrefix(isCurrentSong)
+                        Text(
+                            text = if (isBook) song.albumName.ifBlank { song.name } else song.name,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = TextMain,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                    }
                     Spacer(Modifier.height(3.dp))
                     Text(
                         text = if (isBook) chapterTitle(song) else listOfNotNull(

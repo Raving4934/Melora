@@ -309,17 +309,18 @@ fun QueuePageContent(
                                     horizontalArrangement = Arrangement.spacedBy(5.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
+                                    val titleColor = FullPlayerTextPrimary
                                     if (isCurrent) {
                                         PlaybackBars(
                                             advancing = state.positionAdvancing,
-                                            color = LocalPlayerColors.current.accentSoft,
+                                            color = titleColor,
                                             motionEnabled = isVisible && motionEnabled,
                                         )
                                     }
                                     Text(
                                         text = track.title,
                                         style = MaterialTheme.typography.titleSmall,
-                                        color = FullPlayerTextPrimary,
+                                        color = titleColor,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
                                     )
