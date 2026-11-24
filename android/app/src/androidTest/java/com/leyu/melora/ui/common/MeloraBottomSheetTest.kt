@@ -180,6 +180,25 @@ class MeloraBottomSheetTest {
     }
 
     @Test
+    fun shortSheetReachesFullScrimWhenBothVisibleAnchorsCoincide() {
+        var state: SheetState? = null
+        compose.setContent {
+            TestSheetHost(
+                mounted = true,
+                skipPartiallyExpanded = false,
+                scrimColor = Color.Red,
+                sheetHeightFraction = 0.2f,
+                onReady = { sheet, _ -> state = sheet },
+            )
+        }
+        compose.awaitStable(SHEET_CONTENT_TAG)
+        val frame = captureScrimFrame(compose.onNode(isDialog()), requireNotNull(state))
+        assertTrue(frame.hasPartialAnchor)
+        assertTrue(frame.sheetOffsetPx > frame.viewportHeightPx / 2f)
+        assertPixelsNear(AndroidColor.RED, frame.pixel, tolerance = 24)
+    }
+
+    @Test
     fun scrimTracksPhysicalDragAndRetainsCustomTintAtBothExpandedAnchors() {
         val mounted = mutableStateOf(true)
         var sheetState: SheetState? = null

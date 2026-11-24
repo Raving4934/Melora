@@ -190,6 +190,27 @@ class PlaylistEditSheetTest {
         compose.runOnIdle { assertEquals("本周喜欢", confirmed); assertFalse(open.value) }
     }
 
+    @Test fun renameAppendsAtTheEndAndSubmitsThroughIme() {
+        val open = mutableStateOf(true)
+        var confirmed: String? = null
+        compose.setContent {
+            MeloraTheme {
+                if (open.value) PlaylistEditSheet(
+                    initialName = "已有歌单",
+                    isRename = true,
+                    onDismiss = { open.value = false },
+                    onConfirm = { confirmed = it },
+                )
+            }
+        }
+        val field = compose.onNode(hasSetTextAction())
+        compose.awaitStable(field)
+        field.assertIsFocused().performTextInput(" · 新名称")
+        field.performImeAction()
+        compose.waitUntil(5_000) { !open.value }
+        assertEquals("已有歌单 · 新名称", confirmed)
+    }
+
     @Test fun sameFrameHeaderBoundsIgnoreParentMovementButPreserveRealMisalignment() {
         val parentOffset = mutableStateOf(0.dp)
         val actionOffset = mutableStateOf(0.dp)

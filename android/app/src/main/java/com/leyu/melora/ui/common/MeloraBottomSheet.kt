@@ -52,22 +52,25 @@ internal fun rememberMeloraBottomSheetState(
 ): SheetState {
     val density by rememberUpdatedState(LocalDensity.current)
     val confirm by rememberUpdatedState(confirmValueChange)
+    val enabledValues = remember(skipPartiallyExpanded) {
+        if (skipPartiallyExpanded) setOf(SheetValue.Hidden, SheetValue.Expanded)
+        else setOf(SheetValue.Hidden, SheetValue.PartiallyExpanded, SheetValue.Expanded)
+    }
     // 与 Material3 1.4 的默认阈值一致；lambda 不捕获首次创建时的 Density。
     val positionalThreshold = { with(density) { 56.dp.toPx() } }
     val velocityThreshold = { with(density) { 125.dp.toPx() } }
     val confirmChange: (SheetValue) -> Boolean = { confirm(it) }
     return rememberSaveable(
-        skipPartiallyExpanded,
+        enabledValues,
         saver = SheetState.Saver(
-            skipPartiallyExpanded = skipPartiallyExpanded,
+            enabledValues = enabledValues,
             positionalThreshold = positionalThreshold,
             velocityThreshold = velocityThreshold,
             confirmValueChange = confirmChange,
-            skipHiddenState = false,
         ),
     ) {
         SheetState(
-            skipPartiallyExpanded = skipPartiallyExpanded,
+            enabledValues = enabledValues,
             positionalThreshold = positionalThreshold,
             velocityThreshold = velocityThreshold,
             confirmValueChange = confirmChange,
@@ -145,7 +148,7 @@ internal fun MeloraBottomSheet(
                     if (scrimColor == Color.Unspecified || size.height == 0f) return@drawBehind
                     val height = viewport.height.toFloat()
                     val visibleHeight = if (sheetState.hasPartiallyExpandedState) {
-                        height / 2f
+                        minOf(size.height, height / 2f)
                     } else {
                         size.height.coerceAtMost(height)
                     }

@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
@@ -32,7 +33,7 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class PlayerInputFocusTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
-    private val query = mutableStateOf("")
+    private val query = TextFieldState()
     private var keyboard: SoftwareKeyboardController? = null
     private val track = UiTrack("focus-test", "焦点测试歌曲", "测试歌手", "测试专辑")
 
@@ -43,8 +44,10 @@ class PlayerInputFocusTest {
                 keyboard = LocalSoftwareKeyboardController.current
                 MeloraTheme {
                     Box(Modifier.fillMaxSize()) {
-                        BasicTextField(query.value, { query.value = it },
-                            Modifier.padding(top = 80.dp, start = 24.dp).testTag("underlying-search"))
+                        BasicTextField(
+                            state = query,
+                            modifier = Modifier.padding(top = 80.dp, start = 24.dp).testTag("underlying-search"),
+                        )
                         ContinuousPlayerSheet(PlayerUiState(ready = true, current = track, queue = listOf(track), currentIndex = 0))
                     }
                 }

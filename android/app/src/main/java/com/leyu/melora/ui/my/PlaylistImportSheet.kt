@@ -16,6 +16,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Link
@@ -77,18 +80,20 @@ internal fun PlaylistImportSheet(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var text by rememberSaveable { mutableStateOf("") }
+    val link = rememberTextFieldState()
+    val linkText = link.text.toString()
     var sourceExpanded by rememberSaveable { mutableStateOf(true) }
-    var name by rememberSaveable { mutableStateOf("") }
+    val name = rememberTextFieldState()
     var loading by remember { mutableStateOf(false) }
     var showProgress by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
-    var result by remember { mutableStateOf<PlaylistImportResult?>(null) }
-    var progress by remember { mutableStateOf<PlaylistImportProgress?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
+    // 编辑分享文本时同时清除该文本的预览、错误与选择。
+    var result by remember(linkText) { mutableStateOf<PlaylistImportResult?>(null) }
+    var progress by remember(linkText) { mutableStateOf<PlaylistImportProgress?>(null) }
+    var error by remember(linkText) { mutableStateOf<String?>(null) }
     var job by remember { mutableStateOf<Job?>(null) }
-    var selectedId by remember { mutableStateOf<String?>(null) }
-    var duplicateSeen by remember { mutableStateOf(false) }
+    var selectedId by remember(linkText) { mutableStateOf<String?>(null) }
+    var duplicateSeen by remember(linkText) { mutableStateOf(false) }
     var updateTarget by remember { mutableStateOf<UserLibrary.UserPlaylist?>(null) }
     val available by library.collectAsStateWithLifecycle()
     val coordinator = remember(library, savePlaylist) { PlaylistImportCoordinator({ library.value }, savePlaylist) }
@@ -113,9 +118,7 @@ internal fun PlaylistImportSheet(
         confirmValueChange = { !saving && updateController?.state?.value?.saving != true })
     val closeSheet = rememberSheetDismiss(sheet)
     val dismiss = { if (!saving) { job?.cancel(); closeSheet(onDismiss) } }
-    fun edit(value: String) {
-        if (loading || saving) return
-        text = value
+    fun resetPreview() {
         result = null
         selectedId = null
         duplicateSeen = false
@@ -123,12 +126,11 @@ internal fun PlaylistImportSheet(
         progress = null
     }
     fun read() {
-        if (loading || saving || text.isBlank()) return
+        if (loading || saving || linkText.isBlank() || !link.text.contentEquals(linkText)) return
         // 重试不移除旧错误或预览；busy立即生效，只有持续读取才显示进度。
         progress = null
         showProgress = false
         loading = true
-        val input = text
         job = scope.launch {
             var visibleAt = 0L
             val feedback = launch {
@@ -138,7 +140,7 @@ internal fun PlaylistImportSheet(
             }
             try {
                 val outcome = try {
-                    Result.success(readPlaylist(context, input) { progress = it })
+                    Result.success(readPlaylist(context, linkText) { progress = it })
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (failure: Exception) {
@@ -148,8 +150,9 @@ internal fun PlaylistImportSheet(
                 if (showProgress) {
                     delay((IMPORT_FEEDBACK_DELAY_MS - (SystemClock.elapsedRealtime() - visibleAt)).coerceAtLeast(0))
                 }
+                if (!link.text.contentEquals(linkText)) return@launch
                 outcome.fold(onSuccess = { loaded ->
-                    name = loaded.name
+                    name.setTextAndPlaceCursorAtEnd(loaded.name)
                     result = loaded
                     selectedId = null
                     duplicateSeen = coordinator.choices(loaded, null).matches.isNotEmpty()
@@ -168,12 +171,15 @@ internal fun PlaylistImportSheet(
     }
     fun save(allowCopy: Boolean = false) {
         val ready = result ?: return
-        if (loading || saving || sheet.targetValue == SheetValue.Hidden || name.isBlank()) return
+        val trimmedName = name.text.trim().toString()
+        if (loading || saving || sheet.targetValue == SheetValue.Hidden ||
+            trimmedName.isEmpty() || !link.text.contentEquals(linkText)
+        ) return
         saving = true
         error = null
         job = scope.launch {
             try {
-                when (val outcome = coordinator.save(name.trim(), ready, allowCopy)) {
+                when (val outcome = coordinator.save(trimmedName, ready, allowCopy)) {
                     is PlaylistImportSave.Created -> {
                         saving = false
                         closeSheet { onImported(outcome.playlist) }
@@ -191,7 +197,7 @@ internal fun PlaylistImportSheet(
         }
     }
     fun updateExisting() {
-        if (busy) return
+        if (loading || saving || !link.text.contentEquals(linkText)) return
         val ready = result ?: return
         val id = choices.target?.id ?: return
         try {
@@ -254,14 +260,20 @@ internal fun PlaylistImportSheet(
                                         }
                                         Text(if (showProgress) progress?.let {
                                             "已读取 ${it.loaded}${it.total?.let { total -> " / $total" }.orEmpty()} 首"
-                                        } ?: "正在读取歌单…" else if (expanded) "分享链接" else text,
+                                        } ?: "正在读取歌单…" else if (expanded) "分享链接" else linkText,
                                             color = TextSub, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
                                     if (expanded) {
                                         TextButton(onClick = {
+                                            if (loading || saving) return@TextButton
                                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                                             val pasted = clipboard?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
-                                            if (pasted.isNullOrBlank()) error = "剪贴板没有可粘贴的文字。" else edit(pasted)
+                                            if (pasted.isNullOrBlank()) {
+                                                error = "剪贴板没有可粘贴的文字。"
+                                            } else {
+                                                link.setTextAndPlaceCursorAtEnd(pasted)
+                                                if (pasted == linkText) resetPreview()
+                                            }
                                         }, enabled = !busy, contentPadding = PaddingValues(horizontal = 8.dp)) {
                                             Text("粘贴", color = if (busy) TextSub else BrandBlue, fontSize = 13.sp)
                                         }
@@ -278,13 +290,13 @@ internal fun PlaylistImportSheet(
                                     }
                                 }
                                 if (expanded) BasicTextField(
-                                    value = text, onValueChange = { edit(it) }, enabled = !busy, maxLines = 3,
+                                    state = link, enabled = !busy, lineLimits = TextFieldLineLimits.MultiLine(maxHeightInLines = 3),
                                     textStyle = TextStyle(color = TextMain, fontSize = 14.sp, lineHeight = 21.sp),
                                     cursorBrush = SolidColor(BrandBlue),
                                     modifier = Modifier.fillMaxWidth().height(84.dp).padding(horizontal = 12.dp, vertical = 8.dp).testTag("playlist-import-link"),
-                                    decorationBox = { field ->
+                                    decorator = { field ->
                                         Box {
-                                            if (text.isBlank()) Text("粘贴链接或整段分享文字", color = MeloraAppearance.textMuted, fontSize = 14.sp, lineHeight = 21.sp)
+                                            if (linkText.isBlank()) Text("粘贴链接或整段分享文字", color = MeloraAppearance.textMuted, fontSize = 14.sp, lineHeight = 21.sp)
                                             field()
                                         }
                                     },
@@ -302,7 +314,7 @@ internal fun PlaylistImportSheet(
                                     Column(Modifier.weight(1f)) {
                                         Text(if (duplicate) "副本名称 · 可修改" else "歌单名称 · 可修改", fontSize = 11.sp, color = TextSub)
                                         BasicTextField(
-                                            value = name, onValueChange = { name = it }, singleLine = true, enabled = !busy,
+                                            state = name, lineLimits = TextFieldLineLimits.SingleLine, enabled = !busy,
                                             textStyle = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Medium, color = TextMain),
                                             cursorBrush = SolidColor(BrandBlue),
                                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).testTag("playlist-import-name"),
@@ -380,8 +392,8 @@ internal fun PlaylistImportSheet(
                             error != null -> "重试读取"
                             else -> "读取歌单"
                         },
-                        confirmEnabled = if (result == null) text.isNotBlank() else if (duplicate) choices.target != null else name.isNotBlank(),
-                        busy = busy, secondaryEnabled = if (copyAvailable) !busy && name.isNotBlank() else !saving,
+                        confirmEnabled = if (result == null) linkText.isNotBlank() else if (duplicate) choices.target != null else name.text.isNotBlank(),
+                        busy = busy, secondaryEnabled = if (copyAvailable) !busy && name.text.isNotBlank() else !saving,
                         secondaryText = if (copyAvailable) {
                             if (result!!.warning == null) "另存为副本" else "另存已获取的 ${result!!.songs.size} 首"
                         } else "取消",

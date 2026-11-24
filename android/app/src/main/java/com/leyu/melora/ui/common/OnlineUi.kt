@@ -44,10 +44,11 @@ import androidx.compose.material3.SheetValue
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.clearText
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.outlined.AddCircleOutline
@@ -831,14 +832,14 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
     val scope = rememberCoroutineScope()
     val sheetState = rememberMeloraBottomSheetState()
     val closeSheet = rememberSheetDismiss(sheetState)
-    var newName by remember { mutableStateOf("") }
+    val newName = remember { TextFieldState() }
     var adding by remember { mutableStateOf(false) }
     val playlists by UserLibrary.playlists.collectAsStateWithLifecycle()
     val addSongs: (UserLibrary.UserPlaylist?) -> Unit = { playlist ->
         if (!adding && sheetState.targetValue != SheetValue.Hidden &&
-            (playlist != null || newName.isNotBlank())
+            (playlist != null || newName.text.isNotBlank())
         ) {
-            val name = newName.trim()
+            val name = newName.text.trim().toString()
             adding = true
             scope.launch {
                 try {
@@ -859,7 +860,7 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
                             songs.size == 1 -> "已添加到歌单「${playlist.name}」"
                             else -> "已添加 $newCount 首到歌单「${playlist.name}」"
                         })
-                        if (playlist == null) newName = ""
+                        if (playlist == null) newName.clearText()
                         if (newCount != null) closeSheet(onDismiss)
                     }.onFailure {
                         PlaybackController.postMessage(
@@ -931,10 +932,9 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
                     )
                     Spacer(Modifier.width(10.dp))
                     BasicTextField(
-                        value = newName,
-                        onValueChange = { newName = it },
+                        state = newName,
                         enabled = !adding,
-                        singleLine = true,
+                        lineLimits = TextFieldLineLimits.SingleLine,
                         textStyle = TextStyle(
                             fontSize = 14.sp,
                             color = TextMain,
@@ -943,14 +943,14 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
                         ),
                         cursorBrush = SolidColor(BrandBlue),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = { addSongs(null) }),
+                        onKeyboardAction = { addSongs(null) },
                         modifier = Modifier.weight(1f),
-                        decorationBox = { innerTextField ->
+                        decorator = { innerTextField ->
                             Box(
                                 modifier = Modifier.fillMaxWidth(),
                                 contentAlignment = Alignment.CenterStart,
                             ) {
-                                if (newName.isEmpty()) {
+                                if (newName.text.isEmpty()) {
                                     Text(
                                         "新建歌单名称…",
                                         fontSize = 13.sp,
@@ -961,7 +961,7 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
                             }
                         },
                     )
-                    if (newName.isNotBlank()) {
+                    if (newName.text.isNotBlank()) {
                         Surface(
                             onClick = { addSongs(null) },
                             shape = RoundedCornerShape(14.dp),

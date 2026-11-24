@@ -32,6 +32,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.PlaylistAdd
@@ -64,6 +65,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -146,6 +148,11 @@ internal fun rememberLocalSongsContent(
     content
 }
 
+private val LocalSearchQuerySaver = Saver<TextFieldState?, String>(
+    save = { it?.text?.toString() },
+    restore = { TextFieldState(initialText = it) },
+)
+
 /** 本地列表与搜索共用完整快照；首次排序未完成不冒充空库。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -159,7 +166,9 @@ internal fun LocalSongsPage(
 
     val sortField by MeloraSettings.localSortField.collectAsStateWithLifecycle()
     val ascending by MeloraSettings.localSortAscending.collectAsStateWithLifecycle()
-    var searchPage by rememberSaveable { mutableStateOf<String?>(null) }
+    var searchQuery by rememberSaveable(stateSaver = LocalSearchQuerySaver) {
+        mutableStateOf<TextFieldState?>(null)
+    }
     var showSortSheet by remember { mutableStateOf(false) }
     var moreSong by remember { mutableStateOf<LocalSong?>(null) }
     var pendingDelete by remember { mutableStateOf<List<LocalDeletionTarget>?>(null) }
@@ -268,22 +277,20 @@ internal fun LocalSongsPage(
         if (granted) launchScan() else permissionLauncher.launch(permission)
     }
 
-    BackHandler(enabled = searchPage != null) { searchPage = null }
+    BackHandler(enabled = searchQuery != null) { searchQuery = null }
     // 非搜索态：返回先退出批量管理，有父级回调则回退
-    BackHandler(enabled = searchPage == null && (selection.active || onBack != null)) {
+    BackHandler(enabled = searchQuery == null && (selection.active || onBack != null)) {
         if (selection.active) selection.finish() else onBack?.invoke()
     }
 
     DetailPageHost(
-        target = searchPage,
-        contentKey = { "local-search" },
+        target = searchQuery,
         modifier = Modifier.fillMaxSize(),
-        detail = { page ->
+        detail = { query ->
             LocalSearchPage(
                 content = content,
-                query = page,
-                onQueryChange = { searchPage = it },
-                onCancel = { searchPage = null },
+                queryState = query,
+                onCancel = { searchQuery = null },
                 selection = selection,
                 onOpenSortSheet = { showSortSheet = true },
                 onMore = { moreSong = it },
@@ -298,7 +305,7 @@ internal fun LocalSongsPage(
                 listState = listState,
                 onOpenDrawer = onOpenDrawer,
                 onBack = onBack,
-                onOpenSearch = { searchPage = "" },
+                onOpenSearch = { searchQuery = TextFieldState() },
                 onOpenSortSheet = { showSortSheet = true },
                 onMore = { moreSong = it },
                 onDeleteSelection = { requestDeleteConfirmation(it) },

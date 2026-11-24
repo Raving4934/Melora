@@ -15,8 +15,9 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
@@ -126,11 +127,18 @@ internal fun AudioCacheSizeSetting(maxCacheMb: Int, usedBytes: Long?, onSave: (I
 
 @Composable
 private fun CacheLimitDialog(maxCacheMb: Int, onDismiss: () -> Unit, onSave: (Int) -> Unit) {
-    var draft by rememberSaveable(maxCacheMb) { mutableStateOf(audioCacheSizeGb(maxCacheMb)) }
+    val draft = rememberSaveable(maxCacheMb, saver = TextFieldState.Saver) {
+        TextFieldState(audioCacheSizeGb(maxCacheMb))
+    }
     var focused by remember { mutableStateOf(false) }
-    val candidate = audioCacheMbFromGb(draft)
-    val invalid = draft.isNotBlank() && candidate == null
+    val input = draft.text.toString()
+    val candidate = audioCacheMbFromGb(input)
+    val invalid = input.isNotBlank() && candidate == null
     val errorMessage = "请输入可用的非负容量。"
+
+    fun saveDraft() {
+        audioCacheMbFromGb(draft.text.toString())?.let(onSave)
+    }
 
     MeloraAlertDialog(
         onDismissRequest = onDismiss,
@@ -146,8 +154,7 @@ private fun CacheLimitDialog(maxCacheMb: Int, onDismiss: () -> Unit, onSave: (In
                     else -> MeloraAppearance.softFill
                 }
                 BasicTextField(
-                    value = draft,
-                    onValueChange = { draft = it },
+                    state = draft,
                     modifier = Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }
                         .semantics {
                             contentDescription = "最大缓存大小"
@@ -155,10 +162,10 @@ private fun CacheLimitDialog(maxCacheMb: Int, onDismiss: () -> Unit, onSave: (In
                         },
                     textStyle = TextStyle(color = SettingsTextMain, fontSize = 17.sp, fontWeight = FontWeight.Medium),
                     cursorBrush = SolidColor(SettingsBrandBlue),
-                    singleLine = true,
+                    lineLimits = TextFieldLineLimits.SingleLine,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = { candidate?.let(onSave) }),
-                    decorationBox = { innerField ->
+                    onKeyboardAction = { saveDraft() },
+                    decorator = { innerField ->
                         Row(
                             Modifier.fillMaxWidth().heightIn(min = 50.dp)
                                 .background(fieldFill, RoundedCornerShape(12.dp))
@@ -180,7 +187,7 @@ private fun CacheLimitDialog(maxCacheMb: Int, onDismiss: () -> Unit, onSave: (In
         },
         confirmButton = {
             TextButton(
-                onClick = { candidate?.let(onSave) },
+                onClick = ::saveDraft,
                 enabled = candidate != null,
                 colors = ButtonDefaults.textButtonColors(contentColor = SettingsBrandBlue),
             ) { Text("保存", fontWeight = FontWeight.SemiBold) }

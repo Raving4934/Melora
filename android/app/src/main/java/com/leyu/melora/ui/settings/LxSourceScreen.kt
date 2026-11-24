@@ -42,6 +42,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.clearText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Add
@@ -66,6 +69,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -112,6 +116,8 @@ private data class SourceActionStatus(
     val failed: Boolean = false,
 )
 
+private data class SourceImportFailure(val draft: String, val message: String)
+
 // 自定义源管理：自动换源开关 + 已装音源（启停/检查/导出/删除）+ 导入导出。
 @Composable
 fun LxSourceScreen(modifier: Modifier = Modifier) {
@@ -125,7 +131,6 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
     var pendingExport by remember { mutableStateOf<LxScript?>(null) }
     var importChooserOpen by remember { mutableStateOf(false) }
     var onlineImportOpen by remember { mutableStateOf(false) }
-    var onlineImportError by remember { mutableStateOf<String?>(null) }
     val sourceImporter = remember(context, store) { LxSourceImporter(store) }
     val sourceAlias by MeloraSettings.sourceAliasEnabled.collectAsStateWithLifecycle()
     val autoSwitch by MeloraSettings.autoSwitchSource.collectAsStateWithLifecycle()
@@ -508,7 +513,6 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
             },
             onOnlineUrl = {
                 importChooserOpen = false
-                onlineImportError = null
                 onlineImportOpen = true
             },
         )
@@ -516,16 +520,13 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
     if (onlineImportOpen) {
         OnlineSourceImportSheet(
             busy = busy,
-            errorMessage = onlineImportError,
-            onErrorClear = { onlineImportError = null },
             onDismiss = { if (!busy) onlineImportOpen = false },
             onImportSuccess = { onlineImportOpen = false },
-            onImport = { url, onImportSuccess ->
-                onlineImportError = null
+            onImport = { url, onImportSuccess, onImportFailure ->
                 launchSourceImport(
                     import = { sourceImporter.importUrl(url) },
                     onSuccess = onImportSuccess,
-                    onFailure = { onlineImportError = it },
+                    onFailure = onImportFailure,
                 )
             },
         )
@@ -730,13 +731,20 @@ internal fun ImportSourceSheet(
 @Composable
 private fun OnlineSourceImportSheet(
     busy: Boolean,
-    errorMessage: String?,
-    onErrorClear: () -> Unit,
     onDismiss: () -> Unit,
     onImportSuccess: () -> Unit,
-    onImport: (String, onImportSuccess: () -> Unit) -> Unit,
+    onImport: (url: String, onSuccess: () -> Unit, onFailure: (String) -> Unit) -> Unit,
 ) {
-    var url by remember { mutableStateOf("") }
+    val urlField = remember { TextFieldState() }
+    var failure by remember { mutableStateOf<SourceImportFailure?>(null) }
+    val url = urlField.text.toString()
+    val currentFailure = failure?.takeIf { it.draft == url }
+    if (failure != currentFailure) {
+        SideEffect {
+            if (failure?.draft != urlField.text.toString()) failure = null
+        }
+    }
+    val errorMessage = currentFailure?.message
     val isCleartextHttp = url.trim().startsWith("http://", ignoreCase = true)
     val helperMessage = errorMessage ?: if (isCleartextHttp) {
         "HTTP 是明文连接，脚本内容可能在传输中被篡改。"
@@ -776,12 +784,8 @@ private fun OnlineSourceImportSheet(
                 )
                 Spacer(Modifier.width(10.dp))
                 BasicTextField(
-                    value = url,
-                    onValueChange = {
-                        url = it
-                        if (errorMessage != null) onErrorClear()
-                    },
-                    singleLine = true,
+                    state = urlField,
+                    lineLimits = TextFieldLineLimits.SingleLine,
                     enabled = !busy,
                     textStyle = TextStyle(
                         fontSize = 13.sp,
@@ -792,7 +796,7 @@ private fun OnlineSourceImportSheet(
                     cursorBrush = SolidColor(BrandBlue),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                     modifier = Modifier.weight(1f),
-                    decorationBox = { innerTextField ->
+                    decorator = { innerTextField ->
                         Box(contentAlignment = Alignment.CenterStart) {
                             if (url.isEmpty()) {
                                 Text(
@@ -816,10 +820,7 @@ private fun OnlineSourceImportSheet(
                             .size(20.dp)
                             .clip(CircleShape)
                             .background(MeloraAppearance.softFill)
-                            .clickable {
-                                url = ""
-                                onErrorClear()
-                            },
+                            .clickable { urlField.clearText() },
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
@@ -886,9 +887,13 @@ private fun OnlineSourceImportSheet(
             }
             Surface(
                 onClick = {
-                    onImport(url.trim()) {
-                        closeSheet(onImportSuccess)
-                    }
+                    val submitted = urlField.text.toString()
+                    failure = null
+                    onImport(
+                        submitted.trim(),
+                        { closeSheet(onImportSuccess) },
+                        { failure = SourceImportFailure(submitted, it) },
+                    )
                 },
                 enabled = canSubmit,
                 shape = RoundedCornerShape(12.dp),

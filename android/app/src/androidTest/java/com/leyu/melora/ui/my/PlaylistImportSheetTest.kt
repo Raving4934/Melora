@@ -149,6 +149,29 @@ class PlaylistImportSheetTest {
         compose.waitUntil(5_000) { saves.get() == 1 }
     }
 
+    @Test fun replacingShareTextClearsThePreviousPreviewAndReadsTheNewLink() {
+        val replacement = "分享歌单\nhttps://music.163.com/#/playlist?id=456\n来自网易云音乐"
+        show(read = { _, input, _ ->
+            result().copy(name = if (input == replacement) "新链接歌单" else "原链接歌单")
+        })
+        compose.awaitStable("playlist-import-edit-link")
+        compose.onNodeWithTag("playlist-import-edit-link").performClick()
+        val input = compose.onNodeWithTag("playlist-import-link")
+        compose.awaitStable(input)
+        input.performTextReplacement(replacement)
+        input.assertTextEquals(replacement)
+        compose.onNodeWithTag("playlist-import-name").assertDoesNotExist()
+        compose.onNodeWithText("读取歌单").assertExists()
+        compose.awaitIme(input)
+        compose.awaitStable("playlist-import-submit")
+        compose.onNodeWithTag("playlist-import-submit").assertIsEnabled().performClick()
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("新链接歌单").fetchSemanticsNodes().isNotEmpty()
+        }
+        assertEquals(2, reads.get())
+        assertEquals(0, saves.get())
+    }
+
     @Test fun cancellingReadCancelsWorkWithoutCreatingPlaylist() {
         val cancelled = AtomicBoolean()
         show(read = { _, _, _ ->

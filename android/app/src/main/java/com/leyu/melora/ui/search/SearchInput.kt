@@ -15,8 +15,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
@@ -31,8 +32,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -63,11 +62,10 @@ internal val SearchInputContainerBottomPadding = 8.dp
 @Composable
 internal fun SearchInputSection(
     category: SearchCategory,
-    query: String,
+    queryState: TextFieldState,
     selectedPlatform: PlatformSource,
     platformMenuExpanded: Boolean,
     suggestions: List<String>,
-    onQueryChange: (String) -> Unit,
     onSubmit: (String) -> Unit,
     onClear: () -> Unit,
     onPlatformMenuExpandedChange: (Boolean) -> Unit,
@@ -194,19 +192,18 @@ internal fun SearchInputSection(
                 Spacer(Modifier.width(6.dp))
 
                 BasicTextField(
-                    value = query,
-                    onValueChange = onQueryChange,
+                    state = queryState,
                     textStyle = TextStyle(fontSize = 14.sp, color = TextMain),
                     cursorBrush = SolidColor(BrandBlue),
-                    singleLine = true,
+                    lineLimits = TextFieldLineLimits.SingleLine,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { onSubmit(query) }),
-                    decorationBox = { innerTextField ->
+                    onKeyboardAction = { onSubmit(queryState.text.toString()) },
+                    decorator = { innerTextField ->
                         Box(
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.fillMaxWidth(),
                             contentAlignment = Alignment.CenterStart,
                         ) {
-                            if (query.isEmpty()) {
+                            if (queryState.text.isEmpty()) {
                                 Text(
                                     text = when (category) {
                                         SearchCategory.Song -> "搜索单曲、歌手、专辑..."
@@ -225,7 +222,7 @@ internal fun SearchInputSection(
                     modifier = Modifier.weight(1f),
                 )
 
-                if (query.isNotEmpty()) {
+                if (queryState.text.isNotEmpty()) {
                     IconButton(
                         onClick = onClear,
                         modifier = Modifier.size(24.dp),

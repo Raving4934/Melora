@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -26,6 +25,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.clearText
 import androidx.compose.material.icons.Icons
 
 import androidx.compose.material.icons.outlined.AccessTime
@@ -47,12 +49,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -61,10 +58,8 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.UiTrack
 
@@ -75,7 +70,6 @@ import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.ui.common.toUiTracks
 import com.leyu.melora.ui.common.BrandBlue
 import com.leyu.melora.ui.common.ChromeScaffold
-import com.leyu.melora.ui.common.DividerSoft
 import com.leyu.melora.ui.common.SongSelectionState
 import com.leyu.melora.ui.common.TextMain
 import com.leyu.melora.ui.common.TextMuted
@@ -84,16 +78,12 @@ import com.leyu.melora.ui.common.chromeContentPadding
 import com.leyu.melora.ui.common.chromeHeaderColor
 import com.leyu.melora.ui.theme.MeloraAppearance
 
-import kotlinx.coroutines.launch
-
-
 /** 本地搜索页：搜索框 + 结果列表；排序与列表页共用。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun LocalSearchPage(
     content: LocalSongsContent?,
-    query: String,
-    onQueryChange: (String) -> Unit,
+    queryState: TextFieldState,
     onCancel: () -> Unit,
     selection: SongSelectionState,
     onOpenSortSheet: () -> Unit,
@@ -105,7 +95,7 @@ internal fun LocalSearchPage(
     val context = LocalContext.current
     val playingLocalId = rememberPlayingLocalId()
     val listState = rememberLazyListState()
-    val scope = rememberCoroutineScope()
+    val query = queryState.text.toString()
     val filtered = remember(songs, query) { if (query.isBlank()) songs else songs.filter { it.matches(query) } }
 
     val hasActions = query.isNotBlank() && filtered.isNotEmpty()
@@ -143,13 +133,12 @@ internal fun LocalSearchPage(
                             platformStyle = PlatformTextStyle(includeFontPadding = false),
                         )
                         BasicTextField(
-                            value = query,
-                            onValueChange = onQueryChange,
-                            singleLine = true,
+                            state = queryState,
+                            lineLimits = TextFieldLineLimits.SingleLine,
                             textStyle = inputStyle,
                             cursorBrush = SolidColor(BrandBlue),
                             modifier = Modifier.weight(1f),
-                            decorationBox = { field ->
+                            decorator = { field ->
                                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
                                     if (query.isEmpty()) {
                                         Text(
@@ -171,7 +160,7 @@ internal fun LocalSearchPage(
                                     .clickable(
                                         interactionSource = remember { MutableInteractionSource() },
                                         indication = null,
-                                    ) { onQueryChange("") },
+                                    ) { queryState.clearText() },
                                 contentAlignment = Alignment.Center,
                             ) {
                                 Icon(Icons.Rounded.Close, contentDescription = "清空", tint = TextSub, modifier = Modifier.size(12.dp))

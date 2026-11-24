@@ -14,6 +14,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.clearText
+import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -76,7 +79,8 @@ fun SearchScreen(
     }
     var platformMenuExpanded by remember { mutableStateOf(false) }
 
-    var query by remember { mutableStateOf("") }
+    val queryState = remember { TextFieldState() }
+    val query = queryState.text.toString()
     var submitted by remember { mutableStateOf("") }
     val searchHistory by UserLibrary.searchHistory.collectAsStateWithLifecycle()
 
@@ -333,7 +337,7 @@ fun SearchScreen(
         val text = keyword.trim()
         if (text.isEmpty()) return
         UserLibrary.addSearchKeyword(text)
-        query = text
+        if (queryState.text.toString() != text) queryState.setTextAndPlaceCursorAtEnd(text)
         if (submitted == text) {
             runSearch(text, 1, append = false)
         } else {
@@ -379,14 +383,13 @@ fun SearchScreen(
                         ) {
                             SearchInputSection(
                                 category = category,
-                                query = query,
+                                queryState = queryState,
                                 selectedPlatform = selectedPlatform,
                                 platformMenuExpanded = platformMenuExpanded,
                                 suggestions = visibleSuggestions,
-                                onQueryChange = { query = it },
                                 onSubmit = { submit(it) },
                                 onClear = {
-                                    query = ""
+                                    queryState.clearText()
                                     submitted = ""
                                     cancelSearch()
                                     songs = emptyList()

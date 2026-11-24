@@ -31,6 +31,9 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.clearText
+import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.platform.testTag
@@ -53,7 +56,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Surface
@@ -62,7 +64,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -282,7 +283,8 @@ internal fun BookChapterPicker(
 ) {
     val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true)
     val closeSheet = rememberSheetDismiss(sheetState)
-    var query by rememberSaveable { mutableStateOf("") }
+    val queryState = rememberTextFieldState()
+    val query = queryState.text.toString()
     val input = remember(query) { parseBookChapterQuery(query) }
     var forceTitleSearch by remember(query) { mutableStateOf(false) }
     val searchByTitle = input.keyword.isNotEmpty() && (!input.isEpisode || forceTitleSearch)
@@ -308,8 +310,15 @@ internal fun BookChapterPicker(
         }
     }
     val submit: () -> Unit = {
-        if (searchByTitle) { stopped = false; attempt++ }
-        else input.episode?.let { episode -> closeSheet { onSelectEpisode(episode); onDismiss() } }
+        val submitted = queryState.text.toString()
+        if (submitted == query && searchByTitle) {
+            stopped = false
+            attempt++
+        } else {
+            parseBookChapterQuery(submitted).episode?.let { episode ->
+                closeSheet { onSelectEpisode(episode); onDismiss() }
+            }
+        }
     }
     val pageCount = BookCatalogPaging.pageCount(total) ?: 0
     val invalidEpisode = !searchByTitle && input.isEpisode && input.episode == null
@@ -342,17 +351,17 @@ internal fun BookChapterPicker(
                         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
                             if (query.isEmpty()) Text("输入集数或章节名", fontSize = 13.5.sp, lineHeight = 18.sp, color = TextMuted)
                             BasicTextField(
-                                value = query, onValueChange = { query = it }, singleLine = true,
+                                state = queryState, lineLimits = TextFieldLineLimits.SingleLine,
                                 textStyle = TextStyle(fontSize = 14.sp, color = TextMain, fontWeight = FontWeight.Medium),
                                 cursorBrush = SolidColor(BrandBlue),
                                 // 不随自动识别结果切换键盘，避免输入中途收起/重启输入法。
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Search),
-                                keyboardActions = KeyboardActions(onSearch = { submit() }),
+                                onKeyboardAction = { submit() },
                                 modifier = Modifier.fillMaxWidth().testTag("book-chapter-query")
                                     .semantics { contentDescription = "集数或章节名" },
                             )
                         }
-                        if (query.isNotEmpty()) IconButton(onClick = { query = "" }, modifier = Modifier.size(32.dp)) {
+                        if (query.isNotEmpty()) IconButton(onClick = { queryState.clearText() }, modifier = Modifier.size(32.dp)) {
                             Icon(Icons.Rounded.Close, contentDescription = "清空选集输入", tint = TextMuted, modifier = Modifier.size(18.dp))
                         }
                         val canSubmit = searchByTitle || input.episode != null

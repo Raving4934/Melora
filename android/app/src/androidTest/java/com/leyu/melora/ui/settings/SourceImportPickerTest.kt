@@ -3,9 +3,18 @@ package com.leyu.melora.ui.settings
 import android.content.Intent
 import android.webkit.MimeTypeMap
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.leyu.melora.ui.theme.MeloraTheme
@@ -49,5 +58,31 @@ class SourceImportPickerTest {
 
     @Test fun backupPickerRemainsSeparateAndOnlyAllowsJson() {
         assertArrayEquals(arrayOf("application/json"), select("恢复音源备份"))
+    }
+
+    @Test fun onlineImportShowsValidationForTheCurrentUrlAndClearsItWhenEdited() {
+        compose.setContent { MeloraTheme { LxSourceScreen() } }
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("导入音源脚本"))
+        compose.onNodeWithText("导入音源脚本").performClick()
+        compose.onNodeWithText("从链接导入").performClick()
+        val submit = compose.onNodeWithText("立即导入")
+        compose.waitUntil(5_000) { submit.isDisplayed() }
+        submit.assertIsNotEnabled()
+
+        val url = compose.onNode(hasSetTextAction())
+        val invalidUrl = compose.onNodeWithText("音源脚本链接格式无效")
+        val invalidFragment = compose.onNodeWithText("音源链接不能包含 fragment")
+        url.performTextReplacement("file:///source.js")
+        submit.assertIsEnabled().performClick()
+        compose.waitUntil(5_000) { invalidUrl.isDisplayed() }
+
+        url.performTextReplacement("https://example.invalid/source.js#tag")
+        invalidUrl.assertDoesNotExist()
+        submit.performClick()
+        compose.waitUntil(5_000) { invalidFragment.isDisplayed() }
+
+        compose.onNodeWithContentDescription("清空").performClick()
+        invalidFragment.assertDoesNotExist()
+        submit.assertIsNotEnabled()
     }
 }

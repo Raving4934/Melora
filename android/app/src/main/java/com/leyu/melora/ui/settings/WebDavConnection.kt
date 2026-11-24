@@ -13,8 +13,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicSecureTextField
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.TextFieldDecorator
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.TextObfuscationMode
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckCircle
@@ -35,6 +40,7 @@ import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -60,8 +66,6 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -103,7 +107,7 @@ internal fun WebDavConnectionEntry(
 
 private enum class ConnectionAction { Test, Save }
 
-private data class ConnectionFeedback(val text: String, val failed: Boolean = false)
+private data class ConnectionFeedback(val draft: WebDavConfig, val text: String, val failed: Boolean = false)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -116,7 +120,10 @@ private fun WebDavConnectionEditor(
     val scope = rememberCoroutineScope()
     val savedCallback by rememberUpdatedState(onSaved)
     // 口令只保留在当前编辑窗口，避免写入 Activity 的恢复状态。
-    var draft by remember { mutableStateOf(config ?: WebDavConfig()) }
+    val server = remember { TextFieldState(config?.server.orEmpty()) }
+    val folder = remember { TextFieldState(config?.folder ?: WebDavConfig.DEFAULT_FOLDER) }
+    val account = remember { TextFieldState(config?.account.orEmpty()) }
+    val password = remember { TextFieldState(config?.password.orEmpty()) }
     var visiblePassword by remember { mutableStateOf(false) }
     var action by remember { mutableStateOf<ConnectionAction?>(null) }
     var feedback by remember { mutableStateOf<ConnectionFeedback?>(null) }
@@ -125,14 +132,24 @@ private fun WebDavConnectionEditor(
     }
     val close = rememberSheetDismiss(sheet)
 
-    fun updateConfig(value: WebDavConfig) {
-        draft = value
-        feedback = null
+    fun currentDraft() = WebDavConfig(
+        server = server.text.toString(),
+        account = account.text.toString(),
+        password = password.text.toString(),
+        folder = folder.text.toString(),
+    )
+
+    val draft = currentDraft()
+    val draftFeedback = feedback?.takeIf { it.draft == draft }
+    if (feedback != draftFeedback) {
+        SideEffect {
+            if (feedback?.draft != currentDraft()) feedback = null
+        }
     }
 
     fun runAction(next: ConnectionAction) {
         if (action != null) return
-        val submitted = draft
+        val submitted = currentDraft()
         action = next
         feedback = null
         visiblePassword = false
@@ -143,6 +160,7 @@ private fun WebDavConnectionEditor(
                         ConnectionAction.Test -> {
                             val result = WebDavBackup.test(submitted)
                             feedback = ConnectionFeedback(
+                                submitted,
                                 if (result.canSync) "测试通过，可使用网络备份和多设备同步。"
                                 else "网络备份可用。多设备同步需要服务器支持条件写入。",
                             )
@@ -155,7 +173,7 @@ private fun WebDavConnectionEditor(
                         }
                     }
                 }.onFailure {
-                    feedback = ConnectionFeedback(it.localizedMessage ?: "操作失败，请重试。", failed = true)
+                    feedback = ConnectionFeedback(submitted, it.localizedMessage ?: "操作失败，请重试。", failed = true)
                 }
             } finally {
                 action = null
@@ -198,8 +216,7 @@ private fun WebDavConnectionEditor(
             ) {
                 SettingsCard(contentPadding = PaddingValues(0.dp)) {
                     ConnectionField(
-                        value = draft.server,
-                        onValueChange = { updateConfig(draft.copy(server = it)) },
+                        state = server,
                         label = "服务器地址",
                         placeholder = "https://nas.example.com/dav/",
                         icon = Icons.Outlined.Link,
@@ -208,8 +225,7 @@ private fun WebDavConnectionEditor(
                     )
                     SettingsDivider(Modifier.padding(start = 48.dp))
                     ConnectionField(
-                        value = draft.folder,
-                        onValueChange = { updateConfig(draft.copy(folder = it)) },
+                        state = folder,
                         label = "子文件夹名称",
                         placeholder = WebDavConfig.DEFAULT_FOLDER,
                         icon = Icons.Outlined.Folder,
@@ -218,8 +234,7 @@ private fun WebDavConnectionEditor(
                 }
                 SettingsCard(contentPadding = PaddingValues(0.dp)) {
                     ConnectionField(
-                        value = draft.account,
-                        onValueChange = { updateConfig(draft.copy(account = it)) },
+                        state = account,
                         label = "账号",
                         placeholder = "服务器要求登录时填写",
                         icon = Icons.Outlined.Person,
@@ -227,18 +242,15 @@ private fun WebDavConnectionEditor(
                     )
                     SettingsDivider(Modifier.padding(start = 48.dp))
                     ConnectionField(
-                        value = draft.password,
-                        onValueChange = { updateConfig(draft.copy(password = it)) },
+                        state = password,
                         label = "密码",
                         placeholder = "密码或应用专用密码",
                         icon = Icons.Outlined.Lock,
                         enabled = !busy,
-                        keyboardType = KeyboardType.Password,
-                        imeAction = ImeAction.Done,
-                        transformation = if (visiblePassword) VisualTransformation.None else PasswordVisualTransformation(),
+                        passwordObfuscation = if (visiblePassword) TextObfuscationMode.Visible else TextObfuscationMode.Hidden,
                         trailingContent = {
                             IconButton(
-                                enabled = !busy && draft.password.isNotEmpty(),
+                                enabled = !busy && password.text.isNotEmpty(),
                                 onClick = { visiblePassword = !visiblePassword },
                             ) {
                                 Icon(
@@ -251,7 +263,7 @@ private fun WebDavConnectionEditor(
                     )
                 }
             }
-            WebDavFeedback(feedback, action)
+            WebDavFeedback(draftFeedback, action)
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 val canSubmit = !busy && draft.server.isNotBlank()
                 WebDavAction(
@@ -295,65 +307,82 @@ private fun WebDavIcon() {
 
 @Composable
 private fun ConnectionField(
-    value: String,
-    onValueChange: (String) -> Unit,
+    state: TextFieldState,
     label: String,
     placeholder: String,
     icon: ImageVector,
     enabled: Boolean,
     keyboardType: KeyboardType = KeyboardType.Text,
-    imeAction: ImeAction = ImeAction.Next,
-    transformation: VisualTransformation = VisualTransformation.None,
+    passwordObfuscation: TextObfuscationMode? = null,
     trailingContent: @Composable (() -> Unit)? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
     val fieldColor = if (focused) SettingsBrandBlue else SettingsTextSub
-    BasicTextField(
-        value = value,
-        onValueChange = onValueChange,
-        enabled = enabled,
-        singleLine = true,
-        keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = imeAction, autoCorrectEnabled = false),
-        textStyle = TextStyle(color = SettingsTextMain, fontSize = 15.sp, lineHeight = 22.sp),
-        cursorBrush = SolidColor(SettingsBrandBlue),
-        visualTransformation = transformation,
-        modifier = Modifier.fillMaxWidth()
-            .onFocusChanged { focused = it.isFocused }
-            .semantics { contentDescription = label },
-        decorationBox = { innerField ->
-            Row(
-                modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp)
-                    .background(if (focused) MeloraAppearance.tintBlue else SettingsCardBg)
-                    .padding(
-                        start = 16.dp,
-                        end = if (trailingContent == null) 16.dp else 4.dp,
-                        top = 8.dp,
-                        bottom = 8.dp,
-                    ),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(icon, null, tint = fieldColor, modifier = Modifier.size(20.dp))
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(label, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = fieldColor)
-                    Box(Modifier.fillMaxWidth()) {
-                        if (value.isEmpty()) {
-                            Text(
-                                placeholder,
-                                color = SettingsTextSub,
-                                fontSize = 15.sp,
-                                lineHeight = 22.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        innerField()
+    val modifier = Modifier.fillMaxWidth()
+        .onFocusChanged { focused = it.isFocused }
+        .semantics { contentDescription = label }
+    val textStyle = TextStyle(color = SettingsTextMain, fontSize = 15.sp, lineHeight = 22.sp)
+    val cursorBrush = SolidColor(SettingsBrandBlue)
+    val decorator = TextFieldDecorator { innerField ->
+        Row(
+            modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp)
+                .background(if (focused) MeloraAppearance.tintBlue else SettingsCardBg)
+                .padding(
+                    start = 16.dp,
+                    end = if (trailingContent == null) 16.dp else 4.dp,
+                    top = 8.dp,
+                    bottom = 8.dp,
+                ),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(icon, null, tint = fieldColor, modifier = Modifier.size(20.dp))
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(label, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = fieldColor)
+                Box(Modifier.fillMaxWidth()) {
+                    if (state.text.isEmpty()) {
+                        Text(
+                            placeholder,
+                            color = SettingsTextSub,
+                            fontSize = 15.sp,
+                            lineHeight = 22.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
+                    innerField()
                 }
-                trailingContent?.invoke()
             }
-        },
-    )
+            trailingContent?.invoke()
+        }
+    }
+    if (passwordObfuscation != null) {
+        BasicSecureTextField(
+            state = state,
+            modifier = modifier,
+            enabled = enabled,
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Password,
+                imeAction = ImeAction.Done,
+                autoCorrectEnabled = false,
+            ),
+            textStyle = textStyle,
+            cursorBrush = cursorBrush,
+            decorator = decorator,
+            textObfuscationMode = passwordObfuscation,
+        )
+    } else {
+        BasicTextField(
+            state = state,
+            modifier = modifier,
+            enabled = enabled,
+            lineLimits = TextFieldLineLimits.SingleLine,
+            keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = ImeAction.Next, autoCorrectEnabled = false),
+            textStyle = textStyle,
+            cursorBrush = cursorBrush,
+            decorator = decorator,
+        )
+    }
 }
 
 @Composable

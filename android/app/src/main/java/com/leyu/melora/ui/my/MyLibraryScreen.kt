@@ -60,8 +60,11 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.clearText
+import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
@@ -119,11 +122,9 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -2188,15 +2189,13 @@ internal fun PlaylistEditSheet(
     val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true)
     val closeSheet = rememberSheetDismiss(sheetState)
     val focusRequester = remember { FocusRequester() }
-    var textValue by remember(initialName) {
-        mutableStateOf(TextFieldValue(initialName, selection = TextRange(initialName.length)))
-    }
-    val canSubmit = textValue.text.trim().isNotEmpty()
+    val name = remember(initialName) { TextFieldState(initialText = initialName) }
 
     val submit = {
-        if (canSubmit) {
+        val trimmedName = name.text.trim().toString()
+        if (trimmedName.isNotEmpty()) {
             closeSheet {
-                onConfirm(textValue.text.trim())
+                onConfirm(trimmedName)
                 onDismiss()
             }
         }
@@ -2249,9 +2248,8 @@ internal fun PlaylistEditSheet(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     BasicTextField(
-                        value = textValue,
-                        onValueChange = { textValue = it },
-                        singleLine = true,
+                        state = name,
+                        lineLimits = TextFieldLineLimits.SingleLine,
                         textStyle = TextStyle(
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Medium,
@@ -2259,13 +2257,13 @@ internal fun PlaylistEditSheet(
                         ),
                         cursorBrush = SolidColor(BrandBlue),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = { submit() }),
+                        onKeyboardAction = { submit() },
                         modifier = Modifier
                             .weight(1f)
                             .focusRequester(focusRequester),
-                        decorationBox = { innerTextField ->
+                        decorator = { innerTextField ->
                             Box(contentAlignment = Alignment.CenterStart) {
-                                if (textValue.text.isEmpty()) {
+                                if (name.text.isEmpty()) {
                                     Text(
                                         text = "歌单名称…",
                                         fontSize = 15.sp,
@@ -2276,9 +2274,9 @@ internal fun PlaylistEditSheet(
                             }
                         },
                     )
-                    if (textValue.text.isNotEmpty()) {
+                    if (name.text.isNotEmpty()) {
                         IconButton(
-                            onClick = { textValue = TextFieldValue("") },
+                            onClick = { name.clearText() },
                             modifier = Modifier.size(28.dp),
                         ) {
                             Icon(
@@ -2303,7 +2301,7 @@ internal fun PlaylistEditSheet(
                     items(suggestions) { tag ->
                         Surface(
                             onClick = {
-                                textValue = TextFieldValue(tag, selection = TextRange(tag.length))
+                                name.setTextAndPlaceCursorAtEnd(tag)
                             },
                             shape = RoundedCornerShape(14.dp),
                             color = MeloraAppearance.softFill,
@@ -2326,7 +2324,7 @@ internal fun PlaylistEditSheet(
                 onSecondary = { closeSheet(onDismiss) },
                 onConfirm = submit,
                 confirmText = if (isRename) "保存修改" else "立即创建",
-                confirmEnabled = canSubmit,
+                confirmEnabled = name.text.isNotBlank(),
             )
         }
     }

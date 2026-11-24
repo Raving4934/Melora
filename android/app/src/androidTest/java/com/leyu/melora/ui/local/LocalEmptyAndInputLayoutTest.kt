@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
@@ -727,7 +728,7 @@ class LocalEmptyAndInputLayoutTest {
                     LocalSongListState provides shared,
                 ) {
                     LocalSearchPage(
-                        content = LocalSongsContent(), query = "", onQueryChange = {}, onCancel = {},
+                        content = LocalSongsContent(), queryState = rememberTextFieldState(), onCancel = {},
                         selection = SongSelectionState(), onOpenSortSheet = {}, onMore = {},
                         onDeleteSelection = {}, onAddToPlaylist = {},
                     )
