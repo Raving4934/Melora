@@ -8,8 +8,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
@@ -37,6 +37,8 @@ import com.leyu.melora.ui.theme.MeloraAppearance
 
 internal val LocalBadgeThemeDark = compositionLocalOf<Boolean?> { null }
 internal val QualityBadgeHeight = 18.dp
+private val BadgeShape = RoundedCornerShape(4.dp)
+private val CompactBadgeWeight = FontWeight(650)
 
 @Composable
 internal fun BadgePill(
@@ -50,12 +52,13 @@ internal fun BadgePill(
     val dark = LocalBadgeThemeDark.current ?: MeloraAppearance.isDark
     val compact = resolvedMode == QualityBadgeMode.Compact
     // 同一音轨的各个样式共用档位颜色；图文模式的图标仍取自实际编码。
-    val palette = audioBadgeAppearance(badge.compactTier)
+    val palette = audioBadgeAppearance(badge.compactTier).palette
     val ink = if (dark) palette.dark else palette.light
-    val capsule = if (outlined) {
-        Modifier.border(1.dp, ink.copy(alpha = 0.55f), CircleShape)
+    val badgeSurface = if (outlined) {
+        Modifier.border(1.dp, ink.copy(alpha = 0.55f), BadgeShape)
     } else {
-        Modifier.background(ink.copy(alpha = palette.fillAlpha(compact, dark)), CircleShape)
+        val alpha = if (dark) palette.darkFillAlpha else palette.lightFillAlpha
+        Modifier.background(ink.copy(alpha = alpha), BadgeShape)
     }
     if (compact) {
         val description = buildList {
@@ -69,12 +72,11 @@ internal fun BadgePill(
             modifier = modifier
                 .clearAndSetSemantics { contentDescription = description }
                 .height(17.dp)
-                .widthIn(min = 32.dp)
-                .then(capsule)
-                .padding(horizontal = 7.dp),
+                .then(badgeSurface)
+                .padding(horizontal = 6.dp),
             contentAlignment = Alignment.Center,
         ) {
-            BadgeText(badge.compactLabel, ink, 9.25.dp, letterSpacing = 0.05.em)
+            BadgeText(badge.compactLabel, ink, 9.25.dp, weight = CompactBadgeWeight, letterSpacing = 0.05.em)
         }
         return
     }
@@ -85,7 +87,7 @@ internal fun BadgePill(
         modifier = modifier
             .clearAndSetSemantics { contentDescription = if (spec == null) label else "$label · $spec" }
             .height(height)
-            .then(capsule)
+            .then(badgeSurface)
             .padding(horizontal = 5.5.dp * scale),
         horizontalArrangement = Arrangement.spacedBy(3.5.dp * scale),
         verticalAlignment = Alignment.CenterVertically,
@@ -107,7 +109,7 @@ internal fun LocalBadgePill(modifier: Modifier = Modifier) {
         modifier = modifier
             .clearAndSetSemantics { contentDescription = "本地" }
             .height(QualityBadgeHeight)
-            .background(ink.copy(alpha = if (dark) 0.105f else 0.085f), CircleShape)
+            .background(ink.copy(alpha = if (dark) 0.105f else 0.085f), BadgeShape)
             .padding(horizontal = 5.5.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -121,6 +123,7 @@ private fun BadgeText(
     ink: Color,
     size: Dp,
     specification: Boolean = false,
+    weight: FontWeight = if (specification) FontWeight.Medium else FontWeight.SemiBold,
     letterSpacing: TextUnit = if (specification) 0.02.em else 0.055.em,
 ) {
     val fontSize = with(LocalDensity.current) { size.toSp() }
@@ -129,7 +132,7 @@ private fun BadgeText(
         style = TextStyle(
             color = ink,
             fontSize = fontSize,
-            fontWeight = if (specification) FontWeight.Medium else FontWeight.SemiBold,
+            fontWeight = weight,
             fontFamily = if (specification) FontFamily.Monospace else FontFamily.Default,
             fontFeatureSettings = "tnum",
             letterSpacing = letterSpacing,

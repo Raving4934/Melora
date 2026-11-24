@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
@@ -14,14 +15,17 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertHeightIsEqualTo
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertWidthIsEqualTo
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.leyu.melora.playback.AudioQualityBadge
 import com.leyu.melora.playback.AudioQualityTier
@@ -41,6 +45,17 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class QualityBadgeTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test fun metallicPlatinumMatchesTheDesignForEveryTier() {
+        for (tier in AudioQualityTier.entries) {
+            val expected = metallicPlatinum(tier)
+            val actual = audioBadgeAppearance(tier).palette
+            assertEquals("$tier light foreground", expected.light, actual.light)
+            assertEquals("$tier dark foreground", expected.dark, actual.dark)
+            assertEquals("$tier light fill alpha", expected.lightFillAlpha, actual.lightFillAlpha, 0f)
+            assertEquals("$tier dark fill alpha", expected.darkFillAlpha, actual.darkFillAlpha, 0f)
+        }
+    }
 
     @Test fun everyTierRendersAnIconAndReadableLabel() {
         val badges = listOf(
@@ -66,13 +81,13 @@ class QualityBadgeTest {
         }
         badges.forEach {
             compose.onNodeWithContentDescription(it.label).assertIsDisplayed().assertHeightIsEqualTo(18.dp)
-            assertVisibleGlyph(it.label, audioBadgeAppearance(it.tier).light)
+            assertVisibleGlyph(it.label, metallicPlatinum(it.tier).light)
         }
     }
 
     @Test fun everyModeDrawsTheSameSoftFillAtTheEdgeAndInside() {
         val badge = AudioQualityBadge(AudioQualityTier.Lossless, "LOSSLESS", "16/44.1", "FLAC")
-        val palette = audioBadgeAppearance(badge.tier)
+        val palette = metallicPlatinum(badge.tier)
         val surfaces = listOf(false to Color(0xFFF3EBDF), true to Color(0xFF232C3A))
         compose.setContent {
             Column {
@@ -92,16 +107,20 @@ class QualityBadgeTest {
             QualityBadgeMode.entries.forEach { mode ->
                 val pixels = compose.onNodeWithTag("${mode.name}-$dark").assertIsDisplayed()
                     .captureToImage().toPixelMap()
-                val fillAlpha = if (mode == QualityBadgeMode.Compact) {
-                    if (dark) 0.15f else 0.11f
-                } else {
-                    if (dark) 0.145f else 0.115f
+                val fillAlpha = if (dark) palette.darkFillAlpha else palette.lightFillAlpha
+                val expectedFill = palette.ink(dark).copy(alpha = fillAlpha).compositeOver(surface)
+                val radius = with(compose.density) { 4.dp.roundToPx() }
+                for (y in listOf(0, pixels.height - 1)) {
+                    for (x in listOf(0, pixels.width - 1)) {
+                        assertTrue("rounded corner shows the surface", pixels[x, y].resembles(surface, 0.022f))
+                    }
+                    for (x in listOf(radius, pixels.width - 1 - radius)) {
+                        assertTrue("straight edge starts at 4dp", pixels[x, y].resembles(expectedFill, 0.022f))
+                    }
                 }
-                val ink = if (dark) palette.dark else palette.light
-                val expectedFill = ink.copy(alpha = fillAlpha).compositeOver(surface)
                 val inset = maxOf(1, pixels.height / 8)
                 val sampleRows = listOf(0, inset, pixels.height - 1 - inset, pixels.height - 1)
-                // 从胶囊直边到内部留白采样，避开文字与两侧圆弧。
+                // 从直边到内部留白采样，避开文字与四角。
                 assertTrue("${mode.name}, dark=$dark: edge and interior should share the soft fill", sampleRows.all { y ->
                     (pixels.width * 3 / 8 until pixels.width * 5 / 8).all { x ->
                         pixels[x, y].resembles(expectedFill, tolerance = 0.022f)
@@ -140,8 +159,8 @@ class QualityBadgeTest {
         }
         for (night in listOf(false, true)) {
             compose.runOnIdle { dark.value = night }
-            val economyInk = if (night) Color(0xFF9CB6A7) else Color(0xFF50665B)
-            val opusInk = if (night) Color(0xFFA0B4BD) else Color(0xFF4E6570)
+            val economyInk = metallicPlatinum(AudioQualityTier.Economy).ink(night)
+            val opusInk = metallicPlatinum(AudioQualityTier.Standard).ink(night)
             for (mode in QualityBadgeMode.entries) {
                 for ((badge, ink) in listOf(economy to economyInk, unknown to opusInk)) {
                     val pixels = compose.onNodeWithTag("${mode.name}-${badge.label}").captureToImage().toPixelMap()
@@ -170,7 +189,7 @@ class QualityBadgeTest {
             val specWidth = width("HI-RES · 192 kHz")
             compose.runOnIdle { MeloraSettings.qualityBadgeMode.value = QualityBadgeMode.Compact }
             val compact = compose.onNodeWithContentDescription("HI-RES · 192 kHz").assertIsDisplayed()
-                .assertHeightIsEqualTo(17.dp).assertWidthIsEqualTo(32.dp)
+                .assertHeightIsEqualTo(17.dp)
             val compactWidth = compact.fetchSemanticsNode().boundsInRoot.width
             assertTrue("expected compact < icon < split, was $compactWidth, $iconWidth, $specWidth",
                 compactWidth < iconWidth && iconWidth < specWidth)
@@ -243,23 +262,56 @@ class QualityBadgeTest {
         }
     }
 
-    @Test fun compactBadgePaintsOnlyCenteredShortTextAndRetainsFullDescription() {
-        val badge = AudioQualityBadge(AudioQualityTier.Opus, "OPUS 96K", "96K", "OPUS", AudioQualityTier.Economy)
+    @Test fun compactBadgesWrapCenteredShortTextAndRetainFullDescriptions() {
+        val badges = listOf(
+            AudioQualityBadge(AudioQualityTier.High),
+            AudioQualityBadge(AudioQualityTier.Lossless),
+            AudioQualityBadge(AudioQualityTier.Dsd),
+            AudioQualityBadge(AudioQualityTier.Opus, "OPUS 96K", "96K", "OPUS", AudioQualityTier.Economy),
+        )
         compose.setContent {
+            val textSize = with(LocalDensity.current) { 9.25.dp.toSp() }
             CompositionLocalProvider(LocalBadgeThemeDark provides false) {
-                BadgePill(badge, mode = QualityBadgeMode.Compact)
+                Column {
+                    badges.forEach { badge ->
+                        Row {
+                            BadgePill(badge, mode = QualityBadgeMode.Compact)
+                            BasicText(
+                                text = badge.compactLabel,
+                                modifier = Modifier.testTag("reference-${badge.label}"),
+                                style = TextStyle(
+                                    fontSize = textSize,
+                                    fontWeight = FontWeight(650),
+                                    fontFeatureSettings = "tnum",
+                                    letterSpacing = 0.05.em,
+                                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                                ),
+                                maxLines = 1,
+                                softWrap = false,
+                            )
+                        }
+                    }
+                }
             }
         }
-        val node = compose.onNodeWithContentDescription("OPUS 96K").assertIsDisplayed()
-            .assertHeightIsEqualTo(17.dp).assertWidthIsEqualTo(32.dp)
-        val pixels = node.captureToImage().toPixelMap()
-        val ink = audioBadgeAppearance(AudioQualityTier.Economy).light
-        val inkColumns = (pixels.width / 8 until pixels.width * 7 / 8).filter { x ->
-            (pixels.height / 4 until pixels.height * 3 / 4).any { y -> pixels[x, y].resembles(ink) }
+        val sidePadding = with(compose.density) { 6.dp.roundToPx() }
+        val tolerance = with(compose.density) { 2.dp.roundToPx() }
+        badges.forEach { badge ->
+            val node = compose.onNodeWithContentDescription(badge.label).assertIsDisplayed()
+                .assertHeightIsEqualTo(17.dp)
+            val referenceWidth = compose.onNodeWithTag("reference-${badge.label}").fetchSemanticsNode().size.width
+            val pixels = node.captureToImage().toPixelMap()
+            assertEquals("${badge.label} wraps to its short text and padding", referenceWidth + sidePadding * 2, pixels.width)
+            val ink = metallicPlatinum(badge.compactTier).light
+            val inkColumns = (0 until pixels.width).filter { x ->
+                (pixels.height / 4 until pixels.height * 3 / 4).any { y -> pixels[x, y].resembles(ink) }
+            }
+            assertTrue("${badge.label} draws short text", inkColumns.isNotEmpty())
+            val left = inkColumns.first()
+            val right = pixels.width - 1 - inkColumns.last()
+            assertTrue("${badge.label} keeps clear side padding", left >= sidePadding && right >= sidePadding)
+            assertTrue("${badge.label} centers its short text", abs(left - right) <= tolerance)
         }
-        assertTrue("expected visible short text", inkColumns.isNotEmpty())
-        assertTrue("expected only centered short text, edge columns were ${inkColumns.first()} and ${inkColumns.last()}",
-            inkColumns.first() >= pixels.width / 4 && inkColumns.last() < pixels.width * 3 / 4)
     }
 
     @Test fun splitModeShowsOnlyKnownSpecifications() {
@@ -284,7 +336,7 @@ class QualityBadgeTest {
         }
         val node = compose.onNodeWithContentDescription("SD 192K").assertIsDisplayed()
         assertEquals(before, node.fetchSemanticsNode().boundsInRoot)
-        assertVisibleGlyph("SD 192K", audioBadgeAppearance(AudioQualityTier.Standard).dark)
+        assertVisibleGlyph("SD 192K", metallicPlatinum(AudioQualityTier.Standard).dark)
     }
 
     @Test fun largeSystemFontKeepsBadgesLegibleWithoutIncreasingRowHeight() {
@@ -302,7 +354,7 @@ class QualityBadgeTest {
         }
         compose.onNodeWithContentDescription("ECO 96K").assertIsDisplayed().assertHeightIsEqualTo(18.dp)
         compose.onNodeWithContentDescription("HI-RES").assertIsDisplayed().assertHeightIsEqualTo(18.dp)
-        assertVisibleGlyph("ECO 96K", audioBadgeAppearance(AudioQualityTier.Economy).dark)
+        assertVisibleGlyph("ECO 96K", metallicPlatinum(AudioQualityTier.Economy).dark)
     }
 
     private fun assertVisibleGlyph(label: String, ink: Color) {
@@ -317,4 +369,22 @@ class QualityBadgeTest {
 
     private fun Color.resembles(color: Color, tolerance: Float = 0.13f): Boolean =
         abs(red - color.red) < tolerance && abs(green - color.green) < tolerance && abs(blue - color.blue) < tolerance
+
+    private data class PaletteSpec(val light: Color, val dark: Color, val lightFillAlpha: Float, val darkFillAlpha: Float) {
+        fun ink(dark: Boolean): Color = if (dark) this.dark else light
+    }
+
+    // 录入设计稿中「方案 A · 金属铂银」的原始色值，独立于渲染实现。
+    private fun metallicPlatinum(tier: AudioQualityTier): PaletteSpec = when (tier) {
+        AudioQualityTier.Dsd, AudioQualityTier.Master -> PaletteSpec(Color(0xFF8F5140), Color(0xFFDFA08E), 0.11f, 0.15f)
+        AudioQualityTier.HiRes -> PaletteSpec(Color(0xFF92641E), Color(0xFFDFB978), 0.11f, 0.15f)
+        AudioQualityTier.Lossless -> PaletteSpec(Color(0xFF2F4256), Color(0xFFC9D6E4), 0.11f, 0.15f)
+        AudioQualityTier.Atmos, AudioQualityTier.Spatial -> PaletteSpec(Color(0xFF485478), Color(0xFFA5B3DC), 0.10f, 0.14f)
+        AudioQualityTier.High -> PaletteSpec(Color(0xFF5A6068), Color(0xFF9BA1A9), 0.09f, 0.13f)
+        AudioQualityTier.Standard, AudioQualityTier.Opus -> PaletteSpec(Color(0xFF757B84), Color(0xFF7C828B), 0.075f, 0.11f)
+        AudioQualityTier.Economy -> PaletteSpec(Color(0xFF848A92), Color(0xFF6E747D), 0.068f, 0.10f)
+        AudioQualityTier.Low -> PaletteSpec(Color(0xFF92979F), Color(0xFF626770), 0.06f, 0.09f)
+        AudioQualityTier.LoFi -> PaletteSpec(Color(0xFF8A7C71), Color(0xFF8B7E74), 0.075f, 0.105f)
+        AudioQualityTier.Mono -> PaletteSpec(Color(0xFF9BA0A7), Color(0xFF5A5F68), 0.055f, 0.085f)
+    }
 }
