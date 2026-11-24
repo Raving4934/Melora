@@ -324,7 +324,11 @@ internal fun LyricsViewport(
             val index = frame.focusIndex.coerceAtLeast(0)
             if (browsing || touching || index !in lines.indices) return@LaunchedEffect
             val offset = rowHeight(index) / 2
-            if (!motionEnabled) { list.scrollToItem(index, offset); return@LaunchedEffect }
+            if (!motionEnabled) {
+                // BoxWithConstraints 会在测量中子组合，交由列表下一次测量应用歌词锚点。
+                list.requestScrollToItem(index, offset)
+                return@LaunchedEffect
+            }
             val target = list.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }
             if (target != null) list.animateScrollBy((target.offset + offset).toFloat(), spring(dampingRatio = 0.86f, stiffness = 160f))
             else list.animateScrollToItem(index, offset)

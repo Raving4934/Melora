@@ -1,9 +1,6 @@
 package com.leyu.melora.playback
 
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Process
-import android.os.SystemClock
 import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -28,16 +25,7 @@ class LocalBackupInstrumentedTest {
 
     @Before
     fun selectGrantedDirectory() {
-        context.startActivity(
-            Intent().setClassName(instrumentation.context.packageName, DownloadFixtureProvider.GrantActivity::class.java.name)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                .putExtra("persistable", true),
-        )
-        val deadline = SystemClock.uptimeMillis() + 5_000L
-        while (context.checkUriPermission(tree, Process.myPid(), Process.myUid(), flags) != PackageManager.PERMISSION_GRANTED &&
-            SystemClock.uptimeMillis() < deadline
-        ) SystemClock.sleep(25)
-
+        DownloadFixtureProvider.grantTree(instrumentation, true)
         LocalBackup.selectDirectory(context, tree)
         resolver.call(tree, "reset", null, null)
         assertTrue(resolver.persistedUriPermissions.any { it.uri == tree && it.isReadPermission && it.isWritePermission })

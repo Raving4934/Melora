@@ -59,19 +59,7 @@ class DownloadTransferInstrumentedTest {
         resetDownloadCenterStorage()
         context.root.deleteRecursively()
         context.root.mkdirs()
-        val flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-        instrumentation.context.startActivity(
-            android.content.Intent().setClassName(
-                instrumentation.context.packageName,
-                "com.leyu.melora.playback.DownloadFixtureProvider\$GrantActivity",
-            ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
-        )
-        val deadline = android.os.SystemClock.uptimeMillis() + 5_000
-        while (context.checkUriPermission(tree, android.os.Process.myPid(), android.os.Process.myUid(), flags) !=
-            android.content.pm.PackageManager.PERMISSION_GRANTED && android.os.SystemClock.uptimeMillis() < deadline
-        ) android.os.SystemClock.sleep(25)
-        assertEquals(android.content.pm.PackageManager.PERMISSION_GRANTED,
-            context.checkUriPermission(tree, android.os.Process.myPid(), android.os.Process.myUid(), flags))
+        DownloadFixtureProvider.grantTree(instrumentation, false)
         context.contentResolver.call(tree, "reset", null, null)
         MeloraSettings.init(context)
         MeloraSettings.downloadPath.value = tree.toString()

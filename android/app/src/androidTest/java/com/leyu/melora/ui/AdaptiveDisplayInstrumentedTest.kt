@@ -29,6 +29,7 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeWithVelocity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -238,25 +239,26 @@ class AdaptiveDisplayInstrumentedTest {
         }
         compose.awaitStable("threshold-sheet-body")
         val original = requireNotNull(sheetState)
+        // Material 将把手合并到可点击语义节点；触摸实际把手必须查未合并树。
+        val handle = compose.onNodeWithTag("threshold-sheet-handle", useUnmergedTree = true)
+        fun dragAndRelease() {
+            handle.performTouchInput {
+                swipeWithVelocity(center, center + Offset(0f, touchSlop + 100f), endVelocity = 80f)
+            }
+        }
+        // Foundation 只在有方向的低速释放时应用距离阈值。100px 介于两种密度的阈值之间。
+        val expandedOffset = compose.runOnIdle { original.requireOffset() }
+        dragAndRelease()
+        compose.runOnIdle {
+            assertEquals(SheetValue.Expanded, original.currentValue)
+            assertEquals(expandedOffset, original.requireOffset(), 1f)
+        }
+
         compose.runOnIdle { windowSize.value = IntSize(1000, 1920) }
         compose.awaitStable("threshold-sheet-body")
         assertSame(original, sheetState)
-        val initialOffset = compose.runOnIdle { original.requireOffset() }
-        // Material 将把手合并到可点击语义节点；触摸实际把手必须查未合并树。
-        val handle = compose.onNodeWithTag("threshold-sheet-handle", useUnmergedTree = true)
-        handle.performTouchInput {
-            down(center)
-            moveBy(Offset(0f, touchSlop + 100f), delayMillis = 1_000)
-        }
-        try {
-            compose.runOnIdle {
-                // 100px 介于新阈值 78.75px 与旧阈值 134.4px 之间；尚未松手，不受抛速影响。
-                assertEquals(100f, original.requireOffset() - initialOffset, 1f)
-                assertEquals(SheetValue.Hidden, original.targetValue)
-            }
-        } finally {
-            handle.performTouchInput { cancel() }
-        }
+        dragAndRelease()
+        compose.runOnIdle { assertEquals(SheetValue.Hidden, original.currentValue) }
     }
 
     @Test fun dialogExposesALocalizedPaneTitle() {

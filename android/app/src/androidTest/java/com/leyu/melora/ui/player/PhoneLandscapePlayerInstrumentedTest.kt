@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -22,6 +23,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -29,6 +31,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.leyu.melora.playback.LyricLine
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlaybackController
+import com.leyu.melora.playback.PlayerCoverStyle
 import com.leyu.melora.playback.PlayerLyric
 import com.leyu.melora.playback.PlayerUiState
 import com.leyu.melora.playback.UiTrack
@@ -66,11 +69,13 @@ class PhoneLandscapePlayerInstrumentedTest {
         .get(PlaybackController) as MutableStateFlow<PlayerLyric?>
     private val originalLyrics = lyricFlow.value
     private val originalMiniLyrics = MeloraSettings.miniLyricsEnabled.value
+    private val originalCoverStyle = MeloraSettings.playerCoverStyle.value
 
     @After
     fun restoreFixture() {
         lyricFlow.value = originalLyrics
         MeloraSettings.miniLyricsEnabled.value = originalMiniLyrics
+        MeloraSettings.playerCoverStyle.value = originalCoverStyle
     }
 
     private fun hostShortSideDp(): Float = compose.activity.run {
@@ -82,12 +87,14 @@ class PhoneLandscapePlayerInstrumentedTest {
         }
     }
 
-    private fun showPlayer(landscape: Boolean = true, shortWindow: Boolean = false, carMode: Boolean = false) {
+    private fun showPlayer(landscape: Boolean = true, viewport: DpSize? = null, carMode: Boolean = false) {
         val shortSide = hostShortSideDp()
-        if (shortWindow) {
-            if (!carMode) assumeTrue("该用例验证平板的低高度窗口", shortSide >= 600f)
-        } else {
+        if (viewport == null) {
             assumeTrue("该用例验证真实手机屏幕", shortSide > 0f && shortSide < 600f)
+        } else if (landscape && !carMode) {
+            assumeTrue("该用例验证平板的低高度窗口", shortSide >= 600f)
+        }
+        if (viewport == null || (!landscape && shortSide < 600f)) {
             // 只旋转测试 Activity，保留手机的真实比例、刘海和系统栏设置。
             compose.activityRule.scenario.onActivity {
                 it.requestedOrientation = if (landscape) ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
@@ -105,8 +112,9 @@ class PhoneLandscapePlayerInstrumentedTest {
             "fixture",
         )
         MeloraSettings.miniLyricsEnabled.value = true
+        MeloraSettings.playerCoverStyle.value = PlayerCoverStyle.Default
         compose.setContent {
-            val density = if (shortWindow) Density(1f) else LocalDensity.current
+            val density = if (viewport != null && landscape) Density(1f) else LocalDensity.current
             val configuration = LocalConfiguration.current
             val uiConfiguration = if (carMode) Configuration(configuration).apply {
                 uiMode = (uiMode and Configuration.UI_MODE_TYPE_MASK.inv()) or Configuration.UI_MODE_TYPE_CAR
@@ -116,11 +124,12 @@ class PhoneLandscapePlayerInstrumentedTest {
                     SongListStateProvider {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             back = rememberPlayerSheetBackState()
-                            // 固定在480dp断点以下，并为以物理像素报告的刘海内距和至少一行旧队列留空间。
-                            val playerModifier = if (shortWindow) {
-                                Modifier.requiredSize(800.dp, 440.dp).consumeWindowInsets(WindowInsets.safeDrawing)
-                            } else {
-                                Modifier.fillMaxSize()
+                            val playerModifier = when {
+                                viewport == null -> Modifier.fillMaxSize()
+                                landscape -> Modifier.requiredSize(viewport.width, viewport.height)
+                                    .consumeWindowInsets(WindowInsets.safeDrawing)
+                                // 竖屏直接缩短局部视口，按真实密度换算系统栏内距。
+                                else -> Modifier.size(viewport.width, viewport.height)
                             }
                             ContinuousPlayerSheet(
                                 state = state,
@@ -233,24 +242,48 @@ class PhoneLandscapePlayerInstrumentedTest {
     @Test
     fun phonePortraitKeepsArtworkBetweenHeadingAndTransport() {
         showPlayer(landscape = false)
+        assertPortraitArtworkOrder()
+    }
+
+    @Test
+    fun shortPortraitKeepsArtworkBetweenHeadingAndTransport() {
+        showPlayer(landscape = false, viewport = DpSize(360.dp, 540.dp))
+        assertPortraitArtworkOrder()
+    }
+
+    private fun assertPortraitArtworkOrder() {
         compose.onNodeWithTag("player-phone-landscape").assertDoesNotExist()
-        val (heading, cover, transport) = compose.boundsInSameFrame(
-            compose.onNodeWithTag("player-heading"),
-            compose.onNodeWithTag("player-artwork"),
-            compose.onNodeWithTag("player-transport"),
+        val artwork = compose.onNodeWithTag("player-artwork")
+        try {
+            compose.awaitStable(artwork)
+        } catch (failure: ComposeTimeoutException) {
+            val tree = compose.onRoot().printToString()
+            throw AssertionError("竖屏封面未稳定显示\n$tree", failure)
+        }
+        val headingTag = hasTestTag("player-heading")
+        val (heading, title, cover, transport) = compose.boundsInSameFrame(
+            compose.onNode(headingTag).assertIsDisplayed(),
+            compose.onNode(hasText(tracks.first().title) and hasAnyAncestor(headingTag)).assertIsDisplayed(),
+            artwork.assertIsDisplayed(),
+            compose.onNodeWithTag("player-transport").assertIsDisplayed(),
         )
-        assertTrue(heading.bottom < cover.top && cover.bottom < transport.top)
+        // 标题容器已经包含底部留白，短窗的封面可以贴着容器边缘。
+        assertTrue(
+            "标题应在封面上方，标题容器=$heading，文字=$title，封面=$cover",
+            heading.bottom <= cover.top && title.bottom < cover.top,
+        )
+        assertTrue("封面应在控制区上方，封面=$cover，控制区=$transport", cover.bottom < transport.top)
     }
 
     @Test
     fun tabletShortWindowKeepsQueueInTheExistingRightPane() {
-        showPlayer(shortWindow = true)
+        showPlayer(viewport = DpSize(800.dp, 440.dp))
         assertQueueReplacesOnlyRightPane()
     }
 
     @Test
     fun carShortWindowKeepsQueueInTheExistingRightPane() {
-        showPlayer(shortWindow = true, carMode = true)
+        showPlayer(viewport = DpSize(800.dp, 440.dp), carMode = true)
         assertQueueReplacesOnlyRightPane()
     }
 

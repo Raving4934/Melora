@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application>
-        <activity android:name="com.leyu.melora.playback.DownloadFixtureProvider$GrantActivity"
-            android:theme="@android:style/Theme.NoDisplay" android:exported="true" />
+        <receiver android:name="com.leyu.melora.playback.DownloadFixtureProvider$GrantReceiver"
+            android:exported="true" />
         <provider
             android:name="com.leyu.melora.playback.BackupFixtureProvider"
             android:authorities="${applicationId}.backup-fixture"

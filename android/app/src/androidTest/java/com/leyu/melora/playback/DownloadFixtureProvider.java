@@ -1,5 +1,10 @@
 package com.leyu.melora.playback;
 
+import android.app.Activity;
+import android.app.Instrumentation;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.os.Bundle;
@@ -10,20 +15,34 @@ import android.provider.DocumentsProvider;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 /** 仅测试APK的独立SAF目录；所有操作被限制在自身cache，绝不访问用户下载目录。 */
 public final class DownloadFixtureProvider extends DocumentsProvider {
-    /** 模拟系统目录选择器：由目录所属UID发放前缀授权，不依赖shell特权。 */
-    public static final class GrantActivity extends android.app.Activity {
-        @Override public void onCreate(Bundle state) {
-            super.onCreate(state);
-            String target = getPackageName().replaceFirst("\\.test$", "");
-            int flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION | android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION |
-                android.content.Intent.FLAG_GRANT_PREFIX_URI_PERMISSION;
-            if (getIntent().getBooleanExtra("persistable", false)) flags |= android.content.Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION;
-            grantUriPermission(target, DocumentsContract.buildTreeDocumentUri(getPackageName() + ".download-fixture", "root"),
-                flags);
-            finish();
+    /** 等本次授权完成才继续，其他用例留下的临时读写权限不能代替可持久化授权。 */
+    public static void grantTree(Instrumentation instrumentation, boolean persistable) throws Exception {
+        Intent request = new Intent(instrumentation.getContext(), GrantReceiver.class)
+            .putExtra("persistable", persistable)
+            .addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES);
+        CompletableFuture<Integer> result = new CompletableFuture<>();
+        instrumentation.getTargetContext().sendOrderedBroadcast(request, null, new BroadcastReceiver() {
+            @Override public void onReceive(Context context, Intent intent) {
+                result.complete(getResultCode());
+            }
+        }, null, Activity.RESULT_CANCELED, null, null);
+        if (result.get(10, TimeUnit.SECONDS) != Activity.RESULT_OK) throw new AssertionError("测试目录未授权");
+    }
+
+    public static final class GrantReceiver extends BroadcastReceiver {
+        @Override public void onReceive(Context context, Intent intent) {
+            String fixturePackage = context.getPackageName();
+            String target = fixturePackage.replaceFirst("\\.test$", "");
+            int flags = Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION |
+                Intent.FLAG_GRANT_PREFIX_URI_PERMISSION;
+            if (intent.getBooleanExtra("persistable", false)) flags |= Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION;
+            context.grantUriPermission(target, DocumentsContract.buildTreeDocumentUri(fixturePackage + ".download-fixture", "root"), flags);
+            setResultCode(Activity.RESULT_OK);
         }
     }
     private int failedWrites;
