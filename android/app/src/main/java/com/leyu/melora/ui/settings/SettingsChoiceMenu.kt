@@ -1,15 +1,12 @@
 package com.leyu.melora.ui.settings
 
-import android.view.WindowManager
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -17,7 +14,6 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -31,7 +27,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -39,33 +34,31 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.Layout
-import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionOnScreen
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.round
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.window.DialogWindowProvider
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
 import com.leyu.melora.ui.common.LocalPageActive
 import com.leyu.melora.ui.theme.MeloraAppearance
-import kotlin.math.roundToInt
 
 @Composable
 internal fun <T> SettingsChoiceMenu(
@@ -78,14 +71,16 @@ internal fun <T> SettingsChoiceMenu(
     icon: ((T) -> ImageVector)? = null,
     enabled: Boolean = true,
     optionEnabled: (T) -> Boolean = { true },
+    optionPreview: (@Composable (T) -> Unit)? = null,
 ) {
-    var expanded by remember { mutableStateOf(false) }
+    val active = LocalPageActive.current
+    var expanded by remember(active) { mutableStateOf(false) }
     var anchor by remember { mutableStateOf<IntRect?>(null) }
     val canChoose = enabled && options.isNotEmpty()
     Row(
         modifier = Modifier.fillMaxWidth()
             .onGloballyPositioned { coordinates ->
-                anchor = coordinates.screenOrigin()?.let { IntRect(it, coordinates.size) }
+                anchor = IntRect(coordinates.positionInWindow().round(), coordinates.size)
             }
             .clickable(enabled = canChoose, role = Role.Button) { expanded = true }
             .heightIn(min = 56.dp)
@@ -93,12 +88,7 @@ internal fun <T> SettingsChoiceMenu(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-            Text(title, color = SettingsTextMain, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-            if (subtitle != null) {
-                Text(subtitle, color = SettingsTextSub, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
-            }
-        }
+        SettingsPreferenceLabel(title, subtitle, Modifier.weight(1f).padding(end = 12.dp))
         Row(
             modifier = Modifier.weight(1f, fill = false),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -118,8 +108,8 @@ internal fun <T> SettingsChoiceMenu(
         }
     }
     val row = if (expanded) anchor else null
-    if (row != null && LocalPageActive.current) {
-        AnchoredChoiceDialog(title, row, onDismiss = { expanded = false }) {
+    if (row != null && active) {
+        AnchoredChoicePopup(title, row, onDismiss = { expanded = false }) {
             Column(
                 Modifier.verticalScroll(rememberScrollState())
                     .selectableGroup()
@@ -155,6 +145,9 @@ internal fun <T> SettingsChoiceMenu(
                                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
                                 modifier = Modifier.weight(1f),
                             )
+                            if (optionPreview != null) {
+                                Box(Modifier.clearAndSetSemantics {}) { optionPreview(option) }
+                            }
                             Box(Modifier.size(18.dp), contentAlignment = Alignment.Center) {
                                 if (selected) Icon(Icons.Outlined.Check, null, tint = SettingsBrandBlue)
                             }
@@ -167,91 +160,74 @@ internal fun <T> SettingsChoiceMenu(
 }
 
 @Composable
-private fun AnchoredChoiceDialog(
+private fun AnchoredChoicePopup(
     title: String,
     anchor: IntRect,
     onDismiss: () -> Unit,
     content: @Composable () -> Unit,
 ) {
-    val contentDensity = LocalDensity.current
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = false,
-            dismissOnClickOutside = false,
-        ),
-    ) {
-        val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
-        SideEffect {
-            dialogWindow?.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            dialogWindow?.setDimAmount(0.32f)
-        }
-        CompositionLocalProvider(LocalDensity provides contentDensity) {
-            Box(Modifier.fillMaxSize()) {
-                Box(Modifier.matchParentSize().pointerInput(onDismiss) { detectTapGestures { onDismiss() } })
-                Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
-                    AnchoredChoiceContent(title, anchor, content)
-                }
+    val density = LocalDensity.current
+    val direction = LocalLayoutDirection.current
+    val size = LocalWindowInfo.current.containerSize
+    val safe = WindowInsets.safeDrawing
+    val margin = with(density) { 8.dp.roundToPx() }
+    val left = (safe.getLeft(density, direction) + margin).coerceAtMost(size.width)
+    val right = (size.width - safe.getRight(density, direction) - margin).coerceAtLeast(left)
+    val top = (safe.getTop(density) + margin).coerceAtMost(size.height)
+    val bottom = (size.height - safe.getBottom(density) - margin).coerceAtLeast(top)
+    if (right == left || bottom == top) return
+
+    val gap = with(density) { 4.dp.roundToPx() }
+    val below = (anchor.bottom + gap).coerceIn(top, bottom)
+    val above = (anchor.top - gap).coerceIn(top, bottom)
+    val spaceBelow = bottom - below
+    val sideSpace = maxOf(spaceBelow, above - top)
+    val fitsOneRow = sideSpace >= with(density) { 48.dp.roundToPx() }
+    val maxHeight = if (fitsOneRow) sideSpace else bottom - top
+    val trailing = with(density) { 16.dp.roundToPx() }
+    // 行坐标、可用高度和菜单落点都取自宿主窗口，首帧即可确定展开方向。
+    val position = remember(anchor, left, right, top, bottom, above, below, trailing, fitsOneRow) {
+        object : PopupPositionProvider {
+            override fun calculatePosition(
+                anchorBounds: IntRect,
+                windowSize: IntSize,
+                layoutDirection: LayoutDirection,
+                popupContentSize: IntSize,
+            ): IntOffset {
+                val (width, height) = popupContentSize
+                val x = if (layoutDirection == LayoutDirection.Ltr) anchor.right - trailing - width
+                    else anchor.left + trailing
+                val y = if (!fitsOneRow || height <= spaceBelow) below else above - height
+                return IntOffset(
+                    x.coerceIn(left, (right - width).coerceAtLeast(left)),
+                    y.coerceIn(top, (bottom - height).coerceAtLeast(top)),
+                )
             }
         }
     }
-}
 
-@Composable
-private fun AnchoredChoiceContent(title: String, anchor: IntRect, content: @Composable () -> Unit) {
-    var origin by remember { mutableStateOf<IntOffset?>(null) }
-    Layout(
-        modifier = Modifier.fillMaxSize().onGloballyPositioned { origin = it.screenOrigin() },
-        content = {
-            if (origin != null) {
-                Surface(
-                    modifier = Modifier.widthIn(min = 132.dp).width(IntrinsicSize.Max)
-                        .semantics { paneTitle = title },
-                    shape = RoundedCornerShape(16.dp),
-                    color = SettingsCardBg,
-                    shadowElevation = 8.dp,
-                    border = MeloraAppearance.cardBorder,
-                    content = content,
-                )
-            }
-        },
-    ) { measurables, constraints ->
-        val width = constraints.maxWidth
-        val height = constraints.maxHeight
-        val child = measurables.singleOrNull()
-        val offset = origin
-        if (child == null || offset == null) return@Layout layout(width, height) {}
-
-        val edgeX = minOf(8.dp.roundToPx(), width / 2)
-        val edgeY = minOf(8.dp.roundToPx(), height / 2)
-        val gap = 4.dp.roundToPx()
-        val below = (anchor.bottom - offset.y + gap).coerceIn(edgeY, height - edgeY)
-        val above = (anchor.top - offset.y - gap).coerceIn(edgeY, height - edgeY)
-        val spaceBelow = height - edgeY - below
-        val spaceAbove = above - edgeY
-        val sideSpace = maxOf(spaceAbove, spaceBelow)
-        val useSide = sideSpace >= 48.dp.roundToPx()
-        val menu = child.measure(Constraints(
-            maxWidth = width - 2 * edgeX,
-            maxHeight = if (useSide) sideSpace else height - 2 * edgeY,
-        ))
-
-        val inset = 16.dp.roundToPx()
-        val x = if (layoutDirection == LayoutDirection.Ltr) anchor.right - offset.x - inset - menu.width
-            else anchor.left - offset.x + inset
-        val opensBelow = !useSide || menu.height <= spaceBelow || spaceBelow >= spaceAbove
-        val y = if (opensBelow) below else above - menu.height
-        layout(width, height) {
-            menu.place(
-                x.coerceIn(edgeX, width - edgeX - menu.width),
-                y.coerceIn(edgeY, height - edgeY - menu.height),
+    Popup(
+        popupPositionProvider = position,
+        onDismissRequest = onDismiss,
+        properties = PopupProperties(
+            focusable = true,
+            clippingEnabled = false,
+            excludeFromSystemGesture = false,
+            scrimAlpha = 0.32f,
+        ),
+    ) {
+        CompositionLocalProvider(LocalDensity provides density) {
+            Surface(
+                modifier = Modifier.widthIn(max = with(density) { (right - left).toDp() })
+                    .heightIn(max = with(density) { maxHeight.toDp() })
+                    .widthIn(min = 132.dp).width(IntrinsicSize.Max)
+                    .semantics { paneTitle = title },
+                shape = RoundedCornerShape(16.dp),
+                color = SettingsCardBg,
+                shadowElevation = 8.dp,
+                border = MeloraAppearance.cardBorder,
+                content = content,
             )
         }
     }
-}
-
-private fun LayoutCoordinates.screenOrigin(): IntOffset? {
-    val local = positionOnScreen()
-    return if (local.isSpecified) IntOffset(local.x.roundToInt(), local.y.roundToInt()) else null
 }

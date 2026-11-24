@@ -167,7 +167,7 @@ internal fun SettingsMainMenu(
     onNavigate: (SettingsSubPage) -> Unit,
 ) {
     val primaryEntries = listOf(
-        SettingsMenuEntry(Icons.Outlined.Tune, Color(0xFF2563EB), "基本设置", "主题外观、启动页面与播放界面", SettingsSubPage.Basic),
+        SettingsMenuEntry(Icons.Outlined.Tune, Color(0xFF2563EB), "基本设置", "主题、徽标、启动页面与播放界面", SettingsSubPage.Basic),
         SettingsMenuEntry(Icons.Outlined.Code, Color(0xFF059669), "自定义源", "管理音源脚本、离线源导入与导出", SettingsSubPage.CustomSource),
         SettingsMenuEntry(Icons.Outlined.PlayCircle, Color(0xFFD97706), "播放设置", "启动播放、播放进度、音质偏好", SettingsSubPage.Playback),
         SettingsMenuEntry(Icons.Outlined.Download, Color(0xFF0D9488), "下载设置", "下载路径、音质、命名与嵌入标签", SettingsSubPage.Download),
@@ -287,6 +287,20 @@ internal fun SettingsEntryItem(
 }
 
 @Composable
+internal fun SettingsPreferenceLabel(
+    title: String,
+    subtitle: String?,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier) {
+        Text(title, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = SettingsTextMain)
+        if (subtitle != null) {
+            Text(subtitle, fontSize = 11.sp, color = SettingsTextSub, modifier = Modifier.padding(top = 2.dp))
+        }
+    }
+}
+
+@Composable
 internal fun SwitchItem(
     title: String,
     subtitle: String? = null,
@@ -301,10 +315,7 @@ internal fun SwitchItem(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = SettingsTextMain)
-            if (subtitle != null) Text(subtitle, fontSize = 11.sp, color = SettingsTextSub, modifier = Modifier.padding(top = 2.dp))
-        }
+        SettingsPreferenceLabel(title, subtitle, Modifier.weight(1f))
         Switch(
             checked = checked,
             enabled = enabled,
