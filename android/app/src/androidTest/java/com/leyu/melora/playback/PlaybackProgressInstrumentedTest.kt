@@ -489,6 +489,31 @@ class PlaybackProgressInstrumentedTest {
     }
 
     @Test
+    fun pausedCheckpointPreservesSyncedRewindUntilLocalPlaybackMoves() {
+        val chapter = onlineTrack("sync_paused", book = true, bookId = "sync_book")
+        val song = OnlineSong.from(chapter.raw)!!
+        withSession { player, controller ->
+            val progress = progressFor(player, mapOf(chapter.uid to chapter), bookProgressPrefs)
+            try {
+                prepare(controller, listOf(chapter to longWav))
+                seekPaused(controller, 38_000L)
+                onMain { progress.checkpoint() }
+                val previous = BookListeningProgress.syncSnapshot(context)
+                val updated = org.json.JSONArray(previous.toString())
+                updated.getJSONObject(0).put("positionMs", 6_000L)
+                BookListeningProgress.applySync(context, previous, updated)
+                onMain { progress.checkpoint() }
+                assertEquals(6_000L, BookListeningProgress.read(context, song).positionMs)
+                assertTrue(onMain { near(player.currentPosition, 38_000L, 100L) })
+                seekPaused(controller, 12_000L)
+                assertTrue(BookListeningProgress.read(context, song).positionMs in 11_900L..12_100L)
+            } finally {
+                onMain { progress.close() }
+            }
+        }
+    }
+
+    @Test
     fun switchingBetweenBooksSavesEachBookLastChapterSeparately() {
         val chapterA = onlineTrack("test_switch_book_a", book = true, bookId = "book_a")
         val chapterB = onlineTrack("test_switch_book_b", book = true, bookId = "book_b")

@@ -18,9 +18,11 @@ public final class DownloadFixtureProvider extends DocumentsProvider {
         @Override public void onCreate(Bundle state) {
             super.onCreate(state);
             String target = getPackageName().replaceFirst("\\.test$", "");
+            int flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION | android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION |
+                android.content.Intent.FLAG_GRANT_PREFIX_URI_PERMISSION;
+            if (getIntent().getBooleanExtra("persistable", false)) flags |= android.content.Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION;
             grantUriPermission(target, DocumentsContract.buildTreeDocumentUri(getPackageName() + ".download-fixture", "root"),
-                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION | android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION |
-                android.content.Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+                flags);
             finish();
         }
     }

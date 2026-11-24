@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.CleaningServices
+import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Info
@@ -92,6 +93,7 @@ internal fun SettingsPageContent(
         SettingsSubPage.Others -> OtherSettingsSubPage(onBack = onBack)
         SettingsSubPage.About -> AboutSubPage(onBack = onBack)
         SettingsSubPage.LocalMusic -> LocalMusicSettingsSubPage(onBack = onBack)
+        SettingsSubPage.Sync -> SyncSettingsSubPage(onBack)
     }
 }
 
@@ -171,7 +173,8 @@ internal fun SettingsMainMenu(
     )
     val secondaryEntries = listOf(
         SettingsMenuEntry(Icons.Outlined.MusicNote, Color(0xFF16A34A), "本地歌曲", "媒体库扫描、自定义文件夹与排除规则", SettingsSubPage.LocalMusic),
-        SettingsMenuEntry(Icons.Outlined.CleaningServices, Color(0xFF0284C7), "其他设置", "缓存清理、备份与配置恢复", SettingsSubPage.Others),
+        SettingsMenuEntry(Icons.Outlined.Sync, SettingsBrandBlue, "同步与备份", "本地与网络备份、恢复与多设备记录同步", SettingsSubPage.Sync),
+        SettingsMenuEntry(Icons.Outlined.CleaningServices, Color(0xFF0284C7), "其他设置", "歌单自动更新、软件更新检查与缓存管理", SettingsSubPage.Others),
         SettingsMenuEntry(Icons.Outlined.Info, Color(0xFF4B5563), "关于乐屿", "版本 v${BuildConfig.VERSION_NAME} · Media3 播放引擎", SettingsSubPage.About),
     )
 
@@ -251,12 +254,13 @@ internal fun SettingsEntryItem(
     iconTint: Color,
     title: String,
     desc: String? = null,
+    enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -283,8 +287,9 @@ internal fun SettingsEntryItem(
 @Composable
 internal fun SwitchItem(
     title: String,
-    subtitle: String,
+    subtitle: String? = null,
     checked: Boolean,
+    enabled: Boolean = true,
     onCheckedChange: (Boolean) -> Unit,
 ) {
     Row(
@@ -296,10 +301,11 @@ internal fun SwitchItem(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(title, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = SettingsTextMain)
-            Text(subtitle, fontSize = 11.sp, color = SettingsTextSub, modifier = Modifier.padding(top = 2.dp))
+            if (subtitle != null) Text(subtitle, fontSize = 11.sp, color = SettingsTextSub, modifier = Modifier.padding(top = 2.dp))
         }
         Switch(
             checked = checked,
+            enabled = enabled,
             onCheckedChange = onCheckedChange,
             colors = SwitchDefaults.colors(
                 checkedThumbColor = Color.White,

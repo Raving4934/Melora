@@ -35,6 +35,7 @@ import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlaylistAutoUpdate
 import com.leyu.melora.playback.UpdateChecker
 import com.leyu.melora.playback.UpdateResult
+import com.leyu.melora.playback.WebDavSync
 import com.leyu.melora.playback.local.LocalTagFiller
 import com.leyu.melora.playback.lx.LxInspector
 import com.leyu.melora.playback.lx.LxScriptStore
@@ -236,6 +237,7 @@ class MainActivity : ComponentActivity() {
             com.leyu.melora.playback.PlaybackController.init(this@MainActivity)
             com.leyu.melora.playback.PlaybackController.checkLocalQueue(this@MainActivity)
             PlaylistAutoUpdate.onForeground(this@MainActivity)
+            WebDavSync.onForeground(this@MainActivity)
         }
     }
 

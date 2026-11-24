@@ -8,6 +8,7 @@ import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.sdk.PlaylistImportLink
 import com.leyu.melora.playback.sdk.PlaylistImportResult
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
@@ -19,6 +20,7 @@ import java.io.File
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.util.UUID
 
 /** 用户库（收藏 / 最近播放 / 自建歌单）：所有状态变更与 JSON 快照写入共用同一临界区。 */
 object UserLibrary {
@@ -78,9 +80,13 @@ object UserLibrary {
         val artist: String = "",
     )
 
-    private const val MAX_RECENTS = 100
+    internal const val MAX_RECENTS = 100
+    internal const val MAX_RECENT_CONTAINERS = 30
     private lateinit var file: File
     private val lock = BackupStateLock.monitor
+    private val mutableRevisions = MutableStateFlow(0L)
+    private var historyClearedAt = 0L
+    internal val revisions = mutableRevisions.asStateFlow()
 
     val favorites = MutableStateFlow<List<OnlineSong>>(emptyList())
     val recents = MutableStateFlow<List<OnlineSong>>(emptyList())
@@ -108,9 +114,14 @@ object UserLibrary {
         var favoriteArtists: List<FavoriteArtist> = UserLibrary.favoriteArtists.value
         var recentContainers: List<RecentContainer> = UserLibrary.recentContainers.value
         var searchHistory: List<String> = UserLibrary.searchHistory.value
+        var historyClearedAt: Long = UserLibrary.historyClearedAt
+
+        fun playbackTimestamp(): Long = maxOf(System.currentTimeMillis(), historyClearedAt + 1)
+            .coerceAtMost(MAX_LIBRARY_TIMESTAMP)
     }
 
     private fun publish(snapshot: Snapshot) {
+        historyClearedAt = snapshot.historyClearedAt
         favorites.value = snapshot.favorites
         recents.value = snapshot.recents
         favoriteUids.value = snapshot.favoriteUids
@@ -120,6 +131,7 @@ object UserLibrary {
         recentContainers.value = snapshot.recentContainers
         searchHistory.value = snapshot.searchHistory
         playlists.value = snapshot.playlists
+        mutableRevisions.value++
     }
 
     fun init(context: Context) {
@@ -165,6 +177,7 @@ object UserLibrary {
 
     private fun applyRoot(root: JSONObject) {
         val snapshot = Snapshot()
+        snapshot.historyClearedAt = root.optLong("historyClearedAt").coerceIn(0L, MAX_LIBRARY_TIMESTAMP)
         snapshot.favorites = parseSongs(root.optJSONArray("favorites"))
         snapshot.recents = parseSongs(root.optJSONArray("recents"))
         snapshot.favoritePlaylists = root.optJSONArray("favoritePlaylists")?.let { array ->
@@ -225,6 +238,7 @@ object UserLibrary {
     private fun buildRoot(snapshot: Snapshot = Snapshot()): JSONObject = JSONObject()
         .put("favorites", songsToJson(snapshot.favorites))
         .put("recents", songsToJson(snapshot.recents))
+        .apply { if (snapshot.historyClearedAt > 0) put("historyClearedAt", snapshot.historyClearedAt) }
         .put("searchHistory", JSONArray().apply { snapshot.searchHistory.forEach(::put) })
         .put("favoritePlaylists", JSONArray().apply { snapshot.favoritePlaylists.forEach { put(it.raw) } })
         .put("favoriteAlbums", JSONArray().apply {
@@ -307,7 +321,8 @@ object UserLibrary {
     }
 
     fun markPlayed(song: OnlineSong) = record {
-        recents = (listOf(song) + recents.filterNot { it.uid == song.uid }).take(MAX_RECENTS)
+        val recent = OnlineSong(JSONObject(song.raw.toString()).put("playedAt", playbackTimestamp()))
+        recents = (listOf(recent) + recents.filterNot { it.uid == song.uid }).take(MAX_RECENTS)
     }
 
     /** 移除一本听书在“最近播放”中的章节与容器记录，不影响断点、收藏或其它书籍。 */
@@ -384,6 +399,12 @@ object UserLibrary {
     }
 
     fun clearRecents() = mutate {
+        historyClearedAt = maxOf(
+            historyClearedAt,
+            System.currentTimeMillis(),
+            recents.maxOfOrNull { it.raw.optLong("playedAt") } ?: 0L,
+            recentContainers.maxOfOrNull { it.updatedAt } ?: 0L,
+        ).coerceAtMost(MAX_LIBRARY_TIMESTAMP)
         recents = emptyList()
         recentContainers = emptyList()
     }
@@ -398,10 +419,10 @@ object UserLibrary {
             img = container.img,
             source = container.source,
             queueId = container.queueId,
-            updatedAt = System.currentTimeMillis(),
+            updatedAt = playbackTimestamp(),
             artist = container.artist,
         )
-        recentContainers = (listOf(entry) + recentContainers.filterNot { it.key == entry.key }).take(30)
+        recentContainers = (listOf(entry) + recentContainers.filterNot { it.key == entry.key }).take(MAX_RECENT_CONTAINERS)
     }
 
     /** 容器封面缺失/不满意时补齐（不改变排序）。 */
@@ -488,18 +509,12 @@ object UserLibrary {
     }
 
     private fun createPlaylistSnapshot(draft: UserPlaylist): UserPlaylist = mutate {
-        val currentPlaylists = playlists
-        val existingIds = currentPlaylists.mapTo(hashSetOf()) { it.id }
-        var timestamp = System.currentTimeMillis()
-        while ("pl_$timestamp" in existingIds) timestamp++
-
         val playlist = draft.copy(
-            id = "pl_$timestamp",
+            id = "pl_${UUID.randomUUID()}",
             name = draft.name.ifBlank { "新建歌单" },
             songs = draft.songs.distinctBy { it.uid },
         )
-        val candidatePlaylists = currentPlaylists + playlist
-        playlists = candidatePlaylists
+        playlists = playlists + playlist
         playlist
     }
 

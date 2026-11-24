@@ -5,6 +5,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -60,6 +61,11 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="desktop_lyric_overlay" />
         </service>
+
+        <service
+            android:name=".playback.BackupJobService"
+            android:exported="true"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
 
         <!-- Media3 的系统/外部控制入口需导出；私有收藏/退出命令在服务内校验控制器身份。 -->
         <service

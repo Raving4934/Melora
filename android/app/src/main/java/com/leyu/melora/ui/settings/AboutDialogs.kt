@@ -352,7 +352,7 @@ private fun PrivacyPolicyContent() {
         )
         PolicySection(
             title = "3. 网络访问范围",
-            content = "网络权限（INTERNET）主要用于以下功能：\n• 按您选择的音源或听书服务请求歌曲、章节、封面与同步歌词；\n• 播放在线内容时直连相应内容接口；\n• 您主动点击检测更新时，向 GitHub API 查询 Android Release 与 APK 信息。",
+            content = "网络权限（INTERNET）主要用于以下功能：\n• 按您选择的音源或听书服务请求歌曲、章节、封面与同步歌词；\n• 播放在线内容时直连相应内容接口；\n• 开启歌单自动更新后，读取已绑定的原歌单；\n• 使用云端备份或记录同步时，读写您配置的 WebDAV 目录。账号和密码加密保存在本机；\n• 您主动点击检测更新时，向 GitHub API 查询 Android Release 与 APK 信息。",
         )
         PolicySection(
             title = "4. 设备权限的透明使用",
@@ -360,7 +360,7 @@ private fun PrivacyPolicyContent() {
         )
         PolicySection(
             title = "5. 本地数据管理",
-            content = "收藏歌单、最近播放、自建歌单与自定义设置主要保存在应用私有沙盒文件（user-library.json）中。您可以在「其他设置」中清理缓存或管理本地数据；应用卸载后，应用私有沙盒中的记录会由系统一并清除。",
+            content = "收藏歌单、最近播放、自建歌单与自定义设置主要保存在应用私有沙盒文件（user-library.json）中。您可以在「同步与备份」中备份或恢复数据，在「其他设置」中清理缓存。应用卸载后，应用私有沙盒中的记录会由系统一并清除。",
         )
     }
 }

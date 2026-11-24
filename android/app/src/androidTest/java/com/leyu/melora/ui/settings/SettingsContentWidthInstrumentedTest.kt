@@ -42,6 +42,7 @@ class SettingsContentWidthInstrumentedTest {
         SettingsSubPage.Playback,
         SettingsSubPage.Download,
         SettingsSubPage.DesktopLyrics,
+        SettingsSubPage.Sync,
         SettingsSubPage.Others,
         SettingsSubPage.About,
         SettingsSubPage.LocalMusic,

@@ -11,7 +11,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 
-// 设置页面路由：一级主菜单与 6 个二级子菜单
+// 设置页面路由
 sealed class SettingsSubPage(val title: String) {
     data object None : SettingsSubPage("设置")
     data object Basic : SettingsSubPage("基本设置")
@@ -22,6 +22,7 @@ sealed class SettingsSubPage(val title: String) {
     data object Others : SettingsSubPage("其他设置")
     data object About : SettingsSubPage("关于乐屿")
     data object LocalMusic : SettingsSubPage("本地歌曲")
+    data object Sync : SettingsSubPage("同步与备份")
 }
 
 /** 侧栏深链首帧直接落在目标页，不能先画设置主页再由LaunchedEffect纠正。 */

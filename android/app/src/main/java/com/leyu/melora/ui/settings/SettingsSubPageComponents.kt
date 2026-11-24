@@ -61,7 +61,6 @@ import com.leyu.melora.ui.common.chromeContentPadding
 import com.leyu.melora.BuildConfig
 import com.leyu.melora.R
 import com.leyu.melora.playback.AudioCacheStore
-import com.leyu.melora.playback.BackupManager
 import com.leyu.melora.playback.CacheManager
 import com.leyu.melora.playback.CacheStats
 import com.leyu.melora.playback.formatCacheBytes
@@ -611,39 +610,6 @@ internal fun OtherSettingsSubPage(onBack: () -> Unit) {
         }
     }
 
-    val hasExportRecovery by BackupManager.hasExportRecovery.collectAsStateWithLifecycle()
-    val recoveryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-        if (uri != null) scope.launch {
-            BackupManager.saveExportRecovery(context, uri)
-                .onSuccess { PlaybackController.postMessage(context, it) }
-                .onFailure { PlaybackController.postMessage(context, "副本导出失败：${it.message}") }
-        }
-    }
-
-    val backupLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/json"),
-    ) { uri ->
-        if (uri != null) {
-            scope.launch {
-                BackupManager.export(context, uri)
-                    .onSuccess { PlaybackController.postMessage(context, it) }
-                    .onFailure { PlaybackController.postMessage(context, "备份失败：${it.message}") }
-            }
-        }
-    }
-
-    val restoreLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument(),
-    ) { uri ->
-        if (uri != null) {
-            scope.launch {
-                BackupManager.import(context, uri)
-                    .onSuccess { PlaybackController.postMessage(context, it) }
-                    .onFailure { PlaybackController.postMessage(context, "恢复失败：${it.message}") }
-            }
-        }
-    }
-
     SettingsSubPageScaffold(title = "其他设置", onBack = onBack) {
         item { SectionCaption("自动更新") }
         item {
@@ -728,42 +694,6 @@ internal fun OtherSettingsSubPage(onBack: () -> Unit) {
             }
         }
 
-        item {
-            SectionCaption("备份与恢复")
-        }
-        item {
-            SettingsCard {
-                Text("配置备份与恢复", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = SettingsTextMain)
-                Text("备份设置、收藏/最近、自建歌单与音源脚本；音源合并恢复，不删除已有的其它源。音乐文件、缓存、播放队列与收听进度不包含在内，目录权限需重新授权。", fontSize = 12.sp, color = SettingsTextSub, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Surface(
-                        onClick = { backupLauncher.launch("melora-backup.json") },
-                        shape = RoundedCornerShape(10.dp),
-                        color = MeloraAppearance.tintBlue,
-                    ) {
-                        Text("备份到本地", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = SettingsBrandBlue, modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp))
-                    }
-                    Surface(
-                        onClick = { restoreLauncher.launch(arrayOf("application/json", "*/*")) },
-                        shape = RoundedCornerShape(10.dp),
-                        color = MeloraAppearance.softFill,
-                    ) {
-                        Text("从备份恢复", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = SettingsTextMain, modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp))
-                    }
-                }
-                if (hasExportRecovery) {
-                    Surface(
-                        onClick = { recoveryLauncher.launch("melora-recovered-backup.json") },
-                        shape = RoundedCornerShape(10.dp),
-                        color = MeloraAppearance.tintBlue,
-                        modifier = Modifier.padding(top = 10.dp),
-                    ) {
-                        Text("另存上次保留的原文件副本", fontSize = 12.sp, fontWeight = FontWeight.Medium,
-                            color = SettingsBrandBlue, modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp))
-                    }
-                }
-            }
-        }
     }
 }
 // 6. 二级菜单：关于乐屿

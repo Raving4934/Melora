@@ -8,6 +8,7 @@ import com.leyu.melora.playback.lx.LxScriptStore
 import com.leyu.melora.playback.sdk.LxScriptPool
 import com.leyu.melora.playback.sdk.SourceResolver
 import java.io.File
+import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -47,20 +48,7 @@ object BackupManager {
     suspend fun export(context: Context, uri: Uri): Result<String> = ioResult {
         operations.withLock {
             val job = currentCoroutineContext()
-            val (text, count) = synchronized(BackupStateLock.monitor) {
-                val scripts = LxScriptStore(context).backupSnapshot { job.ensureActive() }
-                val root = JSONObject().put("version", 1).put("exportedAt", System.currentTimeMillis())
-                    .put("settings", BackupSettings.collect()).put("library", UserLibrary.backupSnapshot())
-                    .put("scripts", JSONArray().apply { scripts.forEach { script ->
-                        val item = JSONObject()
-                            .put("fileName", script.fileName)
-                            .put("code", script.code)
-                            .put("enabled", script.enabled)
-                        script.originUrl?.let { item.put("originUrl", it) }
-                        put(item)
-                    } })
-                boundedBackupJson(root).also(::parseBackupDocument) to scripts.size
-            }
+            val (text, count) = createSnapshot(context)
             job.ensureActive()
             writeExport(context, uri, text) { job.ensureActive() }
             "备份完成（含设置、用户库与 $count 个音源脚本；不含音乐文件、缓存及播放进度）"
@@ -72,24 +60,60 @@ object BackupManager {
             val job = currentCoroutineContext()
             val text = context.contentResolver.openInputStream(uri)?.use { it.readBackupText { job.ensureActive() } }
                 ?: error("无法读取备份文件")
-            val backup = parseBackupDocument(text)
-            val grants = context.contentResolver.persistedUriPermissions
-            val readable = grants.filter { it.isReadPermission }.mapTo(hashSetOf()) { it.uri.toString() }
-            val writable = grants.filter { it.isReadPermission && it.isWritePermission }.mapTo(hashSetOf()) { it.uri.toString() }
-            var changedScripts: Set<String> = emptySet()
-            val notice = BackupRestoreTransaction.run(context, { job.ensureActive() }) {
-                val settings = backup.settings?.let { BackupSettings.prepare(it, readable, writable) }
-                settings?.first?.let(BackupSettings::apply)
-                job.ensureActive()
-                backup.library?.let(UserLibrary::replaceFromBackup)
-                job.ensureActive()
-                backup.scripts?.let { changedScripts = LxScriptStore(context).restoreBackup(it) { job.ensureActive() } }
-                settings?.second.orEmpty()
-            }
-            // 一旦commit完成，取消不能跳过运行时同步；源初始化失败是运行状态提示，不误报数据恢复失败。
-            val runtimeNotice = syncRestoredRuntime(context, changedScripts.takeIf { backup.scripts != null })
-            "恢复完成：设置 ${backup.settings?.length() ?: 0} 项、脚本 ${backup.scripts?.size ?: 0} 个、用户库${if (backup.library == null) "未包含" else "已恢复"}。" + notice + runtimeNotice
+            restoreSnapshot(context, text)
         }
+    }
+
+    internal suspend fun snapshot(context: Context): BackupSnapshot = withContext(Dispatchers.IO) {
+        operations.withLock {
+            val id = BackupFileId(System.currentTimeMillis(), WebDavConfigStore.deviceId(context).take(8), UUID.randomUUID())
+            BackupSnapshot(id, createSnapshot(context, id.createdAt).first)
+        }
+    }
+
+    internal suspend fun restoreText(context: Context, text: String): String = withContext(Dispatchers.IO) {
+        operations.withLock { restoreSnapshot(context, text) }
+    }
+
+    private suspend fun createSnapshot(context: Context, createdAt: Long = System.currentTimeMillis()): Pair<String, Int> {
+        val job = currentCoroutineContext()
+        return synchronized(BackupStateLock.monitor) {
+            check(BackupRestoreTransaction.failure.value == null) { "请先完成上一次备份恢复" }
+            val scripts = LxScriptStore(context).backupSnapshot { job.ensureActive() }
+            val root = JSONObject().put(BACKUP_ORIGIN_KEY, BackupOrigin.current().toJson())
+                .put("version", 1).put("exportedAt", createdAt)
+                .put("settings", BackupSettings.collect()).put("library", UserLibrary.backupSnapshot())
+                .put("scripts", JSONArray().apply { scripts.forEach { script ->
+                    val item = JSONObject()
+                        .put("fileName", script.fileName)
+                        .put("code", script.code)
+                        .put("enabled", script.enabled)
+                    script.originUrl?.let { item.put("originUrl", it) }
+                    put(item)
+                } })
+            boundedBackupJson(root).also(::parseBackupDocument) to scripts.size
+        }
+    }
+
+    private suspend fun restoreSnapshot(context: Context, text: String): String {
+        val job = currentCoroutineContext()
+        val backup = parseBackupDocument(text)
+        val grants = context.contentResolver.persistedUriPermissions
+        val readable = grants.filter { it.isReadPermission }.mapTo(hashSetOf()) { it.uri.toString() }
+        val writable = grants.filter { it.isReadPermission && it.isWritePermission }.mapTo(hashSetOf()) { it.uri.toString() }
+        var changedScripts: Set<String> = emptySet()
+        val notice = BackupRestoreTransaction.run(context, { job.ensureActive() }) {
+            val settings = backup.settings?.let { BackupSettings.prepare(it, readable, writable) }
+            settings?.first?.let(BackupSettings::apply)
+            job.ensureActive()
+            backup.library?.let(UserLibrary::replaceFromBackup)
+            job.ensureActive()
+            backup.scripts?.let { changedScripts = LxScriptStore(context).restoreBackup(it) { job.ensureActive() } }
+            settings?.second.orEmpty()
+        }
+        // 提交后即使取消也完成运行时同步，初始化失败只提示运行状态。
+        val runtimeNotice = syncRestoredRuntime(context, changedScripts.takeIf { backup.scripts != null })
+        return "恢复完成：设置 ${backup.settings?.length() ?: 0} 项、脚本 ${backup.scripts?.size ?: 0} 个、用户库${if (backup.library == null) "未包含" else "已恢复"}。" + notice + runtimeNotice
     }
 
     /** Application初始化任何存储/播放模块之前调用，清理已提交日志或回滚中断事务。 */

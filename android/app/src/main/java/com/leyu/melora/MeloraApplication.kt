@@ -15,12 +15,14 @@ import coil3.SingletonImageLoader
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.request.crossfade
 import com.leyu.melora.playback.BackupManager
+import com.leyu.melora.playback.BackupSchedule
 import com.leyu.melora.playback.BackupRestoreTransaction
 import com.leyu.melora.playback.CrashLogger
 import com.leyu.melora.playback.DownloadCenter
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.PlaylistAutoUpdate
+import com.leyu.melora.playback.WebDavSync
 import com.leyu.melora.playback.UserLibrary
 import com.leyu.melora.playback.local.LocalTagFiller
 import com.leyu.melora.playback.local.LocalMediaStore
@@ -81,6 +83,8 @@ class MeloraApplication : Application(), SingletonImageLoader.Factory {
                     ).forEach { it.await() }
                 }
                 runStartupStep("歌单更新") { PlaylistAutoUpdate.init(this@MeloraApplication) }
+                runStartupStep("自动备份") { BackupSchedule.load(this@MeloraApplication) }
+                runStartupStep("记录同步") { WebDavSync.init(this@MeloraApplication) }
                 withContext(Dispatchers.Main.immediate) {
                     runStartupStep("播放控制器") { PlaybackController.init(this@MeloraApplication) }
                     runStartupStep("音源预热") { LxScriptPool.warmEnabled(this@MeloraApplication) }

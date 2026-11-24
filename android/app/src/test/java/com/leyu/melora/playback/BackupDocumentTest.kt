@@ -9,6 +9,12 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class BackupDocumentTest {
+    @Test fun writerRejectsSnapshotsWhichExceedTheReaderStructureLimit() {
+        val inner = JSONArray().apply { repeat(501) { put(0) } }
+        val outer = JSONArray().apply { repeat(1000) { put(inner) } }
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) { boundedBackupJson(outer) }
+    }
+
     @Test
     fun malformedNestedLibraryEntriesAreRejectedInsteadOfBecomingAnEmptyLibrary() {
         for (library in listOf(

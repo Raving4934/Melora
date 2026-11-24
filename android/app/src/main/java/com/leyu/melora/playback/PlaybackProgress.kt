@@ -1,5 +1,6 @@
 package com.leyu.melora.playback
 
+import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
 import androidx.media3.common.MediaItem
@@ -7,6 +8,7 @@ import androidx.media3.common.Player
 import com.leyu.melora.playback.sdk.OnlineSong
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -24,6 +26,9 @@ internal class PlaybackProgress(
     private var explicitStartUid: String? = null
     private var durationUid: String? = null
     private var durationMs = 0L
+    private var selectedBookUid: String? = null
+    private var lastBookCheckpoint: BookCheckpoint? = null
+    private data class BookCheckpoint(val uid: String, val position: Long, val duration: Long, val finished: Boolean)
 
     init { player.addListener(this) }
 
@@ -40,7 +45,7 @@ internal class PlaybackProgress(
             oldPosition.mediaItem?.let { item ->
                 if (oldPosition.positionMs > 0 || reason == Player.DISCONTINUITY_REASON_AUTO_TRANSITION) {
                     persist(item, oldPosition.positionMs, knownDuration(item),
-                        finished = reason == Player.DISCONTINUITY_REASON_AUTO_TRANSITION)
+                        finished = reason == Player.DISCONTINUITY_REASON_AUTO_TRANSITION, checkpoint = true)
                 }
             }
             explicitStartUid = newPosition.mediaItem?.mediaId?.takeIf {
@@ -57,6 +62,8 @@ internal class PlaybackProgress(
     }
 
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+        selectedBookUid = null
+        lastBookCheckpoint = null
         mediaItem?.let(::selectBook)
         pendingUid = mediaItem?.mediaId?.takeIf {
             reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT && it != explicitStartUid
@@ -111,12 +118,15 @@ internal class PlaybackProgress(
             durationUid = item.mediaId
             durationMs = duration
         }
-        persist(item, position, duration, finished)
+        persist(item, position, duration, finished, checkpoint = true)
     }
 
     private fun selectBook(item: MediaItem) {
         if (!isEnabled()) return
-        bookSong(item)?.let { BookListeningProgress.select(prefs, it) }
+        val song = bookSong(item) ?: return
+        if (selectedBookUid == song.uid) return
+        BookListeningProgress.select(prefs, song)
+        selectedBookUid = song.uid
     }
 
     /** 只有 raw UID 与真实 Player mediaId 一致时，才允许进入按书索引/完成标记路径。 */
@@ -129,11 +139,15 @@ internal class PlaybackProgress(
             ?: prefs.getLong("duration:${item.mediaId}", 0L).takeIf { it > 0 }
             ?: ((OnlineSong.from(trackFor(item.mediaId)?.raw)?.intervalSeconds ?: 0) * 1000L)
 
-    private fun persist(item: MediaItem, position: Long, duration: Long, finished: Boolean = false) {
+    private fun persist(item: MediaItem, position: Long, duration: Long, finished: Boolean = false, checkpoint: Boolean = false) {
         if (!isEnabled() || item.mediaId.isBlank()) return
         val song = bookSong(item)
         if (song != null) {
+            // 暂停时仍有服务定时器；相同的本机采样不能盖过另一设备刚同步的断点。
+            val sample = BookCheckpoint(song.uid, position, duration, finished)
+            if (checkpoint && sample == lastBookCheckpoint) return
             BookListeningProgress.persist(prefs, song, position, duration, finished)
+            lastBookCheckpoint = sample
             return
         }
         val value = if (finished) 0L else persistedProgressMs(position.coerceAtLeast(0L), duration)
@@ -207,7 +221,7 @@ internal object BookListeningProgress {
     private const val PREFS = "melora-progress"
     private const val BOOK_PREFIX = "book:"
     private const val COMPLETED_PREFIX = "completed:"
-    private val lock = Any()
+    private val lock = BackupStateLock.monitor
     private val mutableUpdates = MutableStateFlow(0L)
 
     val updates: StateFlow<Long> = mutableUpdates
@@ -261,7 +275,10 @@ internal object BookListeningProgress {
         val key = bookKey(identity.first, identity.second)
         val pointer = pointerJson(song)
         if (prefs.getString(key, null) == pointer) return@synchronized
-        prefs.edit { putString(key, pointer) }
+        prefs.edit {
+            putString(key, pointer)
+            putLong("updated:$key", nextBookTimestamp(prefs, key))
+        }
         mutableUpdates.value += 1L
     }
 
@@ -299,7 +316,10 @@ internal object BookListeningProgress {
             if (position > 0L) putLong(song.uid, position) else remove(song.uid)
             if (durationMs > 0L) putLong(durationKey, durationMs)
             if (completed) putBoolean(completedKey, true) else remove(completedKey)
-            if (bookKey != null && pointer != null) putString(bookKey, pointer)
+            if (bookKey != null && pointer != null) {
+                putString(bookKey, pointer)
+                putLong("updated:$bookKey", nextBookTimestamp(prefs, bookKey))
+            }
         }
         mutableUpdates.value += 1L
     }
@@ -314,6 +334,55 @@ internal object BookListeningProgress {
             durationMs = duration,
             completed = completed,
         )
+    }
+
+    internal fun syncSnapshot(context: Context): JSONArray = synchronized(lock) {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        JSONArray().apply {
+            for ((key, value) in prefs.all.toSortedMap()) {
+                if (!key.startsWith(BOOK_PREFIX) || value !is String) continue
+                val song = parseBookPointer(value) ?: continue
+                val (source, id) = bookIdentity(song) ?: continue
+                if (source == "local" || key != bookKey(source, id)) continue
+                val progress = point(prefs, song)
+                put(JSONObject().put("song", song.raw).put("positionMs", progress.positionMs)
+                    .put("durationMs", progress.durationMs).put("completed", progress.completed)
+                    .put("updatedAt", prefs.getLong("updated:$key", 0L)))
+            }
+        }
+    }
+
+    /** 合并后的每书指针与章节断点一次落盘，沿用播放器已有的读取入口。 */
+    internal fun applySync(context: Context, previous: JSONArray, merged: JSONArray) = synchronized(lock) {
+        fun byBook(points: JSONArray) = (0 until points.length()).associate { index ->
+            val record = points.getJSONObject(index)
+            val song = requireNotNull(OnlineSong.from(record.getJSONObject("song")))
+            val (source, id) = requireNotNull(bookIdentity(song))
+            bookKey(source, id) to record
+        }
+        val old = byBook(previous)
+        val new = byBook(merged)
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val editor = prefs.edit()
+        var changed = false
+        for (key in old.keys + new.keys) {
+            val record = new[key]
+            if (RecordSyncMerge.contentEquals(record, old[key])) continue
+            changed = true
+            if (record == null) {
+                editor.remove(key).remove("updated:$key")
+                continue
+            }
+            val song = requireNotNull(OnlineSong.from(record.getJSONObject("song")))
+            editor.putString(key, pointerJson(song)).putLong("updated:$key", record.getLong("updatedAt"))
+            editor.putLong(song.uid, record.getLong("positionMs"))
+                .putLong("duration:${song.uid}", record.getLong("durationMs"))
+                .putBoolean("$COMPLETED_PREFIX${song.uid}", record.getBoolean("completed"))
+        }
+        if (changed) {
+            check(editor.commit()) { "无法保存听书进度" }
+            mutableUpdates.value += 1L
+        }
     }
 
     private fun pointerJson(song: OnlineSong): String = JSONObject()
@@ -334,4 +403,7 @@ internal object BookListeningProgress {
 
     private fun bookKey(source: String, bookId: String): String =
         "$BOOK_PREFIX${source.length}:$source:$bookId"
+
+    private fun nextBookTimestamp(prefs: SharedPreferences, key: String): Long =
+        maxOf(System.currentTimeMillis(), prefs.getLong("updated:$key", 0L) + 1).coerceAtMost(MAX_LIBRARY_TIMESTAMP)
 }

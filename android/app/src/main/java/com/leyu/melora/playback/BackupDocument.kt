@@ -12,7 +12,9 @@ import org.json.JSONTokener
 
 internal const val MAX_BACKUP_BYTES = 16 * 1024 * 1024
 internal const val MAX_SCRIPT_BYTES = 4 * 1024 * 1024
+internal const val MAX_LIBRARY_TIMESTAMP = 253402300799999L
 private const val MAX_ITEMS = 50_000
+private const val MAX_STRUCTURE_TOKENS = 500_000
 internal data class BackupScript(
     val fileName: String,
     val code: String,
@@ -36,7 +38,7 @@ internal fun InputStream.readBackupText(limit: Int = MAX_BACKUP_BYTES, checkCanc
         .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(output.toByteArray())).toString()
 }
 
-private fun backupObject(text: String): JSONObject {
+internal fun backupObject(text: String): JSONObject {
     require(text.length <= MAX_BACKUP_BYTES && text.toByteArray(Charsets.UTF_8).size <= MAX_BACKUP_BYTES) { "备份超过16 MiB限制" }
     // JSONObject自身没有深度上限；在构造树之前拒绝异常嵌套，兼容历史JSONTokener的单双引号。
     var quote = '\u0000'
@@ -50,7 +52,7 @@ private fun backupObject(text: String): JSONObject {
             // 大量极小对象也能把16MiB文本膨胀成巨量对象；限制建树前的结构密度。
             if (char == '{' || char == '[' || char == ':' || char == ',') {
                 structureTokens++
-                require(structureTokens <= 500_000) { "备份JSON结构条目过多" }
+                require(structureTokens <= MAX_STRUCTURE_TOKENS) { "备份JSON结构条目过多" }
             }
             when (char) {
                 '"', '\'' -> quote = char
@@ -114,7 +116,7 @@ internal fun parseBackupDocument(text: String): ParsedBackup {
     return ParsedBackup(settings, library, scripts)
 }
 
-private fun validateBackupLibrary(root: JSONObject) {
+internal fun validateBackupLibrary(root: JSONObject) {
     var remaining = MAX_ITEMS
     fun array(owner: JSONObject, name: String, visit: (Any) -> Unit) {
         if (!owner.has(name)) return
@@ -128,13 +130,21 @@ private fun validateBackupLibrary(root: JSONObject) {
         val value = item.opt(key)
         require((value is String || numeric && value is Number) && value.toString().isNotBlank()) { "用户库条目缺少有效$key" }
     }
-    fun songs(owner: JSONObject, name: String) = array(owner, name) { value ->
+    fun timestamp(owner: JSONObject, key: String) {
+        val value = owner.opt(key) ?: return
+        require((value is Int || value is Long) && (value as Number).toLong() in 0L..MAX_LIBRARY_TIMESTAMP) {
+            "用户库时间 $key 无效"
+        }
+    }
+    fun songs(owner: JSONObject, name: String, validateSong: (JSONObject) -> Unit = {}) = array(owner, name) { value ->
         val item = node(value)
         required(item, "source")
         required(item, "songmid", numeric = true)
+        validateSong(item)
     }
     songs(root, "favorites")
-    songs(root, "recents")
+    songs(root, "recents") { timestamp(it, "playedAt") }
+    timestamp(root, "historyClearedAt")
     array(root, "favoritePlaylists") { value ->
         val item = node(value); required(item, "id", true); required(item, "name")
     }
@@ -170,10 +180,17 @@ internal fun boundedBackupJson(value: Any, limit: Int = MAX_BACKUP_BYTES): Strin
         }
     }
     val writer = bytes.writer(Charsets.UTF_8)
+    // 导出、云端写入和下次读回使用同一结构限额，避免上传本机无法重读的快照。
+    var remainingTokens = MAX_STRUCTURE_TOKENS.toLong()
+    fun countContainer(depth: Int, size: Int, objectKeys: Int = 0) {
+        require(depth < 64) { "备份嵌套过深" }
+        remainingTokens -= 1L + (size - 1).coerceAtLeast(0) + objectKeys
+        require(remainingTokens >= 0) { "备份JSON结构条目过多" }
+    }
     fun encode(node: Any?, depth: Int) {
-        require(depth <= 64) { "备份嵌套过深" }
         when (node) {
             is JSONObject -> {
+                countContainer(depth, node.length(), node.length())
                 writer.write("{")
                 node.keys().asSequence().forEachIndexed { i, key ->
                     if (i > 0) writer.write(",")
@@ -183,6 +200,7 @@ internal fun boundedBackupJson(value: Any, limit: Int = MAX_BACKUP_BYTES): Strin
                 writer.write("}")
             }
             is JSONArray -> {
+                countContainer(depth, node.length())
                 writer.write("[")
                 repeat(node.length()) { i ->
                     if (i > 0) writer.write(",")

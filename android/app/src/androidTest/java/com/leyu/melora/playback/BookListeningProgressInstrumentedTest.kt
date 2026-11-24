@@ -36,6 +36,24 @@ class BookListeningProgressInstrumentedTest {
     }
 
     @Test
+    fun sharedBookRewindUsesTheExistingResumePointWithoutTouchingMusicOrOtherChapters() {
+        val book = chapter("kw", "shared-chapter", "shared-book")
+        val other = chapter("kw", "previous-chapter", "shared-book")
+        BookListeningProgress.persist(prefs, other, 19_000, 90_000, false)
+        BookListeningProgress.persist(prefs, book, 48_000, 90_000, false)
+        prefs.edit().putLong("wy_ordinary-music", 12_000L).commit()
+        val before = BookListeningProgress.syncSnapshot(context)
+        val updated = org.json.JSONArray(before.toString())
+        val entry = updated.getJSONObject(0)
+        entry.put("positionMs", 7_000L).put("updatedAt", entry.getLong("updatedAt") + 1)
+        BookListeningProgress.applySync(context, before, updated)
+        assertEquals(7_000L, BookListeningProgress.readAlbum(context, "kw", "shared-book")!!.positionMs)
+        assertEquals(12_000L, prefs.getLong("wy_ordinary-music", 0))
+        assertEquals(19_000L, prefs.getLong(other.uid, 0))
+        assertEquals(updated.toString(), BookListeningProgress.syncSnapshot(context).toString())
+    }
+
+    @Test
     fun switchingBooksKeepsEachBookLastChapterAndUidPosition() {
         val firstA = chapter("kw", "resume-a-1", "kw:book_album_book-a")
         val lastA = chapter("kw", "resume-a-2", "book-a")

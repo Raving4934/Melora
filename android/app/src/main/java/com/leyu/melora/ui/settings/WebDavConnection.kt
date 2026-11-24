@@ -1,0 +1,434 @@
+package com.leyu.melora.ui.settings
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.CloudQueue
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SheetValue
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.paneTitle
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.leyu.melora.playback.WebDavBackup
+import com.leyu.melora.playback.WebDavConfig
+import com.leyu.melora.playback.WebDavSync
+import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.rememberMeloraBottomSheetState
+import com.leyu.melora.ui.common.rememberSheetDismiss
+import com.leyu.melora.ui.common.runCatchingCancellable
+import com.leyu.melora.ui.theme.MeloraAppearance
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import kotlinx.coroutines.launch
+
+@Composable
+internal fun WebDavConnectionEntry(
+    config: WebDavConfig?,
+    ready: Boolean,
+    enabled: Boolean = true,
+    onSaved: (WebDavConfig) -> Unit,
+) {
+    var editing by remember { mutableStateOf(false) }
+    SettingsEntryItem(
+        icon = Icons.Outlined.CloudQueue,
+        iconTint = SettingsBrandBlue,
+        title = "配置",
+        desc = when {
+            !ready -> "正在读取连接配置…"
+            config == null -> "设置服务器地址、账号与目录"
+            else -> "${config.server.toHttpUrl().host} / ${config.folder}"
+        },
+        enabled = ready && enabled,
+        onClick = { editing = true },
+    )
+    if (editing) {
+        WebDavConnectionEditor(config, onDismiss = { editing = false }, onSaved = onSaved)
+    }
+}
+
+private enum class ConnectionAction { Test, Save }
+
+private data class ConnectionFeedback(val text: String, val failed: Boolean = false)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun WebDavConnectionEditor(
+    config: WebDavConfig?,
+    onDismiss: () -> Unit,
+    onSaved: (WebDavConfig) -> Unit,
+) {
+    val context = LocalContext.current.applicationContext
+    val scope = rememberCoroutineScope()
+    val savedCallback by rememberUpdatedState(onSaved)
+    // 口令只保留在当前编辑窗口，避免写入 Activity 的恢复状态。
+    var draft by remember { mutableStateOf(config ?: WebDavConfig()) }
+    var visiblePassword by remember { mutableStateOf(false) }
+    var action by remember { mutableStateOf<ConnectionAction?>(null) }
+    var feedback by remember { mutableStateOf<ConnectionFeedback?>(null) }
+    val sheet = rememberMeloraBottomSheetState(skipPartiallyExpanded = true) {
+        it != SheetValue.Hidden || action != ConnectionAction.Save
+    }
+    val close = rememberSheetDismiss(sheet)
+
+    fun updateConfig(value: WebDavConfig) {
+        draft = value
+        feedback = null
+    }
+
+    fun runAction(next: ConnectionAction) {
+        if (action != null) return
+        val submitted = draft
+        action = next
+        feedback = null
+        visiblePassword = false
+        scope.launch {
+            try {
+                runCatchingCancellable {
+                    when (next) {
+                        ConnectionAction.Test -> {
+                            val result = WebDavBackup.test(submitted)
+                            feedback = ConnectionFeedback(
+                                if (result.canSync) "测试通过，可使用网络备份和多设备同步。"
+                                else "网络备份可用。多设备同步需要服务器支持条件写入。",
+                            )
+                        }
+                        ConnectionAction.Save -> {
+                            val saved = WebDavSync.saveConfig(context, submitted)
+                            savedCallback(saved)
+                            action = null
+                            close(onDismiss)
+                        }
+                    }
+                }.onFailure {
+                    feedback = ConnectionFeedback(it.localizedMessage ?: "操作失败，请重试。", failed = true)
+                }
+            } finally {
+                action = null
+            }
+        }
+    }
+
+    MeloraBottomSheet(
+        onDismissRequest = { if (action != ConnectionAction.Save) onDismiss() },
+        sheetState = sheet,
+        containerColor = MeloraAppearance.canvas,
+    ) {
+        val focusManager = LocalFocusManager.current
+        val keyboard = LocalSoftwareKeyboardController.current
+        val busy = action != null
+        Column(
+            modifier = Modifier.fillMaxWidth()
+                .imePadding()
+                .heightIn(max = 600.dp)
+                .padding(start = 20.dp, end = 20.dp, bottom = 16.dp)
+                .semantics { paneTitle = "WebDAV 配置" },
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                WebDavIcon()
+                Text(
+                    "WebDAV 配置",
+                    fontSize = 19.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = SettingsTextMain,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Column(
+                modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                SettingsCard(contentPadding = PaddingValues(0.dp)) {
+                    ConnectionField(
+                        value = draft.server,
+                        onValueChange = { updateConfig(draft.copy(server = it)) },
+                        label = "服务器地址",
+                        placeholder = "https://nas.example.com/dav/",
+                        icon = Icons.Outlined.Link,
+                        enabled = !busy,
+                        keyboardType = KeyboardType.Uri,
+                    )
+                    SettingsDivider(Modifier.padding(start = 48.dp))
+                    ConnectionField(
+                        value = draft.folder,
+                        onValueChange = { updateConfig(draft.copy(folder = it)) },
+                        label = "子文件夹名称",
+                        placeholder = WebDavConfig.DEFAULT_FOLDER,
+                        icon = Icons.Outlined.Folder,
+                        enabled = !busy,
+                    )
+                }
+                SettingsCard(contentPadding = PaddingValues(0.dp)) {
+                    ConnectionField(
+                        value = draft.account,
+                        onValueChange = { updateConfig(draft.copy(account = it)) },
+                        label = "账号",
+                        placeholder = "服务器要求登录时填写",
+                        icon = Icons.Outlined.Person,
+                        enabled = !busy,
+                    )
+                    SettingsDivider(Modifier.padding(start = 48.dp))
+                    ConnectionField(
+                        value = draft.password,
+                        onValueChange = { updateConfig(draft.copy(password = it)) },
+                        label = "密码",
+                        placeholder = "密码或应用专用密码",
+                        icon = Icons.Outlined.Lock,
+                        enabled = !busy,
+                        keyboardType = KeyboardType.Password,
+                        imeAction = ImeAction.Done,
+                        transformation = if (visiblePassword) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingContent = {
+                            IconButton(
+                                enabled = !busy && draft.password.isNotEmpty(),
+                                onClick = { visiblePassword = !visiblePassword },
+                            ) {
+                                Icon(
+                                    if (visiblePassword) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                                    if (visiblePassword) "隐藏密码" else "显示密码",
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                        },
+                    )
+                }
+            }
+            WebDavFeedback(feedback, action)
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                val canSubmit = !busy && draft.server.isNotBlank()
+                WebDavAction(
+                    title = "测试配置",
+                    enabled = canSubmit,
+                    working = action == ConnectionAction.Test,
+                    primary = false,
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        focusManager.clearFocus()
+                        keyboard?.hide()
+                        runAction(ConnectionAction.Test)
+                    },
+                )
+                WebDavAction(
+                    title = "保存配置",
+                    enabled = canSubmit && draft != config,
+                    working = action == ConnectionAction.Save,
+                    primary = true,
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        focusManager.clearFocus()
+                        keyboard?.hide()
+                        runAction(ConnectionAction.Save)
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun WebDavIcon() {
+    Box(
+        modifier = Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(MeloraAppearance.tintBlue),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(Icons.Outlined.CloudQueue, null, tint = SettingsBrandBlue, modifier = Modifier.size(22.dp))
+    }
+}
+
+@Composable
+private fun ConnectionField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    placeholder: String,
+    icon: ImageVector,
+    enabled: Boolean,
+    keyboardType: KeyboardType = KeyboardType.Text,
+    imeAction: ImeAction = ImeAction.Next,
+    transformation: VisualTransformation = VisualTransformation.None,
+    trailingContent: @Composable (() -> Unit)? = null,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val fieldColor = if (focused) SettingsBrandBlue else SettingsTextSub
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        enabled = enabled,
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = imeAction, autoCorrectEnabled = false),
+        textStyle = TextStyle(color = SettingsTextMain, fontSize = 15.sp, lineHeight = 22.sp),
+        cursorBrush = SolidColor(SettingsBrandBlue),
+        visualTransformation = transformation,
+        modifier = Modifier.fillMaxWidth()
+            .onFocusChanged { focused = it.isFocused }
+            .semantics { contentDescription = label },
+        decorationBox = { innerField ->
+            Row(
+                modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp)
+                    .background(if (focused) MeloraAppearance.tintBlue else SettingsCardBg)
+                    .padding(
+                        start = 16.dp,
+                        end = if (trailingContent == null) 16.dp else 4.dp,
+                        top = 8.dp,
+                        bottom = 8.dp,
+                    ),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(icon, null, tint = fieldColor, modifier = Modifier.size(20.dp))
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(label, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = fieldColor)
+                    Box(Modifier.fillMaxWidth()) {
+                        if (value.isEmpty()) {
+                            Text(
+                                placeholder,
+                                color = SettingsTextSub,
+                                fontSize = 15.sp,
+                                lineHeight = 22.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        innerField()
+                    }
+                }
+                trailingContent?.invoke()
+            }
+        },
+    )
+}
+
+@Composable
+private fun WebDavFeedback(feedback: ConnectionFeedback?, action: ConnectionAction?) {
+    val message = when (action) {
+        ConnectionAction.Test -> "正在测试目录读写…"
+        ConnectionAction.Save -> "正在保存配置…"
+        null -> feedback?.text ?: "连接测试会检查目标目录的读写权限。"
+    }
+    val failed = feedback?.failed == true
+    val color = when {
+        failed -> MaterialTheme.colorScheme.onErrorContainer
+        feedback != null -> SettingsBrandBlue
+        else -> SettingsTextSub
+    }
+    val fill = when {
+        failed -> MeloraAppearance.tintRed
+        feedback != null -> MeloraAppearance.tintBlue
+        else -> MeloraAppearance.softFill
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth()
+            .padding(top = 12.dp, bottom = 10.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(fill)
+            .heightIn(min = 50.dp)
+            .padding(horizontal = 12.dp, vertical = 7.dp)
+            .semantics { liveRegion = LiveRegionMode.Polite },
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (feedback != null) {
+            Icon(
+                if (failed) Icons.Outlined.ErrorOutline else Icons.Outlined.CheckCircle,
+                null,
+                tint = color,
+                modifier = Modifier.size(16.dp),
+            )
+        }
+        Text(message, color = color, fontSize = 12.sp, lineHeight = 18.sp)
+    }
+}
+
+@Composable
+private fun WebDavAction(
+    title: String,
+    enabled: Boolean,
+    working: Boolean,
+    primary: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val accented = primary && (enabled || working)
+    val fill = if (accented) SettingsBrandBlue else MeloraAppearance.softFill
+    val content = when {
+        accented -> MaterialTheme.colorScheme.onPrimary
+        enabled || working -> SettingsTextMain
+        else -> SettingsTextSub
+    }
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        shape = RoundedCornerShape(12.dp),
+        color = fill,
+        contentColor = content,
+        modifier = modifier.heightIn(min = 48.dp),
+    ) {
+        Box(Modifier.padding(horizontal = 8.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
+            Text(
+                title,
+                modifier = Modifier.alpha(if (working) 0f else 1f),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            if (working) CircularProgressIndicator(color = content, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+        }
+    }
+}
