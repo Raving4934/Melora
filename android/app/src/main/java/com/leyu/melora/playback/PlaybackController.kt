@@ -282,6 +282,14 @@ object PlaybackController {
         return AudioSpecification.fromFormat(group.getTrackFormat(index))
     }
 
+    /** 多音轨文件的文件级规格不能归到其中任何一条，播放器仍展示选中音轨自身的字段。 */
+    @androidx.annotation.OptIn(UnstableApi::class)
+    private fun hasSingleFileAudioTrack(player: Player): Boolean {
+        val groups = player.currentTracks.groups
+        return groups.none { it.type == C.TRACK_TYPE_VIDEO } &&
+            groups.singleOrNull { it.type == C.TRACK_TYPE_AUDIO }?.length == 1
+    }
+
     /** onEvents位于Media3状态批处理之后，避免切歌回调中把上一首格式写到新资源。 */
     private fun confirmAudioQuality(player: Player) {
         val uid = player.currentMediaItem?.mediaId ?: return
@@ -289,6 +297,7 @@ object PlaybackController {
         val audioSpec = readAudioSpec(player)
         val resourceId = resolution?.resourceId
         if (resourceId in TrackRegistry.LOCAL_RESOURCE_IDS && audioSpec != null) {
+            if (!hasSingleFileAudioTrack(player)) return
             resolution?.localFile?.let { LocalMediaStore.recordAudioSpecification(it, audioSpec) }
             resolution?.downloadUri?.let { uri ->
                 // 旧下载记录按本次真正打开的URI补齐，下载换新文件后旧音轨不能回写到新记录。
@@ -329,7 +338,19 @@ object PlaybackController {
         val hasItems = player.mediaItemCount > 0
         val currentTrack = queue.getOrNull(index)
         val resolution = currentTrack?.uid?.let(TrackRegistry::resolved)
-        val audioSpec = readAudioSpec(player)
+        val selectedSpec = readAudioSpec(player)
+        val fileSpec = when {
+            selectedSpec == null || resolution?.resourceId !in TrackRegistry.LOCAL_RESOURCE_IDS ||
+                !hasSingleFileAudioTrack(player) -> null
+            resolution?.localFile != null -> {
+                val opened = resolution.localFile
+                LocalMediaStore.findByUri(opened.uri)?.takeIf(opened::sameFileVersion)?.audioSpecification
+            }
+            resolution?.downloadUri != null -> DownloadCenter.saved(currentTrack.uid)
+                ?.takeIf { it.savedUri == resolution.downloadUri }?.audioSpec
+            else -> null
+        }
+        val audioSpec = selectedSpec?.withKnownFileFields(fileSpec)
         val isPlayingIntent = player.playWhenReady &&
             (player.playbackState == Player.STATE_READY || player.playbackState == Player.STATE_BUFFERING)
         val previous = _state.value

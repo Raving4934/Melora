@@ -61,6 +61,8 @@ import com.leyu.melora.ui.common.chromeContentPadding
 import com.leyu.melora.BuildConfig
 import com.leyu.melora.R
 import com.leyu.melora.playback.AudioCacheStore
+import com.leyu.melora.playback.AudioQualityBadge
+import com.leyu.melora.playback.AudioQualityTier
 import com.leyu.melora.playback.CacheManager
 import com.leyu.melora.playback.CacheStats
 import com.leyu.melora.playback.formatCacheBytes
@@ -68,8 +70,10 @@ import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.PlaylistAutoUpdate
 import com.leyu.melora.playback.PlayerCoverStyle
+import com.leyu.melora.playback.QualityBadgeMode
 import com.leyu.melora.startup.StartupPage
 import com.leyu.melora.ui.navigationIcon
+import com.leyu.melora.ui.common.BadgePill
 import com.leyu.melora.ui.common.runCatchingCancellable
 import com.leyu.melora.ui.common.MeloraAboutMark
 import com.leyu.melora.ui.theme.MeloraAppearance
@@ -83,6 +87,7 @@ internal fun BasicSettingsSubPage(onBack: () -> Unit) {
     val hideStatusBar by MeloraSettings.hideStatusBar.collectAsStateWithLifecycle()
     val blurTopBar by MeloraSettings.blurTopBar.collectAsStateWithLifecycle()
     val showSongCovers by MeloraSettings.showSongCovers.collectAsStateWithLifecycle()
+    val qualityBadgeMode by MeloraSettings.qualityBadgeMode.collectAsStateWithLifecycle()
     val showExitButton by MeloraSettings.showExitButton.collectAsStateWithLifecycle()
     val restoreLastPage by MeloraSettings.restoreLastPage.collectAsStateWithLifecycle()
     val startupPage by MeloraSettings.startupPage.collectAsStateWithLifecycle()
@@ -132,6 +137,18 @@ internal fun BasicSettingsSubPage(onBack: () -> Unit) {
                 SwitchItem("显示单曲封面", "在歌曲列表中加载单曲封面", showSongCovers) {
                     MeloraSettings.updateShowSongCovers(it)
                 }
+                SettingsDivider(Modifier.padding(horizontal = 14.dp))
+
+                SettingsChoiceMenu(
+                    title = "音质徽标样式",
+                    value = qualityBadgeMode,
+                    options = QualityBadgeMode.entries,
+                    label = QualityBadgeMode::label,
+                    onSelect = MeloraSettings::updateQualityBadgeMode,
+                    optionPreview = { mode ->
+                        BadgePill(AudioQualityBadge(AudioQualityTier.HiRes, "HI-RES", "192 kHz"), mode = mode)
+                    },
+                )
                 SettingsDivider(Modifier.padding(horizontal = 14.dp))
 
                 SwitchItem("启动时恢复上次页面", "记住上次离开时所在的页面", restoreLastPage) {

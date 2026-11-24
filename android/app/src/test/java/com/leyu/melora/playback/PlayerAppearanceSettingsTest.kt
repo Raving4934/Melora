@@ -13,6 +13,7 @@ class PlayerAppearanceSettingsTest {
         assertFalse(MeloraSettings.hideStatusBar.value)
         assertFalse(MeloraSettings.blurTopBar.value)
         assertFalse(MeloraSettings.showSongCovers.value)
+        assertEquals(QualityBadgeMode.Compact, MeloraSettings.qualityBadgeMode.value)
         assertTrue(MeloraSettings.showExitButton.value)
         assertTrue(MeloraSettings.pullToRefresh.value)
         assertEquals(ThemeMode.Auto, MeloraSettings.playerThemeMode.value)
@@ -113,6 +114,33 @@ class PlayerAppearanceSettingsTest {
         assertEquals(PlayerCoverStyle.Vinyl, PlayerCoverStyle.restore("vinyl"))
         assertEquals(PlayerCoverStyle.Circle, PlayerCoverStyle.restore("unknown", PlayerCoverStyle.Circle))
         assertEquals(PlayerCoverStyle.Vinyl, PlayerCoverStyle.restore(null, PlayerCoverStyle.Vinyl))
+    }
+
+    @Test
+    fun qualityBadgeModeRoundTripsAndOlderBackupsKeepTheCurrentChoice() = withAppearanceSettings {
+        fun restoreBadgeMode(snapshot: JSONObject) =
+            BackupSettings.apply(BackupSettings.prepare(snapshot, emptySet(), emptySet()).first)
+
+        assertEquals(QualityBadgeMode.IconText, QualityBadgeMode.restore("icon-label"))
+        assertEquals(QualityBadgeMode.Split, QualityBadgeMode.restore("split"))
+
+        QualityBadgeMode.entries.forEach { mode ->
+            MeloraSettings.updateQualityBadgeMode(mode)
+            val exported = BackupSettings.collect().getString("qualityBadgeMode")
+            assertEquals(mode.storageValue, exported)
+
+            MeloraSettings.updateQualityBadgeMode(QualityBadgeMode.entries.first { it != mode })
+            restoreBadgeMode(JSONObject().put("qualityBadgeMode", exported))
+            assertEquals(mode, MeloraSettings.qualityBadgeMode.value)
+        }
+
+        MeloraSettings.updateQualityBadgeMode(QualityBadgeMode.Split)
+        restoreBadgeMode(JSONObject())
+        restoreBadgeMode(JSONObject().put("qualityBadgeMode", "future-mode"))
+        assertEquals(QualityBadgeMode.Split, MeloraSettings.qualityBadgeMode.value)
+        restoreBadgeMode(JSONObject().put("qualityBadgeMode", "text-only"))
+        assertEquals(QualityBadgeMode.Compact, MeloraSettings.qualityBadgeMode.value)
+        assertEquals("compact", BackupSettings.collect().getString("qualityBadgeMode"))
     }
 
     @Test
@@ -299,6 +327,7 @@ class PlayerAppearanceSettingsTest {
         val originalDesktopLyricPosition = MeloraSettings.desktopLyricPosition.value
         val originalHideStatusBar = MeloraSettings.hideStatusBar.value
         val originalBlurTopBar = MeloraSettings.blurTopBar.value
+        val originalQualityBadgeMode = MeloraSettings.qualityBadgeMode.value
         val originalPlayerThemeMode = MeloraSettings.playerThemeMode.value
         val originalKeepScreenAwake = MeloraSettings.keepScreenAwake.value
         val originalMiniLyricsEnabled = MeloraSettings.miniLyricsEnabled.value
@@ -314,6 +343,7 @@ class PlayerAppearanceSettingsTest {
             MeloraSettings.desktopLyricPosition.value = originalDesktopLyricPosition
             MeloraSettings.hideStatusBar.value = originalHideStatusBar
             MeloraSettings.blurTopBar.value = originalBlurTopBar
+            MeloraSettings.qualityBadgeMode.value = originalQualityBadgeMode
             MeloraSettings.playerThemeMode.value = originalPlayerThemeMode
             MeloraSettings.keepScreenAwake.value = originalKeepScreenAwake
             MeloraSettings.miniLyricsEnabled.value = originalMiniLyricsEnabled

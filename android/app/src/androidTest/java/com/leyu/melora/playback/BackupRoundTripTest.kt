@@ -109,6 +109,26 @@ class BackupRoundTripTest {
     }
 
     @Test
+    fun qualityBadgeModeSurvivesSettingsReloadAndDefaultsForOlderInstallations() {
+        val prefs = context.getSharedPreferences(MeloraSettings.PREFS, Context.MODE_PRIVATE)
+        assertEquals(QualityBadgeMode.Compact, MeloraSettings.qualityBadgeMode.value)
+
+        QualityBadgeMode.entries.forEach { mode ->
+            MeloraSettings.updateQualityBadgeMode(mode)
+            assertTrue(prefs.edit().commit())
+            assertEquals(mode.storageValue, prefs.getString(MeloraSettings.KEY_QUALITY_BADGE_MODE, null))
+
+            MeloraSettings.qualityBadgeMode.value = QualityBadgeMode.entries.first { it != mode }
+            MeloraSettings.reloadAfterRestore()
+            assertEquals(mode, MeloraSettings.qualityBadgeMode.value)
+        }
+
+        assertTrue(prefs.edit().putString(MeloraSettings.KEY_QUALITY_BADGE_MODE, "text-only").commit())
+        MeloraSettings.reloadAfterRestore()
+        assertEquals(QualityBadgeMode.Compact, MeloraSettings.qualityBadgeMode.value)
+    }
+
+    @Test
     fun musicPlayModePersistsAndReloadsFromRealPreferences() {
         val originalMode = MeloraSettings.musicPlayMode.value
         val prefs = context.getSharedPreferences(MeloraSettings.PREFS, Context.MODE_PRIVATE)

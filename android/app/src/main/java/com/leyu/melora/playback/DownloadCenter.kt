@@ -90,8 +90,10 @@ object DownloadCenter {
             if (current.id == expected.id && current.hasSavedResource &&
                 sameResourceAddress(current.fileName, current.savedUri, expected.fileName, expected.savedUri) &&
                 current.audioSpec == expected.audioSpec
-            ) current.copy(savedUri = uri, audioSpec = spec ?: current.audioSpec.takeIf { current.savedUri == uri })
-            else current
+            ) {
+                val previousSpec = current.audioSpec.takeIf { current.savedUri == uri }
+                current.copy(savedUri = uri, audioSpec = spec?.withKnownFileFields(previousSpec) ?: previousSpec)
+            } else current
         }
     }
 
@@ -263,7 +265,6 @@ object DownloadCenter {
         val status = runCatching { Status.valueOf(node.optString("status")) }.getOrDefault(Status.Failed)
         val rawFileName = node.optString("fileName").takeIf { it.isNotBlank() }
         val rawSavedUri = node.optString("savedUri").takeIf { it.startsWith("content://") || it.startsWith("file://") }
-        val audioSpec = node.optJSONObject("audioSpec")?.let(::audioSpecificationFromJson)
         // 旧格式没有资源生命周期字段：只有 Done 记录能证明地址仍属于已保存资源；
         // 旧 Failed+filename 常来自删除/失效后的残留地址，不能在新模型中当作可播放资源。
         val legacyHasSavedResource = status == Status.Done
@@ -284,7 +285,7 @@ object DownloadCenter {
             updatedAt = node.optLong("updatedAt"),
             savedUri = rawSavedUri.takeIf { keepResource },
             hasSavedResource = keepResource,
-            audioSpec = audioSpec,
+            audioSpec = node.optJSONObject("audioSpec")?.takeIf { keepResource }?.let(::audioSpecificationFromJson),
             upgradeFrom = node.optJSONObject("upgradeFrom")?.let(LocalSong::fromJson),
         )
     }
@@ -335,6 +336,7 @@ object DownloadCenter {
             sampleRate = node.optInt("sampleRate", -1),
             bitrate = node.optInt("bitrate", -1),
             bitDepth = node.optInt("bitDepth", -1),
+            channelCount = node.optInt("channelCount", -1).takeIf { it > 0 } ?: -1,
         )
     }
 
@@ -343,6 +345,7 @@ object DownloadCenter {
         .put("sampleRate", spec.sampleRate)
         .put("bitrate", spec.bitrate)
         .put("bitDepth", spec.bitDepth)
+        .put("channelCount", spec.channelCount)
 
     private fun validArtworkUrl(value: String?): String? = value
         ?.trim()

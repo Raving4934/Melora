@@ -10,10 +10,10 @@ import org.junit.Test
 class AudioSpecificationTest {
     @Test
     fun sourceRequestCannotOverrideActualDecodedFormat() {
-        assertEquals("128K", AudioSpecification("audio/mpeg", 44100, 128000).qualityBadge)
+        assertEquals("SD 128K", AudioSpecification("audio/mpeg", 44100, 128000).qualityBadge?.label)
         assertNull(AudioSpecification("audio/flac", 96000, -1).qualityBadge)
-        assertEquals("SQ", AudioSpecification("audio/flac", 96000, -1, 16).qualityBadge)
-        assertEquals("HR", AudioSpecification("audio/flac", 96000, -1, 24).qualityBadge)
+        assertEquals("LOSSLESS", AudioSpecification("audio/flac", 96000, -1, 16).qualityBadge?.label)
+        assertEquals("HI-RES", AudioSpecification("audio/flac", 96000, -1, 24).qualityBadge?.label)
         assertNull(AudioSpecification(null, -1, -1).qualityBadge)
         assertNull(AudioSpecification("audio/flac", 96000, -1).verifiedQuality)
         assertEquals("128k", AudioSpecification("audio/mpeg", 44100, 128000).verifiedQuality)
@@ -26,9 +26,9 @@ class AudioSpecificationTest {
             for (rate in listOf(44100, 96000, 192000)) {
                 assertNull(AudioSpecification(mime, rate, 4_608_000).qualityBadge)
                 assertNull(AudioSpecification(mime, rate, 4_608_000, 0).qualityBadge)
-                assertEquals("SQ", AudioSpecification(mime, rate, -1, 16).qualityBadge)
-                assertEquals("HR", AudioSpecification(mime, rate, -1, 24).qualityBadge)
-                assertEquals("HR", AudioSpecification(mime, rate, -1, 32).qualityBadge)
+                assertEquals("LOSSLESS", AudioSpecification(mime, rate, -1, 16).qualityBadge?.label)
+                assertEquals("HI-RES", AudioSpecification(mime, rate, -1, 24).qualityBadge?.label)
+                assertEquals("HI-RES", AudioSpecification(mime, rate, -1, 32).qualityBadge?.label)
             }
         }
     }
@@ -36,20 +36,20 @@ class AudioSpecificationTest {
     @Test
     fun localMeasuredMappingUsesBitDepthInsteadOfSampleRate() {
         assertEquals(
-            "HR",
-            AudioSpecification.fromLocal("audio/flac", "file:///Music/a.flac", 48_000, 0, 24).qualityBadge,
+            "HI-RES",
+            AudioSpecification.fromLocal("audio/flac", "file:///Music/a.flac", 48_000, 0, 24).qualityBadge?.label,
         )
         assertEquals(
-            "SQ",
-            AudioSpecification.fromLocal("audio/flac", "file:///Music/a.flac", 96_000, 0, 16).qualityBadge,
+            "LOSSLESS",
+            AudioSpecification.fromLocal("audio/flac", "file:///Music/a.flac", 96_000, 0, 16).qualityBadge?.label,
         )
         assertEquals(
-            "HR",
-            AudioSpecification.fromLocal("audio/flac", "file:///Music/a.flac", 384_000, 0, 24).qualityBadge,
+            "HI-RES",
+            AudioSpecification.fromLocal("audio/flac", "file:///Music/a.flac", 384_000, 0, 24).qualityBadge?.label,
         )
         assertEquals(
-            "MASTER",
-            AudioSpecification.fromLocal("audio/unknown", "file:///Music/a.dsf", 2_822_400, 0, -1).qualityBadge,
+            "DSD",
+            AudioSpecification.fromLocal("audio/unknown", "file:///Music/a.dsf", 2_822_400, 0, -1).qualityBadge?.label,
         )
         assertNull(
             AudioSpecification.fromLocal("audio/unknown", "file:///Music/a.flac", 96_000, 900_000, -1).qualityBadge,
@@ -58,9 +58,9 @@ class AudioSpecificationTest {
 
     @Test
     fun compressedBitrateStaysSpecificInsteadOfFallingBackTo128K() {
-        assertEquals("192K", AudioSpecification("audio/mpeg", 44_100, 192_000).qualityBadge)
-        assertEquals("256K", AudioSpecification("audio/mpeg", 44_100, 256_000).qualityBadge)
-        assertEquals("128K", AudioSpecification("audio/mpeg", 44_100, 128_000).qualityBadge)
+        assertEquals("192K", AudioSpecification("audio/mpeg", 44_100, 192_000).qualityBadge?.label)
+        assertEquals("256K", AudioSpecification("audio/mpeg", 44_100, 256_000).qualityBadge?.label)
+        assertEquals("SD 128K", AudioSpecification("audio/mpeg", 44_100, 128_000).qualityBadge?.label)
     }
 
     @Test
@@ -68,7 +68,7 @@ class AudioSpecificationTest {
         val spec = AudioSpecification.fromFormat(format("audio/mp4a-latm", averageBitrate = 96_434, peakBitrate = 165_032))
 
         assertEquals(96_434, spec.bitrate)
-        assertEquals("96K", spec.qualityBadge)
+        assertEquals("ECO 96K", spec.qualityBadge?.label)
         assertEquals("aac96k", spec.verifiedQuality)
     }
 
@@ -87,20 +87,21 @@ class AudioSpecificationTest {
         val high = AudioSpecification.fromFormat(format("audio/mp4a-latm", averageBitrate = 320_000, peakBitrate = 320_000))
 
         assertEquals(128_000, low.bitrate)
-        assertEquals("128K", low.qualityBadge)
+        assertEquals("SD 128K", low.qualityBadge?.label)
         assertEquals(320_000, high.bitrate)
-        assertEquals("HQ", high.qualityBadge)
+        assertEquals("HQ", high.qualityBadge?.label)
     }
 
     @Test
-    fun formatMappingPreservesBitDepthForHrBadge() {
+    fun formatMappingPreservesBitDepthAndChannelCount() {
         val spec = AudioSpecification.fromFormat(
-            format("audio/flac", peakBitrate = 165_032, pcmEncoding = C.ENCODING_PCM_24BIT),
+            format("audio/flac", peakBitrate = 165_032, pcmEncoding = C.ENCODING_PCM_24BIT, channelCount = 2),
         )
 
         assertEquals(-1, spec.bitrate)
         assertEquals(24, spec.bitDepth)
-        assertEquals("HR", spec.qualityBadge)
+        assertEquals(2, spec.channelCount)
+        assertEquals("HI-RES", spec.qualityBadge?.label)
     }
 
     private fun format(
@@ -108,11 +109,13 @@ class AudioSpecificationTest {
         averageBitrate: Int = Format.NO_VALUE,
         peakBitrate: Int = Format.NO_VALUE,
         pcmEncoding: Int = Format.NO_VALUE,
+        channelCount: Int = Format.NO_VALUE,
     ): Format = Format.Builder()
         .setSampleMimeType(mimeType)
         .setSampleRate(44_100)
         .setAverageBitrate(averageBitrate)
         .setPeakBitrate(peakBitrate)
         .setPcmEncoding(pcmEncoding)
+        .setChannelCount(channelCount)
         .build()
 }

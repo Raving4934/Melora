@@ -1,6 +1,10 @@
 package com.leyu.melora.playback.sdk
 
+import com.leyu.melora.playback.AudioQualityBadge
+import com.leyu.melora.playback.AudioQualityTier
+import com.leyu.melora.playback.compressedAudioBadge
 import java.util.Calendar
+import java.util.Locale
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import org.json.JSONObject
@@ -30,7 +34,7 @@ data class OnlineSong(val raw: JSONObject) {
         }
 
     /** 列表响应已声明的最高音质；只读目录元数据，不触发播放地址解析。 */
-    val bestQualityBadge: String?
+    val bestQualityBadge: AudioQualityBadge?
         get() = qualityBadgeForCapabilities(qualitys)
 
     val intervalSeconds: Int
@@ -83,26 +87,34 @@ private fun parseOnlineYear(value: Any?): Int? {
 private val YEAR_PATTERN = Regex("(?<!\\d)(?:19|20)\\d{2}(?!\\d)")
 
 
-/** 音质词表只在播放/下载模型层维护，列表与全屏播放器共享同一映射。 */
-internal fun qualityBadgeForQuality(quality: String?): String? = when (quality?.trim()?.lowercase()) {
-    "master" -> "MASTER"
-    "atmos_plus", "atmos", "hires", "flac24bit", "flac32bit" -> "HR"
-    "flac", "ape", "wav" -> "SQ"
-    "320k" -> "HQ"
-    "128k" -> "128K"
-    else -> null
-}
+/** 顺序与目录优先级一致。目录声明不能提供采样率或实测码率。 */
+private val catalogBadges = mapOf(
+    "master" to AudioQualityBadge(AudioQualityTier.Master, shortSpec = "母带"),
+    "dsd" to AudioQualityBadge(AudioQualityTier.Dsd),
+    "atmos_plus" to AudioQualityBadge(AudioQualityTier.Atmos, shortSpec = "DOLBY"),
+    "atmos" to AudioQualityBadge(AudioQualityTier.Atmos, shortSpec = "DOLBY"),
+    "spatial" to AudioQualityBadge(AudioQualityTier.Spatial),
+    "flac32bit" to AudioQualityBadge(AudioQualityTier.HiRes, shortSpec = "32-bit"),
+    "flac24bit" to AudioQualityBadge(AudioQualityTier.HiRes, shortSpec = "24-bit"),
+    "hires" to AudioQualityBadge(AudioQualityTier.HiRes),
+    "flac" to AudioQualityBadge(AudioQualityTier.Lossless, shortSpec = "FLAC"),
+    "ape" to AudioQualityBadge(AudioQualityTier.Lossless, shortSpec = "APE"),
+    "wav" to AudioQualityBadge(AudioQualityTier.Lossless, shortSpec = "WAV"),
+)
 
-internal fun qualityBadgeForCapabilities(qualities: Iterable<String>): String? {
-    val normalized = qualities.map { it.trim().lowercase() }.toSet()
-    return when {
-        "master" in normalized -> "MASTER"
-        normalized.any { it in setOf("atmos_plus", "atmos", "hires", "flac24bit", "flac32bit") } -> "HR"
-        normalized.any { it in setOf("flac", "ape", "wav") } -> "SQ"
-        "320k" in normalized -> "HQ"
-        "128k" in normalized -> "128K"
-        else -> null
-    }
+private val catalogBitrate = Regex("""(aac|ogg|opus)?([1-9][0-9]{0,3})k""")
+
+internal fun qualityBadgeForCapabilities(qualities: Iterable<String>): AudioQualityBadge? {
+    val keys = qualities.map { it.trim().lowercase(Locale.ROOT) }.toSet()
+    catalogBadges.entries.firstOrNull { it.key in keys }?.let { return it.value }
+    val best = keys.mapNotNull(catalogBitrate::matchEntire)
+        .maxWithOrNull(compareBy({ it.groupValues[2].toInt() }, { it.value }))
+        ?: return when {
+            "opus" in keys -> AudioQualityBadge(AudioQualityTier.Opus)
+            "standard" in keys -> AudioQualityBadge(AudioQualityTier.Standard)
+            else -> null
+        }
+    return compressedAudioBadge(best.groupValues[2].toInt(), if (best.groupValues[1] == "opus") "Opus" else null)
 }
 
 internal fun Iterable<OnlineSong>.musicOnly(): List<OnlineSong> = filterNot(OnlineSong::isBookChapter)

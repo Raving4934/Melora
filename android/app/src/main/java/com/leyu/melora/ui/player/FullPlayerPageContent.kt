@@ -862,9 +862,8 @@ private fun AudioInfoPage(
 ) {
     val platformName = sourceAliasDisplay(track?.source.orEmpty(), platformLabel(track?.source))
     // 只显示已选中音轨的实测徽标，不借目录最高档或请求档冒充实际音质。
-    val qualityBadge = audioSpec?.qualityBadge
     if (immersive) {
-        ImmersiveTrackNotes(track, platformName, qualityBadge, sourceLabel, onOpenAlbum, onOpenArtist)
+        ImmersiveTrackNotes(track, platformName, audioSpec, sourceLabel, onOpenAlbum, onOpenArtist)
         return
     }
     val viewConfiguration = LocalViewConfiguration.current
@@ -880,7 +879,7 @@ private fun AudioInfoPage(
             CompositionLocalProvider(LocalViewConfiguration provides viewConfiguration) {
                 AudioInfoCard(
                     platformName = platformName,
-                    qualityBadge = qualityBadge,
+                    audioSpec = audioSpec,
                     sourceLabel = sourceLabel,
                 )
                 AlbumInfoCard(track = track, onOpenAlbum = onOpenAlbum)
@@ -895,7 +894,7 @@ private fun AudioInfoPage(
 internal fun ImmersiveTrackNotes(
     track: UiTrack?,
     platformName: String,
-    qualityBadge: String?,
+    audioSpec: AudioSpecification?,
     sourceLabel: String,
     onOpenAlbum: (String) -> Unit,
     onOpenArtist: (String) -> Unit,
@@ -944,8 +943,12 @@ internal fun ImmersiveTrackNotes(
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
                     Column(Modifier.weight(1f)) {
                         Text("实际音质", fontSize = 11.sp, color = FullPlayerTextMuted.copy(alpha = 0.65f))
-                        Text(qualityBadge ?: "未识别", fontSize = 16.sp, color = FullPlayerTextPrimary,
-                            modifier = Modifier.padding(top = 8.dp))
+                        Text(
+                            audioSpec?.qualityBadge?.label ?: "未识别",
+                            fontSize = 16.sp,
+                            color = FullPlayerTextPrimary,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
                     }
                     Column(Modifier.weight(1f)) {
                         Text("音乐平台", fontSize = 11.sp, color = FullPlayerTextMuted.copy(alpha = 0.65f))
@@ -953,7 +956,7 @@ internal fun ImmersiveTrackNotes(
                             modifier = Modifier.padding(top = 8.dp))
                     }
                 }
-                Spacer(Modifier.height(20.dp))
+                AudioSpecificationLine(audioSpec, Modifier.padding(top = 12.dp, bottom = 6.dp))
                 Text(sourceLabel, fontSize = 11.sp, lineHeight = 18.sp,
                     color = FullPlayerTextMuted.copy(alpha = 0.65f))
             }

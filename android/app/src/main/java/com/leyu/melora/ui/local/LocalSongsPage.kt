@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -96,7 +97,7 @@ import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.ui.common.toUiTracks
 import com.leyu.melora.ui.common.AddToPlaylistSheet
 import com.leyu.melora.ui.common.BadgePill
-import com.leyu.melora.ui.common.LocalBadgePill
+import com.leyu.melora.ui.common.QualityBadgeHeight
 import com.leyu.melora.ui.common.BrandBlue
 import com.leyu.melora.ui.common.SongRowSelectionAction
 import com.leyu.melora.ui.common.ChromeScaffold
@@ -707,7 +708,7 @@ internal fun LocalSongRow(
             }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(top = 2.dp),
+                modifier = Modifier.padding(top = 2.dp).heightIn(min = QualityBadgeHeight),
             ) {
                 song.qualityBadge?.let {
                     BadgePill(it)

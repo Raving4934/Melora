@@ -41,6 +41,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.leyu.melora.playback.AudioSpecification
 import com.leyu.melora.playback.LyricsUiConfig
 import com.leyu.melora.playback.LyricLine
 import com.leyu.melora.playback.MeloraSettings
@@ -329,17 +330,19 @@ class ImmersivePlayerInstrumentedTest {
     @Test
     fun immersiveNotesKeepFullMetadataAndExistingAlbumArtistCallbacks() {
         val track = UiTrack("notes", "这是一个需要完整展示而不能截断的长歌曲名字", "测试歌手", "完整专辑名字")
+        val specification = AudioSpecification("audio/flac", 192_000, 4_812_000, bitDepth = 24)
         val clicked = mutableListOf<String>()
         compose.setContent {
             PlayerAppearanceProvider(dark = true) {
-                ImmersiveTrackNotes(track, "本地音频", "SQ", "播放源：本地媒体",
+                ImmersiveTrackNotes(track, "本地音频", specification, "播放源：本地媒体",
                     { clicked += "album:$it" }, { clicked += "artist:$it" })
             }
         }
         compose.onNodeWithText(track.title).assertIsDisplayed()
         compose.onNodeWithTag("immersive-artist").performScrollTo().performClick()
         compose.onNodeWithTag("immersive-album").performScrollTo().performClick()
-        compose.onNodeWithText("SQ").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("HI-RES").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("24-bit · 192 kHz · FLAC · 4,812 kbps").performScrollTo().assertIsDisplayed()
         assertEquals(listOf("artist:${track.artist}", "album:${track.album}"), clicked)
     }
 

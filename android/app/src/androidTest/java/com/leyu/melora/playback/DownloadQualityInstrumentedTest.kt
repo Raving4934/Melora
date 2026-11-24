@@ -436,10 +436,12 @@ class DownloadQualityInstrumentedTest {
     @Test fun mp3CanUpgradeToReal24bitWithoutDeletingOriginalAndRepeatedDownloadSkips() = runBlocking<Unit> {
         seed("128k", "fixture-128.mp3"); download("128k")
         val old = requireNotNull(DownloadCenter.saved(song.uid)); val original = bytes(old.savedUri!!)
-        assertEquals("128K", old.audioSpec?.qualityBadge)
+        assertEquals("SD 128K", old.audioSpec?.qualityBadge?.label)
+        assertEquals(1, old.audioSpec?.channelCount)
         seed("flac24bit", "fixture-24.flac"); assertTrue(download("flac24bit").contains("缓存"))
         val upgraded = requireNotNull(DownloadCenter.saved(song.uid))
         assertEquals(24, upgraded.audioSpec?.bitDepth)
+        assertEquals(1, upgraded.audioSpec?.channelCount)
         assertArrayEquals(original, bytes(old.savedUri))
         assertEquals(2, files().size)
         assertTrue(download("flac24bit").contains("已跳过"))
@@ -514,7 +516,7 @@ class DownloadQualityInstrumentedTest {
         assertTrue(download("flac24bit").contains("已跳过"))
         assertEquals(1, files().size)
         assertEquals(oldUri, DownloadCenter.saved(song.uid)?.savedUri)
-        assertEquals("128K", DownloadCenter.saved(song.uid)?.audioSpec?.qualityBadge)
+        assertEquals("SD 128K", DownloadCenter.saved(song.uid)?.audioSpec?.qualityBadge?.label)
     }
 
     @Test fun failedPublicationKeepsOldResourceAndRemovesOnlyStagingFile() = runBlocking<Unit> {
@@ -604,7 +606,7 @@ class DownloadQualityInstrumentedTest {
             val recovered = DownloadCenter.records.value.first { it.id == song.uid }
             assertEquals(DownloadCenter.Status.Done, recovered.status)
             assertEquals(published.savedUri, recovered.savedUri)
-            assertEquals("HQ", recovered.audioSpec?.qualityBadge)
+            assertEquals("HQ", recovered.audioSpec?.qualityBadge?.label)
             assertEquals(local, recovered.upgradeFrom)
             assertEquals(1, files().size)
             assertArrayEquals(original, bytes(local.uri))
@@ -659,7 +661,7 @@ class DownloadQualityInstrumentedTest {
         seed("320k", "fixture-320.mp3")
         MeloraSettings.downloadQuality.value = "320k"
         Downloader.upgrade(context, song, local).await().getOrThrow()
-        assertEquals("HQ", DownloadCenter.saved(song.uid)?.audioSpec?.qualityBadge)
+        assertEquals("HQ", DownloadCenter.saved(song.uid)?.audioSpec?.qualityBadge?.label)
         assertEquals(1, files().size)
     }
 

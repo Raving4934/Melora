@@ -18,12 +18,12 @@ class OnlineQualityBadgeTest {
         )
 
         assertEquals(listOf("320k", "flac24bit").toSet(), song.qualitys.toSet())
-        assertEquals("HR", song.bestQualityBadge)
+        assertEquals("HI-RES", song.bestQualityBadge?.label)
     }
 
     @Test
     fun masterAndLegacyTypesArrayUseTheSharedBadgeVocabulary() {
-        assertEquals("MASTER", qualityBadgeForCapabilities(listOf("flac", "master")))
+        assertEquals("MASTER", qualityBadgeForCapabilities(listOf("flac", "master"))?.label)
         val legacy = OnlineSong(
             JSONObject()
                 .put("source", "tx")
@@ -31,7 +31,8 @@ class OnlineQualityBadgeTest {
                 .put("name", "Song")
                 .put("types", JSONArray().put(JSONObject().put("type", "320k"))),
         )
-        assertEquals("HQ", legacy.bestQualityBadge)
-        assertNull(qualityBadgeForQuality("192k"))
+        assertEquals("HQ", legacy.bestQualityBadge?.label)
+        assertEquals("192K", qualityBadgeForCapabilities(listOf("192k"))?.label)
+        assertNull(qualityBadgeForCapabilities(listOf("unknown")))
     }
 }

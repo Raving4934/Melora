@@ -118,7 +118,7 @@ object LocalMediaScanner {
         }
     }
 
-    /** 后台补全媒体库条目的采样率/码率（用于 HR/SQ 徽标），不影响列表展示。 */
+    /** 后台补全媒体库条目的实测采样率、码率与位深。 */
     suspend fun enrich(context: Context) = scanMutex.withLock {
         withContext(Dispatchers.IO) {
             val appContext = context.applicationContext
@@ -395,6 +395,9 @@ internal fun preserveLocalEnrichment(scanned: LocalSong, previous: LocalSong?): 
         sampleRate = if (scanned.sampleRate > 0) scanned.sampleRate else previous.sampleRate,
         bitrate = if (scanned.bitrate > 0) scanned.bitrate else previous.bitrate,
         bitDepth = if (scanned.bitDepth > 0) scanned.bitDepth else previous.bitDepth,
+        channelCount = if (scanned.channelCount > 0 || !scanned.sameFileVersion(previous)) {
+            scanned.channelCount
+        } else previous.channelCount,
         year = if (scanned.year > 0) scanned.year else previous.year,
         coverUri = scanned.coverUri ?: previous.coverUri,
         infoFilled = previous.infoFilled,

@@ -16,8 +16,10 @@ class DownloadAudioTest {
             val header = flacHeader(depth)
             val actual = requireNotNull(flacDownloadAudio(header))
             assertEquals(depth, actual.spec.bitDepth)
+            assertEquals(2, actual.spec.channelCount)
+            assertEquals(-1, actual.spec.bitrate)
             assertEquals(1000L, actual.durationMs)
-            assertEquals(if (depth == 16) "SQ" else "HR", actual.spec.qualityBadge)
+            assertEquals(if (depth == 16) "LOSSLESS" else "HI-RES", actual.spec.qualityBadge?.label)
         }
         assertNull(flacDownloadAudio("{\"url\":\"not an audio file\"}".toByteArray()))
         assertNull(flacDownloadAudio(ByteArray(42)))
@@ -37,6 +39,7 @@ class DownloadAudioTest {
         assertArrayEquals(payload.copyOfRange(42, payload.size), input.readBytes())
         assertEquals("audio/flac", probe.spec?.mimeType)
         assertEquals(24, probe.spec?.bitDepth)
+        assertEquals(2, probe.spec?.channelCount)
     }
 
     @Test fun unknownPrefixIsBoundedAndReplayedWithoutLosingBytes() {

@@ -119,7 +119,7 @@ object LocalMediaStore {
         val latest = byId[expected.id]?.takeIf { expected.sameFileVersion(it) } ?: return@synchronized null
         require(song.id == expected.id && song.uri == expected.uri)
         val updated = song.copy(mimeType = latest.mimeType, sampleRate = latest.sampleRate,
-            bitrate = latest.bitrate, bitDepth = latest.bitDepth)
+            bitrate = latest.bitrate, bitDepth = latest.bitDepth, channelCount = latest.channelCount)
         if (updated != latest) commitLocked(_songs.value.map { if (it.id == expected.id) updated else it }, pruneMissing = false)
         updated
     }
@@ -141,14 +141,17 @@ object LocalMediaStore {
                 if (!observed.sameFileVersion(currentSong)) return@mutate current
 
                 val measuredMime = spec.mimeType?.trim()?.takeIf { it.isNotEmpty() }
+                // PCM 轨可来自已知无损容器；其余格式以这次实际选中的编码为准。
+                val mime = if (measuredMime == "audio/raw" && currentSong.isLossless) {
+                    currentSong.mimeType
+                } else measuredMime ?: currentSong.mimeType
+                val measured = spec.copy(mimeType = mime).withKnownFileFields(currentSong.audioSpecification)
                 val updated = currentSong.copy(
-                    // 真实输入格式纠正过时索引；raw仅保留已识别无损容器，不能保留错标的MP3。
-                    mimeType = if (measuredMime == "audio/raw" && currentSong.isLossless) {
-                        currentSong.mimeType
-                    } else measuredMime ?: currentSong.mimeType,
-                    sampleRate = spec.sampleRate.takeIf { it > 0 } ?: currentSong.sampleRate,
-                    bitrate = spec.bitrate.takeIf { it > 0 } ?: currentSong.bitrate,
-                    bitDepth = spec.bitDepth.takeIf { it > 0 } ?: currentSong.bitDepth,
+                    mimeType = mime,
+                    sampleRate = measured.sampleRate,
+                    bitrate = measured.bitrate,
+                    bitDepth = measured.bitDepth,
+                    channelCount = measured.channelCount,
                 )
                 if (updated == currentSong) current else current.toMutableList().also { it[index] = updated }
             }
@@ -386,6 +389,7 @@ object LocalMediaStore {
             coverUri = existing?.coverUri ?: song.img,
             infoFilled = existing?.infoFilled ?: false,
             bitDepth = spec.bitDepth.takeIf { it > 0 } ?: -1,
+            channelCount = spec.channelCount.takeIf { it > 0 } ?: -1,
         )
         if (existing == null) return downloaded
 

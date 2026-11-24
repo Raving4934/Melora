@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.leyu.melora.playback.AudioSpecification
 import com.leyu.melora.playback.LyricLine
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlaybackController
@@ -59,6 +60,7 @@ class PhoneLandscapePlayerInstrumentedTest {
     private val state = PlayerUiState(
         ready = true, current = tracks.first(), queue = tracks,
         currentIndex = 0, positionMs = 24_000L, durationMs = 120_000L, playing = true,
+        audioSpec = AudioSpecification("audio/flac", 192_000, 4_812_000, bitDepth = 24),
     )
     private val seeks = mutableListOf<Long>()
     private var nextClicks = 0
@@ -190,6 +192,7 @@ class PhoneLandscapePlayerInstrumentedTest {
 
         selectTab(0)
         compose.onNodeWithText("音频信息").assertIsDisplayed()
+        compose.onNodeWithText("24-bit · 192 kHz · FLAC · 4,812 kbps").assertIsDisplayed()
         assertEquals(before, rightControlBounds())
         selectTab(1)
         compose.onNodeWithTag("player-pages").performTouchInput { swipeLeft(durationMillis = 420L) }

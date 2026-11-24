@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 
 import com.leyu.melora.ui.common.BadgePill
+import com.leyu.melora.ui.common.QualityBadgeHeight
 
 import android.os.SystemClock
 import androidx.compose.foundation.background
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -51,10 +53,15 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.leyu.melora.playback.AudioSpecification
+import com.leyu.melora.playback.QualityBadgeMode
 import com.leyu.melora.playback.sdk.LxScriptPool
 import com.leyu.melora.playback.LyricLine
 import com.leyu.melora.playback.PlayMode
@@ -63,6 +70,7 @@ import com.leyu.melora.playback.PlayerUiState
 import com.leyu.melora.playback.TrackRegistry
 import com.leyu.melora.playback.PlayerLyric
 import com.leyu.melora.ui.common.SongArtwork
+import java.util.Locale
 
 /** 歌曲状态和歌词流分开发射时，绝不能短暂显示上一首歌词。 */
 internal fun playerLyricLines(uid: String?, lyric: PlayerLyric?): List<LyricLine> =
@@ -108,10 +116,37 @@ internal fun platformLabel(source: String?): String = when (source) {
     else -> "本地音频"
 }
 
+internal fun AudioSpecification.playerSpecificationLabel(): String = buildList {
+    if (bitDepth > 0) add("$bitDepth-bit")
+    sampleRateLabel?.let { add(it) }
+    codecLabel?.let { add(it) }
+    val kbps = displayBitrateKbps
+    if (kbps != null) add(String.format(Locale.ROOT, "%,d kbps", kbps))
+    else if (bitrate > 0) add("$bitrate bps")
+}.joinToString(" · ")
+
+@Composable
+internal fun AudioSpecificationLine(specification: AudioSpecification?, modifier: Modifier = Modifier) {
+    val label = remember(specification) { specification?.playerSpecificationLabel().orEmpty() }
+    val lineHeight = 18.sp
+    Text(
+        text = label,
+        modifier = modifier.fillMaxWidth().heightIn(min = with(LocalDensity.current) { lineHeight.toDp() }),
+        color = FullPlayerTextMuted,
+        style = TextStyle(
+            fontSize = 12.sp,
+            lineHeight = lineHeight,
+            letterSpacing = 0.15.sp,
+            fontFeatureSettings = "tnum",
+            lineBreak = LineBreak.Paragraph,
+        ),
+    )
+}
+
 @Composable
 internal fun AudioInfoCard(
     platformName: String,
-    qualityBadge: String?,
+    audioSpec: AudioSpecification?,
     sourceLabel: String,
 ) {
     Surface(
@@ -135,19 +170,26 @@ internal fun AudioInfoCard(
                     color = FullPlayerTextPrimary,
                 )
             }
-            Spacer(Modifier.height(10.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Spacer(Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth().heightIn(min = QualityBadgeHeight),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Text(
                     text = platformName,
                     fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
                     color = FullPlayerTextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
-                if (qualityBadge != null) {
-                    Spacer(Modifier.width(8.dp))
-                    val badgeTint = if (qualityBadge == "128K") FullPlayerTextPrimary.copy(alpha = 0.72f) else null
-                    BadgePill(qualityBadge, tint = badgeTint)
+                audioSpec?.qualityBadge?.let { badge ->
+                    BadgePill(badge, mode = QualityBadgeMode.Split, outlined = true)
                 }
             }
+            AudioSpecificationLine(audioSpec, Modifier.padding(top = 6.dp))
             Text(
                 text = sourceLabel,
                 minLines = 2,

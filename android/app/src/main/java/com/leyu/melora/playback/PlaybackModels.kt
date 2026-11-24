@@ -198,7 +198,13 @@ data class PlayerLyric(
 )
 
 /** 来自Media3选中输入音轨，而不是用户设置、目录能力或音源请求参数；bitrate是平均码率，未知为-1。 */
-data class AudioSpecification(val mimeType: String?, val sampleRate: Int, val bitrate: Int, val bitDepth: Int = -1) {
+data class AudioSpecification(
+    val mimeType: String?,
+    val sampleRate: Int,
+    val bitrate: Int,
+    val bitDepth: Int = -1,
+    val channelCount: Int = -1,
+) {
     private val normalizedMimeType: String? get() = mimeType?.trim()?.lowercase(Locale.ROOT)
 
     /** 只有真实 DSD 容器才是母带级；高采样率 PCM/FLAC 仍按位深归入 HR/SQ。 */
@@ -216,16 +222,73 @@ data class AudioSpecification(val mimeType: String?, val sampleRate: Int, val bi
         else -> null
     }
 
-    val qualityBadge: String? get() = when {
-        isDsd -> "MASTER"
-        isLossless -> when {
-            bitDepth >= 24 -> "HR"
-            bitDepth > 0 -> "SQ"
-            else -> null // 未识别位深不冒充SQ，也不用请求HR替代实测。
-        }
-        bitrate >= 320_000 -> "HQ"
-        bitrate > 0 -> "${bitrate / 1000}K"
+    val codecLabel: String? get() = when (normalizedMimeType) {
+        "audio/flac", "audio/x-flac" -> "FLAC"
+        "audio/alac" -> "ALAC"
+        "audio/ape", "audio/x-ape" -> "APE"
+        "audio/raw" -> "PCM"
+        "audio/wav", "audio/x-wav" -> "WAV"
+        in DSD_MIME_TYPES -> "DSD"
+        "audio/mpeg" -> "MP3"
+        "audio/mpeg-l1" -> "MP1"
+        "audio/mpeg-l2" -> "MP2"
+        "audio/mp4a-latm", "audio/aac", "audio/aac-adts" -> "AAC"
+        "audio/opus" -> "Opus"
+        "audio/vorbis" -> "Vorbis"
+        "audio/ac3" -> "AC-3"
+        "audio/eac3", "audio/eac3-joc" -> "E-AC-3"
+        "audio/ac4" -> "AC-4"
+        "audio/vnd.dts" -> "DTS"
+        "audio/vnd.dts.hd" -> "DTS-HD"
+        "audio/true-hd" -> "TrueHD"
+        "audio/iamf" -> "IAMF"
+        "audio/mha1", "audio/mhm1" -> "MPEG-H"
+        "audio/amr-wb" -> "AMR-WB"
+        "audio/3gpp", "audio/amr" -> "AMR"
         else -> null
+    }
+
+    internal val displayBitrateKbps: Int? get() =
+        bitrate.takeIf { it >= 1_000 }?.let { ((it + 500L) / 1_000).toInt() }
+
+    val sampleRateLabel: String? get() = if (sampleRate <= 0) null else {
+        val mhz = isDsd && sampleRate >= 1_000_000
+        val rate = java.math.BigDecimal.valueOf(sampleRate.toLong(), if (mhz) 6 else 3).stripTrailingZeros()
+        "${rate.toPlainString()} ${if (mhz) "MHz" else "kHz"}"
+    }
+
+    val qualityBadge: AudioQualityBadge? get() = when {
+        isDsd -> {
+            val multiplier = (sampleRate / 44_100).takeIf {
+                sampleRate % 44_100 == 0 && it in DSD_MULTIPLIERS
+            }
+            AudioQualityBadge(AudioQualityTier.Dsd, shortSpec = multiplier?.toString() ?: sampleRateLabel)
+        }
+        isLossless && bitDepth >= 24 ->
+            AudioQualityBadge(AudioQualityTier.HiRes, shortSpec = sampleRateLabel ?: "${bitDepth}-bit")
+        isLossless && bitDepth > 0 -> AudioQualityBadge(
+            AudioQualityTier.Lossless,
+            shortSpec = sampleRateLabel?.removeSuffix(" kHz")?.let { "$bitDepth/$it" } ?: "${bitDepth}-bit",
+            splitLabel = codecLabel ?: AudioQualityTier.Lossless.label,
+        )
+        isLossless -> null
+        normalizedMimeType == "audio/eac3-joc" -> AudioQualityBadge(AudioQualityTier.Atmos, shortSpec = "DOLBY")
+        else -> compressedAudioBadge(displayBitrateKbps ?: 0, codecLabel, channelCount)
+    }
+
+    /** 只用同一文件的已知字段补齐所选轨道。规格冲突时可能是另一条音轨。 */
+    internal fun withKnownFileFields(file: AudioSpecification?): AudioSpecification {
+        if (file == null || codecLabel == null || codecLabel != file.codecLabel ||
+            (normalizedMimeType != file.normalizedMimeType && codecLabel == "E-AC-3")) return this
+        fun conflicts(a: Int, b: Int) = a > 0 && b > 0 && a != b
+        if (conflicts(sampleRate, file.sampleRate) || conflicts(bitDepth, file.bitDepth) ||
+            conflicts(channelCount, file.channelCount) || conflicts(bitrate, file.bitrate)) return this
+        return copy(
+            sampleRate = sampleRate.takeIf { it > 0 } ?: file.sampleRate,
+            bitrate = bitrate.takeIf { it > 0 } ?: file.bitrate,
+            bitDepth = bitDepth.takeIf { it > 0 } ?: file.bitDepth,
+            channelCount = channelCount.takeIf { it > 0 } ?: file.channelCount,
+        )
     }
 
     companion object {
@@ -239,7 +302,7 @@ data class AudioSpecification(val mimeType: String?, val sampleRate: Int, val bi
                 C.ENCODING_PCM_32BIT, C.ENCODING_PCM_32BIT_BIG_ENDIAN -> 32
                 else -> -1
             }
-            return AudioSpecification(format.sampleMimeType, format.sampleRate, format.averageBitrate, bitDepth)
+            return AudioSpecification(format.sampleMimeType, format.sampleRate, format.averageBitrate, bitDepth, format.channelCount)
         }
 
         /**
@@ -252,27 +315,23 @@ data class AudioSpecification(val mimeType: String?, val sampleRate: Int, val bi
             sampleRate: Int,
             bitrate: Int,
             bitDepth: Int = -1,
+            channelCount: Int = -1,
         ): AudioSpecification {
             val mime = mimeType?.trim()?.lowercase(Locale.ROOT)
-            val extension = uri
-                .substringBefore('?')
-                .substringBefore('#')
-                .substringAfterLast('.', "")
-                .lowercase(Locale.ROOT)
-            val normalized = when {
-                mime in DSD_MIME_TYPES || extension in DSD_EXTENSIONS -> "audio/dsd"
-                mime in LOSSLESS_MIME_TYPES -> mime
-                extension == "flac" -> "audio/flac"
-                extension == "ape" -> "audio/ape"
-                extension == "wav" || extension == "wave" -> "audio/wav"
-                extension == "mp3" -> "audio/mpeg"
-                else -> mime
-            }
-            return AudioSpecification(normalized, sampleRate, bitrate, bitDepth)
+            val declared = AudioSpecification(mime, sampleRate, bitrate, bitDepth, channelCount)
+            if (declared.codecLabel != null) return declared
+            val extension = uri.substringBefore('?').substringBefore('#').substringAfterLast('.', "").lowercase(Locale.ROOT)
+            return FILE_AUDIO_MIME_TYPES[extension]?.let { declared.copy(mimeType = it) } ?: declared
         }
 
         private val DSD_MIME_TYPES = setOf("audio/dsd", "audio/x-dsd", "audio/vnd.dsd", "audio/dsf", "audio/dff")
-        private val DSD_EXTENSIONS = setOf("dsd", "dsf", "dff")
+        private val DSD_MULTIPLIERS = setOf(64, 128, 256, 512, 1024)
+        private val FILE_AUDIO_MIME_TYPES = mapOf(
+            "dsd" to "audio/dsd", "dsf" to "audio/dsd", "dff" to "audio/dsd",
+            "flac" to "audio/flac", "alac" to "audio/alac", "ape" to "audio/ape",
+            "wav" to "audio/wav", "wave" to "audio/wav", "mp3" to "audio/mpeg",
+            "aac" to "audio/aac", "opus" to "audio/opus",
+        )
         private val LOSSLESS_MIME_TYPES = setOf(
             "audio/flac", "audio/x-flac", "audio/alac", "audio/ape", "audio/x-ape", "audio/raw", "audio/wav", "audio/x-wav",
             *DSD_MIME_TYPES.toTypedArray(),

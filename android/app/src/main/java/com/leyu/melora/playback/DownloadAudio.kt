@@ -139,9 +139,7 @@ private fun mp3PrefixAudioSpec(prefix: ByteArray): AudioSpecification? {
     } catch (_: java.io.IOException) {
         // 有界前缀耗尽不等于网络读取失败；真正的输入异常已在读取前缀时原样抛出。
     } finally { extractor.release() }
-    return format?.takeIf { it.averageBitrate > 0 }?.let {
-        AudioSpecification(it.sampleMimeType, it.sampleRate, it.averageBitrate)
-    }
+    return format?.takeIf { it.averageBitrate > 0 }?.let(AudioSpecification::fromFormat)
 }
 
 /** MediaExtractor只接触已读入内存的前缀，绝不会因预检再次访问网络或原始输入流。 */
@@ -170,7 +168,8 @@ private fun MediaExtractor.downloadAudioSpec(tag: LocalTagReader.Tag? = null): A
     selectTrack(track)
     if (sampleTime < 0) return null
     val format = getTrackFormat(track)
-    fun number(key: String, fallback: Int) = if (format.containsKey(key)) format.getInteger(key) else fallback
+    fun number(key: String, fallback: Int = -1): Int =
+        if (format.containsKey(key)) format.getInteger(key).takeIf { it > 0 } ?: fallback else fallback
     val depth = when (number(MediaFormat.KEY_PCM_ENCODING, C.ENCODING_INVALID)) {
         C.ENCODING_PCM_8BIT -> 8
         C.ENCODING_PCM_16BIT, C.ENCODING_PCM_16BIT_BIG_ENDIAN -> 16
@@ -178,8 +177,13 @@ private fun MediaExtractor.downloadAudioSpec(tag: LocalTagReader.Tag? = null): A
         C.ENCODING_PCM_32BIT, C.ENCODING_PCM_32BIT_BIG_ENDIAN -> 32
         else -> tag?.bitDepth ?: -1
     }
-    return AudioSpecification(format.getString(MediaFormat.KEY_MIME), number(MediaFormat.KEY_SAMPLE_RATE, tag?.sampleRate ?: -1),
-        number(MediaFormat.KEY_BIT_RATE, tag?.bitrate ?: -1), depth)
+    return AudioSpecification(
+        mimeType = format.getString(MediaFormat.KEY_MIME),
+        sampleRate = number(MediaFormat.KEY_SAMPLE_RATE, tag?.sampleRate ?: -1),
+        bitrate = number(MediaFormat.KEY_BIT_RATE, tag?.bitrate ?: -1),
+        bitDepth = depth,
+        channelCount = number(MediaFormat.KEY_CHANNEL_COUNT),
+    )
 }
 
 private class PrefixMediaDataSource(private val data: ByteArray) : MediaDataSource() {
@@ -198,10 +202,20 @@ private class PrefixMediaDataSource(private val data: ByteArray) : MediaDataSour
     override fun close() = Unit
 }
 
-/** 后缀只在名称冲突时使用；以实际规格命名，不能拿请求HR给16bit文件贴标。 */
+/** 名称冲突沿用下载文件后缀，以实际音频规格命名。 */
 internal fun downloadVariantName(baseName: String, extension: String, spec: AudioSpecification, ordinal: Int): String {
     if (ordinal == 0) return baseName + extension
-    val label = spec.qualityBadge ?: "音质待识别"
+    val label = when {
+        spec.isDsd -> "MASTER"
+        spec.isLossless -> when {
+            spec.bitDepth >= 24 -> "HR"
+            spec.bitDepth > 0 -> "SQ"
+            else -> "音质待识别"
+        }
+        spec.bitrate >= 320_000 -> "HQ"
+        spec.bitrate > 0 -> "${spec.bitrate / 1000}K"
+        else -> "音质待识别"
+    }
     val serial = if (ordinal == 1) "" else " ($ordinal)"
     return "${baseName.take(70)} [$label]$serial$extension"
 }
@@ -231,7 +245,8 @@ internal fun inspectDownloadAudio(context: Context, uri: Uri): DownloadAudio? = 
         } finally { extractor.release() }
     }.getOrNull()
     if (flac != null && extracted == null) return@withRead null
-    val spec = flac?.spec ?: extracted ?: tag?.let { AudioSpecification(it.mimeType, it.sampleRate, it.bitrate, it.bitDepth) }
+    val spec = flac?.spec?.withKnownFileFields(extracted)
+        ?: extracted ?: tag?.let { AudioSpecification(it.mimeType, it.sampleRate, it.bitrate, it.bitDepth) }
     if (spec?.mimeType?.startsWith("audio/") != true) return@withRead null
     val duration = flac?.durationMs?.takeIf { it > 0 } ?: tag?.durationMs ?: 0L
     DownloadAudio(spec, duration, tag)
@@ -244,6 +259,6 @@ internal fun flacDownloadAudio(header: ByteArray): DownloadAudio? {
         header[4].toInt() and 0x7f != 0 || header[5] != 0.toByte() || header[6] != 0.toByte() || header[7] != 34.toByte()) return null
     val metadata = FlacStreamMetadata(header, 8)
     if (metadata.sampleRate <= 0 || metadata.bitsPerSample !in 4..32) return null
-    return DownloadAudio(AudioSpecification("audio/flac", metadata.sampleRate, -1, metadata.bitsPerSample),
+    return DownloadAudio(AudioSpecification("audio/flac", metadata.sampleRate, -1, metadata.bitsPerSample, metadata.channels),
         metadata.totalSamples * 1000 / metadata.sampleRate, null)
 }

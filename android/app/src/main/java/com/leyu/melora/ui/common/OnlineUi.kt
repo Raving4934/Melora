@@ -272,7 +272,9 @@ fun OnlineSongRow(
     }
     val showLocalBadge = song.source == LocalSong.SOURCE || matchedLocal != null
     // 本地命中后只显示本地实测徽标；位深未知时保持空白，不能拿网络目录能力冒充实测。
-    val qualityBadge = if (matchedLocal != null) matchedLocal.audioSpecification.qualityBadge else song.bestQualityBadge
+    val qualityBadge = remember(song, matchedLocal) {
+        if (matchedLocal != null) matchedLocal.qualityBadge else song.bestQualityBadge
+    }
     val artwork = rememberOnlineSongCover(song, enabled = showCovers)
     val highlighted = isCurrent ?: isCurrentListSong(song.uid)
     Row(
@@ -315,7 +317,7 @@ fun OnlineSongRow(
             }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(top = 2.dp),
+                modifier = Modifier.padding(top = 2.dp).heightIn(min = QualityBadgeHeight),
             ) {
                 if (showLocalBadge) {
                     LocalBadgePill()

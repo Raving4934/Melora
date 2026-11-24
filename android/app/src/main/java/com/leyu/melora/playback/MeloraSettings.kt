@@ -57,6 +57,7 @@ object MeloraSettings {
     val hideStatusBar = MutableStateFlow(false)
     val blurTopBar = MutableStateFlow(false)
     val showSongCovers = MutableStateFlow(false)
+    val qualityBadgeMode = MutableStateFlow(QualityBadgeMode.Compact)
     val pullToRefresh = MutableStateFlow(true)
     val downloadPath = MutableStateFlow(DEFAULT_DOWNLOAD_PATH)
     val downloadQuality = MutableStateFlow("320k")
@@ -137,6 +138,7 @@ object MeloraSettings {
         hideStatusBar.value = prefs.getBoolean(KEY_HIDE_STATUS_BAR, false)
         blurTopBar.value = prefs.getBoolean(KEY_BLUR_TOP_BAR, false)
         showSongCovers.value = prefs.getBoolean(KEY_SHOW_SONG_COVERS, false)
+        qualityBadgeMode.value = QualityBadgeMode.restore(prefs.getString(KEY_QUALITY_BADGE_MODE, null))
         pullToRefresh.value = prefs.getBoolean(KEY_PULL_REFRESH, true)
         downloadPath.value = prefs.getString(KEY_DOWNLOAD_PATH, DEFAULT_DOWNLOAD_PATH) ?: DEFAULT_DOWNLOAD_PATH
         downloadQuality.value = prefs.getString(KEY_DOWNLOAD_QUALITY, "320k") ?: "320k"
@@ -216,6 +218,10 @@ object MeloraSettings {
     fun updateHideStatusBar(value: Boolean) = update { hideStatusBar.value = value; persist { putBoolean(KEY_HIDE_STATUS_BAR, value) } }
     fun updateBlurTopBar(value: Boolean) = update { blurTopBar.value = value; persist { putBoolean(KEY_BLUR_TOP_BAR, value) } }
     fun updateShowSongCovers(value: Boolean) = update { showSongCovers.value = value; persist { putBoolean(KEY_SHOW_SONG_COVERS, value) } }
+    fun updateQualityBadgeMode(value: QualityBadgeMode) = update {
+        qualityBadgeMode.value = value
+        persist { putString(KEY_QUALITY_BADGE_MODE, value.storageValue) }
+    }
     fun updatePullToRefresh(value: Boolean) = update { pullToRefresh.value = value; persist { putBoolean(KEY_PULL_REFRESH, value) } }
     fun updateSearchPlatform(value: String) = update { searchPlatform.value = value; persist { putString(KEY_SEARCH_PLATFORM, value) } }
     fun updateLeaderboardPlatform(value: String) = update { leaderboardPlatform.value = value; persist { putString(KEY_LEADERBOARD_PLATFORM, value) } }
@@ -328,6 +334,7 @@ object MeloraSettings {
     internal const val KEY_HIDE_STATUS_BAR = "basic.hideStatusBar"
     internal const val KEY_BLUR_TOP_BAR = "basic.blurTopBar"
     internal const val KEY_SHOW_SONG_COVERS = "basic.showSongCovers"
+    internal const val KEY_QUALITY_BADGE_MODE = "basic.qualityBadgeMode"
     internal const val KEY_PULL_REFRESH = "basic.pullToRefresh"
     internal const val KEY_DOWNLOAD_PATH = "basic.downloadPath"
     internal const val KEY_DOWNLOAD_QUALITY = "basic.downloadQuality"

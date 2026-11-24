@@ -36,6 +36,8 @@ internal object BackupSettings {
         field("hideStatusBar", MeloraSettings.KEY_HIDE_STATUS_BAR, MeloraSettings.hideStatusBar, ::backupBoolean),
         field("blurTopBar", MeloraSettings.KEY_BLUR_TOP_BAR, MeloraSettings.blurTopBar, ::backupBoolean),
         field("showSongCovers", MeloraSettings.KEY_SHOW_SONG_COVERS, MeloraSettings.showSongCovers, ::backupBoolean),
+        field("qualityBadgeMode", MeloraSettings.KEY_QUALITY_BADGE_MODE, MeloraSettings.qualityBadgeMode,
+            { QualityBadgeMode.restore(it as? String, MeloraSettings.qualityBadgeMode.value) }, QualityBadgeMode::storageValue),
         field("pullToRefresh", MeloraSettings.KEY_PULL_REFRESH, MeloraSettings.pullToRefresh, ::backupBoolean),
         field("sourceAliasEnabled", MeloraSettings.KEY_SOURCE_ALIAS, MeloraSettings.sourceAliasEnabled, ::backupBoolean),
         field("searchPlatform", MeloraSettings.KEY_SEARCH_PLATFORM, MeloraSettings.searchPlatform, ::backupString),

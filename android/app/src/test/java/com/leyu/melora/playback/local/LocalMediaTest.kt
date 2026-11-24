@@ -508,23 +508,23 @@ class LocalMediaTest {
     @Test
     fun qualityBadgesUseMeasuredBitDepthAndDoNotMislabelCompressedFilesAs128k() {
         assertEquals(
-            "HR",
-            localSong(mimeType = "audio/unknown", uri = "file:///Music/a.flac", sampleRate = 48_000, bitDepth = 24).qualityBadge,
+            "HI-RES",
+            localSong(mimeType = "audio/unknown", uri = "file:///Music/a.flac", sampleRate = 48_000, bitDepth = 24).qualityBadge?.label,
         )
         assertEquals(
-            "SQ",
-            localSong(mimeType = "audio/flac", sampleRate = 96_000, bitDepth = 16).qualityBadge,
+            "LOSSLESS",
+            localSong(mimeType = "audio/flac", sampleRate = 96_000, bitDepth = 16).qualityBadge?.label,
         )
         assertNull(
             localSong(mimeType = "audio/unknown", uri = "file:///Music/a.flac", bitrate = 900_000, bitDepth = -1).qualityBadge,
         )
         assertEquals(
-            "MASTER",
-            localSong(mimeType = "audio/unknown", uri = "file:///Music/a.dsf", bitDepth = -1).qualityBadge,
+            "DSD",
+            localSong(mimeType = "audio/unknown", uri = "file:///Music/a.dsf", bitDepth = -1).qualityBadge?.label,
         )
-        assertEquals("HQ", localSong(mimeType = "audio/mpeg", bitrate = 320_000).qualityBadge)
-        assertEquals("128K", localSong(mimeType = "audio/mpeg", bitrate = 128_000).qualityBadge)
-        assertEquals("192K", localSong(mimeType = "audio/mpeg", bitrate = 192_000).qualityBadge)
+        assertEquals("HQ", localSong(mimeType = "audio/mpeg", bitrate = 320_000).qualityBadge?.label)
+        assertEquals("SD 128K", localSong(mimeType = "audio/mpeg", bitrate = 128_000).qualityBadge?.label)
+        assertEquals("192K", localSong(mimeType = "audio/mpeg", bitrate = 192_000).qualityBadge?.label)
         assertEquals("flac", localSong(mimeType = "audio/flac", sampleRate = 192_000).playbackQuality)
     }
 
@@ -535,14 +535,28 @@ class LocalMediaTest {
 
         val job = LocalMediaStore.recordAudioSpecification(
             observed = local,
-            spec = AudioSpecification("audio/raw", 48_000, -1, 24),
+            spec = AudioSpecification("audio/raw", 48_000, -1, 24, channelCount = 2),
         )
         job.join()
 
         val updated = LocalMediaStore.find(local.id)!!
         assertEquals(48_000, updated.sampleRate)
         assertEquals(24, updated.bitDepth)
-        assertEquals("HR", updated.qualityBadge)
+        assertEquals(2, updated.channelCount)
+        assertEquals(2, LocalSong.fromJson(updated.toJson())?.audioSpecification?.channelCount)
+        assertEquals("HI-RES", updated.qualityBadge?.label)
+    }
+
+    @Test
+    fun correctingAStaleCodecDropsItsBitrateAndChannelCount() = runBlocking {
+        val indexed = localSong(mimeType = "audio/mpeg", bitrate = 320_000).copy(channelCount = 2)
+        LocalMediaStore.replaceAll(listOf(indexed))
+        LocalMediaStore.recordAudioSpecification(indexed, AudioSpecification("audio/opus", 48_000, -1)).join()
+        val updated = LocalMediaStore.find(indexed.id)!!
+        assertEquals("audio/opus", updated.mimeType)
+        assertEquals("OPUS", updated.qualityBadge?.label)
+        assertEquals(-1, updated.bitrate)
+        assertEquals(-1, updated.channelCount)
     }
 
     @Test
@@ -550,7 +564,7 @@ class LocalMediaTest {
         val observed = localSong(mimeType = "audio/flac", bitDepth = -1)
         val enriched = observed.copy(coverUri = "file:///new-cover.jpg", artist = "Filled Artist")
         LocalMediaStore.replaceAll(listOf(enriched))
-        LocalMediaStore.recordAudioSpecification(observed, AudioSpecification("audio/raw", 48000, -1, 24)).join()
+        LocalMediaStore.recordAudioSpecification(observed, AudioSpecification("audio/raw", 48000, -1, 24, channelCount = 2)).join()
         val updated = LocalMediaStore.find(observed.id)!!
         assertEquals("audio/flac", updated.mimeType)
         assertEquals(enriched.coverUri, updated.coverUri)
@@ -560,11 +574,12 @@ class LocalMediaTest {
         LocalMediaStore.updateMetadata(observed, observed.copy(coverUri = "file:///late.jpg", modifiedAt = observed.modifiedAt + 100))
         assertEquals(24, LocalMediaStore.find(observed.id)?.bitDepth)
         assertEquals(48000, LocalMediaStore.find(observed.id)?.sampleRate)
+        assertEquals(2, LocalMediaStore.find(observed.id)?.channelCount)
         assertEquals("file:///late.jpg", LocalMediaStore.find(observed.id)?.coverUri)
 
         val replaced = observed.copy(modifiedAt = observed.modifiedAt + 1, bitDepth = 16)
         LocalMediaStore.replaceAll(listOf(replaced))
-        LocalMediaStore.recordAudioSpecification(observed, AudioSpecification("audio/flac", 48000, -1, 24)).join()
+        LocalMediaStore.recordAudioSpecification(observed, AudioSpecification("audio/flac", 48000, -1, 24, channelCount = 2)).join()
         assertEquals(replaced, LocalMediaStore.find(observed.id))
         LocalMediaStore.clear()
         LocalMediaStore.recordAudioSpecification(observed, AudioSpecification("audio/flac", 48000, -1, 24)).join()
