@@ -114,6 +114,30 @@ class PlaybackQueueAppendInstrumentedTest {
             }
         }
 
+    @Test fun lyricPrefetchFollowsNaturalSuccessorAcrossModesAndDuplicateOccurrences() =
+        withPlayer(listen = true) { player, controller ->
+            val prefetchedUid = field("lyricPrefetchUid")
+            fun awaitTarget(index: Int, uid: String?) = await {
+                controller.currentMediaItemIndex == index && prefetchedUid.get(PlaybackController) == uid
+            }
+            installProjectionQueue(player, controller)
+            main { controller.seekToDefaultPosition(0) }
+            awaitTarget(0, "b")
+            main { controller.shuffleModeEnabled = true }
+            awaitTarget(0, "d")
+            main { controller.seekToDefaultPosition(2) }
+            awaitTarget(2, null) // 随机后继是另一份同 UID 的当前曲，复用正在加载的歌词。
+            main { controller.shuffleModeEnabled = false }
+            awaitTarget(2, "d")
+            main { controller.repeatMode = Player.REPEAT_MODE_ONE }
+            awaitTarget(2, null)
+            main {
+                controller.seekToDefaultPosition(3)
+                controller.repeatMode = Player.REPEAT_MODE_ALL
+            }
+            awaitTarget(3, "repeat")
+        }
+
     @Test fun nextFollowsTheDisplayedRepeatedTracksShuffleSuccessorByRawIndex() =
         withPlayer(listen = true) { player, controller ->
             val previousMode = main { MeloraSettings.musicPlayMode.value }
@@ -1313,7 +1337,11 @@ class PlaybackQueueAppendInstrumentedTest {
                 .setListener(field("controllerListener").get(PlaybackController) as MediaController.Listener)
                 .buildAsync()
         }.get(5, TimeUnit.SECONDS)
-        val fields = listOf("controller", "controllerFuture", "bookQueue", "appContext", "lastSavedQueue", "detailUid", "currentQueueId", "playbackPreflight", "queueLoadJob", "pendingPlayback", "lyricJob", "positionJob").associateWith(::field)
+        val fields = listOf(
+            "controller", "controllerFuture", "bookQueue", "appContext", "lastSavedQueue", "detailUid",
+            "currentQueueId", "playbackPreflight", "queueLoadJob", "pendingPlayback", "lyricJob", "positionJob",
+            "lyricPrefetchUid", "lyricPrefetchJob",
+        ).associateWith(::field)
         val previous = main { fields.mapValues { it.value.get(PlaybackController) } }
         @Suppress("UNCHECKED_CAST")
         val state = field("_state").get(PlaybackController) as MutableStateFlow<PlayerUiState>
@@ -1331,6 +1359,8 @@ class PlaybackQueueAppendInstrumentedTest {
                 fields.getValue("controller").set(PlaybackController, controller)
                 fields.getValue("appContext").set(PlaybackController, testContext.applicationContext)
                 fields.getValue("detailUid").set(PlaybackController, if (empty) "quality128" else "a")
+                fields.getValue("lyricPrefetchUid").set(PlaybackController, null)
+                fields.getValue("lyricPrefetchJob").set(PlaybackController, null)
                 if (!empty) {
                     TrackRegistry.registerAll(listOf(track("a"), track("b")))
                     controller.setMediaItems(listOf("a", "b").map { MediaItem.Builder().setMediaId(it).setUri(Uri.fromFile(audio)).build() })
@@ -1353,6 +1383,7 @@ class PlaybackQueueAppendInstrumentedTest {
                 (field("queueLoadJob").get(PlaybackController) as? Job)?.cancel()
                 (fields.getValue("lyricJob").get(PlaybackController) as? Job)
                     ?.takeIf { it !== previous["lyricJob"] }?.cancel()
+                (fields.getValue("lyricPrefetchJob").get(PlaybackController) as? Job)?.cancel()
                 (fields.getValue("positionJob").get(PlaybackController) as? Job)?.cancel()
                 fields.forEach { (name, field) ->
                     if (name != "positionJob") field.set(PlaybackController, previous[name])

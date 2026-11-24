@@ -127,6 +127,8 @@ object PlaybackController {
     }
 
     private var lyricJob: Job? = null
+    private var lyricPrefetchJob: Job? = null
+    private var lyricPrefetchUid: String? = null
     private var artworkJob: Job? = null
     private var artworkUid: String? = null
     private val errorRecovery = PlaybackErrorRecovery()
@@ -367,13 +369,20 @@ object PlaybackController {
             audioSpec = audioSpec,
             queueId = currentQueueId.takeIf { hasItems },
         )
-        // 曲目变化（含启动恢复队列、切歌、自动连播）即加载详情与歌词，不再只依赖过渡事件
         if (currentTrack == null) {
             clearCurrentTrackLyrics()
-        } else if (currentTrack.uid != detailUid) {
-            detailUid = currentTrack.uid
-            loadTrackDetails()
+            return
         }
+        if (currentTrack.uid != detailUid) {
+            detailUid = currentTrack.uid
+            ensureCurrentArtwork()
+            appContext?.let { LocalTagFiller.consider(it, currentTrack) }
+            _lyric.value = null
+            refreshLyrics(currentTrack.uid)
+        }
+        // 自然连播使用引擎实序，且尊重单曲循环。队列编辑或播放模式变化也会更新后继。
+        val next = player.currentTimeline.getNextWindowIndex(index, player.repeatMode, player.shuffleModeEnabled)
+        prefetchLyrics(queue.getOrNull(next)?.takeUnless { it.uid == currentTrack.uid })
     }
 
     private fun refreshPosition() {
@@ -498,29 +507,17 @@ object PlaybackController {
         lyricJob = null
         detailUid = null
         _lyric.value = null
+        prefetchLyrics(null)
     }
 
-    private fun loadTrackDetails() {
-        val snapshot = _state.value
-        val track = snapshot.current
-        // 封面与歌词是独立生命周期；歌词缓存命中也不能跳过封面补齐和下一曲预取。
-        ensureCurrentArtwork()
-        appContext?.let { LocalTagFiller.consider(it, track) }
-        if (track == null) {
-            clearCurrentTrackLyrics()
-            return
-        }
-
-        lyricJob?.cancel()
-        _lyric.value = null
-        refreshLyrics(track.uid)
-
-        val context = appContext ?: return
-        // 预取下一首歌词：自动连播时歌词秒现（听书连播同理）
-        val next = snapshot.queue.getOrNull(snapshot.currentIndex + 1)
-        if (next != null) {
-            scope.launch { LyricRepository.prefetch(context, next) }
-        }
+    private fun prefetchLyrics(track: UiTrack?) {
+        if (lyricPrefetchUid == track?.uid) return
+        lyricPrefetchUid = track?.uid
+        lyricPrefetchJob?.cancel()
+        val context = appContext
+        lyricPrefetchJob = if (context != null && track != null) {
+            scope.launch { LyricRepository.prefetch(context, track) }
+        } else null
     }
 
     /** 统一的封面 metadata 回写入口；解析策略由调用方提供，使用 track.uid 保留原始曲目身份。 */
