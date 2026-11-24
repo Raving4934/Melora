@@ -65,6 +65,8 @@ class PhoneLandscapePlayerInstrumentedTest {
     private val seeks = mutableListOf<Long>()
     private var nextClicks = 0
     private lateinit var back: PlayerSheetBackState
+    private data class HostOrientation(val configuration: Int, val requested: Int)
+    private var originalHostOrientation: HostOrientation? = null
 
     @Suppress("UNCHECKED_CAST")
     private val lyricFlow = PlaybackController.javaClass.getDeclaredField("_lyric").apply { isAccessible = true }
@@ -75,9 +77,39 @@ class PhoneLandscapePlayerInstrumentedTest {
 
     @After
     fun restoreFixture() {
-        lyricFlow.value = originalLyrics
-        MeloraSettings.miniLyricsEnabled.value = originalMiniLyrics
-        MeloraSettings.playerCoverStyle.value = originalCoverStyle
+        try {
+            restoreHostOrientation()
+        } finally {
+            lyricFlow.value = originalLyrics
+            MeloraSettings.miniLyricsEnabled.value = originalMiniLyrics
+            MeloraSettings.playerCoverStyle.value = originalCoverStyle
+        }
+    }
+
+    private fun restoreHostOrientation() {
+        val original = originalHostOrientation ?: return
+        val scenario = compose.activityRule.scenario
+        try {
+            val request = when (original.configuration) {
+                Configuration.ORIENTATION_LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                Configuration.ORIENTATION_PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                else -> null
+            }
+            if (request != null) {
+                // 先由仍在台前的 Activity 带动真实屏幕回转，再交还方向策略。
+                scenario.onActivity { it.requestedOrientation = request }
+                awaitHostOrientation(original.configuration)
+            }
+        } finally {
+            scenario.onActivity {
+                it.requestedOrientation = original.requested
+                assertEquals("恢复 Activity 的方向策略", original.requested, it.requestedOrientation)
+            }
+        }
+    }
+
+    private fun awaitHostOrientation(expected: Int) {
+        compose.waitUntil(8_000) { compose.activity.resources.configuration.orientation == expected }
     }
 
     private fun hostShortSideDp(): Float = compose.activity.run {
@@ -99,11 +131,15 @@ class PhoneLandscapePlayerInstrumentedTest {
         if (viewport == null || (!landscape && shortSide < 600f)) {
             // 只旋转测试 Activity，保留手机的真实比例、刘海和系统栏设置。
             compose.activityRule.scenario.onActivity {
+                originalHostOrientation = originalHostOrientation ?: HostOrientation(
+                    it.resources.configuration.orientation,
+                    it.requestedOrientation,
+                )
                 it.requestedOrientation = if (landscape) ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
                     else ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             }
             val expected = if (landscape) Configuration.ORIENTATION_LANDSCAPE else Configuration.ORIENTATION_PORTRAIT
-            compose.waitUntil(8_000) { compose.activity.resources.configuration.orientation == expected }
+            awaitHostOrientation(expected)
         }
 
         val track = tracks.first()
