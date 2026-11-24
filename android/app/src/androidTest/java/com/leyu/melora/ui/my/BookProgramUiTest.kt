@@ -6,6 +6,7 @@ import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.Density
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.asAndroidBitmap
+import android.content.Context
 import android.graphics.Bitmap
 import android.os.Build
 import androidx.test.platform.app.InstrumentationRegistry
@@ -13,8 +14,11 @@ import java.io.File
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.leyu.melora.playback.BookListeningProgress
+import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.ui.awaitStable
+import com.leyu.melora.ui.boundsInSameFrame
 import com.leyu.melora.ui.common.SongListStateProvider
 import com.leyu.melora.ui.common.SongMoreSheet
 import com.leyu.melora.ui.theme.MeloraTheme
@@ -65,20 +69,59 @@ class BookProgramUiTest {
         compose.runOnIdle { assertEquals(1, deleted) }
     }
 
-    @Test fun recentProgramClickResumesInsteadOfOpeningAnAlbum() {
-        var resumed: String? = null
-        var opened = 0
-        compose.setContent {
-            MeloraTheme {
-                SongListStateProvider {
-                    RecentsPage(listOf(chapter), emptyList(), {}, { opened++ }, { resumed = it.uid }, {})
+    @Test fun recentChaptersKeepTheirOwnProgressAndActionsInBothTabs() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val prefs = context.getSharedPreferences("melora-progress", Context.MODE_PRIVATE)
+        val originalEnabled = MeloraSettings.rememberProgress.value
+        val albumId = "book-program-ui-${System.nanoTime()}"
+        val albumName = chapter.albumName
+        fun episode(number: Int) = OnlineSong(JSONObject(chapter.raw.toString())
+            .put("albumId", albumId).put("songmid", "$albumId-$number")
+            .put("name", "$albumName 第${number}集"))
+        val older = episode(128)
+        val newer = episode(27)
+        val resumed = mutableListOf<String>()
+        val moreOpened = mutableListOf<String>()
+        var albumsOpened = 0
+        try {
+            MeloraSettings.rememberProgress.value = true
+            BookListeningProgress.persist(prefs, older, 62_000L, 360_000L, completed = false)
+            BookListeningProgress.persist(prefs, newer, 193_000L, 360_000L, completed = false)
+            assertEquals(newer.uid, BookListeningProgress.readAlbum(context, newer.source, albumId)?.song?.uid)
+
+            compose.setContent {
+                MeloraTheme {
+                    SongListStateProvider {
+                        RecentsPage(
+                            listOf(newer, older), emptyList(), {}, { albumsOpened++ },
+                            { resumed.add(it.uid) }, { moreOpened.add(it.uid) },
+                        )
+                    }
                 }
             }
+
+            val olderRow = compose.onNode(hasText("第128集") and hasText("$albumName · 已听 01:02"))
+            val newerRow = compose.onNode(hasText("第27集") and hasText("$albumName · 已听 03:13"))
+            val olderMore = compose.onNode(hasContentDescription("更多") and hasAnyAncestor(hasText("第128集")))
+            for (tab in listOf("全部 2", "节目 2")) {
+                compose.onNodeWithText(tab).assertIsDisplayed().performClick()
+                compose.awaitStable(olderRow)
+                newerRow.assertIsDisplayed()
+                val (newerBounds, olderBounds) = compose.boundsInSameFrame(newerRow, olderRow)
+                assertTrue("$tab 应按最近播放顺序列出章节", newerBounds.top < olderBounds.top)
+
+                olderRow.performClick()
+                olderMore.performClick()
+            }
+            compose.runOnIdle {
+                assertEquals(listOf(older.uid, older.uid), resumed)
+                assertEquals(listOf(older.uid, older.uid), moreOpened)
+                assertEquals(0, albumsOpened)
+            }
+        } finally {
+            MeloraSettings.rememberProgress.value = originalEnabled
+            prefs.edit().apply { prefs.all.keys.filter { albumId in it }.forEach(::remove) }.commit()
         }
-        val row = compose.onNodeWithText("续听测试专辑")
-        compose.awaitStable(row)
-        row.performClick()
-        compose.runOnIdle { assertEquals(chapter.uid, resumed); assertEquals(0, opened) }
     }
 
     @Test fun programMenuKeepsBookActionsAndDispatchesResumeOnce() {

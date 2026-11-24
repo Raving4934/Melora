@@ -46,10 +46,10 @@ class LibraryPresentationTest {
         prefs.edit().apply { prefs.all.keys.filter { it.contains(id) }.forEach(::remove) }.commit()
     }
 
-    private fun showRecents(includeProgram: Boolean = false) {
+    private fun showRecents(programs: List<OnlineSong> = emptyList()) {
         compose.setContent {
             MeloraTheme { SongListStateProvider {
-                RecentsPage(if (includeProgram) listOf(song, chapter) else listOf(song), listOf(playlist, book), {}, {}, {}, {})
+                RecentsPage(listOf(song) + programs, listOf(playlist, book), {}, {}, {}, {})
             } }
         }
         compose.awaitStable(compose.onNodeWithText("最近收听"))
@@ -93,34 +93,41 @@ class LibraryPresentationTest {
     }
 
     @Test fun programsAndBookCardsShareTheirRowSizeAndTypographyWithoutCountHeaders() {
-        showRecents(includeProgram = true)
+        MeloraSettings.rememberProgress.value = true
+        BookListeningProgress.persist(prefs, chapter, 0L, 60_000L, completed = true)
+        val standaloneChapter = OnlineSong(JSONObject().put("source", "kw").put("songmid", "$id-standalone")
+            .put("name", "旧记录第5集").put("isBookChapter", true).put("img", "file:///standalone-chapter.jpg"))
+        showRecents(listOf(chapter, standaloneChapter))
         compose.onNodeWithText("听书 1").performClick()
         compose.awaitStable(compose.onNodeWithText("测试有声专辑"))
         compose.onNodeWithText("1 本听书").assertDoesNotExist()
         val bookRow = compose.onNodeWithText("测试有声专辑").fetchSemanticsNode().boundsInRoot
         val bookTitle = compose.onNodeWithText("测试有声专辑", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-        compose.onNodeWithText("节目 1").performClick()
-        compose.awaitStable(compose.onNodeWithText("测试有声专辑"))
-        compose.onNodeWithText("1 个节目").assertDoesNotExist()
-        val programRow = compose.onNodeWithText("测试有声专辑").fetchSemanticsNode().boundsInRoot
-        val programTitle = compose.onNodeWithText("测试有声专辑", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        compose.onNodeWithText("节目 2").performClick()
+        val program = compose.onNodeWithText("第26集")
+        compose.awaitStable(program)
+        compose.onNodeWithText("2 个节目").assertDoesNotExist()
+        val programRow = program.fetchSemanticsNode().boundsInRoot
+        val programTitle = compose.onNodeWithText("第26集", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         assertEquals(bookRow.top, programRow.top, 1f)
         assertEquals(bookRow.height, programRow.height, 1f)
         assertEquals(bookTitle.left, programTitle.left, 1f)
         assertEquals(bookTitle.top, programTitle.top, 1f)
         assertEquals(bookTitle.height, programTitle.height, 1f)
-        compose.onNodeWithContentDescription("更多").assertIsDisplayed()
+        compose.onNodeWithText("测试有声专辑 · 已听完本集").assertIsDisplayed()
+        compose.onNode(hasText("旧记录第5集") and hasText("继续收听")).assertIsDisplayed()
+        compose.onAllNodesWithContentDescription("更多").assertCountEquals(2)
         saveScreenshot("recent-program-cards.png")
     }
 
     @Test fun switchingFromSongsOrAllHasNoHeaderOrTargetRowJumpAcrossFrames() {
-        showRecents(includeProgram = true)
+        showRecents(listOf(chapter))
         val tabs = compose.onNodeWithTag("recent-tabs")
         val tabsBefore = tabs.fetchSemanticsNode().boundsInRoot
         compose.mainClock.autoAdvance = false
         try {
             for (origin in listOf("单曲 1", "全部 4")) {
-                for ((destination, title) in listOf("歌单专辑 1" to "测试歌单", "听书 1" to "测试有声专辑", "节目 1" to "测试有声专辑")) {
+                for ((destination, title) in listOf("歌单专辑 1" to "测试歌单", "听书 1" to "测试有声专辑", "节目 1" to "第26集")) {
                     compose.onNodeWithText(origin).performClick()
                     compose.mainClock.advanceTimeBy(300)
                     compose.onNodeWithText(destination).performClick()

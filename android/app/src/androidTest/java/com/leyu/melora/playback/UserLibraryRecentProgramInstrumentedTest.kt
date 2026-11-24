@@ -59,7 +59,7 @@ class UserLibraryRecentProgramInstrumentedTest {
     }
 
     @Test
-    fun removingBookProgramOnlyRemovesSameBookRecentSongsAndBookContainer() {
+    fun removingBookProgramKeepsSameBookChaptersContainersFavoritesAndProgress() {
         val target = chapter("kw", "remove-target", "kw:book_album_fixture")
         val sameBookChapter = chapter("kw", "remove-same-book", "fixture")
         val sameIdOtherSource = chapter("wy", "remove-other-source", "fixture")
@@ -83,27 +83,34 @@ class UserLibraryRecentProgramInstrumentedTest {
             .commit()
         val existingProgressKeys = checkNotNull(progressKeys)
         val progressSnapshot = progressPrefs.all.filterKeys { it !in existingProgressKeys }
+        val containerSnapshot = UserLibrary.recentContainers.value
         UserLibrary.setFavorites(listOf(target), favorite = true)
 
         UserLibrary.removeRecentProgram(target)
 
         assertEquals(
-            setOf(sameIdOtherSource.uid, otherBook.uid, music.uid),
-            UserLibrary.recents.value.map { it.uid }.toSet(),
+            listOf(music.uid, otherBook.uid, sameIdOtherSource.uid, sameBookChapter.uid),
+            UserLibrary.recents.value.map { it.uid },
         )
-        assertEquals(
-            setOf(
-                Triple("book", "fixture", "wy"),
-                Triple("book", "book_album_other", "kw"),
-                Triple("playlist", "book_album_fixture", "kw"),
-            ),
-            UserLibrary.recentContainers.value.map { Triple(it.kind, it.id, it.source) }.toSet(),
-        )
+        assertEquals(containerSnapshot, UserLibrary.recentContainers.value)
         assertEquals(45_000L, progressPrefs.getLong(target.uid, 0L))
         assertEquals(90_000L, progressPrefs.getLong("duration:${target.uid}", 0L))
         assertTrue(progressPrefs.getBoolean("completed:${target.uid}", false))
         assertEquals(progressSnapshot, progressPrefs.all.filterKeys { it !in existingProgressKeys })
         assertTrue("移除历史不能改变收藏", UserLibrary.isFavorite(target.uid))
+    }
+
+    @Test
+    fun replayingAChapterMovesItToTheFrontWithoutReplacingOtherChapters() {
+        val earlier = chapter("kw", "replay-earlier", "replay-book")
+        val latest = chapter("kw", "replay-latest", "replay-book")
+
+        UserLibrary.markPlayed(earlier)
+        UserLibrary.markPlayed(latest)
+        assertEquals(listOf(latest.uid, earlier.uid), UserLibrary.recents.value.map { it.uid })
+
+        UserLibrary.markPlayed(earlier)
+        assertEquals(listOf(earlier.uid, latest.uid), UserLibrary.recents.value.map { it.uid })
     }
 
     @Test

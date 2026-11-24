@@ -139,6 +139,88 @@ class BookPlaybackInstrumentedTest {
         }
     }
 
+    @Test fun playingEarlierChapterRestoresItsPositionAndKeepsBookContinuation() = withBook(
+        load = { _, _ -> error("队列已包含后续章节，不需要加载目录") },
+    ) { player, controller, queue, item ->
+        val testContext = isolatedContext()
+        val progressPrefs = testContext.getSharedPreferences("melora-progress", Context.MODE_PRIVATE)
+        val queuePrefs = testContext.getSharedPreferences("melora-queue", Context.MODE_PRIVATE)
+        val previousRememberProgress = MeloraSettings.rememberProgress.value
+        val chapters = (41..46).map(::track)
+        val earlier = requireNotNull(OnlineSong.from(chapters[0].raw))
+        val later = requireNotNull(OnlineSong.from(chapters[1].raw))
+        val registryField = TrackRegistry::class.java.getDeclaredField("tracks").apply { isAccessible = true }
+        @Suppress("UNCHECKED_CAST")
+        val registry = registryField.get(TrackRegistry) as java.util.concurrent.ConcurrentHashMap<String, UiTrack>
+        val previousTracks = chapters.associate { it.uid to registry[it.uid] }
+        try {
+            MeloraSettings.rememberProgress.value = true
+            val items = chapters.map(item)
+            val wav = LocalSong(
+                id = "history-resume-${System.nanoTime()}",
+                uri = items.first().localConfiguration!!.uri.toString(),
+                title = earlier.name,
+                artist = earlier.singer,
+                album = earlier.albumName,
+                durationMs = 60_000L,
+                sizeBytes = 960_044L,
+                mimeType = "audio/wav",
+                sampleRate = 8_000,
+                bitrate = 128_000,
+                modifiedAt = 0L,
+                addedAt = 0L,
+                folder = "",
+            )
+            withIsolatedUserLibrary {
+                LocalMediaStore.replaceAll(LocalMediaStore.songs.value + wav)
+                try {
+                    assertEquals(wav.id, LocalMediaStore.matchTrack(UiTrack.fromOnline(earlier))?.id)
+                    withInjectedPlaybackController(testContext, controller, queue, detailUid = earlier.uid) {
+                        BookListeningProgress.persist(progressPrefs, earlier, 32_000L, 60_000L, completed = false)
+                        BookListeningProgress.persist(progressPrefs, later, 17_000L, 60_000L, completed = false)
+                        val progress = main { PlaybackProgress(player, progressPrefs) }
+                        try {
+                            main {
+                                controller.setMediaItems(items, 1, C.TIME_UNSET)
+                                queue.start("fixture")
+                                controller.prepare()
+                            }
+                            await {
+                                player.currentMediaItem?.mediaId == later.uid &&
+                                    player.playbackState == Player.STATE_READY && player.currentPosition in 16_500L..17_500L
+                            }
+                            assertEquals(later.uid, BookListeningProgress.read(testContext, earlier).song.uid)
+
+                            main { PlaybackController.playTrack(testContext, UiTrack.fromOnline(earlier)) }
+                            await {
+                                player.currentMediaItem?.mediaId == earlier.uid &&
+                                    player.isPlaying && player.currentPosition in 31_500L..33_500L
+                            }
+                            main {
+                                assertEquals("fixture", queue.albumId)
+                                assertEquals(chapters.map { it.uid },
+                                    (0 until controller.mediaItemCount).map { controller.getMediaItemAt(it).mediaId })
+                                controller.seekTo(59_500L)
+                            }
+                            await { player.currentMediaItem?.mediaId == later.uid && player.isPlaying }
+                        } finally {
+                            main { progress.close() }
+                        }
+                    }
+                } finally {
+                    LocalMediaStore.removeIds(setOf(wav.id))
+                }
+            }
+        } finally {
+            MeloraSettings.rememberProgress.value = previousRememberProgress
+            progressPrefs.edit().clear().commit()
+            queuePrefs.edit().clear().commit()
+            previousTracks.forEach { (uid, previous) ->
+                if (previous == null) registry.remove(uid) else registry[uid] = previous
+            }
+        }
+    }
+
     @Test fun restoredQueueWindowContinuesAfter755NotAfterLastOriginallyLoadedPage() = withBook { _, controller, queue, item ->
         main {
             controller.setMediaItems((556..755).map { item(track(it)) }, 199, C.TIME_UNSET)
@@ -362,12 +444,13 @@ class BookPlaybackInstrumentedTest {
         testContext: Context,
         controller: MediaController,
         queue: BookPlaybackQueue,
+        detailUid: String? = null,
         block: () -> Unit,
     ) {
         val names = listOf(
             "controller", "controllerFuture", "bookQueue", "appContext", "currentQueueId",
             "lastSavedQueue", "playbackPreflight", "queueLoadJob", "urlPrefetchJob",
-            "urlPrefetchUid", "pendingPlayback",
+            "urlPrefetchUid", "pendingPlayback", "detailUid",
         )
         val fields = names.associateWith { name ->
             PlaybackController.javaClass.getDeclaredField(name).apply { isAccessible = true }
@@ -392,6 +475,8 @@ class BookPlaybackInstrumentedTest {
                 fields.getValue("appContext").set(PlaybackController, testContext.applicationContext)
                 fields.getValue("currentQueueId").set(PlaybackController, bookQueueId("fixture"))
                 fields.getValue("lastSavedQueue").set(PlaybackController, null)
+                // 只验证播放与断点时，跳过无关的网络封面和歌词刷新。
+                if (detailUid != null) fields.getValue("detailUid").set(PlaybackController, detailUid)
             }
             block()
             main {

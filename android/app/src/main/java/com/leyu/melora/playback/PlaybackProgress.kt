@@ -229,6 +229,12 @@ internal object BookListeningProgress {
     fun read(context: android.content.Context, fallback: OnlineSong): BookResumePoint =
         read(context.applicationContext.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE), fallback)
 
+    /** 按章节 UID 读取断点，不使用整书记录的最后章节。 */
+    fun readChapter(context: Context, song: OnlineSong): BookResumePoint = synchronized(lock) {
+        if (!MeloraSettings.rememberProgress.value) return@synchronized emptyPoint(song)
+        point(context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE), song)
+    }
+
     /** 仅读取已有的同平台、同专辑有效断点；无记录时不构造替代章节。 */
     fun readAlbum(context: android.content.Context, source: String, albumId: String): BookResumePoint? =
         readAlbum(context.applicationContext.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE), source, albumId)
@@ -247,14 +253,7 @@ internal object BookListeningProgress {
     }
 
     internal fun read(prefs: SharedPreferences, fallback: OnlineSong): BookResumePoint = synchronized(lock) {
-        if (!MeloraSettings.rememberProgress.value) {
-            return@synchronized BookResumePoint(
-                song = fallback,
-                positionMs = 0L,
-                durationMs = fallback.intervalSeconds * 1_000L,
-                completed = false,
-            )
-        }
+        if (!MeloraSettings.rememberProgress.value) return@synchronized emptyPoint(fallback)
         val identity = bookIdentity(fallback)
         val saved = identity?.let { (source, id) ->
             prefs.getString(bookKey(source, id), null)?.let(::parseBookPointer)
@@ -335,6 +334,13 @@ internal object BookListeningProgress {
             completed = completed,
         )
     }
+
+    private fun emptyPoint(song: OnlineSong) = BookResumePoint(
+        song = song,
+        positionMs = 0L,
+        durationMs = song.intervalSeconds * 1_000L,
+        completed = false,
+    )
 
     internal fun syncSnapshot(context: Context): JSONArray = synchronized(lock) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

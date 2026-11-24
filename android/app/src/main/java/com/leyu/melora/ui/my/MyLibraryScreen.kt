@@ -9,7 +9,7 @@ import com.leyu.melora.playback.BookListeningProgress
 import com.leyu.melora.ui.common.chapterTitle
 import com.leyu.melora.ui.common.rememberBookAlbumSubtitle
 import com.leyu.melora.ui.common.rememberBookResumePoint
-import com.leyu.melora.ui.common.bookResumeSubtitle
+import com.leyu.melora.ui.common.chapterHistorySubtitle
 import com.leyu.melora.ui.common.rememberSheetDismiss
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -227,6 +227,11 @@ fun MyLibraryScreen(
     var favoritesTab by rememberSaveable { mutableIntStateOf(0) }
     var detail by remember { mutableStateOf<LibraryDetail?>(null) }
     var moreSong by remember { mutableStateOf<OnlineSong?>(null) }
+    val playRecentChapter: (OnlineSong) -> Unit = { song ->
+        val alreadyPlayingChapter = PlaybackController.state.value.current?.uid == song.uid
+        PlaybackController.playTrack(context, UiTrack.fromOnline(song))
+        if (alreadyPlayingChapter) onOpenPlayer()
+    }
     val resumeProgram: (OnlineSong) -> Unit = { song ->
         val current = OnlineSong.from(PlaybackController.state.value.current?.raw)
         val alreadyListening = song.bookId() != null && current?.bookId() == song.bookId()
@@ -340,7 +345,7 @@ fun MyLibraryScreen(
     moreSong?.let { song ->
         SongMoreSheet(song, onDismiss = { moreSong = null },
             onOpenBookAlbum = { detail = LibraryDetail.Playlist(it) },
-            onResumeBook = if (page == MyPage.Recents && song.isBookChapter) ({ resumeProgram(song) }) else null,
+            onResumeBook = if (page == MyPage.Recents && song.isBookChapter) ({ playRecentChapter(song) }) else null,
             onRemoveRecentProgram = if (page == MyPage.Recents && song.isBookChapter) ({ UserLibrary.removeRecentProgram(song) }) else null,
         )
     }
@@ -410,7 +415,7 @@ fun MyLibraryScreen(
                     recentContainers = recentContainers,
                     onBack = { page = null },
                     onOpenContainer = openContainer,
-                    onResumeProgram = resumeProgram,
+                    onPlayChapter = playRecentChapter,
                     onMoreSong = { moreSong = it },
                 )
                 MyPage.UserPlaylists -> UserPlaylistsPage(
@@ -1279,6 +1284,7 @@ internal fun FavoritesPage(
                             itemsIndexed(favoriteChapters, key = { index, song -> "${song.uid}:$index" }) { _, song ->
                                 BookProgramRow(
                                     song = song,
+                                    title = song.albumName.ifBlank { song.name },
                                     subtitle = chapterTitle(song),
                                     onClick = { bookAlbumOf(song)?.let(onOpenPlaylist) },
                                     onMore = { onMoreSong(song) },
@@ -1323,10 +1329,12 @@ private fun PlaylistListColumn(
 
 // ---------- 最近播放子页 ----------
 
-/** 首页入口采用与最近页「全部」相同口径：单曲 + 容器 + 按专辑聚合的节目。 */
+private fun recentChapters(songs: List<OnlineSong>): List<OnlineSong> =
+    songs.filter { it.isBookChapter }.distinctBy { it.uid }
+
+/** 首页入口采用与最近页「全部」相同口径：单曲、容器和实际收听的章节。 */
 internal fun recentEntryCount(songs: List<OnlineSong>, containers: List<UserLibrary.RecentContainer>): Int =
-    songs.count { !it.isBookChapter } + containers.size +
-        songs.filter { it.isBookChapter }.distinctBy { BookListeningProgress.bookIdentity(it) ?: (it.source to it.uid) }.size
+    songs.count { !it.isBookChapter } + containers.size + recentChapters(songs).size
 
 /** 全部数量与四个可见分类相加一致，听书容器不可漏计。 */
 internal fun recentTabCounts(songs: Int, collections: Int, books: Int, programs: Int): List<Int> =
@@ -1338,7 +1346,7 @@ internal fun RecentsPage(
     recentContainers: List<UserLibrary.RecentContainer>,
     onBack: () -> Unit,
     onOpenContainer: (UserLibrary.RecentContainer) -> Unit,
-    onResumeProgram: (OnlineSong) -> Unit,
+    onPlayChapter: (OnlineSong) -> Unit,
     onMoreSong: (OnlineSong) -> Unit,
 ) {
     val context = LocalContext.current
@@ -1354,7 +1362,7 @@ internal fun RecentsPage(
     val listState = listStates[tab]
     val scrollToTop = rememberFastScrollToTop(listState)
     val songs = recentSongs.filterNot { it.isBookChapter }
-    val chapters = recentSongs.filter { it.isBookChapter }.distinctBy { BookListeningProgress.bookIdentity(it) ?: (it.source to it.uid) }
+    val chapters = recentChapters(recentSongs)
     // 容器按类型分流：歌单/榜单/推荐 与 听书专辑
     val collectionContainers = recentContainers.filter { it.kind != "book" }
     val bookContainers = recentContainers.filter { it.kind == "book" }
@@ -1439,13 +1447,14 @@ internal fun RecentsPage(
                 if (tab == 0 && visiblePrograms.isNotEmpty()) {
                     item(key = "programs-section", contentType = "section") { RecentSectionTitle("节目") }
                 }
-                itemsIndexed(visiblePrograms, key = { index, song -> "b:${song.uid}:$index" }, contentType = { _, _ -> "program" }) { _, song ->
-                    val progress = rememberBookResumePoint(song)
+                items(visiblePrograms, key = { "b:${it.uid}" }, contentType = { "program" }) { song ->
+                    val progress = rememberBookResumePoint(song, chapterOnly = true)
                     BookProgramRow(
-                        song = progress.song,
-                        subtitle = bookResumeSubtitle(progress),
-                        onClick = { onResumeProgram(progress.song) },
-                        onMore = { onMoreSong(progress.song) },
+                        song = song,
+                        title = chapterTitle(song),
+                        subtitle = chapterHistorySubtitle(progress),
+                        onClick = { onPlayChapter(song) },
+                        onMore = { onMoreSong(song) },
                     )
                 }
             }
@@ -1495,13 +1504,14 @@ private fun RecentContainerRow(
 @Composable
 private fun BookProgramRow(
     song: OnlineSong,
+    title: String,
     subtitle: String,
     onClick: () -> Unit,
     onMore: () -> Unit,
 ) {
     val cover = rememberOnlineSongCover(song, enabled = true)
     PlaylistListRow(
-        name = song.albumName.ifBlank { song.name },
+        name = title,
         meta = subtitle,
         img = cover ?: song.img,
         seed = song.uid,

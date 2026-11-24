@@ -103,6 +103,22 @@ class BookListeningProgressInstrumentedTest {
     }
 
     @Test
+    fun chapterReadsUseTheirOwnPositionAndCompletionWhileBookReadUsesLatestChapter() {
+        val completed = chapter("kw", "finished-first", "chapter-history-book")
+        val earlier = chapter("kw", "history-earlier", "chapter-history-book")
+        val latest = chapter("kw", "history-latest", "chapter-history-book")
+        BookListeningProgress.persist(prefs, completed, 90_000L, 90_000L, completed = true)
+        BookListeningProgress.persist(prefs, earlier, 12_000L, 88_000L, completed = false)
+        BookListeningProgress.persist(prefs, latest, 35_000L, 100_000L, completed = false)
+        val revision = BookListeningProgress.updates.value
+
+        assertEquals(BookResumePoint(earlier, 12_000L, 88_000L, false), BookListeningProgress.readChapter(context, earlier))
+        assertEquals(BookResumePoint(completed, 0L, 90_000L, true), BookListeningProgress.readChapter(context, completed))
+        assertEquals(latest.uid, BookListeningProgress.read(context, earlier).song.uid)
+        assertEquals(revision, BookListeningProgress.updates.value)
+    }
+
+    @Test
     fun legacyUidBookmarkWithoutBookPointerUsesFallbackSong() {
         val legacy = chapter("kw", "legacy-no-book-pointer", "legacy-book")
         prefs.edit()
@@ -141,6 +157,7 @@ class BookListeningProgressInstrumentedTest {
     fun readWhenRememberProgressOffIgnoresOldChapterAndPosition() {
         val previous = chapter("kw", "disabled-previous", "disabled-book")
         val fallback = chapter("kw", "disabled-fallback", "disabled-book")
+        BookListeningProgress.persist(prefs, fallback, 25_000L, 90_000L, completed = false)
         BookListeningProgress.persist(prefs, previous, 40_000L, 90_000L, completed = true)
         MeloraSettings.rememberProgress.value = false
 
@@ -148,6 +165,8 @@ class BookListeningProgressInstrumentedTest {
         assertEquals(fallback.uid, point.song.uid)
         assertEquals(0L, point.positionMs)
         assertFalse(point.completed)
+        assertEquals(point, BookListeningProgress.readChapter(context, fallback))
+        assertFalse(BookListeningProgress.readChapter(context, previous).completed)
     }
 
     @Test

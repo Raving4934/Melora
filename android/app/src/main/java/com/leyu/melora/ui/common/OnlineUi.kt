@@ -422,11 +422,13 @@ internal fun bookAlbumOf(song: OnlineSong): OnlinePlaylist? {
 }
 
 @Composable
-internal fun rememberBookResumePoint(song: OnlineSong): BookResumePoint {
+internal fun rememberBookResumePoint(song: OnlineSong, chapterOnly: Boolean = false): BookResumePoint {
     val context = LocalContext.current
     val revision by BookListeningProgress.updates.collectAsStateWithLifecycle()
     val enabled by MeloraSettings.rememberProgress.collectAsStateWithLifecycle()
-    return remember(song.uid, revision, enabled) { BookListeningProgress.read(context, song) }
+    return remember(song, chapterOnly, revision, enabled) {
+        if (chapterOnly) BookListeningProgress.readChapter(context, song) else BookListeningProgress.read(context, song)
+    }
 }
 
 /** 整书续听点：专辑断点优先，旧记录回退到最近收听章节；只读本地数据，不发网络请求。 */
@@ -470,11 +472,12 @@ internal fun bookAlbumSubtitle(author: String, point: BookResumePoint?, total: I
     return listOfNotNull(creator, progress).joinToString(" · ")
 }
 
-internal fun bookResumeSubtitle(point: BookResumePoint): String {
+internal fun chapterHistorySubtitle(point: BookResumePoint): String {
     val status = if (point.completed) "已听完本集" else if (point.positionMs > 0) {
         "已听 ${LocalSong.formatDuration(point.positionMs / 1000)}"
     } else "继续收听"
-    return "${chapterTitle(point.song)} · $status"
+    val book = point.song.albumName
+    return if (book.isBlank()) status else "$book · $status"
 }
 
 /** 歌曲更多操作面板：收藏 / 下一首播放 / 添加到歌单 / 下载；歌单内额外提供"从歌单移除"。 */

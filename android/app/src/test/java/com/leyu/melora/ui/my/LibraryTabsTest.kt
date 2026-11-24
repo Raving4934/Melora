@@ -63,7 +63,7 @@ class LibraryTabsTest {
     }
 
     @Test
-    fun homeRecentCountMatchesAllTabIncludingGroupedPrograms() {
+    fun homeRecentCountMatchesAllTabCountingEveryChapter() {
         fun track(id: String, book: Boolean = false, album: String = "") = OnlineSong(
             JSONObject().put("source", "kw").put("songmid", id)
                 .put("isBookChapter", book).put("albumId", album),
@@ -73,7 +73,7 @@ class LibraryTabsTest {
             UserLibrary.RecentContainer("playlist", "1", "歌单", null, "kw", "p", 1L),
             UserLibrary.RecentContainer("book", "2", "听书", null, "kw", "b", 2L),
         )
-        assertEquals(recentTabCounts(2, 1, 1, 2).first(), recentEntryCount(songs, containers))
+        assertEquals(recentTabCounts(2, 1, 1, 3).first(), recentEntryCount(songs, containers))
         assertEquals(0, recentEntryCount(emptyList(), emptyList()))
         assertEquals(2, recentEntryCount(emptyList(), containers))
     }
@@ -103,12 +103,17 @@ class LibraryTabsTest {
         assertFalse(OnlineSong(JSONObject().put("name", "第三集").put("albumId", "42")).isBookChapter)
     }
 
-    @Test fun recentProgramsGroupCanonicalBookIdsWithoutMixingPlatforms() {
+    @Test fun recentProgramCountUsesChapterUidAcrossBooksAndPlatforms() {
         fun chapter(id: String, source: String, album: String) = OnlineSong(JSONObject()
             .put("source", source).put("songmid", id).put("name", id)
             .put("albumId", album).put("isBookChapter", true))
-        val chapters = listOf(chapter("a", "kw", "42"), chapter("b", "kw", "kw:book_album_42"), chapter("c", "wy", "42"))
-        assertEquals(2, recentEntryCount(chapters, emptyList()))
+        val chapters = listOf(
+            chapter("a", "kw", "42"),
+            chapter("b", "kw", "kw:book_album_42"),
+            chapter("a", "wy", "42"),
+            chapter("b", "kw", "42"),
+        )
+        assertEquals(3, recentEntryCount(chapters, emptyList()))
     }
 
     @Test

@@ -325,22 +325,14 @@ object UserLibrary {
         recents = (listOf(recent) + recents.filterNot { it.uid == song.uid }).take(MAX_RECENTS)
     }
 
-    /** 移除一本听书在“最近播放”中的章节与容器记录，不影响断点、收藏或其它书籍。 */
+    /** 移除“最近播放”中指定的章节记录。 */
     fun removeRecentProgram(song: OnlineSong) {
         if (!song.isBookChapter) return
-        val identity = BookListeningProgress.bookIdentity(song)
         mutate(shouldPersist = { it }) {
-            val nextRecents = recents.filterNot {
-                if (identity == null) it.uid == song.uid else BookListeningProgress.bookIdentity(it) == identity
-            }
-            val nextContainers = if (identity == null) recentContainers else recentContainers.filterNot { container ->
-                container.kind == "book" && container.source == identity.first &&
-                    canonicalBookId(container.source, container.id) == identity.second
-            }
-            val changed = nextRecents != recents || nextContainers != recentContainers
+            val nextRecents = recents.filterNot { it.isBookChapter && it.uid == song.uid }
+            if (nextRecents.size == recents.size) return@mutate false
             recents = nextRecents
-            recentContainers = nextContainers
-            changed
+            true
         }
     }
 
