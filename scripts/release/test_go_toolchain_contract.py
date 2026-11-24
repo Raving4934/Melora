@@ -51,7 +51,7 @@ class GoToolchainContractTest(unittest.TestCase):
         match = re.search(r"(?:^|\s)GOTOOLCHAIN=go([0-9]+\.[0-9]+\.[0-9]+)(?:\s|$)", command)
         self.assertIsNotNone(match, "vuln:server must explicitly pin its Go toolchain")
         self.assertEqual(match.group(1), GO_VERSION)
-        self.assertIn("govulncheck@v1.9.0", command)
+        self.assertIn("govulncheck@v1.10.0", command)
 
 
 if __name__ == "__main__":

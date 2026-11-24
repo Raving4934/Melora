@@ -868,7 +868,7 @@ class DeviceWorkflowTest(unittest.TestCase):
 
     def test_sdk_install_does_not_retry_permanent_or_unclassified_errors(self) -> None:
         for message in (
-            "License for package Android SDK Platform 37.0 not accepted.",
+            "License for package Android SDK Platform 37.2 not accepted.",
             "Some SDK licenses have not been accepted.",
             "No space left on device", "Not enough free disk space", "Insufficient disk space",
             "Permission denied", "Failed to find package 'unknown'", "Unknown package: missing",
@@ -906,7 +906,7 @@ class DeviceWorkflowTest(unittest.TestCase):
                     [(1, "Peer disconnected"), (2, "Connection reset"), (0, "SDK installed")], api,
                 )
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                expected = ["--channel=0", "platforms;android-37.0", "ndk;30.0.16248370",
+                expected = ["--channel=0", "platforms;android-37.2", "ndk;30.0.16248370",
                             "cmake;4.1.2", "emulator", f"system-images;android-{image_api};google_apis;x86_64"]
                 self.assertEqual(calls, [expected] * 3)
                 self.assertEqual(sleeps, ["5", "10"])

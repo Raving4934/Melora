@@ -162,7 +162,6 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.key
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -521,15 +520,16 @@ internal fun FullPlayerPageContent(
                 // 细长进度线（无圆点极简纯线条设计） + 左右时间（消除48dp隐形留白干扰）
                 var dragging by remember { mutableStateOf<Float?>(null) }
                 val range = 0f..(state.durationMs.takeIf { it > 0 }?.toFloat() ?: 1f)
+                val seekState = remember(range) { SliderState(trackRange = range) }
+                seekState.value = dragging ?: state.positionMs.toFloat()
                 CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
                     Slider(
-                        value = dragging ?: state.positionMs.toFloat(),
+                        state = seekState,
                         onValueChange = { dragging = it },
                         onValueChangeFinished = {
                             dragging?.let { onSeek(it.toLong()) }
                             dragging = null
                         },
-                        valueRange = range,
                         enabled = state.durationMs > 0,
                         colors = SliderDefaults.colors(
                             activeTrackColor = FullPlayerProgressActive,
@@ -1631,7 +1631,7 @@ private fun TimerSettingsBottomSheet(
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true)
-    var timerMinutes by remember { mutableFloatStateOf(30f) }
+    val timerState = remember { SliderState(value = 30f, steps = 16, trackRange = 5f..90f) }
     var extendToFinishTrack by remember { mutableStateOf(true) }
     val sleepRemaining by PlaybackController.sleepRemaining.collectAsStateWithLifecycle()
     val sleepTimerEnabled = sleepRemaining != null
@@ -1782,7 +1782,7 @@ private fun TimerSettingsBottomSheet(
                     Switch(
                         checked = sleepTimerEnabled,
                         onCheckedChange = { enabled ->
-                            if (enabled) PlaybackController.setSleepTimer(timerMinutes.toInt(), extendToFinishTrack)
+                            if (enabled) PlaybackController.setSleepTimer(timerState.value.toInt(), extendToFinishTrack)
                             else PlaybackController.cancelSleepTimer()
                         },
                         colors = SwitchDefaults.colors(
@@ -1803,16 +1803,14 @@ private fun TimerSettingsBottomSheet(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text("定时时长", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MeloraAppearance.textMain)
-                            Text("${timerMinutes.toInt()} 分钟", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MeloraAppearance.brand)
+                            Text("${timerState.value.toInt()} 分钟", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MeloraAppearance.brand)
                         }
                         Slider(
-                            value = timerMinutes,
-                            onValueChange = { timerMinutes = it },
+                            state = timerState,
+                            onValueChange = { timerState.value = it },
                             onValueChangeFinished = {
-                                PlaybackController.setSleepTimer(timerMinutes.toInt(), extendToFinishTrack)
+                                PlaybackController.setSleepTimer(timerState.value.toInt(), extendToFinishTrack)
                             },
-                            valueRange = 5f..90f,
-                            steps = 16,
                             thumb = {
                                 Box(
                                     Modifier
@@ -1846,7 +1844,7 @@ private fun TimerSettingsBottomSheet(
                         checked = extendToFinishTrack,
                         onCheckedChange = { value ->
                             extendToFinishTrack = value
-                            if (sleepTimerEnabled) PlaybackController.setSleepTimer(timerMinutes.toInt(), value)
+                            if (sleepTimerEnabled) PlaybackController.setSleepTimer(timerState.value.toInt(), value)
                         },
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = Color.White,

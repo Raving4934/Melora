@@ -39,6 +39,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.SliderState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -46,6 +47,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -422,17 +424,17 @@ internal fun SettingSliderRow(
     onValueChangeFinished: () -> Unit = {},
     onValueChange: (Float) -> Unit,
 ) {
+    val sliderState = remember(steps, range) { SliderState(steps = steps, trackRange = range) }
+    sliderState.value = value
     Column {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(title, fontSize = 13.sp, color = SettingsTextMain)
             Text(valueText, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = SettingsBrandBlue)
         }
         Slider(
-            value = value,
+            state = sliderState,
             onValueChange = onValueChange,
             onValueChangeFinished = onValueChangeFinished,
-            valueRange = range,
-            steps = steps,
             thumb = {
                 Box(
                     Modifier

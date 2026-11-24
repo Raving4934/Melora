@@ -14,7 +14,9 @@ require(meloraDebugAbi == null || meloraDebugAbi == "x86_64") {
 
 android {
     namespace = "com.leyu.melora"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) { minorApiLevel = 2 }
+    }
     ndkVersion = "30.0.16248370"
 
     defaultConfig {
@@ -115,6 +117,8 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(platform(libs.kotlinx.serialization.bom))
     constraints {
+        // Media3 传递引入的 Guava 需使用修复 GHSA-xxph-c9ww-hj94 的 Android 版本。
+        implementation(libs.guava)
         // OkHttp/Coil 的共享 I/O 依赖统一到已核验的稳定补丁，不引入第二套实现。
         implementation(libs.okio)
     }

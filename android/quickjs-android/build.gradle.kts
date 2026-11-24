@@ -9,7 +9,9 @@ require(meloraDebugAbi == null || meloraDebugAbi == "x86_64") {
 
 android {
     namespace = "com.quickjs"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) { minorApiLevel = 2 }
+    }
     ndkVersion = "30.0.16248370"
 
     defaultConfig {
