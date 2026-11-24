@@ -159,21 +159,48 @@ class AdaptiveNavigationInstrumentedTest {
     }
 
     @Test fun navigationKeepsSelectionAcrossCompactAndExpandedWindows() {
+        val drawer = compose.onNodeWithTag("main-navigation-drawer")
+        val brand = compose.onNodeWithText("乐屿 · Melora")
+        val openDrawer = compose.onNodeWithContentDescription("打开侧栏")
+        val settings = compose.onNodeWithTag("main-navigation-item-7")
+        val settingsContent = compose.onNodeWithText("基本设置")
+
+        fun awaitExpandedDrawer() {
+            compose.awaitStable(drawer)
+            drawer.assertIsDisplayed()
+            compose.awaitStable(brand)
+            compose.onNodeWithText("沉浸式音乐与听书体验").assertIsDisplayed()
+            openDrawer.assertDoesNotExist()
+        }
+
         showApp()
-        compose.onNodeWithTag("main-navigation-drawer").assertIsDisplayed()
-        compose.onNodeWithText("乐屿 · Melora").assertIsDisplayed()
-        compose.onNodeWithText("沉浸式音乐与听书体验").assertIsDisplayed()
-        compose.onNodeWithContentDescription("打开侧栏").assertDoesNotExist()
-        compose.onNodeWithTag("main-navigation-item-7").performScrollTo().performClick()
-        compose.onNodeWithTag("main-navigation-item-7").assertIsSelected()
+        awaitExpandedDrawer()
+        settings.performScrollTo()
+        compose.awaitStable(settings)
+        settings.performClick()
+        compose.awaitStable(settingsContent)
+        settings.assertIsSelected()
+
         // 相同物理窗口中的dp空间缩小，验证按当前可用空间重排，而非固定tablet布尔值。
         compose.runOnIdle { compactWindow.value = true }
-        compose.waitForIdle()
-        compose.onNodeWithTag("main-navigation-drawer").assertDoesNotExist()
-        compose.onNodeWithContentDescription("打开侧栏").assertIsDisplayed()
+        compose.awaitStable(openDrawer)
+        drawer.assertDoesNotExist()
+        openDrawer.assertIsDisplayed()
+        openDrawer.performClick()
+        compose.awaitStable(brand)
+        settings.performScrollTo()
+        compose.awaitStable(settings)
+        settings.assertIsSelected()
+        settings.performClick()
+        compose.waitUntil(5_000) { !brand.isDisplayed() }
+        compose.awaitStable(settingsContent)
+
         compose.runOnIdle { compactWindow.value = false }
-        compose.waitForIdle()
-        compose.onNodeWithTag("main-navigation-item-7").assertIsSelected()
+        awaitExpandedDrawer()
+        settings.performScrollTo()
+        compose.awaitStable(settings)
+        settings.assertIsSelected()
+        compose.awaitStable(settingsContent)
     }
 
     @Test fun configuredExitActionRemainsReachableInTheDrawer() {

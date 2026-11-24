@@ -15,6 +15,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -167,6 +168,8 @@ class AdaptiveDisplayInstrumentedTest {
         var windowView: Any? = null
         var bodyDensity: Density? = null
         var handleDensity: Density? = null
+        var bodySize = IntSize.Zero
+        var handleSize = IntSize.Zero
         compose.setContent {
             DisplayHost {
                 MeloraBottomSheet(
@@ -176,14 +179,16 @@ class AdaptiveDisplayInstrumentedTest {
                     dragHandle = {
                         val density = LocalDensity.current
                         SideEffect { handleDensity = density }
-                        Box(Modifier.size(100.dp, 48.dp).testTag("retained-sheet-handle"))
+                        Box(Modifier.size(100.dp, 48.dp).onSizeChanged { handleSize = it }
+                            .testTag("retained-sheet-handle"))
                     },
                 ) {
                     val identity = remember { Any() }
                     val density = LocalDensity.current
                     val view = LocalView.current
                     SideEffect { bodyIdentity = identity; bodyDensity = density; windowView = view }
-                    Box(Modifier.size(100.dp).testTag("retained-sheet-body"))
+                    Box(Modifier.size(100.dp).onSizeChanged { bodySize = it }
+                        .testTag("retained-sheet-body"))
                 }
             }
         }
@@ -206,8 +211,8 @@ class AdaptiveDisplayInstrumentedTest {
         assertSame(originalWindow, windowView)
         assertEquals(1.92f, requireNotNull(bodyDensity).density, 0.0001f)
         assertEquals(1.92f, requireNotNull(handleDensity).density, 0.0001f)
-        assertEquals(192f, compose.onNodeWithTag("retained-sheet-body").fetchSemanticsNode().boundsInRoot.width, 1f)
-        assertEquals(192f, compose.onNodeWithTag("retained-sheet-handle", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot.width, 1f)
+        // 直接读叶子布局尺寸，语义边界会受到抽屉父节点的合并和移动影响。
+        compose.waitUntil(5_000) { compose.runOnIdle { bodySize.width == 192 && handleSize.width == 192 } }
 
         compose.runOnIdle { fontScale.value = 1.6f }
         compose.awaitStable("retained-sheet-body")
