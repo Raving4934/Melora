@@ -4,6 +4,8 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import android.graphics.Bitmap
 import android.os.Build
 import androidx.test.platform.app.InstrumentationRegistry
@@ -99,6 +101,69 @@ class BookCatalogNavigationTest {
 
         assertEquals(listOf(1, 10), requests.toList())
         assertEquals(playing, PlaybackController.state.value.current?.uid)
+    }
+
+    @Test fun locatingAChapterHighlightsOnlyItsRowAndClearsAfterFadeOrPageChange() {
+        val playing = PlaybackController.state.value.current?.uid
+        show()
+        val located = SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "已定位章节")
+        val highlighted = compose.onAllNodes(located, useUnmergedTree = true)
+        val title = "目录第304集"
+        val target = compose.onNodeWithText(title, useUnmergedTree = true)
+        val highlightedTitle = compose.onNode(hasText(title) and hasAnyAncestor(located), useUnmergedTree = true)
+        val clock = compose.mainClock
+        highlighted.assertCountEquals(0)
+        try {
+            fun startJump() {
+                clock.autoAdvance = true
+                val field = queryField()
+                field.performTextReplacement("304")
+                clock.autoAdvance = false
+                field.performImeAction()
+                compose.waitUntil(5_000) {
+                    clock.advanceTimeByFrame()
+                    highlightedTitle.isDisplayed()
+                }
+                highlighted.assertCountEquals(1)
+            }
+
+            startJump()
+            clock.advanceTimeBy(250)
+            highlightedTitle.assertIsDisplayed()
+            compose.onNodeWithText("目录第305集", useUnmergedTree = true)
+                .assertIsDisplayed().assert(hasAnyAncestor(located).not())
+            if (Build.VERSION.SDK_INT >= 28) {
+                val bitmap = compose.onNodeWithTag("catalog-fixture").captureToImage().asAndroidBitmap()
+                try {
+                    File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir, "book-catalog-location-highlight.png")
+                        .outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                } finally { bitmap.recycle() }
+            }
+            clock.advanceTimeBy(1_500)
+            highlighted.assertCountEquals(0)
+            target.assertIsDisplayed()
+
+            startJump()
+            val segment = compose.onNodeWithContentDescription("目录 101–200")
+            compose.onNodeWithTag("book-chapter-picker-trigger").performClick()
+            compose.waitUntil(5_000) {
+                clock.advanceTimeByFrame()
+                segment.isDisplayed()
+            }
+            // 入场期间节点已存在，等面板就位再触发分段的点击语义。
+            clock.advanceTimeBy(400)
+            segment.performSemanticsAction(SemanticsActions.OnClick)
+            compose.waitUntil(5_000) {
+                clock.advanceTimeByFrame()
+                requests.contains(2) && compose.onAllNodesWithTag("book-chapter-picker").fetchSemanticsNodes().isEmpty()
+            }
+            compose.onNodeWithText("目录第101集").assertIsDisplayed()
+            highlighted.assertCountEquals(0)
+            assertEquals(listOf(1, 4, 2), requests.toList())
+            assertEquals(playing, PlaybackController.state.value.current?.uid)
+        } finally {
+            clock.autoAdvance = true
+        }
     }
 
     @Test fun supersededSlowJumpCannotReplaceNewerChapterWindow() {
@@ -274,7 +339,7 @@ class BookCatalogNavigationTest {
         compose.onNodeWithContentDescription("切换为倒序").assertIsEnabled()
         val picker = compose.onNodeWithTag("book-chapter-picker-trigger")
         picker.performClick()
-        compose.onNodeWithText("1500 条").assertExists()
+        compose.onNodeWithText("共 1500 集").assertExists()
     }
 
     @Test fun descendingScrollAppendsThePreviousSourcePageInDisplayOrder() {

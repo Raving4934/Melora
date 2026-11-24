@@ -2,81 +2,88 @@ package com.leyu.melora.ui.common
 
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowForward
-import androidx.compose.material.icons.rounded.MyLocation
-import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalDensity
-
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.remember
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.withStyle
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.input.TextFieldLineLimits
-import androidx.compose.foundation.text.input.clearText
-import androidx.compose.foundation.text.input.rememberTextFieldState
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.selected
-import com.leyu.melora.ui.theme.MeloraAppearance
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.IntrinsicSize
-import androidx.compose.foundation.layout.width
-import androidx.compose.material3.Icon
-import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.clearText
+import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.MyLocation
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leyu.melora.playback.sdk.BOOK_CATALOG_PAGE_SIZE
 import com.leyu.melora.playback.sdk.KwBookApi
 import com.leyu.melora.playback.sdk.OnlineSong
+import com.leyu.melora.ui.theme.MeloraAppearance
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 
 internal object BookCatalogPaging {
@@ -280,6 +287,7 @@ internal fun BookChapterPicker(
     searchPages: () -> MutableMap<Int, KwBookApi.BookChapters>,
     loadSearchPage: suspend (Int) -> KwBookApi.BookChapters,
     onSelectChapter: (BookChapterMatch) -> Unit,
+    onLocateCurrent: (() -> Unit)? = null,
 ) {
     val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true)
     val closeSheet = rememberSheetDismiss(sheetState)
@@ -322,60 +330,72 @@ internal fun BookChapterPicker(
     }
     val pageCount = BookCatalogPaging.pageCount(total) ?: 0
     val invalidEpisode = !searchByTitle && input.isEpisode && input.episode == null
+    val locateCurrent = input.keyword.isEmpty()
+    val actionLabel = when {
+        locateCurrent -> "定位当前"
+        searchByTitle -> "搜索章节"
+        else -> "定位集数"
+    }
 
-    MeloraBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = CanvasBackground) {
-        BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 18.dp)) {
+    MeloraBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = MeloraAppearance.card) {
+        BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
             val density = LocalDensity.current
-            val itemHeight = maxOf(36.dp, with(density) { 18.sp.toDp() } + 8.dp)
-            val itemSpacing = 7.dp
-            val columnCount = minOf(pageCount.coerceAtLeast(1),
-                ((maxWidth.value + itemSpacing.value) / (80 * density.fontScale.coerceAtLeast(1f) + itemSpacing.value)).toInt().coerceAtLeast(1))
-            val rows = ((pageCount + columnCount - 1) / columnCount).coerceAtMost(5)
-            val gridHeight = (rows * itemHeight.value + (rows - 1).coerceAtLeast(0) * itemSpacing.value).dp
+            val textMeasurer = rememberTextMeasurer()
+            val itemSpacing = 8.dp
+            val itemHeight = maxOf(44.dp, with(density) { ChapterRangeStyle.lineHeight.toDp() } + 20.dp)
+            val lastRange = "${BookCatalogPaging.rangeStart(pageCount)}–${total ?: 0}"
+            val rangeWidth = with(density) {
+                textMeasurer.measure(lastRange, ChapterRangeStyle.copy(fontWeight = FontWeight.SemiBold)).size.width.toDp()
+            }
+            val cellWidth = maxOf(80.dp, rangeWidth + 18.dp)
+            val columnCount = ((maxWidth + itemSpacing) / (cellWidth + itemSpacing)).toInt()
+                .coerceIn(1, minOf(3, pageCount.coerceAtLeast(1)))
+            val rows = ((pageCount + columnCount - 1) / columnCount).coerceIn(1, 5)
+            val gridHeight = itemHeight * rows + itemSpacing * (rows - 1)
+            val currentIndex = (if (descending) pageCount - currentPage else currentPage - 1)
+                .coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+            val firstRow = (currentIndex / columnCount - rows / 2).coerceAtLeast(0)
+            val gridState = key(columnCount, pageCount, currentPage, descending) {
+                rememberLazyGridState(initialFirstVisibleItemIndex = firstRow * columnCount)
+            }
             val bodyHeight by animateDpAsState(if (searchByTitle) 260.dp else gridHeight,
                 tween(220), label = "chapterPickerContentHeight")
-            Column(Modifier.fillMaxWidth().padding(bottom = 14.dp).testTag("book-chapter-picker")) {
-                Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("选集", fontSize = 18.sp, lineHeight = 24.sp, fontWeight = FontWeight.Bold, color = TextMain)
+            Column(Modifier.fillMaxWidth().padding(bottom = 16.dp).testTag("book-chapter-picker")) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("选集", Modifier.semantics { heading() }, fontSize = 21.sp, lineHeight = 28.sp,
+                        fontWeight = FontWeight.SemiBold, color = TextMain)
                     total?.let {
-                        Spacer(Modifier.width(8.dp))
-                        Text("$it 条", fontSize = 12.sp, lineHeight = 16.sp, color = TextMuted)
+                        Spacer(Modifier.weight(1f))
+                        Text("共 $it 集", fontSize = 12.sp, lineHeight = 16.sp, color = TextSub,
+                            style = TextStyle(fontFeatureSettings = "tnum"), maxLines = 1)
                     }
                 }
-                Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp),
-                    color = MeloraAppearance.softFill,
-                    border = if (invalidEpisode) BorderStroke(1.dp, AccentRed) else MeloraAppearance.cardBorder) {
-                    Row(Modifier.fillMaxWidth().heightIn(min = 40.dp)
-                        .padding(start = 12.dp, end = 5.dp, top = 4.dp, bottom = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                            if (query.isEmpty()) Text("输入集数或章节名", fontSize = 13.5.sp, lineHeight = 18.sp, color = TextMuted)
-                            BasicTextField(
-                                state = queryState, lineLimits = TextFieldLineLimits.SingleLine,
-                                textStyle = TextStyle(fontSize = 14.sp, color = TextMain, fontWeight = FontWeight.Medium),
-                                cursorBrush = SolidColor(BrandBlue),
-                                // 不随自动识别结果切换键盘，避免输入中途收起/重启输入法。
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Search),
-                                onKeyboardAction = { submit() },
-                                modifier = Modifier.fillMaxWidth().testTag("book-chapter-query")
-                                    .semantics { contentDescription = "集数或章节名" },
-                            )
+                Spacer(Modifier.height(12.dp))
+                BookChapterSearchBar(
+                    query = query,
+                    state = queryState,
+                    actionLabel = actionLabel,
+                    searchByTitle = searchByTitle,
+                    actionEnabled = if (locateCurrent) onLocateCurrent != null else searchByTitle || input.episode != null,
+                    invalidEpisode = invalidEpisode,
+                    onSubmit = submit,
+                    onAction = {
+                        if (locateCurrent) {
+                            onLocateCurrent?.let { locate ->
+                                closeSheet {
+                                    onDismiss()
+                                    locate()
+                                }
+                            }
+                        } else {
+                            submit()
                         }
-                        if (query.isNotEmpty()) IconButton(onClick = { queryState.clearText() }, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Rounded.Close, contentDescription = "清空选集输入", tint = TextMuted, modifier = Modifier.size(18.dp))
-                        }
-                        val canSubmit = searchByTitle || input.episode != null
-                        IconButton(onClick = submit, enabled = canSubmit,
-                            modifier = Modifier.size(32.dp).testTag("book-chapter-query-action")) {
-                            Icon(if (searchByTitle) Icons.Rounded.Search else Icons.Rounded.MyLocation,
-                                contentDescription = if (searchByTitle) "搜索章节名" else "定位集数",
-                                tint = if (canSubmit) TextSub else TextMuted.copy(alpha = .5f), modifier = Modifier.size(18.dp))
-                        }
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-                Box(Modifier.fillMaxWidth().heightIn(min = 28.dp)) {
-                    Row(Modifier.fillMaxWidth().heightIn(min = 26.dp).padding(bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                    },
+                )
+                Spacer(Modifier.height(6.dp))
+                val statusHeight = maxOf(44.dp, with(density) { 18.sp.toDp() } + 12.dp)
+                Box(Modifier.fillMaxWidth().height(statusHeight)) {
+                    Row(Modifier.fillMaxWidth().fillMaxHeight(), verticalAlignment = Alignment.CenterVertically) {
                         val status = when {
                             !searchByTitle -> "目录分段"
                             error != null -> error!!
@@ -383,7 +403,7 @@ internal fun BookChapterPicker(
                             stopped -> "已停止 · 已查 ${progress.scannedPages} 页"
                             else -> "已查 ${progress.scannedPages}${progress.totalPages?.let { " / $it" }.orEmpty()} 页 · 找到 ${progress.matches.size} 条"
                         }
-                        Text(status, Modifier.weight(1f).testTag("book-chapter-search-status"), fontSize = 11.5.sp, lineHeight = 16.sp,
+                        Text(status, Modifier.weight(1f).testTag("book-chapter-search-status"), fontSize = 12.sp, lineHeight = 17.sp,
                             fontWeight = if (searchByTitle) FontWeight.Normal else FontWeight.SemiBold,
                             color = if (error != null) AccentRed else TextSub, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         when {
@@ -396,7 +416,10 @@ internal fun BookChapterPicker(
                                 contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp), modifier = Modifier.heightIn(min = 24.dp)) {
                                 Text("按章节名查找", fontSize = 11.5.sp, lineHeight = 16.sp, color = BrandBlue)
                             }
-                            !searchByTitle -> Text(if (descending) "倒序" else "每 100 条", fontSize = 11.sp, lineHeight = 16.sp, color = TextMuted)
+                            !searchByTitle && pageCount > 0 -> Text(
+                                if (descending) "倒序" else "每段 ${BookCatalogPaging.PAGE_SIZE} 集",
+                                fontSize = 11.5.sp, lineHeight = 16.sp, color = TextSub, maxLines = 1,
+                            )
                         }
                     }
                     if (searchByTitle && loading) {
@@ -408,7 +431,7 @@ internal fun BookChapterPicker(
                         ) else LinearProgressIndicator(modifier = indicator, color = BrandBlue, trackColor = MeloraAppearance.softFill)
                     }
                 }
-                Spacer(Modifier.height(2.dp))
+                Spacer(Modifier.height(4.dp))
                 if (searchByTitle) {
                     Box(Modifier.fillMaxWidth().height(bodyHeight).testTag("book-picker-body")) {
                         LazyColumn(Modifier.fillMaxWidth().fillMaxHeight().testTag("book-chapter-search-results")) {
@@ -429,19 +452,24 @@ internal fun BookChapterPicker(
                                         }
                                         append(title.substring(cursor))
                                     }
-                                    Row(Modifier.fillMaxWidth().heightIn(min = 44.dp).padding(horizontal = 6.dp, vertical = 9.dp),
+                                    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 8.dp, vertical = 9.dp),
                                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                         Text(highlighted, Modifier.weight(1f), fontSize = 13.5.sp, lineHeight = 19.sp,
                                             color = TextMain, maxLines = 2, overflow = TextOverflow.Ellipsis)
                                         Icon(Icons.AutoMirrored.Rounded.ArrowForward, contentDescription = null, tint = TextMuted, modifier = Modifier.size(14.dp))
                                     }
                                 }
-                                Box(Modifier.fillMaxWidth().padding(horizontal = 6.dp).height(.5.dp).background(MeloraAppearance.divider))
+                                Box(Modifier.fillMaxWidth().padding(horizontal = 8.dp).height(.5.dp).background(MeloraAppearance.divider))
                             }
                         }
                     }
+                } else if (pageCount == 0) {
+                    Box(Modifier.fillMaxWidth().height(bodyHeight).testTag("book-picker-body"), contentAlignment = Alignment.CenterStart) {
+                        Text("暂无目录分段", fontSize = 12.sp, color = TextSub)
+                    }
                 } else {
                     LazyVerticalGrid(columns = GridCells.Fixed(columnCount),
+                        state = gridState,
                         modifier = Modifier.fillMaxWidth().height(bodyHeight).testTag("book-picker-body"),
                         horizontalArrangement = Arrangement.spacedBy(itemSpacing), verticalArrangement = Arrangement.spacedBy(itemSpacing)) {
                         items(pageCount, key = { index -> if (descending) pageCount - index else index + 1 }) { index ->
@@ -450,14 +478,16 @@ internal fun BookChapterPicker(
                             val end = BookCatalogPaging.rangeEnd(page, total) ?: start
                             val selected = page == currentPage
                             Surface(onClick = { closeSheet { onSelectPage(page); onDismiss() } },
-                                color = if (selected) BrandBlue else MeloraAppearance.softFill, shape = RoundedCornerShape(8.dp),
-                                border = if (selected) BorderStroke(.5.dp, BrandBlue) else MeloraAppearance.chipBorder,
+                                color = if (selected) BrandBlue.copy(alpha = .08f) else MeloraAppearance.softFill.copy(alpha = .65f),
+                                shape = RoundedCornerShape(12.dp),
+                                border = if (selected) BorderStroke(1.dp, BrandBlue.copy(alpha = .36f)) else MeloraAppearance.cardBorder,
                                 modifier = Modifier.fillMaxWidth().height(itemHeight)
                                     .semantics { contentDescription = "目录 $start–$end"; this.selected = selected }) {
                                 Box(contentAlignment = Alignment.Center) {
-                                    Text("$start–$end", fontSize = 12.sp, lineHeight = 18.sp, maxLines = 1,
+                                    Text("$start–$end", Modifier.padding(horizontal = 8.dp),
+                                        style = ChapterRangeStyle, maxLines = 1, overflow = TextOverflow.Ellipsis,
                                         fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                                        color = if (selected) Color.White else TextMain)
+                                        color = if (selected) BrandBlue else TextMain)
                                 }
                             }
                         }
@@ -466,4 +496,124 @@ internal fun BookChapterPicker(
             }
         }
     }
+}
+
+private val ChapterRangeStyle = TextStyle(fontSize = 13.sp, lineHeight = 18.sp, fontFeatureSettings = "tnum")
+private val ChapterActionStyle = TextStyle(fontSize = 12.sp, lineHeight = 17.sp, fontWeight = FontWeight.SemiBold)
+private val ChapterInputStyle = TextStyle(fontSize = 14.sp, lineHeight = 20.sp)
+private const val ChapterSearchHint = "输入集数或章节名"
+
+@Composable
+private fun BookChapterSearchBar(
+    query: String,
+    state: TextFieldState,
+    actionLabel: String,
+    searchByTitle: Boolean,
+    actionEnabled: Boolean,
+    invalidEpisode: Boolean,
+    onSubmit: () -> Unit,
+    onAction: () -> Unit,
+) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val density = LocalDensity.current
+        val textMeasurer = rememberTextMeasurer()
+        val labelWidth = with(density) {
+            maxOf(
+                textMeasurer.measure("定位当前", ChapterActionStyle).size.width,
+                textMeasurer.measure("定位集数", ChapterActionStyle).size.width,
+                textMeasurer.measure("搜索章节", ChapterActionStyle).size.width,
+            ).toDp()
+        }
+        val inputWidth = with(density) { textMeasurer.measure(ChapterSearchHint, ChapterInputStyle).size.width.toDp() }
+        val controlHeight = maxOf(48.dp, with(density) { ChapterInputStyle.lineHeight.toDp() } + 16.dp)
+        val actionWidth = labelWidth + 46.dp
+        val gap = 8.dp
+        val action: @Composable (Modifier) -> Unit = { modifier ->
+            Surface(
+                onClick = onAction,
+                enabled = actionEnabled,
+                color = if (actionEnabled) MeloraAppearance.tintBlue else MeloraAppearance.softFill,
+                contentColor = if (actionEnabled) BrandBlue else TextMuted,
+                shape = CircleShape,
+                border = if (actionEnabled) BorderStroke(1.dp, BrandBlue.copy(alpha = .16f)) else MeloraAppearance.cardBorder,
+                modifier = modifier.width(actionWidth).height(controlHeight).testTag("book-chapter-query-action")
+                    .semantics { contentDescription = if (searchByTitle) "搜索章节名" else actionLabel },
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(if (searchByTitle) Icons.AutoMirrored.Rounded.ArrowForward else Icons.Rounded.MyLocation,
+                        contentDescription = null, modifier = Modifier.size(16.dp))
+                    Text(actionLabel, style = ChapterActionStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+        if (maxWidth >= inputWidth + 46.dp + actionWidth + gap) {
+            Row(horizontalArrangement = Arrangement.spacedBy(gap), verticalAlignment = Alignment.CenterVertically) {
+                BookChapterSearchField(query, state, invalidEpisode, onSubmit, controlHeight, Modifier.weight(1f))
+                action(Modifier)
+            }
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(gap), horizontalAlignment = Alignment.End) {
+                BookChapterSearchField(query, state, invalidEpisode, onSubmit, controlHeight, Modifier.fillMaxWidth())
+                action(Modifier)
+            }
+        }
+    }
+}
+
+@Composable
+private fun BookChapterSearchField(
+    query: String,
+    state: TextFieldState,
+    invalidEpisode: Boolean,
+    onSubmit: () -> Unit,
+    controlHeight: Dp,
+    modifier: Modifier,
+) {
+    var focused by remember { mutableStateOf(false) }
+    BasicTextField(
+        state = state,
+        lineLimits = TextFieldLineLimits.SingleLine,
+        textStyle = ChapterInputStyle.copy(color = TextMain),
+        cursorBrush = SolidColor(BrandBlue),
+        // 固定键盘类型，输入集数和中文标题时不会重启输入法。
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Search),
+        onKeyboardAction = { onSubmit() },
+        modifier = modifier.testTag("book-chapter-query").onFocusChanged { focused = it.isFocused }
+            .semantics { contentDescription = "集数或章节名" },
+        decorator = { innerTextField ->
+            Surface(
+                shape = RoundedCornerShape(13.dp),
+                color = MeloraAppearance.softFill,
+                border = when {
+                    invalidEpisode -> BorderStroke(1.dp, AccentRed)
+                    focused -> BorderStroke(1.dp, BrandBlue.copy(alpha = .4f))
+                    else -> MeloraAppearance.cardBorder
+                },
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().heightIn(min = controlHeight).padding(start = 12.dp, end = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Rounded.Search, contentDescription = null, tint = TextSub, modifier = Modifier.size(18.dp))
+                    Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                        if (query.isEmpty()) {
+                            Text(ChapterSearchHint, style = ChapterInputStyle, color = TextSub,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        innerTextField()
+                    }
+                    if (query.isNotEmpty()) {
+                        IconButton(onClick = { state.clearText() }, modifier = Modifier.size(40.dp)) {
+                            Icon(Icons.Rounded.Close, contentDescription = "清空选集输入", tint = TextSub, modifier = Modifier.size(16.dp))
+                        }
+                    }
+                }
+            }
+        },
+    )
 }

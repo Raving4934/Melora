@@ -3,6 +3,7 @@ package com.leyu.melora.ui.common
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import com.leyu.melora.ui.common.PageBackHandler as BackHandler
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -44,9 +45,15 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -70,12 +77,32 @@ import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import org.json.JSONObject
 
 internal val PlaylistControlsHeight = 50.6.dp
+
+private class BookChapterHighlight(val uid: String) {
+    val opacity = Animatable(1f)
+}
+
+@Composable
+private fun Modifier.bookChapterHighlight(highlight: BookChapterHighlight?): Modifier {
+    if (highlight == null) return this
+    val fill = BrandBlue.copy(alpha = if (MeloraAppearance.isDark) 0.20f else 0.13f)
+    return drawBehind {
+        val inset = minOf(8.dp.toPx(), size.width / 4f)
+        drawRoundRect(
+            color = fill.copy(alpha = fill.alpha * highlight.opacity.value),
+            topLeft = Offset(inset, 0f),
+            size = Size(size.width - inset * 2, size.height),
+            cornerRadius = CornerRadius(12.dp.toPx()),
+        )
+    }.semantics { stateDescription = "已定位章节" }
+}
 
 /** 使用自然流中的占位项定位；不再读取已被 native stickyHeader 平移后的坐标。 */
 internal fun shouldPinPlaylistControls(firstVisibleIndex: Int, controlBarTop: Int?, headerBottom: Int): Boolean =
@@ -114,6 +141,7 @@ fun PlaylistDetailContent(
         var bookPickerOpen by remember { mutableStateOf(false) }
         val bookSearchPageNumbers = remember(detailCacheKey) { mutableSetOf<Int>() }
         var pendingBookUid by remember { mutableStateOf<String?>(null) }
+        var highlightedBookChapter by remember { mutableStateOf<BookChapterHighlight?>(null) }
         var bookPageLoading by remember { mutableStateOf(false) }
         var bookRequestJob by remember(detailCacheKey) { mutableStateOf<Job?>(null) }
         // 目录连续展示，缓存仍按原始页保存；detailCacheKey 只存第1页供播放队列续页。
@@ -179,6 +207,17 @@ fun PlaylistDetailContent(
             }
         }
         var moreSong by remember { mutableStateOf<OnlineSong?>(null) }
+
+        fun beginBookRequest(append: Boolean = false): Long {
+            val (requestState, generation) = bookCatalog.beginRequest()
+            bookCatalog = requestState
+            bookRequestJob?.cancel()
+            if (!append) {
+                pendingBookUid = null
+                highlightedBookChapter = null
+            }
+            return generation
+        }
 
         fun applyBookResponse(
             generation: Long,
@@ -249,9 +288,7 @@ fun PlaylistDetailContent(
             val matches: (OnlineSong) -> Boolean = { song ->
                 if (targetUid != null) song.uid == targetUid else bookEpisodeNumber(song.name) == targetEpisode
             }
-            val (requestState, generation) = bookCatalog.beginRequest()
-            bookCatalog = requestState
-            bookRequestJob?.cancel()
+            val generation = beginBookRequest(append)
             if (hasTarget) {
                 val loaded = songs.firstOrNull(matches)
                 if (loaded != null) {
@@ -374,16 +411,16 @@ fun PlaylistDetailContent(
 
         // 批量管理模式：收藏右侧"批量管理"进入，顶栏/列表行/底部工具条联动
         val selection = remember { SongSelectionState() }
+        val locationUid = pendingBookUid
+        val locationGeneration = bookCatalog.requestGeneration
         LaunchedEffect(
             bookCatalog,
-            pendingBookUid,
+            locationUid,
             selection.active,
             bookDescending,
         ) {
-            if (!isBook || pendingBookUid == null) {
-                return@LaunchedEffect
-            }
-            val itemIndex = displaySongs.indexOfFirst { it.uid == pendingBookUid }
+            if (locationUid == null || !bookCatalog.isCurrentRequest(locationGeneration)) return@LaunchedEffect
+            val itemIndex = displaySongs.indexOfFirst { it.uid == locationUid }
             if (itemIndex !in displaySongs.indices) {
                 PlaybackController.postMessage(context, "目录中未找到当前章节")
                 pendingBookUid = null
@@ -391,9 +428,20 @@ fun PlaylistDetailContent(
             }
             val headerItems = if (selection.active) 0 else 2
             // LazyColumn的顶部padding只包含标题栏；必须额外让开覆盖式吸顶操作栏。
-            listState.scrollToItem((itemIndex + headerItems).coerceAtLeast(0),
+            listState.scrollToItem(itemIndex + headerItems,
                 scrollOffset = if (selection.active) 0 else -bookScrollInsetPx)
+            // 滚动可能挂起，更新目录的后续请求不能继承已取消的定位。
+            if (!bookCatalog.isCurrentRequest(locationGeneration) || pendingBookUid != locationUid) return@LaunchedEffect
             pendingBookUid = null
+            if (listState.layoutInfo.visibleItemsInfo.any { it.key == locationUid }) {
+                highlightedBookChapter = BookChapterHighlight(locationUid)
+            }
+        }
+        LaunchedEffect(highlightedBookChapter) {
+            val highlight = highlightedBookChapter ?: return@LaunchedEffect
+            delay(1_050)
+            highlight.opacity.animateTo(0f, tween(400))
+            if (highlightedBookChapter === highlight) highlightedBookChapter = null
         }
 
         fun locateCurrentBookChapter() {
@@ -649,10 +697,12 @@ fun PlaylistDetailContent(
                             }
                         }
                         itemsIndexed(displaySongs, key = { _, song -> song.uid }) { _, song ->
+                            val highlight = highlightedBookChapter?.takeIf { it.uid == song.uid }
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .then(bodyHazeModifier),
+                                    .then(bodyHazeModifier)
+                                    .bookChapterHighlight(highlight),
                             ) {
                                 OnlineSongRow(
                                     song = song,
@@ -761,9 +811,7 @@ fun PlaylistDetailContent(
                     }
                 },
                 onSelectChapter = { match ->
-                    val (requestState, generation) = bookCatalog.beginRequest()
-                    bookCatalog = requestState
-                    bookRequestJob?.cancel()
+                    val generation = beginBookRequest()
                     bookRequestJob = null
                     bookPageLoading = false
                     loading = false
@@ -771,6 +819,7 @@ fun PlaylistDetailContent(
                     applyBookResponse(generation, match.page.page, match.page, match.song.uid,
                         preserveScroll = false, directionOnAccept = null, append = false)
                 },
+                onLocateCurrent = if (currentBookSong != null && !bookPageLoading) ::locateCurrentBookChapter else null,
             )
         }
         moreSong?.let { song ->
