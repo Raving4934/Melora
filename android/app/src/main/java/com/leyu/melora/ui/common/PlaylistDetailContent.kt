@@ -71,7 +71,6 @@ import com.leyu.melora.playback.sdk.OnlineRepository
 import com.leyu.melora.playback.sdk.formatPlayCountLabel
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.sdk.SongPage
-import com.leyu.melora.playback.sdk.loadUntilPlayable
 import dev.chrisbanes.haze.ExperimentalHazeApi
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
@@ -353,27 +352,24 @@ fun PlaylistDetailContent(
         }
 
         suspend fun loadFirstPage() {
+            val previous = songSnapshot
             try {
-                runCatchingCancellable {
-                    val previous = songSnapshot
-                    val first = OnlineCache.refresh(detailCacheKey, OnlineCache.CATALOG_TTL_MS) {
-                        OnlineRepository.playlistSongs(context, playlist.source, playlist.id, 1).forRequestedPage(1)
-                    }
-                    val fresh = first.loadUntilPlayable { page ->
-                        OnlineRepository.playlistSongs(context, playlist.source, playlist.id, page)
-                    }
-                    if (previous?.list?.isNotEmpty() == true && fresh.list.isEmpty()) {
-                        // 空响应不是有效的重载结果：保留正在展示的歌曲，避免内容闪空。
-                        OnlineCache.put(detailCacheKey, previous)
-                    } else {
-                        songSnapshot = fresh
-                        if (fresh !== first) OnlineCache.put(detailCacheKey, fresh)
-                    }
-                }.onSuccess {
-                    error = null
-                }.onFailure {
-                    if (songs.isEmpty()) error = it.message ?: "歌单加载失败"
+                val cached = OnlineCache.get<SongPage>(detailCacheKey, OnlineCache.CATALOG_TTL_MS)
+                val first = cached ?: OnlineCache.refresh(
+                    OnlineRepository.playlistEntryPageKey(playlist), OnlineCache.CATALOG_TTL_MS,
+                ) { OnlineRepository.playlistEntryPage(context, playlist) }
+                if (songSnapshot === previous) {
+                    songSnapshot = first
+                    if (cached == null) OnlineCache.put(detailCacheKey, first)
                 }
+                error = null
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (empty: OnlineRepository.NoPlayablePlaylist) {
+                if (songSnapshot?.list.isNullOrEmpty()) songSnapshot = empty.snapshot
+                error = null
+            } catch (failure: Exception) {
+                if (songSnapshot?.list.isNullOrEmpty()) error = failure.message ?: "歌单加载失败"
             } finally {
                 loading = false
             }
@@ -461,21 +457,18 @@ fun PlaylistDetailContent(
             })
         }
         val isFav = favoritePlaylists.any { "${it.source}_${it.id}" == "${playlist.source}_${playlist.id}" }
+        // 与 playBook/卡片按钮同一队列身份；听书有断点时续听，不再跳回第一章。
+        val playQueueId = remember(playlist.source, playlist.id, isBook) {
+            collectionQueueId(playlist.source, playlist.id, isBook)
+        }
         val playAll: () -> Unit = {
             if (isBook) {
                 // 目录窗口可能在第1000章附近，播放全部仍从本书第一页开始，不能拿当前窗口冒充整本。
                 PlaybackController.playBook(context, detailPlaylist)
             } else {
-                UserLibrary.markContainerPlayed(UserLibrary.PlayContainer(
-                    kind = "playlist", id = playlist.id, name = playlist.name, img = playlist.img,
-                    source = playlist.source, queueId = "playlist.${playlist.source}.${playlist.id}",
-                ))
-                PlaybackController.playQueue(context, songs.toUiTracks(), 0, "playlist.${playlist.source}.${playlist.id}")
+                playlist.markCollectionPlayed(playQueueId)
+                PlaybackController.playQueue(context, songs.toUiTracks(), 0, playQueueId)
             }
-        }
-        // 与 playBook/卡片按钮同一队列身份；听书有断点时续听，不再跳回第一章。
-        val playQueueId = remember(playlist.source, playlist.id, isBook) {
-            collectionQueueId(playlist.source, playlist.id, isBook)
         }
         val (queueActive, queuePlaying) = rememberQueuePlayback(playQueueId)
         val resumePoint = if (isBook) rememberBookAlbumResumePoint(playlist.source, playlist.id).first else null
@@ -714,16 +707,7 @@ fun PlaylistDetailContent(
                                         if (selection.active) {
                                             selection.toggle(song.uid)
                                         } else {
-                                            UserLibrary.markContainerPlayed(
-                                                UserLibrary.PlayContainer(
-                                                    kind = if (playlist.isBookAlbum) "book" else "playlist",
-                                                    id = playlist.id,
-                                                    name = playlist.name,
-                                                    img = playlist.img,
-                                                    source = playlist.source,
-                                                    queueId = "playlist.${playlist.source}.${playlist.id}",
-                                                ),
-                                            )
+                                            playlist.markCollectionPlayed("playlist.${playlist.source}.${playlist.id}")
                                             PlaybackController.playTrack(context, UiTrack.fromOnline(song))
                                         }
                                     },

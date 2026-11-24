@@ -37,28 +37,31 @@ import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.UserLibrary
 import com.leyu.melora.playback.sdk.OnlinePlaylist
 import com.leyu.melora.playback.sdk.OnlineRepository
+import com.leyu.melora.playback.sdk.SongPage
 import com.leyu.melora.ui.theme.MeloraAppearance
 
-// 歌单/有声专辑点击播放：优先缓存秒播，未缓存则拉第一页再播（带 queueId 供卡片按钮跟随状态）
+internal fun OnlinePlaylist.markCollectionPlayed(queueId: String) =
+    UserLibrary.markContainerPlayed(
+        UserLibrary.PlayContainer(
+            kind = if (isBookAlbum) "book" else "playlist",
+            id = id,
+            name = name,
+            img = img,
+            source = source,
+            queueId = queueId,
+        ),
+    )
+
+// 歌单/有声专辑点击播放：优先使用缓存的首个可播页，queueId 供卡片按钮跟随状态。
 fun playOnlinePlaylist(context: android.content.Context, playlist: OnlinePlaylist) {
     if (playlist.isBookAlbum) {
         PlaybackController.playBook(context, playlist)
         return
     }
     val queueId = "playlist.${playlist.source}.${playlist.id}"
-    val cacheKey = "playlistSongs.${playlist.source}.${playlist.id}"
-    UserLibrary.markContainerPlayed(
-        UserLibrary.PlayContainer(
-            kind = "playlist",
-            id = playlist.id,
-            name = playlist.name,
-            img = playlist.img,
-            source = playlist.source,
-            queueId = queueId,
-        ),
-    )
-    PlaybackController.requestQueue(context, queueId, cacheKey, songs = { it }) {
-        OnlineRepository.playlistSongs(context, playlist.source, playlist.id, 1).list
+    playlist.markCollectionPlayed(queueId)
+    PlaybackController.requestQueue(context, queueId, OnlineRepository.playlistEntryPageKey(playlist), SongPage::list) {
+        OnlineRepository.playlistEntryPage(context, playlist)
     }
 }
 

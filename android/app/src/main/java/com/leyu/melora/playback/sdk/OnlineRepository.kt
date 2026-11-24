@@ -131,6 +131,17 @@ object OnlineRepository {
         return songPage(data)
     }
 
+    internal fun playlistEntryPageKey(playlist: OnlinePlaylist): String =
+        "playlistSongs.${playlist.source}.${playlist.id}"
+
+    internal class NoPlayablePlaylist(val snapshot: SongPage) : IllegalStateException("暂无可播放内容")
+
+    /** 卡片播放和详情共用首个有歌曲的页。空目录不写入首屏缓存，恢复后可以立即重试。 */
+    internal suspend fun playlistEntryPage(context: Context, playlist: OnlinePlaylist): SongPage =
+        playlistSongs(context, playlist.source, playlist.id, 1).forRequestedPage(1).loadUntilPlayable { page ->
+            playlistSongs(context, playlist.source, playlist.id, page)
+        }.also { if (it.list.isEmpty()) throw NoPlayablePlaylist(it) }
+
     suspend fun lyric(context: Context, source: String, song: OnlineSong, background: Boolean = false): OnlineLyric {
         val data = MusicSdkEngine.call(context, "lyric", source, JSONObject().put("song", song.raw), background = background)
         return OnlineLyric.from(data, source, song)
