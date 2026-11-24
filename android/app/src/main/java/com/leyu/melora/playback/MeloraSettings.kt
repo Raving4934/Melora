@@ -173,7 +173,7 @@ object MeloraSettings {
         // 旧版单一音质键迁移为 WiFi 音质
         playQualityWifi.value = prefs.getString(KEY_QUALITY_WIFI, prefs.getString(KEY_QUALITY, "320k")) ?: "320k"
         playQualityMobile.value = prefs.getString(KEY_QUALITY_MOBILE, "128k") ?: "128k"
-        maxCacheMb.value = prefs.getInt(KEY_MAX_CACHE_MB, 1024)
+        maxCacheMb.value = prefs.getInt(KEY_MAX_CACHE_MB, 1024).takeIf { it >= 0 } ?: 1024
         showDesktopLyrics.value = prefs.getBoolean(KEY_DESKTOP_LYRICS, false)
         lockLyrics.value = prefs.getBoolean(KEY_LYRICS_LOCK, false)
         singleLineLyric.value = prefs.getBoolean(KEY_LYRICS_SINGLE_LINE, false)
@@ -253,7 +253,11 @@ object MeloraSettings {
     fun updateNotificationCover(value: Boolean) = update { showNotificationCover.value = value; persist { putBoolean(KEY_NOTIFICATION_COVER, value) } }
     fun updatePlayQualityWifi(value: String) = update { playQualityWifi.value = value; persist { putString(KEY_QUALITY_WIFI, value) } }
     fun updatePlayQualityMobile(value: String) = update { playQualityMobile.value = value; persist { putString(KEY_QUALITY_MOBILE, value) } }
-    fun updateMaxCacheMb(value: Int) = update { maxCacheMb.value = value; persist { putInt(KEY_MAX_CACHE_MB, value) } }
+    fun updateMaxCacheMb(value: Int) = update {
+        require(value >= 0)
+        maxCacheMb.value = value
+        persist { putInt(KEY_MAX_CACHE_MB, value) }
+    }
 
     fun updateLocalUseMediaStore(value: Boolean) = update { localUseMediaStore.value = value; persist { putBoolean(KEY_LOCAL_MEDIA_STORE, value) } }
     fun updateLocalFolders(value: List<String>) = update {

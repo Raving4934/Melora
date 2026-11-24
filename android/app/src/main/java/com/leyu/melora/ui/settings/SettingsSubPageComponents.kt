@@ -41,7 +41,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -356,7 +355,8 @@ internal fun PlaybackSettingsSubPage(onBack: () -> Unit) {
     val mobileQuality by MeloraSettings.playQualityMobile.collectAsStateWithLifecycle()
     val maxCacheMb by MeloraSettings.maxCacheMb.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    var audioCacheBytes by remember { mutableLongStateOf(0L) }
+    val scope = rememberCoroutineScope()
+    var audioCacheBytes by remember { mutableStateOf<Long?>(null) }
     LaunchedEffect(Unit) { audioCacheBytes = CacheManager.audioCacheBytes(context) }
 
     SettingsSubPageScaffold(title = "播放设置", onBack = onBack) {
@@ -417,24 +417,13 @@ internal fun PlaybackSettingsSubPage(onBack: () -> Unit) {
             SectionCaption("缓存管理")
         }
         item {
-            SettingsCard {
-                Text("播放缓存", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = SettingsTextMain)
-                Text(
-                    "播放过的歌曲自动缓存，重复播放更省流更快；超出上限按最久未用自动清理。",
-                    fontSize = 12.sp,
-                    color = SettingsTextSub,
-                    modifier = Modifier.padding(top = 2.dp, bottom = 14.dp),
-                )
-                AudioCacheSizeSetting(maxCacheMb = maxCacheMb) {
-                    MeloraSettings.updateMaxCacheMb(it)
-                    AudioCacheStore.trimNow()
+            AudioCacheSizeSetting(maxCacheMb = maxCacheMb, usedBytes = audioCacheBytes) {
+                MeloraSettings.updateMaxCacheMb(it)
+                val trim = AudioCacheStore.trimNow()
+                scope.launch {
+                    trim.join()
+                    audioCacheBytes = CacheManager.audioCacheBytes(context)
                 }
-                Text(
-                    "当前音频缓存占用 ${formatCacheBytes(audioCacheBytes)}",
-                    fontSize = 11.sp,
-                    color = SettingsTextSub,
-                    modifier = Modifier.padding(top = 10.dp),
-                )
             }
         }
     }

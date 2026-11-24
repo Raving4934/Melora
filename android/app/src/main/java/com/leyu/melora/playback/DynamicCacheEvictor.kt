@@ -122,7 +122,8 @@ class DynamicCacheEvictor(private val maxBytesProvider: () -> Long) : CacheEvict
     }
 
     private fun trimLocked(cache: Cache) {
-        val max = maxBytesProvider().coerceAtLeast(MIN_BYTES)
+        val max = maxBytesProvider()
+        if (max == 0L) return
         while (currentBytes > max && sizes.isNotEmpty()) {
             val key = sizes.keys.first()
             val before = currentBytes
@@ -133,9 +134,5 @@ class DynamicCacheEvictor(private val maxBytesProvider: () -> Long) : CacheEvict
                 break
             }
         }
-    }
-
-    private companion object {
-        const val MIN_BYTES = 64L * 1024 * 1024
     }
 }

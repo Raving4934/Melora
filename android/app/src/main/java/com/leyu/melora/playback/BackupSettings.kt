@@ -156,7 +156,7 @@ private fun backupNumber(name: String, value: Any): Number {
         "lastTab", "startupTab" -> 0.0..7.0
         "playlistSort" -> 0.0..1.0
         "downloadConcurrentTasks" -> 1.0..5.0
-        "maxCacheMb" -> 0.0..1_048_576.0
+        "maxCacheMb" -> 0.0..Int.MAX_VALUE.toDouble()
         "lyricFontSize" -> 8.0..100.0
         "lyricAlpha" -> 0.0..100.0
         "lyricMaxLines" -> 1.0..20.0

@@ -126,7 +126,7 @@ class StartupSettingsInstrumentedTest {
     fun audioCacheCapacityDefaultsToOneGigabyteAndPersistsManualValues() {
         MeloraSettings.init(context)
         assertEquals(1024, MeloraSettings.maxCacheMb.value)
-        for (mb in listOf(256, 8704)) {
+        for (mb in listOf(256, 8704, 0)) {
             MeloraSettings.updateMaxCacheMb(mb)
             assertEquals(mb, context.settingsPrefs.getInt(MeloraSettings.KEY_MAX_CACHE_MB, -1))
             MeloraSettings.maxCacheMb.value = 1024

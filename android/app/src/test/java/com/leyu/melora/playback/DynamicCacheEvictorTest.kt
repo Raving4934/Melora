@@ -59,6 +59,22 @@ class DynamicCacheEvictorTest {
     }
 
     @Test
+    fun zeroKeepsEveryResourceAndASmallPositiveLimitTrimsImmediately() {
+        val mib = 1024L * 1024
+        var limit = 0L
+        val evictor = DynamicCacheEvictor { limit }
+        val cache = fakeCache(evictor, linkedMapOf("old" to 100 * mib, "recent" to 4 * mib), "unused")
+        evictor.attach(cache)
+        assertEquals(setOf("old", "recent"), cache.keys)
+        assertEquals(104 * mib, evictor.trackedBytes())
+
+        limit = 8 * mib
+        evictor.trimNow()
+        assertEquals(setOf("recent"), cache.keys)
+        assertEquals(4 * mib, evictor.trackedBytes())
+    }
+
+    @Test
     fun initializationWaitsForAllTimestampsBeforeEvicting() {
         val evictor = DynamicCacheEvictor { 64L * 1024 * 1024 }
         val cache = fakeCache(evictor, linkedMapOf("recent" to 40L * 1024 * 1024,

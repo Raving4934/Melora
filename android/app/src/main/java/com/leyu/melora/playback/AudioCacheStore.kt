@@ -213,8 +213,9 @@ object AudioCacheStore {
     }
 
     /** 设置变化后按当前容量上限在 IO 线程收缩。 */
-    fun trimNow() {
-        scope.launch { evictor?.trimNow() }
+    fun trimNow(): Job = scope.launch {
+        evictor?.trimNow()
+        CacheManager.invalidateCachedStats()
     }
 
     /** 等待后台补齐完全退出后安全清空共享缓存。 */
