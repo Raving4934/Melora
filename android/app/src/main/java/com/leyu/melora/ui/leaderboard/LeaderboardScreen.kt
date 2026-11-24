@@ -143,10 +143,10 @@ private suspend fun loadBoardFirstPage(context: Context, platform: String, board
 
 private suspend fun loadBoardPreview(context: Context, platform: String, boardId: String): SongPage {
     OnlineCache.get<SongPage>(boardPageCacheKey(platform, boardId), BOARD_SONGS_TTL_MS)
-        ?.let { return it.copy(list = it.list.take(BOARD_PREVIEW_LIMIT)) }
+        ?.let { return it.copy(entries = it.list.take(BOARD_PREVIEW_LIMIT)) }
     return OnlineCache.refresh<SongPage>(boardPreviewCacheKey(platform, boardId), BOARD_SONGS_TTL_MS) {
         OnlineRepository.boardSongs(context, platform, boardId, page = 1, limit = BOARD_PREVIEW_LIMIT)
-            .let { it.copy(list = it.list.take(BOARD_PREVIEW_LIMIT)) }
+            .let { it.copy(entries = it.list.take(BOARD_PREVIEW_LIMIT)) }
     }
 }
 
@@ -510,6 +510,7 @@ internal fun BoardDetailContent(
     var loading by remember(boardKey) { mutableStateOf(songs.isEmpty()) }
     var error by remember(boardKey) { mutableStateOf<String?>(null) }
     var page by remember(boardKey) { mutableIntStateOf(1) }
+    var receivedCount by remember(boardKey) { mutableIntStateOf(cachedPage?.receivedCount ?: 0) }
     var hasMore by remember(boardKey) { mutableStateOf(cachedPage?.hasMore() ?: false) }
     var loadingMore by remember(boardKey) { mutableStateOf(false) }
     var moreSong by remember { mutableStateOf<OnlineSong?>(null) }
@@ -528,7 +529,8 @@ internal fun BoardDetailContent(
                 val before = songs.size
                 songs = if (append) (songs + result.list).distinctBy { it.uid } else result.list
                 // 部分平台不回传 page（解析默认为 1），推进以实际请求页为准。
-                hasMore = result.copy(page = targetPage).hasMore(songs.size) && (!append || songs.size > before)
+                receivedCount = if (append) receivedCount + result.rawCount else result.receivedCount
+                hasMore = result.copy(page = targetPage).hasMore(receivedCount) && (!append || songs.size > before)
                 page = targetPage
             }.onFailure {
                 if (songs.isEmpty()) error = it.message ?: "榜单歌曲加载失败"

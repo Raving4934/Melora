@@ -9,6 +9,26 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SongPageTest {
+    @Test fun firstPageKeepsFirstVersionPerSourceAndCountsEveryReceivedRecord() {
+        fun song(source: String, title: String) = OnlineSong(
+            JSONObject().put("source", source).put("songmid", "395119045").put("name", title),
+        )
+        val first = song("kg", "首条记录")
+        val alias = song("kg", "另一种标题")
+        val otherSource = song("kw", "首条记录")
+        val page = SongPage(listOf(first, alias, otherSource), total = 4, page = 1, allPage = 0)
+
+        assertEquals(listOf(first, otherSource), page.list)
+        assertEquals(3, page.rawCount)
+        assertTrue(page.hasMore())
+
+        val next = SongPage(listOf(alias), total = 4, page = 2, allPage = 0)
+        val merged = page.append(next, 2)
+        assertEquals(listOf(first, otherSource), merged.list)
+        assertEquals(4, merged.receivedCount)
+        assertFalse(merged.hasMore())
+    }
+
     @Test fun filteredMiddlePageKeepsCursorAndLaterPlayableSongs() {
         val first = page(1, 1..30, total = 75, all = 3)
         val second = first.append(page(2, IntRange.EMPTY, total = 75, all = 3, raw = 30), 2)
@@ -110,7 +130,7 @@ class SongPageTest {
 
     private fun page(number: Int, ids: IntRange, total: Int = 0, all: Int = 0,
         raw: Int = ids.count(), size: Int = 30) = SongPage(
-        list = ids.map { OnlineSong(JSONObject().put("source", "kg").put("songmid", "$it").put("name", "$it")) },
+        entries = ids.map { OnlineSong(JSONObject().put("source", "kg").put("songmid", "$it").put("name", "$it")) },
         total = total, page = number, allPage = all, rawCount = raw, pageSize = size,
     )
 }

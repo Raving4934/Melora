@@ -35,7 +35,7 @@ class PlaylistSyncTest {
         val second = SongPage(listOf(song("c"), song("d")), 4, 2, 2, pageSize = 2)
         val variants = linkedMapOf(
             "total decreased" to second.copy(total = 3),
-            "total increased" to second.copy(total = 5, list = listOf(song("c"), song("d"), song("e")), rawCount = 3),
+            "total increased" to second.copy(total = 5, entries = listOf(song("c"), song("d"), song("e")), rawCount = 3),
             "total disappeared" to second.copy(total = 0),
             "allPage decreased" to second.copy(allPage = 1),
             "allPage disappeared" to second.copy(allPage = 0),

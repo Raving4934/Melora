@@ -73,11 +73,42 @@ class SearchDataTest {
         assertFalse(progressive.hasMore)
     }
 
+    @Test fun aggregatedSearchDoesNotPublishTwoTitlesWithTheSameSongId() = runBlocking {
+        platformIds.forEach { cache(it, 1, 0, 0, 1) }
+        fun cacheTitle(bucket: String, title: String) {
+            val song = OnlineSong(JSONObject().put("source", "kg").put("songmid", "395119045")
+                .put("name", title).put("singer", "同一位歌手"))
+            OnlineCache.put(songSearchCacheKey(bucket, keyword, 1), SongPage(listOf(song), 1, 1, 1))
+        }
+        cacheTitle("kw", "第一个标题")
+        cacheTitle("kg", "另一个标题")
+
+        val expected = listOf("kg_395119045")
+        val batch = searchSongs(context, PlatformSource.All, keyword, 1)
+        assertEquals(expected, batch.songs.map(OnlineSong::uid))
+        val updates = mutableListOf<List<String>>()
+        val progressive = searchSongs(context, PlatformSource.All, keyword, 1) { update ->
+            updates += update.songs.map(OnlineSong::uid)
+        }
+        assertEquals(listOf(expected), updates.filter { it.isNotEmpty() }.distinct())
+        assertEquals(expected, progressive.songs.map(OnlineSong::uid))
+    }
+
+    @Test fun aSkippedSearchRowDoesNotHideAnotherSongOrItsAlias() = runBlocking {
+        fun song(id: String, title: String) = OnlineSong(JSONObject()
+            .put("source", "kg").put("songmid", id).put("name", title).put("singer", "同一位歌手"))
+        val entries = listOf(song("1", "甲"), song("2", "甲"), song("2", "乙"), song("2", "丙"), song("3", "丙"))
+        OnlineCache.put(songSearchCacheKey("kg", keyword, 1), SongPage(entries, entries.size, 1, 1))
+
+        val result = searchSongs(context, PlatformSource.Kugou, keyword, 1)
+        assertEquals(listOf(entries[0], entries[2], entries[4]), result.songs)
+    }
+
     @Test fun refreshedSourceReplacesOldSongsInsteadOfAppendingThem() = runBlocking {
         val key = songSearchCacheKey("kw", keyword, 1)
         cache("kw", 1, 2, 60, 2)
         val old = requireNotNull(OnlineCache.peek<SongPage>(key))
-        val fresh = old.copy(list = old.list.take(1), total = 1, allPage = 1)
+        val fresh = old.copy(entries = old.list.take(1), total = 1, allPage = 1)
         expire(key)
         val started = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
@@ -109,7 +140,7 @@ class SearchDataTest {
         val release = CompletableDeferred<Unit>()
         val sawSnapshot = CompletableDeferred<Unit>()
         val updates = mutableListOf<SongSearchOutcome>()
-        val refresh = async { OnlineCache.refresh(key, -1) { started.complete(Unit); release.await(); old.copy(list = emptyList()) } }
+        val refresh = async { OnlineCache.refresh(key, -1) { started.complete(Unit); release.await(); old.copy(entries = emptyList()) } }
         withTimeout(5_000) { started.await() }
         val search = async { searchSongs(context, PlatformSource.Kuwo, keyword, 1) {
             updates += it
@@ -119,7 +150,7 @@ class SearchDataTest {
             withTimeout(5_000) { sawSnapshot.await() }
             search.cancelAndJoin()
             val count = updates.size
-            OnlineCache.put(songSearchCacheKey("kw", "next keyword", 1), old.copy(list = old.list.take(1), total = 1, allPage = 1))
+            OnlineCache.put(songSearchCacheKey("kw", "next keyword", 1), old.copy(entries = old.list.take(1), total = 1, allPage = 1))
             val next = searchSongs(context, PlatformSource.Kuwo, "next keyword", 1)
             release.complete(Unit)
             withTimeout(5_000) { refresh.await() }

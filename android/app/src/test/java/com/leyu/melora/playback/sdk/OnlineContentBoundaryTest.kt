@@ -66,11 +66,11 @@ class OnlineContentBoundaryTest {
         val shortPage = SongPage(listOf(song("one")), total = 2, page = 1, allPage = 2)
         assertTrue(shortPage.hasMore())
         assertFalse(shortPage.copy(page = 2).hasMore(2))
-        val fullLastPage = shortPage.copy(list = List(30) { song("$it") }, total = 30, allPage = 1,
+        val fullLastPage = shortPage.copy(entries = List(30) { song("$it") }, total = 30, allPage = 1,
             rawCount = 30, receivedCount = 30)
         assertFalse(fullLastPage.hasMore())
         assertTrue(fullLastPage.copy(total = 0, allPage = 0).hasMore())
-        assertFalse(fullLastPage.copy(list = emptyList(), allPage = 2, rawCount = 0, receivedCount = 0).hasMore())
+        assertFalse(fullLastPage.copy(entries = emptyList(), allPage = 2, rawCount = 0, receivedCount = 0).hasMore())
         assertTrue(shortPage.copy(allPage = 0).hasMore(1))
         assertFalse(shortPage.copy(allPage = 0).hasMore(2))
     }
@@ -78,13 +78,13 @@ class OnlineContentBoundaryTest {
     @Test
     fun mergedSongSnapshotKeepsRequestedCursorAndStopsDuplicatePages() {
         val firstPage = SongPage(
-            list = List(30) { song("first-$it") },
+            entries = List(30) { song("first-$it") },
             total = 60,
             page = 1,
             allPage = 2,
         )
         val secondPage = SongPage(
-            list = List(30) { song("second-$it") },
+            entries = List(30) { song("second-$it") },
             total = 60,
             page = 1,
             allPage = 2,

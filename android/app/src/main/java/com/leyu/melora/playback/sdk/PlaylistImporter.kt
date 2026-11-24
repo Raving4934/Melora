@@ -79,23 +79,23 @@ internal object PlaylistImporter {
             val previousSize = songs.size
             // 页内重复可以是合法的重复曲目；跨页重叠则无法区分它与分页漂移造成的漏项。
             // 继续读取供首次导入明确保存，但更新必须通过 warning 拒绝此不可信快照。
-            if (result.list.any { it.uid in songs }) {
+            if (result.entries.any { it.uid in songs }) {
                 integrityWarnings += "平台分页存在跨页重复歌曲，尚未确认完整歌单。"
             }
-            for (song in result.list) {
+            for (song in result.entries) {
                 if (song.uid in songs) duplicates++
                 else if (songs.size < MAX_SONGS) songs[song.uid] = song
                 else { warning = "单次最多读取 $MAX_SONGS 首，尚未获取完整歌单。"; break }
             }
             received += result.rawCount
-            unavailable += (result.rawCount - result.list.size).coerceAtLeast(0)
+            unavailable += (result.rawCount - result.entries.size).coerceAtLeast(0)
             onProgress(PlaylistImportProgress(page, songs.size, total.takeIf { it > 0 }))
             if (warning != null) break
             if (result.rawCount == 0) {
                 if (total > received || result.allPage > page) warning = "平台提前返回空页，尚未获取完整歌单。"
                 break
             }
-            if (page > 1 && result.list.isNotEmpty() && songs.size == previousSize) {
+            if (page > 1 && result.entries.isNotEmpty() && songs.size == previousSize) {
                 warning = "平台返回了重复页面，已停止继续读取，尚未确认完整歌单。"
                 break
             }

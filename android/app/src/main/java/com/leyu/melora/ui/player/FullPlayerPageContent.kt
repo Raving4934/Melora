@@ -1161,8 +1161,8 @@ internal fun SongsCollectionPage(
                 var more = true
                 while (more && collected.isEmpty() && extra <= 2) {
                     val result = OnlineRepository.search(context, collection.source, collection.keyword, current, 30)
-                    collected += result.list.filter(::matches)
-                    more = result.list.size >= 30
+                    collected += result.entries.filter(::matches)
+                    more = result.entries.size >= 30
                     if (collected.isEmpty() && more) {
                         current += 1
                         extra += 1

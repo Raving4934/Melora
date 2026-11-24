@@ -121,7 +121,8 @@ private fun inferredSongPageHasMore(
 }
 
 data class SongPage(
-    val list: List<OnlineSong>,
+    /** 音源返回的有效记录，供导入计数与版本匹配使用。 */
+    internal val entries: List<OnlineSong>,
     val total: Int,
     val page: Int,
     val allPage: Int,
@@ -131,10 +132,13 @@ data class SongPage(
     val playlistName: String? = null,
     val playlistCover: String? = null,
     val pageSize: Int = 30,
-    val rawCount: Int = list.size,
+    val rawCount: Int = entries.size,
     /** 实际收到的原始条目累计；不能用去重/过滤后的展示数量代替。 */
     val receivedCount: Int = rawCount,
 ) {
+    /** 列表行和播放队列使用同一个 UID，按来源顺序保留首次出现的版本。 */
+    val list = entries.distinctBy(OnlineSong::uid)
+
     /** 优先使用已保存的合并快照状态；未知总数时才以当前页满页推断。 */
     fun hasMore(loadedCount: Int = receivedCount): Boolean = snapshotHasMore ?: inferredSongPageHasMore(
         rawCount = rawCount,
@@ -164,7 +168,6 @@ data class SongPage(
     /** 生成完整合并快照：保存去重列表、总数、实际请求游标和 hasMore 终态。 */
     internal fun append(next: SongPage, requestedPage: Int): SongPage {
         val cursor = requestedPage.coerceAtLeast(1)
-        val merged = (list + next.list).distinctBy(OnlineSong::uid)
         val resolvedTotal = next.total.takeIf { it > 0 } ?: total
         val resolvedAllPage = next.allPage.takeIf { it > 0 } ?: allPage
         val received = receivedCount + next.rawCount
@@ -176,19 +179,21 @@ data class SongPage(
             allPage = resolvedAllPage,
             loadedCount = received,
         )
-        return SongPage(
-            list = merged,
+        val merged = SongPage(
+            entries = list + next.list,
             total = resolvedTotal,
             page = cursor,
             allPage = resolvedAllPage,
-            snapshotHasMore = next.rawCount > 0 &&
-                (next.list.isEmpty() || merged.size > list.size) && nextHasMore,
+            snapshotHasMore = next.rawCount > 0 && nextHasMore,
             playlistName = next.playlistName ?: playlistName,
             playlistCover = next.playlistCover ?: playlistCover,
             pageSize = next.pageSize,
             rawCount = next.rawCount,
             receivedCount = received,
         )
+        return if (merged.hasMore() && next.list.isNotEmpty() && merged.list.size == list.size) {
+            merged.copy(snapshotHasMore = false)
+        } else merged
     }
 }
 

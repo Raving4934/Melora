@@ -237,7 +237,7 @@ object SourceResolver {
                         findMatchedSongs(song, source, PLAYBACK_MATCH_TIMEOUT_MS) { keyword ->
                             OnlineRepository.search(context, source, keyword, limit = 25,
                                 background = purpose != Purpose.PLAYBACK,
-                                timeoutMs = PLAYBACK_MATCH_TIMEOUT_MS).list
+                                timeoutMs = PLAYBACK_MATCH_TIMEOUT_MS).entries
                         }
                     }
                 }
@@ -528,7 +528,7 @@ object SourceResolver {
                 OnlineRepository.search(
                     context, source, keyword, limit = 25,
                     background = background, timeoutMs = ALT_SEARCH_REQUEST_TIMEOUT_MS,
-                ).list
+                ).entries
             }
         }.flatten().sortedByDescending { alternativeScore(song, it) }.distinctBy { it.uid }
     }
@@ -673,7 +673,7 @@ object SourceResolver {
             OnlineRepository.search(
                 context, LOCAL_MATCH_SOURCE, keyword, limit = 25,
                 background = background, timeoutMs = ALT_SEARCH_REQUEST_TIMEOUT_MS,
-            ).list
+            ).entries
         }.firstOrNull()
 
 

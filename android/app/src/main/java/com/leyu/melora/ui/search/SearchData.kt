@@ -77,8 +77,19 @@ internal suspend fun searchSongs(
     val pages = linkedMapOf<String, SongPage>()
     fun outcome(): SongSearchOutcome {
         val available = if (onUpdate == null) targets.mapNotNull(pages::get) else pages.values
+        val songs = buildList {
+            val uids = hashSetOf<String>()
+            val titlesAndSingers = hashSetOf<String>()
+            for (song in available.asSequence().flatMap { it.entries }) {
+                val uid = song.uid
+                // 只有进入结果的歌曲才占用两个键，跳过的同名记录仍可能有可展示的别名。
+                if (uid in uids || !titlesAndSingers.add("${song.name}|${song.singer}")) continue
+                uids.add(uid)
+                add(song)
+            }
+        }
         return SongSearchOutcome(
-            songs = available.flatMap { it.list }.distinctBy { "${it.name}|${it.singer}" },
+            songs = songs,
             hasMore = available.any { it.hasMore(loadedCount = (page - 1) * it.pageSize + it.rawCount) },
         )
     }

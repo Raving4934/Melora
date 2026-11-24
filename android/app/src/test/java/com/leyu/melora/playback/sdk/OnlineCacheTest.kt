@@ -72,7 +72,7 @@ class OnlineCacheTest {
     @Test fun detailSnapshotsRestoreMergedCursorAndTerminalStateOnReentry() = runBlocking {
         val song = OnlineSong(org.json.JSONObject().put("source", "kw").put("songmid", "song"))
         val songSnapshot = SongPage(
-            list = listOf(song),
+            entries = listOf(song),
             total = 1,
             page = 2,
             allPage = 2,

@@ -165,7 +165,7 @@ object OnlineRepository {
                 .musicOnly()
         }.orEmpty()
         return SongPage(
-            list = list,
+            entries = list,
             total = data.optInt("total"),
             page = data.optInt("page", 1),
             allPage = data.optInt("allPage"),
