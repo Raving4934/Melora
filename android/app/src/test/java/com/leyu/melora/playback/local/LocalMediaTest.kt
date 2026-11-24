@@ -178,13 +178,12 @@ class LocalMediaTest {
 
     @Test
     fun sourceFailureIsNotAnEmptySuccessAndCancellationStillPropagates() = runBlocking {
-        val failed = LocalMediaScanner.scanSource { throw SecurityException("revoked") }
-        assertFalse(failed.successful)
-        val empty = LocalMediaScanner.scanSource { emptyList() }
-        assertTrue(empty.successful)
+        val failed = LocalMediaScanner.scanSource<List<LocalSong>> { throw SecurityException("revoked") }
+        assertNull(failed)
+        val empty = LocalMediaScanner.scanSource { emptyList<LocalSong>() }
+        assertEquals(emptyList<LocalSong>(), empty)
         val recovered = LocalMediaScanner.scanSource { listOf(localSong()) }
-        assertTrue(recovered.successful)
-        assertEquals(1, recovered.songs.size)
+        assertEquals(1, recovered?.size)
         try {
             LocalMediaScanner.scanSource { throw CancellationException("cancelled") }
             error("must propagate cancellation")

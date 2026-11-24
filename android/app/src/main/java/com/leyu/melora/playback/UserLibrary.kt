@@ -1,6 +1,7 @@
 package com.leyu.melora.playback
 
 import android.content.Context
+import com.leyu.melora.playback.local.LocalMediaReference
 import com.leyu.melora.playback.local.LocalMediaStore
 import com.leyu.melora.playback.local.LocalSong
 import com.leyu.melora.playback.sdk.OnlinePlaylist
@@ -139,10 +140,21 @@ object UserLibrary {
         file = File(context.applicationContext.filesDir, "user-library.json")
         synchronized(lock) { applyRoot(readRoot()) }
         // 本地索引可能先于用户库初始化，也可能反过来；两端就绪后由本地索引协调一次刷新。
-        refreshLocalSongs()
+        LocalMediaStore.refreshLibrary()
     }
 
     fun exportSnapshot(): String = synchronized(lock) { buildRoot().toString() }
+
+    internal fun localMediaReferences(): List<LocalMediaReference> = synchronized(lock) {
+        sequenceOf(favorites.value, recents.value).plus(playlists.value.asSequence().map(UserPlaylist::songs))
+            .flatten().filter { it.source == LocalSong.SOURCE }
+            .mapNotNull { song ->
+                song.raw.optString("localUri").takeIf(String::isNotBlank)?.let {
+                    LocalMediaReference(song.songmid, it, song.raw.optString("localFolder"))
+                }
+            }
+            .distinct().toList()
+    }
 
     internal fun backupSnapshot(): String = synchronized(lock) {
         val entries = favorites.value.size.toLong() + recents.value.size + favoritePlaylists.value.size +
@@ -337,37 +349,36 @@ object UserLibrary {
     }
 
     /**
-     * 本地索引提交后刷新收藏/最近/自建歌单里的 source=local 快照；
+     * 刷新本地曲目快照，只在扫描或物理删除确认文件缺失后删除引用。
      * 索引快照在 LocalMediaStore 锁内读取，避免调用方把旧 map 写回来。
      */
-    internal fun refreshLocalSongs(pruneMissing: Boolean = false) {
+    internal fun refreshLocalSongs(
+        current: Map<String, LocalSong>,
+        previous: Map<String, LocalSong> = emptyMap(),
+        deleted: DeletedLocalFiles? = null,
+    ) {
         if (!::file.isInitialized) return
-        LocalMediaStore.withIndexLock { songs ->
-            val currentIndex = songs.associateBy(LocalSong::id)
-            if (currentIndex.isEmpty() && !pruneMissing) return@withIndexLock
-            mutate(shouldPersist = { it }) {
-                fun refreshed(list: List<OnlineSong>) = list.mapNotNull { song ->
-                    if (song.source != LocalSong.SOURCE) return@mapNotNull song
-                    currentIndex[song.songmid]?.let { song.withLocalSong(it) }
-                        ?: song.takeUnless { pruneMissing }
+        mutate(shouldPersist = { it }) {
+            fun refreshed(list: List<OnlineSong>) = list.mapNotNull { song ->
+                if (song.source != LocalSong.SOURCE) return@mapNotNull song
+                val id = song.songmid
+                val address = song.raw.optString("localUri")
+                val local = (current[id] ?: previous[id])?.takeIf { address.isEmpty() || address == it.uri }
+                if (deleted != null && (if (address.isEmpty()) id in deleted.ids else address in deleted.uris)) {
+                    return@mapNotNull null
                 }
-                val newFavorites = refreshed(favorites)
-                val newRecents = refreshed(recents)
-                val newPlaylists = playlists.map { it.copy(songs = refreshed(it.songs)) }
-                val newFavoriteUids = newFavorites.mapTo(linkedSetOf()) { it.uid }
-                if (
-                    newFavorites == favorites &&
-                    newRecents == recents &&
-                    newPlaylists == playlists &&
-                    newFavoriteUids == favoriteUids
-                ) {
-                    return@mutate false
-                }
-                favorites = newFavorites
-                recents = newRecents
-                playlists = newPlaylists
-                true
+                local?.let { song.withLocalSong(it) } ?: song
             }
+            val updatedFavorites = refreshed(favorites)
+            val updatedRecents = refreshed(recents)
+            val updatedPlaylists = playlists.map { it.copy(songs = refreshed(it.songs)) }
+            if (updatedFavorites == favorites && updatedRecents == recents && updatedPlaylists == playlists) {
+                return@mutate false
+            }
+            favorites = updatedFavorites
+            recents = updatedRecents
+            playlists = updatedPlaylists
+            true
         }
     }
 
@@ -378,10 +389,14 @@ object UserLibrary {
         val interval = LocalSong.formatDuration(local.durationMs / 1000)
         val image = local.coverUri?.takeIf { it.isNotBlank() }
         val imageUnchanged = img == image && (image != null || !raw.has("img"))
-        if (this.name == name && singer == this.singer && albumName == this.albumName && interval == this.interval && imageUnchanged) {
+        if (this.name == name && singer == this.singer && albumName == this.albumName && interval == this.interval &&
+            imageUnchanged && raw.optString("localUri") == local.uri && raw.optString("localFolder") == local.folder
+        ) {
             return this
         }
         return OnlineSong(JSONObject(raw.toString()).apply {
+            put("localUri", local.uri)
+            put("localFolder", local.folder)
             put("name", name)
             put("singer", singer)
             put("albumName", albumName)

@@ -40,7 +40,7 @@ class FavoriteArtistsTest {
             assertEquals("新歌手", UserLibrary.favorites.value.single().singer)
             assertEquals("新专辑", UserLibrary.favorites.value.single().albumName)
 
-            LocalMediaStore.removeIds(setOf(local.id))
+            LocalMediaStore.removeDeleted(DeletedLocalFiles(setOf(local.id), setOf(local.uri)))
             assertTrue(UserLibrary.favorites.value.isEmpty())
             assertTrue(UserLibrary.favoriteUids.value.isEmpty())
         } finally {

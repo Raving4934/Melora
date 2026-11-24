@@ -208,7 +208,7 @@ class BookPlaybackInstrumentedTest {
                         }
                     }
                 } finally {
-                    LocalMediaStore.removeIds(setOf(wav.id))
+                    LocalMediaStore.discardIndexEntry(wav.id)
                 }
             }
         } finally {

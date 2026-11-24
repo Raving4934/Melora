@@ -586,7 +586,7 @@ object PlaybackController {
                 ) {
                     return@launch stop(if (staleLocal != null) "本地文件无法播放，请检查文件是否仍然存在" else "本地文件无法播放，请检查文件和下载目录权限")
                 }
-                LocalMediaStore.removeIds(setOf(staleLocal.id))
+                LocalMediaStore.discardIndexEntry(staleLocal.id)
                 TrackRegistry.clearResolved(track.uid)
                 "local:${track.uid}"
             } else resourceId?.also(SourceResolver::rejectResource)
@@ -1039,7 +1039,7 @@ object PlaybackController {
             val references = LocalMediaStore.songs.value.filter { it.id in ids || it.id in aliasIds || it.uri in uris }
             val files = DeletedLocalFiles(ids + aliasIds + references.map { it.id }, uris + references.map { it.uri })
             try {
-                LocalMediaStore.removeIds(files.ids)
+                LocalMediaStore.removeDeleted(files)
             } catch (error: IOException) {
                 // 文件已经物理删除，资料落盘失败不能阻断队列收尾或使应用崩溃。
                 Log.e(TAG, "删除后的本地歌曲资料保存失败", error)

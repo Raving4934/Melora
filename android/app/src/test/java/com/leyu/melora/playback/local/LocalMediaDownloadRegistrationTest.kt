@@ -141,7 +141,7 @@ class LocalMediaDownloadRegistrationTest {
         assertEquals(LocalMediaStore.idForUri(newUri), LocalMediaStore.findByUri(newUri)?.id)
         // 同一基线上的并发删除不能被新的身份生成器重新加入。
         val secondBaseline = LocalMediaStore.snapshot()
-        LocalMediaStore.removeIds(setOf(old.id))
+        LocalMediaStore.discardIndexEntry(old.id)
         LocalMediaStore.commitScanned(secondBaseline, scanned)
         assertEquals(listOf(newUri), LocalMediaStore.songs.value.map { it.uri })
     }
@@ -216,7 +216,7 @@ class LocalMediaDownloadRegistrationTest {
         assertEquals(high, LocalMediaStore.find(high.id))
         LocalMediaStore.replaceAll(LocalMediaStore.snapshot())
         assertEquals(2, LocalMediaStore.count)
-        LocalMediaStore.removeIds(setOf(complete.id))
+        LocalMediaStore.discardIndexEntry(complete.id)
         assertEquals(listOf(high), LocalMediaStore.songs.value)
     }
 

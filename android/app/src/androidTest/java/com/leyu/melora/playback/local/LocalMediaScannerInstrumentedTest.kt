@@ -13,6 +13,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
 import com.leyu.melora.playback.BackupStateLock
+import com.leyu.melora.playback.DeletedLocalFiles
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.UserLibrary
@@ -127,6 +128,184 @@ class LocalMediaScannerInstrumentedTest {
     }
 
     @Test
+    fun mediaFiltersRetainUserReferencesAndRefreshLegacyLocalUris() = runBlocking {
+        val tracks = (1L..5L).map(::mediaSong)
+        seed(tracks)
+        tracks.forEach { UserLibrary.markPlayed(it.toOnlineSong()) }
+        val root = JSONObject(UserLibrary.exportSnapshot())
+        val favorites = root.getJSONArray("favorites")
+        val legacySong = (0 until favorites.length()).map(favorites::getJSONObject)
+            .single { it.getString("songmid") == tracks.first().id }
+        legacySong.remove("localUri")
+        legacySong.remove("localFolder")
+        UserLibrary.replaceFromBackup(root.toString())
+        context.useMediaStore(listOf(1L, 2L, 3L, 4L), tracks.first().folder)
+        context.mediaProvider.shortTrackId = 1L
+        context.mediaProvider.smallTrackId = 2L
+        context.mediaProvider.nonMusicTrackId = 3L
+        MeloraSettings.localExcludeShort.value = true
+        MeloraSettings.localExcludeSmall.value = true
+
+        val result = LocalMediaScanner.scan(context)
+
+        assertEquals(0, result.failedSources)
+        assertMediaReferences(tracks.take(4).map { it.id }.toSet(), setOf("ms_4"))
+        val legacy = UserLibrary.favorites.value.first { it.songmid == tracks.first().id }
+        assertEquals(tracks.first().uri, legacy.raw.getString("localUri"))
+        assertEquals(tracks.first().folder, legacy.raw.getString("localFolder"))
+
+        MeloraSettings.localExcludeShort.value = false
+        MeloraSettings.localExcludeSmall.value = false
+        LocalMediaScanner.scan(context)
+        assertMediaReferences(tracks.take(4).map { it.id }.toSet(), setOf("ms_1", "ms_2", "ms_4"))
+    }
+
+    @Test
+    fun removedScanDirectoryRetainsUserReferencesUntilPhysicalDeletion() = runBlocking {
+        val hidden = song("loading", "loading/hidden")
+        val deleted = song("healthy", "healthy/deleted")
+        seed(listOf(hidden, deleted))
+        listOf(hidden, deleted).forEach { UserLibrary.markPlayed(it.toOnlineSong()) }
+        MeloraSettings.localFolders.value = listOf(treeUri("healthy").toString())
+        provider.setChildren("healthy", emptyList(), false)
+
+        assertEquals(0, LocalMediaScanner.scan(context).failedSources)
+        assertMediaReferences(setOf(hidden.id), emptySet())
+
+        // 删除入口只按确认的地址清理；隐藏曲目此时已经不在索引。
+        repeat(2) { LocalMediaStore.removeDeleted(DeletedLocalFiles(emptySet(), setOf(hidden.uri))) }
+        assertMediaReferences(emptySet())
+    }
+
+    @Test
+    fun reenabledDirectoryPrunesDeletedHiddenReferenceAndPreservesUncoveredUri() = runBlocking {
+        val hidden = song("loading", "loading/hidden")
+        val otherDevice = song("backup-only", "backup-only/unknown")
+        seed(listOf(hidden))
+        UserLibrary.setFavorites(listOf(otherDevice.toOnlineSong()), favorite = true)
+        val restored = UserLibrary.createPlaylist("备份中的未扫描目录", listOf(otherDevice.copy(id = hidden.id).toOnlineSong()))
+        MeloraSettings.localFolders.value = listOf(treeUri("healthy").toString())
+        provider.setChildren("healthy", emptyList(), false)
+        LocalMediaScanner.scan(context)
+        assertEquals(setOf(hidden.id, otherDevice.id), UserLibrary.favorites.value.map { it.songmid }.toSet())
+        assertPersistedSongs(emptySet())
+
+        provider.setChildren("loading", emptyList(), false)
+        MeloraSettings.localFolders.value = listOf(treeUri("loading").toString())
+        repeat(2) { LocalMediaScanner.scan(context) }
+
+        assertPersistedSongs(emptySet())
+        UserLibrary.reloadAfterRestore()
+        assertEquals(otherDevice.id, UserLibrary.favorites.value.single().songmid)
+        val playlists = UserLibrary.playlists.value.associateBy { it.id }
+        val protected = requireNotNull(playlists[restored.id]).songs.single()
+        assertEquals(hidden.id, protected.songmid)
+        assertEquals(otherDevice.uri, protected.raw.getString("localUri"))
+        assertTrue(UserLibrary.playlists.value.single { it.id != restored.id }.songs.isEmpty())
+    }
+
+    @Test
+    fun liftingFilterPrunesHiddenFileDeletedFromMountedMediaStore() = runBlocking {
+        val hidden = mediaSong(1)
+        seed(listOf(hidden))
+        UserLibrary.markPlayed(hidden.toOnlineSong())
+        context.useMediaStore(listOf(1L), hidden.folder)
+        context.mediaProvider.shortTrackId = 1L
+        MeloraSettings.localExcludeShort.value = true
+        LocalMediaScanner.scan(context)
+        assertMediaReferences(setOf(hidden.id), emptySet())
+
+        context.useMediaStore(emptyList(), hidden.folder)
+        MeloraSettings.localExcludeShort.value = false
+        LocalMediaScanner.scan(context)
+        assertMediaReferences(emptySet())
+    }
+
+    @Test
+    fun enrichReadsMissingAudioSpecsAndKeepsExistingMetadata() = runBlocking {
+        val audio = File(context.cacheDir, "enrich-fixture.mp3")
+        InstrumentationRegistry.getInstrumentation().context.assets.open("audio/fixture-320.mp3").use { input ->
+            audio.outputStream().use { input.copyTo(it) }
+        }
+        val incomplete = song("healthy", "healthy/specs").copy(
+            uri = Uri.fromFile(audio).toString(), sampleRate = 0, bitrate = 0,
+        )
+        val complete = song("healthy", "healthy/already-known")
+        val measured = requireNotNull(LocalTagReader.read(context, incomplete.uri))
+        assertTrue(measured.bitrate > 0 || measured.sampleRate > 0)
+        seed(listOf(incomplete, complete))
+
+        LocalMediaScanner.enrich(context)
+
+        val enriched = requireNotNull(LocalMediaStore.find(incomplete.id))
+        assertEquals(measured.sampleRate, enriched.sampleRate)
+        assertEquals(measured.bitrate, enriched.bitrate)
+        assertEquals(incomplete, enriched.copy(sampleRate = 0, bitrate = 0, bitDepth = incomplete.bitDepth))
+        assertEquals(complete, LocalMediaStore.find(complete.id))
+        LocalMediaStore.init(context)
+        assertEquals(enriched, LocalMediaStore.find(incomplete.id))
+    }
+
+    @Test
+    fun scanDoesNotPruneReferencesWhenSameUriHasAnUpdatedId() {
+        val old = mediaSong(1)
+        seed(listOf(old))
+        UserLibrary.markPlayed(old.toOnlineSong())
+        val baseline = LocalMediaStore.snapshot()
+        val replacement = old.copy(id = "another-index-id")
+        LocalMediaStore.replaceAll(listOf(replacement))
+        LocalMediaStore.commitScanned(baseline, emptyList(), missing = listOf(LocalMediaReference(old.id, old.uri, old.folder)))
+
+        assertMediaReferences(setOf(old.id), setOf(replacement.id))
+    }
+
+    @Test
+    fun legacyDocumentIdentitySurvivesRepeatedHidingAndScanning() = runBlocking {
+        val document = song("healthy", "healthy/legacy")
+        val legacy = document.copy(id = "doc_${document.uri.hashCode().toUInt().toString(16)}")
+        seed(listOf(legacy))
+        UserLibrary.markPlayed(legacy.toOnlineSong())
+        provider.setChildren("healthy", listOf(LoadingDocumentsProvider.Document("healthy/legacy", "legacy.mp3")), false)
+
+        repeat(2) {
+            MeloraSettings.localFolders.value = emptyList()
+            LocalMediaScanner.scan(context)
+            assertMediaReferences(setOf(legacy.id), emptySet())
+            MeloraSettings.localFolders.value = listOf(treeUri("healthy").toString())
+            LocalMediaScanner.scan(context)
+            assertMediaReferences(setOf(legacy.id))
+            assertTrue(UserLibrary.isFavorite(LocalMediaStore.songs.value.single().toOnlineSong().uid))
+        }
+    }
+
+    @Test
+    fun ambiguousLegacyIdIsNotAssignedToEitherNewlyScannedFile() = runBlocking {
+        val a = song("healthy", "healthy/Aa")
+        val b = song("healthy", "healthy/BB")
+        assertEquals(a.uri.hashCode(), b.uri.hashCode())
+        val legacyId = "doc_${a.uri.hashCode().toUInt().toString(16)}"
+        MeloraSettings.localFolders.value = listOf(treeUri("healthy").toString())
+        provider.setChildren("healthy", listOf(
+            LoadingDocumentsProvider.Document("healthy/Aa", "a.mp3"),
+            LoadingDocumentsProvider.Document("healthy/BB", "b.mp3"),
+        ), false)
+        UserLibrary.setFavorites(listOf(a.copy(id = legacyId).toOnlineSong()), favorite = true)
+        UserLibrary.createPlaylist("另一份旧记录", listOf(b.copy(id = legacyId).toOnlineSong()))
+
+        LocalMediaScanner.scan(context)
+
+        assertPersistedSongs(setOf(a.id, b.id))
+        assertEquals(a.uri, UserLibrary.favorites.value.single().raw.getString("localUri"))
+        assertEquals(b.uri, UserLibrary.playlists.value.single().songs.single().raw.getString("localUri"))
+
+        provider.setChildren("healthy", listOf(LoadingDocumentsProvider.Document("healthy/BB", "b.mp3")), false)
+        LocalMediaScanner.scan(context)
+        assertPersistedSongs(setOf(b.id))
+        assertTrue(UserLibrary.favorites.value.isEmpty())
+        assertEquals(b.uri, UserLibrary.playlists.value.single().songs.single().raw.getString("localUri"))
+    }
+
+    @Test
     fun mediaVolumeBecomingUnavailableDuringQueryRetainsItsOldReferences() = runBlocking {
         assertMediaVolumeTransition(availableBefore = true)
     }
@@ -155,9 +334,9 @@ class LocalMediaScannerInstrumentedTest {
         folder = Environment.getExternalStorageDirectory().absolutePath + "/Melora-scan-fixture",
     )
 
-    private fun assertMediaReferences(expected: Set<String>) {
-        assertPersistedSongs(expected)
-        assertEquals(expected, LocalMediaStore.songs.value.map { it.id }.toSet())
+    private fun assertMediaReferences(expected: Set<String>, indexed: Set<String> = expected) {
+        assertPersistedSongs(indexed)
+        assertEquals(indexed, LocalMediaStore.songs.value.map { it.id }.toSet())
         UserLibrary.reloadAfterRestore()
         assertEquals(expected, UserLibrary.favorites.value.map { it.songmid }.toSet())
         assertEquals(expected, UserLibrary.playlists.value.single().songs.map { it.songmid }.toSet())

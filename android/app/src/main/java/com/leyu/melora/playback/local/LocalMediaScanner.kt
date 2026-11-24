@@ -13,6 +13,7 @@ import android.provider.MediaStore
 import androidx.core.net.toUri
 import androidx.documentfile.provider.DocumentFile
 import com.leyu.melora.playback.MeloraSettings
+import com.leyu.melora.playback.UserLibrary
 import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
@@ -23,6 +24,8 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+
+internal data class LocalMediaReference(val id: String, val uri: String, val folder: String)
 
 /**
  * 本地媒体扫描：
@@ -36,9 +39,9 @@ object LocalMediaScanner {
     private val AUDIO_EXTENSIONS = setOf("mp3", "flac", "wav", "ape", "aac", "m4a", "ogg", "opus", "wma", "dsf", "dff", "mp4")
     private val scanMutex = Mutex()
 
-    internal data class SourceScan(
+    private data class SourceIndex(
         val songs: List<LocalSong>,
-        val successful: Boolean,
+        val observed: Set<String>,
     )
 
     fun requiresAudioPermission(): Boolean = MeloraSettings.localUseMediaStore.value
@@ -48,54 +51,61 @@ object LocalMediaScanner {
             if (failedSources > 0) "；$failedSources 个来源暂无法读取，已保留旧记录，请检查目录授权" else ""
     }
 
-    suspend fun scan(context: Context): ScanResult {
-        return scanMutex.withLock {
+    suspend fun scan(context: Context): ScanResult =
+        scanMutex.withLock {
             withContext(Dispatchers.IO) {
                 val appContext = context.applicationContext
                 LocalMediaStore.withScanning {
                     val baseline = LocalMediaStore.snapshot()
-                    val idsByUri = baseline.associate { it.uri to it.id }
-                    val folders = MeloraSettings.localFolders.value
-                    val useMediaStore = requiresAudioPermission()
+                    val baselineByUri = baseline.associateBy(LocalSong::uri)
+                    val references = UserLibrary.localMediaReferences()
+                    val priorFiles = (baseline.map { LocalMediaReference(it.id, it.uri, it.folder) } + references)
+                        .distinctBy { it.id to it.uri }
                     val successful = mutableListOf<LocalSong>()
                     val failed = mutableListOf<LocalSong>()
+                    val observed = hashSetOf<String>()
+                    val missing = mutableListOf<LocalMediaReference>()
                     var failedSources = 0
-
-                    if (useMediaStore) {
-                        val readableBefore = readableMediaStoreFolders(appContext, baseline)
+                    fun collect(
+                        index: SourceIndex?,
+                        previous: List<LocalMediaReference>,
+                        canRemove: (LocalMediaReference) -> Boolean,
+                    ) {
+                        if (index != null) {
+                            successful += index.songs
+                            observed += index.observed
+                        }
+                        var incomplete = index == null
+                        previous.forEach { song ->
+                            if (index?.observed?.contains(song.observationKey()) == true) return@forEach
+                            if (index != null && canRemove(song)) {
+                                missing += song
+                            } else {
+                                baselineByUri[song.uri]?.let {
+                                    failed += it
+                                    incomplete = true
+                                }
+                            }
+                        }
+                        if (incomplete) failedSources++
+                    }
+                    if (requiresAudioPermission()) {
+                        val previous = priorFiles.filterCancellable { it.isMediaStore() }
+                        val readableBefore = readableMediaStoreFolders(appContext, previous)
                         val mediaStore = scanSource { scanMediaStore(appContext) }
-                        if (mediaStore.successful) {
-                            successful += mediaStore.songs
-                            val observedIds = mediaStore.songs.mapTo(hashSetOf(), LocalSong::id)
-                            val readableAfter = readableMediaStoreFolders(appContext, baseline)
-                            // external 是多卷聚合：成功游标缺席不代表离线卷文件已删除。
-                            // 两端都可读的卷才允许缺失清理；保留条目不再走短/小音频过滤。
-                            val unavailable = baselineSongs(baseline) { song ->
-                                isMediaStoreSong(song) && song.id !in observedIds &&
-                                    (song.folder !in readableBefore || song.folder !in readableAfter)
-                            }
-                            if (unavailable.isNotEmpty()) {
-                                failedSources++
-                                failed += unavailable
-                            }
-                        } else {
-                            failedSources++
-                            failed += baselineSongs(baseline, ::isMediaStoreSong)
-                        }
+                        // external 聚合多卷，只有前后均可读的卷能确认缺失。
+                        val readable = readableBefore.intersect(readableMediaStoreFolders(appContext, previous))
+                        collect(mediaStore, previous) { it.folder in readable }
                     }
-
-                    for (tree in folders) {
+                    val folders = MeloraSettings.localFolders.value
+                    val idsByUri by lazy(LazyThreadSafetyMode.NONE) { documentIds(baseline, references) }
+                    for (folderUri in folders) {
                         currentCoroutineContext().ensureActive()
+                        val tree = folderUri.toUri()
                         val folder = scanSource { scanFolderTree(appContext, tree, idsByUri) }
-                        if (folder.successful) {
-                            successful += folder.songs
-                        } else {
-                            // 失败目录不能伪装成空目录；仅保留该 SAF 树的旧索引，其他树仍正常替换。
-                            failedSources++
-                            failed += baselineSongs(baseline) { isInTree(it.uri, tree) }
-                        }
+                        val previous = priorFiles.filterCancellable { matchesTree(it.uri, tree, includeAliases = folder == null) }
+                        collect(folder, previous) { true }
                     }
-
                     val scannedById = LinkedHashMap<String, LocalSong>(successful.size + failed.size)
                     successful.forEach { song ->
                         currentCoroutineContext().ensureActive()
@@ -106,16 +116,23 @@ object LocalMediaScanner {
                         currentCoroutineContext().ensureActive()
                         scannedById.putIfAbsent(song.id, song)
                     }
-                    val scanned = scannedById.values.toList()
-
+                    val deleted = missing.filterNot { it.observationKey() in observed }
                     currentCoroutineContext().ensureActive()
                     // 提交时在 LocalMediaStore 锁内合并 baseline/scanned/current，冲突不重做 IO。
-                    LocalMediaStore.commitScanned(baseline, scanned)
+                    LocalMediaStore.commitScanned(baseline, scannedById.values.toList(), deleted)
                     com.leyu.melora.playback.PlaybackController.checkLocalQueue(appContext)
                     ScanResult(LocalMediaStore.count, failedSources)
                 }
             }
         }
+
+    private fun documentIds(baseline: List<LocalSong>, references: List<LocalMediaReference>): Map<String, String> {
+        val usedIds = baseline.mapTo(hashSetOf(), LocalSong::id)
+        val saved = references.filterNot { it.id in usedIds }.distinctBy { it.id to it.uri }
+        // 旧哈希 ID 仅在本机记录能唯一确定地址和身份时复用。
+        val retained = saved.groupBy(LocalMediaReference::id).values.mapNotNull { it.singleOrNull() }
+            .groupBy(LocalMediaReference::uri).values.mapNotNull { it.singleOrNull() }
+        return retained.associate { it.uri to it.id } + baseline.associate { it.uri to it.id }
     }
 
     /** 后台补全媒体库条目的实测采样率、码率与位深。 */
@@ -123,69 +140,50 @@ object LocalMediaScanner {
         withContext(Dispatchers.IO) {
             val appContext = context.applicationContext
             val baseline = LocalMediaStore.snapshot()
-            val pending = mutableListOf<LocalSong>()
-            for (song in baseline) {
+            val scanned = baseline.map { song ->
                 currentCoroutineContext().ensureActive()
-                if (song.sampleRate == 0 || song.bitrate == 0) pending += song
-            }
-            if (pending.isEmpty()) return@withContext
-
-            val updated = HashMap<String, LocalSong>(pending.size)
-            for (song in pending) {
-                currentCoroutineContext().ensureActive()
-                val tag = LocalTagReader.read(appContext, song.uri) ?: continue
-                if (tag.sampleRate == 0 && tag.bitrate == 0) continue
-                updated[song.id] = song.copy(
+                if (song.sampleRate != 0 && song.bitrate != 0) return@map song
+                val tag = LocalTagReader.read(appContext, song.uri)
+                    ?.takeUnless { it.sampleRate == 0 && it.bitrate == 0 } ?: return@map song
+                song.copy(
                     sampleRate = if (tag.sampleRate > 0) tag.sampleRate else song.sampleRate,
                     bitrate = if (tag.bitrate > 0) tag.bitrate else song.bitrate,
                     bitDepth = if (tag.bitDepth > 0) tag.bitDepth else song.bitDepth,
                 )
-                currentCoroutineContext().ensureActive()
             }
-            if (updated.isEmpty()) return@withContext
-
-            val scanned = ArrayList<LocalSong>(baseline.size)
-            for (song in baseline) {
-                currentCoroutineContext().ensureActive()
-                scanned += updated[song.id] ?: song
-            }
-            // enrich 也只读一次文件；并发删除/更新由同一三方合并保留。
             currentCoroutineContext().ensureActive()
-            LocalMediaStore.commitScanned(baseline, scanned)
+            if (scanned != baseline) LocalMediaStore.commitScanned(baseline, scanned)
         }
     }
 
-    internal suspend fun scanSource(scan: suspend () -> List<LocalSong>): SourceScan {
+    internal suspend fun <T> scanSource(scan: suspend () -> T): T? {
         return try {
             currentCoroutineContext().ensureActive()
-            SourceScan(scan(), successful = true)
+            scan()
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
             currentCoroutineContext().ensureActive()
-            SourceScan(emptyList(), successful = false)
+            null
         }
     }
 
-    private suspend fun baselineSongs(
-        baseline: List<LocalSong>,
-        predicate: (LocalSong) -> Boolean,
-    ): List<LocalSong> {
-        val retained = ArrayList<LocalSong>()
-        for (song in baseline) {
-            currentCoroutineContext().ensureActive()
-            if (predicate(song)) retained += song
+    private suspend fun <T> List<T>.filterCancellable(predicate: (T) -> Boolean): List<T> {
+        val caller = currentCoroutineContext()
+        return filter { song ->
+            caller.ensureActive()
+            predicate(song)
         }
-        return retained
     }
 
-    private fun isMediaStoreSong(song: LocalSong): Boolean =
-        song.id.startsWith("ms_") ||
-            song.uri.startsWith(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI.toString())
+    private fun LocalMediaReference.isMediaStore(): Boolean =
+        uri.startsWith("content://media/") && uri.substringBeforeLast('/').endsWith("/audio/media")
 
-    private fun readableMediaStoreFolders(context: Context, baseline: List<LocalSong>): Set<String> {
+    private fun LocalMediaReference.observationKey(): String = if (isMediaStore()) "ms_${uri.substringAfterLast('/')}" else uri
+
+    private fun readableMediaStoreFolders(context: Context, baseline: List<LocalMediaReference>): Set<String> {
         val storage = context.getSystemService(StorageManager::class.java) ?: return emptySet()
-        return baseline.asSequence().filter(::isMediaStoreSong).map(LocalSong::folder)
+        return baseline.asSequence().map(LocalMediaReference::folder)
             .filter(String::isNotBlank).distinct().filter { folder ->
                 runCatching {
                     storage.getStorageVolume(File(folder))?.state in
@@ -194,21 +192,17 @@ object LocalMediaScanner {
             }.toSet()
     }
 
-    private fun isInTree(songUri: String, treeUri: String): Boolean {
+    private fun matchesTree(songUri: String, tree: Uri, includeAliases: Boolean): Boolean {
         val song = songUri.toUri()
-        val tree = treeUri.toUri()
-        if (song.scheme != "content" || tree.scheme != "content" || song.authority != tree.authority) {
-            return false
-        }
-        return try {
+        if (song.scheme != tree.scheme || song.authority != tree.authority) return false
+        return runCatching {
             val treeDocumentId = DocumentsContract.getTreeDocumentId(tree)
-            // SAF provider 的 documentId 可能是不透明ID，不能只按路径前缀判断归属。
             val sameTree = DocumentsContract.isTreeUri(song) && DocumentsContract.getTreeDocumentId(song) == treeDocumentId
-            val documentId = DocumentsContract.getDocumentId(song)
-            sameTree || documentId == treeDocumentId || documentId.startsWith("$treeDocumentId/")
-        } catch (_: IllegalArgumentException) {
-            false
-        }
+            // 无法扫描时允许按旧路径保留；只有同一个授权根能确认删除。
+            sameTree || includeAliases && DocumentsContract.getDocumentId(song).let {
+                it == treeDocumentId || it.startsWith("$treeDocumentId/")
+            }
+        }.getOrDefault(false)
     }
 
     private fun keep(song: LocalSong): Boolean {
@@ -217,7 +211,7 @@ object LocalMediaScanner {
         return true
     }
 
-    private suspend fun scanMediaStore(context: Context): List<LocalSong> {
+    private suspend fun scanMediaStore(context: Context): SourceIndex {
         val projection = arrayOf(
             MediaStore.Audio.Media._ID,
             MediaStore.Audio.Media.TITLE,
@@ -230,10 +224,11 @@ object LocalMediaScanner {
             MediaStore.Audio.Media.DATE_ADDED,
             MediaStore.Audio.Media.YEAR,
             MediaStore.Audio.Media.DATA,
+            MediaStore.Audio.Media.IS_MUSIC,
         )
         val result = mutableListOf<LocalSong>()
-        val cursor = query(context, MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, projection,
-            "${MediaStore.Audio.Media.IS_MUSIC} != 0")
+        val observed = hashSetOf<String>()
+        val cursor = query(context, MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, projection)
         cursor.use {
                 val idIndex = it.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
                 val titleIndex = it.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
@@ -246,9 +241,13 @@ object LocalMediaScanner {
                 val addedIndex = it.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED)
                 val yearIndex = it.getColumnIndexOrThrow(MediaStore.Audio.Media.YEAR)
                 val pathIndex = it.getColumnIndexOrThrow(MediaStore.Audio.Media.DATA)
+                val musicIndex = it.getColumnIndexOrThrow(MediaStore.Audio.Media.IS_MUSIC)
                 while (it.moveToNext()) {
                     currentCoroutineContext().ensureActive()
                     val mediaId = it.getLong(idIndex)
+                    val id = "ms_$mediaId"
+                    observed += id
+                    if (it.getInt(musicIndex) == 0) continue
                     val path = it.getString(pathIndex).orEmpty()
                     val folder = path.substringBeforeLast('/', "")
                     val stem = path.substringAfterLast('/').substringBeforeLast('.')
@@ -259,7 +258,7 @@ object LocalMediaScanner {
                         stem,
                     )
                     result += LocalSong(
-                        id = "ms_$mediaId",
+                        id = id,
                         uri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, mediaId).toString(),
                         title = title,
                         artist = artist,
@@ -279,16 +278,16 @@ object LocalMediaScanner {
                     )
                 }
         }
-        return result
+        return SourceIndex(result, observed)
     }
 
     /** 把扫描协程取消传给provider，信号生命周期覆盖查询和游标遍历。 */
-    private suspend fun query(context: Context, uri: Uri, projection: Array<String>, selection: String? = null): Cursor {
+    private suspend fun query(context: Context, uri: Uri, projection: Array<String>): Cursor {
         val cancellation = Job(currentCoroutineContext()[Job])
         val signal = CancellationSignal()
         cancellation.invokeOnCompletion { cause -> if (cause != null) signal.cancel() }
         try {
-            val cursor = context.contentResolver.query(uri, projection, selection, null, null, signal)
+            val cursor = context.contentResolver.query(uri, projection, null, null, null, signal)
                 ?: error("媒体目录暂时不可用")
             return object : CursorWrapper(cursor) {
                 override fun close() {
@@ -301,10 +300,11 @@ object LocalMediaScanner {
         }
     }
 
-    private suspend fun scanFolderTree(context: Context, treeUri: String, idsByUri: Map<String, String>): List<LocalSong> {
-        val root = DocumentFile.fromTreeUri(context, treeUri.toUri()) ?: error("无法读取自定义目录")
+    private suspend fun scanFolderTree(context: Context, treeUri: Uri, idsByUri: Map<String, String>): SourceIndex {
+        val root = DocumentFile.fromTreeUri(context, treeUri) ?: error("无法读取自定义目录")
         require(root.exists() && root.isDirectory && root.canRead()) { "自定义目录权限已失效" }
         val result = mutableListOf<LocalSong>()
+        val observed = hashSetOf<String>()
         val queue = ArrayDeque<Pair<android.net.Uri, String>>().apply { add(root.uri to root.name.orEmpty()) }
         val visited = hashSetOf<String>()
         val projection = arrayOf(
@@ -334,6 +334,8 @@ object LocalMediaScanner {
                         continue
                     }
                     val extension = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
+                    val address = uri.toString()
+                    observed += address
                     if (!mime.startsWith("audio") && extension !in AUDIO_EXTENSIONS) continue
                     val tag = LocalTagReader.read(context, uri.toString())
                     currentCoroutineContext().ensureActive()
@@ -341,8 +343,8 @@ object LocalMediaScanner {
                     val (title, artist) = restoreFromFileName(tag?.title?.ifBlank { null } ?: stem, tag?.artist.orEmpty(), stem)
                     val modifiedAt = it.getLong(4)
                     result += LocalSong(
-                        id = LocalMediaStore.idForUri(uri.toString(), idsByUri[uri.toString()]),
-                        uri = uri.toString(), title = title, artist = artist,
+                        id = LocalMediaStore.idForUri(address, idsByUri[address]),
+                        uri = address, title = title, artist = artist,
                         album = cleanFolderAlbum(tag?.album.orEmpty(), folderName),
                         durationMs = tag?.durationMs ?: 0L, sizeBytes = it.getLong(3),
                         mimeType = mime.ifBlank { "audio/${extension.ifBlank { "unknown" }}" },
@@ -354,7 +356,7 @@ object LocalMediaScanner {
                 }
             }
         }
-        return result
+        return SourceIndex(result, observed)
     }
 
     private fun cleanUnknown(value: String?): String {

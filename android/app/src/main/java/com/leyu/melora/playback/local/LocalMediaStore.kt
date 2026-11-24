@@ -3,6 +3,7 @@ package com.leyu.melora.playback.local
 import android.content.Context
 import android.net.Uri
 import com.leyu.melora.playback.AudioSpecification
+import com.leyu.melora.playback.DeletedLocalFiles
 import com.leyu.melora.playback.UiTrack
 import com.leyu.melora.playback.UserLibrary
 import com.leyu.melora.playback.sdk.OnlineSong
@@ -55,8 +56,8 @@ object LocalMediaStore {
             val prepared = prepareIndex(loaded)
             if (prepared.songs != loaded) persist(prepared.songs)
             applyIndex(prepared)
+            refreshLibrary()
         }
-        UserLibrary.refreshLocalSongs()
     }
 
     fun setScanning(value: Boolean) { scanning.value = value }
@@ -71,11 +72,12 @@ object LocalMediaStore {
     }
 
     /** 扫描结果整体替换索引并持久化。 */
-    fun replaceAll(list: List<LocalSong>) { mutate(pruneMissing = true) { list } }
+    fun replaceAll(list: List<LocalSong>) { mutate { list } }
 
-    fun removeIds(ids: Set<String>) {
-        if (ids.isEmpty()) return
-        mutate(pruneMissing = true) { current -> current.filterNot { it.id in ids } }
+    internal fun discardIndexEntry(id: String) = mutate { songs -> songs.filterNot { it.id == id } }
+
+    internal fun removeDeleted(files: DeletedLocalFiles) = synchronized(lock) {
+        commitLocked(_songs.value.filterNot { it.id in files.ids || it.uri in files.uris }, files)
     }
 
     /**
@@ -110,7 +112,7 @@ object LocalMediaStore {
         } else {
             current.map { if (it.id == existing.id) registered else it }
         }
-        commitLocked(updated, pruneMissing = false)
+        commitLocked(updated)
         registered
     }
 
@@ -120,7 +122,7 @@ object LocalMediaStore {
         require(song.id == expected.id && song.uri == expected.uri)
         val updated = song.copy(mimeType = latest.mimeType, sampleRate = latest.sampleRate,
             bitrate = latest.bitrate, bitDepth = latest.bitDepth, channelCount = latest.channelCount)
-        if (updated != latest) commitLocked(_songs.value.map { if (it.id == expected.id) updated else it }, pruneMissing = false)
+        if (updated != latest) commitLocked(_songs.value.map { if (it.id == expected.id) updated else it })
         updated
     }
 
@@ -158,9 +160,14 @@ object LocalMediaStore {
         }
     }
 
-    fun clear() { mutate(pruneMissing = true) { emptyList() } }
+    fun clear() { mutate { emptyList() } }
 
-    /** 在索引锁内读取当前完整快照，集合刷新不能使用调用方提前捕获的旧 map。 */
+    /** 启动时两边谁先就绪都能刷新，索引与记录始终按同一锁顺序提交。 */
+    internal fun refreshLibrary() = synchronized(lock) {
+        if (byId.isNotEmpty()) UserLibrary.refreshLocalSongs(byId)
+    }
+
+    /** 在索引锁内读取当前完整快照。 */
     internal fun <T> withIndexLock(block: (List<LocalSong>) -> T): T = synchronized(lock) {
         block(_songs.value)
     }
@@ -178,26 +185,22 @@ object LocalMediaStore {
     internal fun commitScanned(
         baseline: List<LocalSong>,
         scanned: List<LocalSong>,
-    ): Int = synchronized(lock) {
+        missing: List<LocalMediaReference> = emptyList(),
+    ) = synchronized(lock) {
         val baselineById = baseline.associateBy(LocalSong::id)
-        val scannedById = scanned.associateBy(LocalSong::id)
-        val current = _songs.value
-        val currentById = current.associateBy(LocalSong::id)
-        val merged = buildList(scanned.size + current.size) {
-            scanned.forEach { scannedSong ->
-                val baselineSong = baselineById[scannedSong.id]
-                val currentSong = currentById[scannedSong.id]
-                if (currentSong == null && baselineSong != null) return@forEach
-                add(mergeScannedSong(scannedSong, baselineSong, currentSong))
-            }
-            current.forEach { currentSong ->
-                if (scannedById.containsKey(currentSong.id)) return@forEach
-                val baselineSong = baselineById[currentSong.id]
-                if (baselineSong == null || currentSong != baselineSong) add(currentSong)
-            }
+        val scannedIds = scanned.mapTo(hashSetOf(), LocalSong::id)
+        val merged = scanned.mapNotNull { song ->
+            val old = baselineById[song.id]
+            val current = byId[song.id]
+            if (current == null && old != null) null else mergeScannedSong(song, old, current)
+        } + _songs.value.filter { it.id !in scannedIds && it != baselineById[it.id] }
+        val confirmed = missing.takeIf { it.isNotEmpty() }?.let {
+            val remainingIds = merged.mapTo(hashSetOf(), LocalSong::id)
+            val remainingUris = merged.mapTo(hashSetOf(), LocalSong::uri)
+            val deleted = it.filterNot { song -> song.id in remainingIds || song.uri in remainingUris }
+            DeletedLocalFiles(deleted.mapTo(hashSetOf(), LocalMediaReference::id), deleted.mapTo(hashSetOf(), LocalMediaReference::uri))
         }
-        commitLocked(merged, pruneMissing = true)
-        scanned.size
+        commitLocked(merged, confirmed)
     }
 
     /** 清除缓存目录后同步移除只指向该目录的封面地址，避免持久化失效 file URI。 */
@@ -291,22 +294,19 @@ object LocalMediaStore {
     fun hasLocalFile(song: OnlineSong): Boolean =
         song.source == LocalSong.SOURCE || matchSong(song) != null
 
-    private fun mutate(
-        pruneMissing: Boolean = false,
-        transform: (List<LocalSong>) -> List<LocalSong>,
-    ): Boolean = synchronized(lock) {
-        commitLocked(transform(_songs.value), pruneMissing)
+    private fun mutate(transform: (List<LocalSong>) -> List<LocalSong>) = synchronized(lock) {
+        commitLocked(transform(_songs.value))
     }
 
-    private fun commitLocked(updated: List<LocalSong>, pruneMissing: Boolean): Boolean {
+    private fun commitLocked(updated: List<LocalSong>, deleted: DeletedLocalFiles? = null) {
         val current = _songs.value
-        if (updated === current || updated == current) return false
-        val prepared = prepareIndex(updated)
-        if (prepared.songs == current) return false
-        persist(prepared.songs)
-        applyIndex(prepared)
-        UserLibrary.refreshLocalSongs(pruneMissing)
-        return true
+        val previousById = byId
+        val prepared = updated.takeUnless { it == current }?.let(::prepareIndex)?.takeUnless { it.songs == current }
+        if (prepared != null) {
+            persist(prepared.songs)
+            applyIndex(prepared)
+        }
+        if (prepared != null || deleted != null) UserLibrary.refreshLocalSongs(byId, previousById, deleted)
     }
 
     /** 旧版本重复ID按原顺序合并，修复时不删除媒体文件。 */

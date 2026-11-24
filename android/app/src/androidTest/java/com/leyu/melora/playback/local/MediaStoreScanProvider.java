@@ -11,6 +11,9 @@ public final class MediaStoreScanProvider extends ContentProvider {
     private long[] ids = new long[0];
     private String folder = "";
     public Runnable onQuery;
+    public long shortTrackId = -1;
+    public long smallTrackId = -1;
+    public long nonMusicTrackId = -1;
 
     public void setSongs(long[] ids, String folder) { this.ids = ids; this.folder = folder; }
     @Override public boolean onCreate() { return true; }
@@ -18,6 +21,7 @@ public final class MediaStoreScanProvider extends ContentProvider {
         if (onQuery != null) { Runnable callback = onQuery; onQuery = null; callback.run(); }
         MatrixCursor cursor = new MatrixCursor(projection);
         for (long id : ids) {
+            if ("is_music != 0".equals(selection) && id == nonMusicTrackId) continue;
             MatrixCursor.RowBuilder row = cursor.newRow();
             for (String column : projection) {
                 Object value;
@@ -26,13 +30,14 @@ public final class MediaStoreScanProvider extends ContentProvider {
                     case "title": value = "scanned-" + id; break;
                     case "artist": value = "scanned-artist"; break;
                     case "album": value = "scanned-album"; break;
-                    case "duration": value = 180_000L; break;
-                    case "_size": value = 3_000_000L; break;
+                    case "duration": value = id == shortTrackId ? 30_000L : 180_000L; break;
+                    case "_size": value = id == smallTrackId ? 500_000L : 3_000_000L; break;
                     case "mime_type": value = "audio/mpeg"; break;
                     case "date_modified": value = 1L; break;
                     case "date_added": value = 1L; break;
                     case "year": value = 2024; break;
                     case "_data": value = folder + "/song-" + id + ".mp3"; break;
+                    case "is_music": value = id == nonMusicTrackId ? 0 : 1; break;
                     default: value = null;
                 }
                 row.add(value);
