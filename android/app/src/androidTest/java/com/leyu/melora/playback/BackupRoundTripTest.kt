@@ -6,6 +6,7 @@ import android.content.ContextWrapper
 import android.content.Intent
 import android.content.SharedPreferences
 import android.net.Uri
+import android.provider.DocumentsContract
 import android.provider.Settings as AndroidSettings
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -239,23 +240,23 @@ class BackupRoundTripTest {
         MeloraSettings.reloadAfterRestore()
         assertEquals(expected, desktopLyricSnapshot())
 
-        val target = document("desktop-lyrics-round-trip.json")
-        assertTrue(BackupManager.export(context, target).isSuccess)
-        MeloraSettings.updateShowDesktopLyrics(false)
-        MeloraSettings.updateLockLyrics(false)
-        MeloraSettings.updateSingleLine(false)
-        MeloraSettings.updateLyricFontSize(18f)
-        MeloraSettings.updateLyricMaxLines(2f)
-        MeloraSettings.updateLyricAlpha(82f)
-        MeloraSettings.updateLyricHAlign(0)
-        MeloraSettings.updateLyricVAlign(2)
-        MeloraSettings.updateDesktopLyricPosition(DesktopLyricPosition(0.9f, 0.1f))
-        MeloraSettings.updateLyricColorIndex(3)
-        MeloraSettings.updateLyricBackground(false)
-        MeloraSettings.updateNotificationLyrics(false)
+        withLocalBackup { target ->
+            MeloraSettings.updateShowDesktopLyrics(false)
+            MeloraSettings.updateLockLyrics(false)
+            MeloraSettings.updateSingleLine(false)
+            MeloraSettings.updateLyricFontSize(18f)
+            MeloraSettings.updateLyricMaxLines(2f)
+            MeloraSettings.updateLyricAlpha(82f)
+            MeloraSettings.updateLyricHAlign(0)
+            MeloraSettings.updateLyricVAlign(2)
+            MeloraSettings.updateDesktopLyricPosition(DesktopLyricPosition(0.9f, 0.1f))
+            MeloraSettings.updateLyricColorIndex(3)
+            MeloraSettings.updateLyricBackground(false)
+            MeloraSettings.updateNotificationLyrics(false)
 
-        BackupManager.import(context, target).getOrThrow()
-        assertEquals(expected, desktopLyricSnapshot())
+            BackupManager.import(context, target).getOrThrow()
+            assertEquals(expected, desktopLyricSnapshot())
+        }
     }
 
     @Test
@@ -270,42 +271,42 @@ class BackupRoundTripTest {
         val store = LxScriptStore(context)
         val originUrl = "https://example.test/saved.js"
         store.import("saved.js", "// original test source", originUrl)
-        val target = document("round-trip.json")
-        assertTrue(BackupManager.export(context, target).getOrThrow().contains("备份完成"))
-        val parsed = parseBackupDocument(File(target.path!!).readText())
-        val exportedScripts = requireNotNull(parsed.scripts)
-        assertEquals("测试分类", parsed.settings!!.getString("playlistTagName"))
-        assertEquals("saved.js", exportedScripts.single().fileName)
-        assertEquals(originUrl, exportedScripts.single().originUrl)
+        withLocalBackup { target ->
+            val parsed = parseBackupDocument(context.contentResolver.openInputStream(target)!!.use { it.readBackupText() })
+            val exportedScripts = requireNotNull(parsed.scripts)
+            assertEquals("测试分类", parsed.settings!!.getString("playlistTagName"))
+            assertEquals("saved.js", exportedScripts.single().fileName)
+            assertEquals(originUrl, exportedScripts.single().originUrl)
 
-        MeloraSettings.updatePlayerLyrics(LyricsUiConfig())
-        MeloraSettings.updatePlaylistTag("different", "changed")
-        MeloraSettings.updateLyricBackground(false)
-        UserLibrary.replaceFromBackup(library("changed").toString())
-        store.import("saved.js", "// changed test source", "https://stale.example.test/saved.js")
-        store.import("other.js", "// not part of backup")
-        BackupManager.import(context, target).getOrThrow()
-        assertEquals(LyricsUiConfig(26f, true, true, true), MeloraSettings.playerLyrics.value)
-        MeloraSettings.playerLyrics.value = LyricsUiConfig()
-        MeloraSettings.reloadAfterRestore()
-        assertEquals(LyricsUiConfig(26f, true, true, true), MeloraSettings.playerLyrics.value)
-        assertEquals("original", UserLibrary.favorites.value.single().name)
-        assertEquals("tag-id", MeloraSettings.playlistTagId.value)
-        assertEquals("测试分类", MeloraSettings.playlistTagName.value)
-        assertTrue(MeloraSettings.lyricBackground.value)
-        assertTrue(MeloraSettings.notificationLyrics.value)
-        assertTrue(MeloraSettings.localAutoFillInfo.value)
-        assertEquals(setOf("saved.js", "other.js"), store.list().map { it.id }.toSet())
-        assertEquals("// original test source", store.code("saved.js"))
-        assertEquals(originUrl, store.list().single { it.id == "saved.js" }.originUrl)
-        val first = UserLibrary.exportSnapshot()
-        val sourceFile = File(context.filesDir, "lx-sources/saved.js")
-        val previousStamp = sourceFile.lastModified()
-        BackupManager.import(context, target).getOrThrow()
-        assertEquals("unchanged scripts must not be rewritten/restarted", previousStamp, sourceFile.lastModified())
-        assertEquals(first, UserLibrary.exportSnapshot())
-        assertEquals(2, store.list().size)
-        assertFalse(File(context.filesDir, "backup-restore").exists())
+            MeloraSettings.updatePlayerLyrics(LyricsUiConfig())
+            MeloraSettings.updatePlaylistTag("different", "changed")
+            MeloraSettings.updateLyricBackground(false)
+            UserLibrary.replaceFromBackup(library("changed").toString())
+            store.import("saved.js", "// changed test source", "https://stale.example.test/saved.js")
+            store.import("other.js", "// not part of backup")
+            BackupManager.import(context, target).getOrThrow()
+            assertEquals(LyricsUiConfig(26f, true, true, true), MeloraSettings.playerLyrics.value)
+            MeloraSettings.playerLyrics.value = LyricsUiConfig()
+            MeloraSettings.reloadAfterRestore()
+            assertEquals(LyricsUiConfig(26f, true, true, true), MeloraSettings.playerLyrics.value)
+            assertEquals("original", UserLibrary.favorites.value.single().name)
+            assertEquals("tag-id", MeloraSettings.playlistTagId.value)
+            assertEquals("测试分类", MeloraSettings.playlistTagName.value)
+            assertTrue(MeloraSettings.lyricBackground.value)
+            assertTrue(MeloraSettings.notificationLyrics.value)
+            assertTrue(MeloraSettings.localAutoFillInfo.value)
+            assertEquals(setOf("saved.js", "other.js"), store.list().map { it.id }.toSet())
+            assertEquals("// original test source", store.code("saved.js"))
+            assertEquals(originUrl, store.list().single { it.id == "saved.js" }.originUrl)
+            val first = UserLibrary.exportSnapshot()
+            val sourceFile = File(context.filesDir, "lx-sources/saved.js")
+            val previousStamp = sourceFile.lastModified()
+            BackupManager.import(context, target).getOrThrow()
+            assertEquals("unchanged scripts must not be rewritten/restarted", previousStamp, sourceFile.lastModified())
+            assertEquals(first, UserLibrary.exportSnapshot())
+            assertEquals(2, store.list().size)
+            assertFalse(File(context.filesDir, "backup-restore").exists())
+        }
     }
 
     @Test
@@ -789,18 +790,21 @@ class BackupRoundTripTest {
     }
 
     @Test
-    fun contentProviderExportFailureRestoresPreviousDocument() = runBlocking<Unit> {
+    fun recoveryExportFailureRestoresDestinationAndKeepsTheSourceForRetry() = runBlocking<Unit> {
         val authority = InstrumentationRegistry.getInstrumentation().context.packageName + ".backup-fixture"
         val uri = Uri.parse("content://$authority/backup/fail-once.json")
         context.contentResolver.call(uri, "reset", null, null)
         val previous = "{\"keep\":\"previous backup\"}"
         context.contentResolver.openOutputStream(uri, "wt")!!.use { it.write(previous.toByteArray()) }
         context.contentResolver.call(uri, "failNextWrite", null, null)
-        assertTrue(BackupManager.export(context, uri).isFailure)
+        val saved = File(context.filesDir, "backup-export-recovery-legacy.json").apply { writeText(previous + "\n") }
+        BackupManager.recoverInterruptedRestore(context)
+        assertTrue(BackupManager.saveExportRecovery(context, uri).isFailure)
+        assertTrue(saved.exists())
         assertEquals(previous, context.contentResolver.openInputStream(uri)!!.bufferedReader().use { it.readText() })
-        // The next export uses the same real provider path, then real import accepts the file.
-        BackupManager.export(context, uri).getOrThrow()
-        BackupManager.import(context, uri).getOrThrow()
+        BackupManager.saveExportRecovery(context, uri).getOrThrow()
+        assertEquals(previous + "\n", context.contentResolver.openInputStream(uri)!!.bufferedReader().use { it.readText() })
+        assertFalse(saved.exists())
         context.contentResolver.call(uri, "reset", null, null)
     }
 
@@ -812,11 +816,19 @@ class BackupRoundTripTest {
         val original = "{\"original\":\"do not lose\"}"
         context.contentResolver.openOutputStream(uri, "wt")!!.use { it.write(original.toByteArray()) }
         context.contentResolver.call(uri, "failBothWrites", null, null)
-        val failure = BackupManager.export(context, uri).exceptionOrNull()
+        val source = File(context.filesDir, "backup-export-recovery-legacy.json").apply {
+            writeText("original from an older installation")
+            assertTrue(setLastModified(1_000L))
+        }
+        val failure = BackupManager.saveExportRecovery(context, uri).exceptionOrNull()
         assertTrue(failure?.message.orEmpty().contains("副本已保留"))
-        val saved = context.filesDir.listFiles()!!.single { it.name.startsWith("backup-export-recovery-") }
+        val saved = context.filesDir.listFiles()!!.single { it.name.startsWith("backup-export-recovery-") && it != source }
         assertEquals(original, saved.readText())
         BackupManager.recoverInterruptedRestore(context) // 重启后仍发现待取回副本。
+        assertTrue(BackupManager.hasExportRecovery.value)
+        val first = document("saved-legacy.json")
+        BackupManager.saveExportRecovery(context, first).getOrThrow()
+        assertEquals("original from an older installation", File(first.path!!).readText())
         assertTrue(BackupManager.hasExportRecovery.value)
         val recovered = document("saved-original.json")
         BackupManager.saveExportRecovery(context, recovered).getOrThrow()
@@ -824,6 +836,21 @@ class BackupRoundTripTest {
         assertFalse(saved.exists())
         assertFalse(BackupManager.hasExportRecovery.value)
         context.contentResolver.call(uri, "reset", null, null)
+    }
+
+    private suspend fun withLocalBackup(verify: suspend (Uri) -> Unit) {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val tree = DocumentsContract.buildTreeDocumentUri("${instrumentation.context.packageName}.download-fixture", "root")
+        DownloadFixtureProvider.grantTree(instrumentation, true)
+        LocalBackup.selectDirectory(context, tree)
+        try {
+            val snapshot = BackupManager.snapshot(context)
+            LocalBackup.write(context, tree, snapshot, keepLatest = false)
+            verify(DocumentsContract.buildDocumentUriUsingTree(tree, snapshot.id.localName))
+        } finally {
+            context.contentResolver.call(tree, "reset", null, null)
+            context.contentResolver.releasePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        }
     }
 
     private fun seedExistingData() {

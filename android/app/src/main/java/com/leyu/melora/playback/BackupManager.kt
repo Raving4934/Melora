@@ -45,16 +45,6 @@ object BackupManager {
         }
     }
 
-    suspend fun export(context: Context, uri: Uri): Result<String> = ioResult {
-        operations.withLock {
-            val job = currentCoroutineContext()
-            val (text, count) = createSnapshot(context)
-            job.ensureActive()
-            writeExport(context, uri, text) { job.ensureActive() }
-            "备份完成（含设置、用户库与 $count 个音源脚本；不含音乐文件、缓存及播放进度）"
-        }
-    }
-
     suspend fun import(context: Context, uri: Uri): Result<String> = ioResult {
         operations.withLock {
             val job = currentCoroutineContext()
@@ -67,7 +57,7 @@ object BackupManager {
     internal suspend fun snapshot(context: Context): BackupSnapshot = withContext(Dispatchers.IO) {
         operations.withLock {
             val id = BackupFileId(System.currentTimeMillis(), WebDavConfigStore.deviceId(context).take(8), UUID.randomUUID())
-            BackupSnapshot(id, createSnapshot(context, id.createdAt).first)
+            BackupSnapshot(id, createSnapshot(context, id.createdAt))
         }
     }
 
@@ -75,7 +65,7 @@ object BackupManager {
         operations.withLock { restoreSnapshot(context, text) }
     }
 
-    private suspend fun createSnapshot(context: Context, createdAt: Long = System.currentTimeMillis()): Pair<String, Int> {
+    private suspend fun createSnapshot(context: Context, createdAt: Long): String {
         val job = currentCoroutineContext()
         return synchronized(BackupStateLock.monitor) {
             check(BackupRestoreTransaction.failure.value == null) { "请先完成上一次备份恢复" }
@@ -91,7 +81,7 @@ object BackupManager {
                     script.originUrl?.let { item.put("originUrl", it) }
                     put(item)
                 } })
-            boundedBackupJson(root).also(::parseBackupDocument) to scripts.size
+            boundedBackupJson(root).also(::parseBackupDocument)
         }
     }
 
