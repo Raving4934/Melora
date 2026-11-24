@@ -2,6 +2,40 @@
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-11-25
+
+### 安卓客户端
+
+【同步与备份】
+
+- 新增「同步与备份」。可以选择本地备份目录，手动或每日自动备份到本地、WebDAV 或两者，也可仅保留最新本地备份。网络恢复列表显示可用的设备型号和应用版本。
+- 在设备上保存同一 WebDAV 目录后，开启「同步我的记录」即可同步收藏、自建和收藏歌单、最近播放与听书断点。离线修改会在连网后尝试合并，无法自动判断的冲突可以逐项选择要保留的版本。
+- WebDAV 表单填写后即可测试目录读写和列举权限。每台设备写入自己的记录文件，基础的目录读写和列举权限即可支持同步。
+
+【播放与听书】
+
+- 最近播放按听书章节分别记录，重回对应章节时可以从该章节的断点继续。选集抽屉改进长目录的搜索和定位，跳转后短暂高亮所选章节。
+- 手机横屏播放页重新布局，浏览队列时可以继续使用播放控制。歌曲列表、队列及更多菜单显示当前歌曲的跳动音柱。
+- 音质徽标采用「金属铂银」配色和微圆角，默认短标随文字定宽，也可选择「图标+文字」或「双段规格」。播放页音频信息使用细描边双段规格，并显示可识别的位深、采样率、编码和码率。沉浸模式的实际音质以文字显示。
+- 修复歌词定位与预取、队尾资源耗尽后的手动重试，以及清理已播曲目时的定位问题。优化通知栏歌词刷新和重复下载的准备流程。
+
+【设置与资料库】
+
+- 关闭「启动时恢复上次页面」后，可指定发现、搜索、排行榜、歌单、听书、本地歌曲或我的列表为启动页面。播放缓存容量可手动输入，设为 0 时不限容量。
+- 「其他设置」可分别开启导入歌单自动更新与启动时自动检查软件更新。导入歌单跟随原歌单更新时保留本地的手动增删。
+- 修复设置选项菜单弹出时的位置抖动和字号不一致。搜索分页失败时保留已加载结果，并支持重试失败页。在线列表按曲目去重，歌单卡片和详情共用首个可播放目录页。
+- 本地扫描只在确认媒体文件已删除后清理关联收藏和播放历史。更新 Android 构建和界面组件依赖。
+
+### 提交追溯（不进入应用内日志）
+
+Android 版本号为 0.2.4，versionCode 为 24。完整 Android 提交区间见 [android-v0.2.3 至 android-v0.2.4][Android 0.2.4]。
+
+- 本地及 WebDAV 备份、快照统一和多设备记录合并。[`e13514c`](https://github.com/Raving4934/Melora/commit/e13514c36d7cb54fc24f5ef9b31799f414e52991)、[`dcecca3`](https://github.com/Raving4934/Melora/commit/dcecca315ac05637f4336231232ec3e4d0d94beb)、[`dbecbbe`](https://github.com/Raving4934/Melora/commit/dbecbbe53140b7603713b79ca0f08c6ab9bc3f6c)
+- 听书章节断点、选集定位和目录完整性。[`eeda94e`](https://github.com/Raving4934/Melora/commit/eeda94e0511b34f9069ed65347267644e0b5d24a)、[`0da46d5`](https://github.com/Raving4934/Melora/commit/0da46d59b9c0a05d15eee6196223da0a4317c8a7)、[`6028213`](https://github.com/Raving4934/Melora/commit/6028213a9ded5cabd1cf46d64a0153b40480afcc)
+- 手机横屏播放、播放音柱、音质徽标及音频信息。[`74387f3`](https://github.com/Raving4934/Melora/commit/74387f371d18c1c921b766e7a62a32d71de4a4d5)、[`36cc54f`](https://github.com/Raving4934/Melora/commit/36cc54f39dc37f4a240e868ade0dee9864580787)、[`b90ea13`](https://github.com/Raving4934/Melora/commit/b90ea13729bb6c71be42b826f12574ee140873c5)、[`f5ec848`](https://github.com/Raving4934/Melora/commit/f5ec8482810dd2a89191586965852523255b1b3b)、[`1d56363`](https://github.com/Raving4934/Melora/commit/1d56363405ca3481ac6b2afa29ccab6e467fcaf0)
+- 启动页面、缓存容量、自动更新开关与弹出菜单。[`91aa30f`](https://github.com/Raving4934/Melora/commit/91aa30f60bf13aaf4b552ac7d2c1465b8b9aa62c)、[`0ad4a1d`](https://github.com/Raving4934/Melora/commit/0ad4a1d9b6fb5cc10a496a472c476ceb7dbeffec)、[`c728207`](https://github.com/Raving4934/Melora/commit/c7282077311a0a319f50fdc5559dae20e812cbe1)、[`2d87241`](https://github.com/Raving4934/Melora/commit/2d87241f79aa41f49304fef5b5ae615b0cc3273a)、[`d19f776`](https://github.com/Raving4934/Melora/commit/d19f77664530d45a62d0236838cd3ac3b1cc5056)、[`f96983b`](https://github.com/Raving4934/Melora/commit/f96983bf2d0b9becf6bacbe38ad7bd8bba8422d7)
+- 队列和歌词稳定性、下载准备、搜索分页与本地资料保护。[`c3e2dcf`](https://github.com/Raving4934/Melora/commit/c3e2dcfa974376baece65cf7751fb54dad1b632c)、[`824cc2d`](https://github.com/Raving4934/Melora/commit/824cc2d44e810d2686405c45613fd4bfe83de04b)、[`bb9ae76`](https://github.com/Raving4934/Melora/commit/bb9ae767e87e475fddee1ba49f19b4a06aa599b4)、[`b4db9b9`](https://github.com/Raving4934/Melora/commit/b4db9b993967dde8b29a47ed55fac33c06536618)、[`81be8da`](https://github.com/Raving4934/Melora/commit/81be8da298f4575745e2aff2f244fa3dcd42a25a)、[`ae68072`](https://github.com/Raving4934/Melora/commit/ae68072f9e3dd6b663d941513a30637db7d5f190)
+
 ## [0.2.3] - 2026-11-08
 
 ### 安卓客户端
@@ -608,7 +642,9 @@
 
 **Docker 镜像：** `ghcr.io/raving4934/melora:0.1.0`（支持 `linux/amd64`、`linux/arm64`）。
 
-[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.3...HEAD
+[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.4...HEAD
+[0.2.4]: https://github.com/Raving4934/Melora/compare/android-v0.2.3...android-v0.2.4
+[Android 0.2.4]: https://github.com/Raving4934/Melora/compare/android-v0.2.3...android-v0.2.4
 [0.2.3]: https://github.com/Raving4934/Melora/compare/android-v0.2.2...android-v0.2.3
 [Android 0.2.3]: https://github.com/Raving4934/Melora/compare/android-v0.2.2...android-v0.2.3
 [0.2.2]: https://github.com/Raving4934/Melora/compare/android-v0.2.1...android-v0.2.2
@@ -619,7 +655,7 @@
 [Android 0.2.0]: https://github.com/Raving4934/Melora/compare/android-v0.1.10...android-v0.2.0
 [0.1.10]: https://github.com/Raving4934/Melora/compare/android-v0.1.9...android-v0.1.10
 [Android 0.1.10]: https://github.com/Raving4934/Melora/compare/android-v0.1.9...android-v0.1.10
-[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.3...HEAD
+[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.4...HEAD
 [Web Unreleased]: https://github.com/Raving4934/Melora/compare/v0.1.3...HEAD
 [Web 0.1.3]: https://github.com/Raving4934/Melora/compare/v0.1.2...v0.1.3
 [Web 0.1.2]: https://github.com/Raving4934/Melora/compare/v0.1.1...v0.1.2
