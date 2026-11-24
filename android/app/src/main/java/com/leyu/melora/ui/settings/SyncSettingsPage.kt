@@ -16,6 +16,7 @@ import androidx.compose.material.icons.outlined.Backup
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.Sync
+import androidx.compose.material.icons.outlined.SyncProblem
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -88,13 +89,15 @@ internal fun SyncSettingsSubPage(onBack: () -> Unit) {
     val recoveryAvailable by BackupManager.hasExportRecovery.collectAsStateWithLifecycle()
     val syncEnabled by WebDavSync.enabled.collectAsStateWithLifecycle()
     val syncStatus by WebDavSync.status.collectAsStateWithLifecycle()
+    val syncConflicts by WebDavSync.conflicts.collectAsStateWithLifecycle()
     var saved by remember { mutableStateOf<WebDavConfig?>(null) }
     var ready by remember { mutableStateOf(false) }
-    var busy by remember { mutableStateOf(false) }
+    var busyAreas by remember { mutableStateOf(emptySet<FeedbackArea>()) }
     var notice by remember { mutableStateOf("") }
     var preferenceNotice by remember { mutableStateOf("") }
     var recordNotice by remember { mutableStateOf("") }
     var configNotice by remember { mutableStateOf("") }
+    var showConflicts by rememberSaveable { mutableStateOf(false) }
     var menu by rememberSaveable { mutableStateOf<BackupMenu?>(null) }
     var pendingDirectoryTarget by rememberSaveable { mutableStateOf<BackupDestination?>(null) }
     var pendingAutomatic by rememberSaveable { mutableStateOf(false) }
@@ -102,7 +105,7 @@ internal fun SyncSettingsSubPage(onBack: () -> Unit) {
     var remoteRestore by remember { mutableStateOf<NetworkBackupListing?>(null) }
 
     fun runAction(message: String, area: FeedbackArea = FeedbackArea.BACKUPS, action: suspend () -> String) {
-        if (busy) return
+        if (area in busyAreas) return
         fun report(text: String) {
             when (area) {
                 FeedbackArea.BACKUPS -> notice = text
@@ -110,13 +113,13 @@ internal fun SyncSettingsSubPage(onBack: () -> Unit) {
                 FeedbackArea.RECORDS -> recordNotice = text
             }
         }
-        busy = true
-        report(message)
+        busyAreas = busyAreas + area
+        if (message.isNotBlank()) report(message)
         scope.launch {
             try {
                 report(runCatchingCancellable { action() }.getOrElse { it.localizedMessage ?: "操作失败，请重试" })
             } finally {
-                busy = false
+                busyAreas = busyAreas - area
             }
         }
     }
@@ -185,12 +188,14 @@ internal fun SyncSettingsSubPage(onBack: () -> Unit) {
             listOf(volume, id.substringAfter(':', "")).filter(String::isNotBlank).joinToString(" / ")
         } else preferences.directoryName
     }
-    val available = ready && !busy
+    val recordsAvailable = ready && FeedbackArea.RECORDS !in busyAreas
+    val preferencesAvailable = ready && FeedbackArea.PREFERENCES !in busyAreas
+    val backupsAvailable = ready && FeedbackArea.BACKUPS !in busyAreas
     SettingsSubPageScaffold(title = "同步与备份", onBack = onBack) {
         item { SectionCaption("WebDav设置") }
         item {
             SettingsCard(contentPadding = PaddingValues(0.dp)) {
-                WebDavConnectionEntry(config = saved, ready = ready, enabled = !busy) {
+                WebDavConnectionEntry(config = saved, ready = ready, enabled = busyAreas.isEmpty()) {
                     saved = it
                     configNotice = ""
                     recordNotice = ""
@@ -198,17 +203,31 @@ internal fun SyncSettingsSubPage(onBack: () -> Unit) {
                 OperationNotice(configNotice)
                 SettingsDivider()
                 SwitchItem("同步我的记录", "跨设备同步收藏，歌单，最近播放，听书断点",
-                    syncEnabled, enabled = available && (syncEnabled || saved != null)) { value ->
-                    runAction("正在更新同步设置…", FeedbackArea.RECORDS) {
+                    syncEnabled, enabled = recordsAvailable && (syncEnabled || saved != null)) { value ->
+                    runAction("", FeedbackArea.RECORDS) {
                         WebDavSync.setEnabled(context, value)
-                        if (value) "" else "记录同步已关闭"
+                        ""
                     }
                 }
                 if (syncEnabled) {
                     SettingsDivider()
                     SettingsEntryItem(Icons.Outlined.Sync, SettingsBrandBlue, "立即同步", syncStatus.ifBlank { "等待同步" },
-                        enabled = available && saved != null) {
-                        runAction("正在同步…", FeedbackArea.RECORDS) { WebDavSync.syncNow(context); "" }
+                        enabled = recordsAvailable && saved != null) {
+                        runAction("", FeedbackArea.RECORDS) {
+                            WebDavSync.syncNow(context)
+                            ""
+                        }
+                    }
+                    if (syncConflicts.isNotEmpty()) {
+                        SettingsDivider()
+                        SettingsEntryItem(
+                            icon = Icons.Outlined.SyncProblem,
+                            iconTint = SettingsBrandBlue,
+                            title = "处理同步冲突",
+                            desc = "${syncConflicts.size} 项记录需要你选择",
+                            enabled = recordsAvailable && saved != null,
+                            onClick = { showConflicts = true },
+                        )
                     }
                 }
                 OperationNotice(recordNotice)
@@ -224,12 +243,12 @@ internal fun SyncSettingsSubPage(onBack: () -> Unit) {
                     options = automaticDestinations,
                     label = ::automaticLabel,
                     onSelect = { selectTarget(it, automatic = true) },
-                    enabled = available,
+                    enabled = preferencesAvailable,
                     optionEnabled = { !it.network || saved != null },
                 )
                 if (preferences.automatic != BackupDestination.OFF) OperationNotice(lastAutomatic.orEmpty())
                 SettingsDivider()
-                SwitchItem("仅保留最新本地备份", checked = preferences.keepLatest, enabled = available) {
+                SwitchItem("仅保留最新本地备份", checked = preferences.keepLatest, enabled = preferencesAvailable) {
                     runAction("", FeedbackArea.PREFERENCES) {
                         BackupSchedule.setKeepLatest(context, it)
                         ""
@@ -242,16 +261,16 @@ internal fun SyncSettingsSubPage(onBack: () -> Unit) {
         item {
             SettingsCard(contentPadding = PaddingValues(0.dp)) {
                 SettingsEntryItem(Icons.Outlined.FolderOpen, SettingsBrandBlue, "本地备份目录",
-                    directoryLabel ?: "选择保存备份的文件夹", enabled = available) {
+                    directoryLabel ?: "选择保存备份的文件夹", enabled = backupsAvailable) {
                     openSystemPicker { directoryPicker.launch(preferences.directory) }
                 }
                 SettingsDivider()
-                SettingsEntryItem(Icons.Outlined.Backup, SettingsBrandBlue, "备份", "保存设置、收藏、歌单与音源脚本", enabled = available) { menu = BackupMenu.BACKUP }
+                SettingsEntryItem(Icons.Outlined.Backup, SettingsBrandBlue, "备份", "保存设置、收藏、歌单与音源脚本", enabled = backupsAvailable) { menu = BackupMenu.BACKUP }
                 SettingsDivider()
-                SettingsEntryItem(Icons.Outlined.Restore, SettingsBrandBlue, "恢复", "从本地文件或网络备份恢复", enabled = available) { menu = BackupMenu.RESTORE }
+                SettingsEntryItem(Icons.Outlined.Restore, SettingsBrandBlue, "恢复", "从本地文件或网络备份恢复", enabled = backupsAvailable) { menu = BackupMenu.RESTORE }
                 if (recoveryAvailable) {
                     SettingsDivider()
-                    SettingsEntryItem(Icons.Outlined.FolderOpen, SettingsBrandBlue, "另存上次保留的原文件副本", enabled = available) {
+                    SettingsEntryItem(Icons.Outlined.FolderOpen, SettingsBrandBlue, "另存上次保留的原文件副本", enabled = backupsAvailable) {
                         openSystemPicker { recoveryPicker.launch("melora-recovered-backup.json") }
                     }
                 }
@@ -260,6 +279,11 @@ internal fun SyncSettingsSubPage(onBack: () -> Unit) {
         }
     }
 
+    if (showConflicts && syncEnabled) {
+        RecordConflictSheet(syncConflicts, onDismiss = { showConflicts = false }) { choices ->
+            WebDavSync.resolve(context, choices)
+        }
+    }
     menu?.let { action ->
         val restoring = action == BackupMenu.RESTORE
         BackupDestinationSheet(

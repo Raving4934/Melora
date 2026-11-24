@@ -158,11 +158,11 @@ private fun WebDavConnectionEditor(
                 runCatchingCancellable {
                     when (next) {
                         ConnectionAction.Test -> {
-                            val result = WebDavBackup.test(submitted)
+                            val cleanupNotice = WebDavBackup.test(submitted)
                             feedback = ConnectionFeedback(
                                 submitted,
-                                if (result.canSync) "测试通过，可使用网络备份和多设备同步。"
-                                else "网络备份可用。多设备同步需要服务器支持条件写入。",
+                                listOfNotNull("测试通过，可使用网络备份和多设备同步。", cleanupNotice)
+                                    .joinToString("\n"),
                             )
                         }
                         ConnectionAction.Save -> {
@@ -266,7 +266,7 @@ private fun WebDavConnectionEditor(
             WebDavFeedback(draftFeedback, action)
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 val canSubmit = !busy && draft.server.isNotBlank()
-                WebDavAction(
+                SyncSettingsSheetAction(
                     title = "测试配置",
                     enabled = canSubmit,
                     working = action == ConnectionAction.Test,
@@ -278,7 +278,7 @@ private fun WebDavConnectionEditor(
                         runAction(ConnectionAction.Test)
                     },
                 )
-                WebDavAction(
+                SyncSettingsSheetAction(
                     title = "保存配置",
                     enabled = canSubmit && draft != config,
                     working = action == ConnectionAction.Save,
@@ -388,9 +388,9 @@ private fun ConnectionField(
 @Composable
 private fun WebDavFeedback(feedback: ConnectionFeedback?, action: ConnectionAction?) {
     val message = when (action) {
-        ConnectionAction.Test -> "正在测试目录读写…"
+        ConnectionAction.Test -> "正在测试目录读写和列举…"
         ConnectionAction.Save -> "正在保存配置…"
-        null -> feedback?.text ?: "连接测试会检查目标目录的读写权限。"
+        null -> feedback?.text ?: "填写后即可测试目录读写和列举权限。"
     }
     val failed = feedback?.failed == true
     val color = when {
@@ -427,7 +427,7 @@ private fun WebDavFeedback(feedback: ConnectionFeedback?, action: ConnectionActi
 }
 
 @Composable
-private fun WebDavAction(
+internal fun SyncSettingsSheetAction(
     title: String,
     enabled: Boolean,
     working: Boolean,

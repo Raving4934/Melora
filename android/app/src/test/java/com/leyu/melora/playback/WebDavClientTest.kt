@@ -3,21 +3,30 @@ package com.leyu.melora.playback
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import java.io.EOFException
+import java.io.File
 import java.net.InetSocketAddress
 import java.security.cert.CertificateException
+import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import javax.net.ssl.SSLHandshakeException
 import javax.net.ssl.SSLPeerUnverifiedException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import okhttp3.Credentials
+import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 
 class WebDavClientTest {
+    @get:Rule val temporary = TemporaryFolder()
+
     @Test
     fun configurationUsesFolderAsOneEncodedPathSegment() {
         val config = WebDavConfig(" https://dav.example.test:443/base ", " 用户 ", "secret", "乐屿 +%").validated()
@@ -36,12 +45,12 @@ class WebDavClientTest {
     }
 
     @Test
-    fun probeCreatesFolderTestsBothConditionsAndRemovesItsFile() = runBlocking {
+    fun probeCreatesFolderVerifiesReadAndListingAndRemovesItsFile() = runBlocking {
         DavFixture().use { dav ->
-            assertTrue(WebDavBackup.test(dav.config).canSync)
+            assertNull(WebDavBackup.test(dav.config))
             assertTrue(WebDavClient(dav.config).listNames().isEmpty())
             assertEquals(
-                listOf("PROPFIND", "MKCOL", "PROPFIND", "PUT", "GET", "PROPFIND", "PUT", "PUT", "PUT", "GET", "DELETE", "PROPFIND"),
+                listOf("PROPFIND", "MKCOL", "PROPFIND", "PUT", "GET", "PROPFIND", "DELETE", "PROPFIND"),
                 dav.methods,
             )
         }
@@ -84,33 +93,114 @@ class WebDavClientTest {
     }
 
     @Test
-    fun missingStrongTagOrIgnoredPreconditionsAllowBackupOnly() = runBlocking {
-        DavFixture(weakEtags = true).use { dav ->
-            assertFalse(WebDavBackup.test(dav.config).canSync)
-            assertTrue(WebDavClient(dav.config).listNames().isEmpty())
-        }
-        DavFixture(ignoreIfMatch = true).use { dav ->
-            assertFalse(WebDavBackup.test(dav.config).canSync)
-            assertTrue(WebDavClient(dav.config).listNames().isEmpty())
+    fun serversWithoutStrongEtagOrConditionalWritesPassProbe() = runBlocking {
+        for (etag in listOf(null, "W/\"weak\"")) {
+            DavFixture(etag = etag).use { dav ->
+                assertNull(WebDavBackup.test(dav.config))
+                assertTrue(WebDavClient(dav.config).listNames().isEmpty())
+            }
         }
     }
 
     @Test
-    fun concurrentWriterCannotOverwriteRemoteRevisionWithStaleTag() = runBlocking {
+    fun probeCanSucceedWhenServerDoesNotGrantDeletePermission() = runBlocking {
+        DavFixture(deleteStatus = 403).use { dav ->
+            val warning = WebDavBackup.test(dav.config)
+            assertTrue(warning.orEmpty().contains("DELETE（HTTP 403）"))
+            assertTrue(WebDavClient(dav.config).listNames().single().startsWith("melora-test-"))
+        }
+    }
+
+    @Test
+    fun probeReportsFailureWhenServerOmitsTheFileFromDirectoryListing() {
+        DavFixture(hideProbeFiles = true).use { dav ->
+            val error = assertThrows(IllegalStateException::class.java) {
+                runBlocking { WebDavBackup.test(dav.config) }
+            }
+            assertTrue(error.message.orEmpty().contains("目录列表缺少"))
+            assertEquals("DELETE", dav.methods.last())
+        }
+    }
+
+    @Test
+    fun directoryMissingIsAnErrorForSyncButAnEmptyBackupList() = runBlocking {
+        DavFixture().use { dav ->
+            val error = assertThrows(WebDavException::class.java) {
+                runBlocking { WebDavClient(dav.config).listNames() }
+            }
+            assertEquals(404, error.status)
+            assertTrue(WebDavBackup.list(dav.config).isEmpty())
+        }
+    }
+
+    @Test
+    fun concurrentDevicesCanPublishDifferentFilesWithoutConditionalWrites() = runBlocking {
         DavFixture().use { dav ->
             val phone = WebDavClient(dav.config)
             val tablet = WebDavClient(dav.config)
             phone.ensureFolder()
-            val name = "records.json"
-            assertNull(phone.read(name, 128))
-            assertTrue(phone.put(name, "first", expectedEtag = null))
-            val phoneTag = checkNotNull(phone.read(name, 128)?.etag)
-            val tabletTag = checkNotNull(tablet.read(name, 128)?.etag)
-            assertEquals(phoneTag, tabletTag)
-            assertTrue(tablet.put(name, "new from tablet", tabletTag))
-            assertFalse(phone.put(name, "stale from phone", phoneTag))
-            assertFalse(phone.put(name, "cannot create again", expectedEtag = null))
-            assertEquals("new from tablet", phone.read(name, 128)?.text)
+            val phoneWrite = async { phone.writeFile("phone.json", "new from phone") }
+            val tabletWrite = async { tablet.writeFile("tablet.json", "new from tablet") }
+            phoneWrite.await()
+            tabletWrite.await()
+            assertEquals(setOf("phone.json", "tablet.json"), phone.listNames().toSet())
+            assertEquals("new from phone", tablet.read("phone.json", 128))
+            assertEquals("new from tablet", phone.read("tablet.json", 128))
+        }
+    }
+
+    @Test
+    fun twoDevicesConvergeAndResolveOnlyTheConflictingPlaylistFieldOverPlainWebDav() = runBlocking {
+        DavFixture(deleteStatus = 403).use { dav ->
+            val client = WebDavClient(dav.config)
+            val backup = BackupSnapshot(BackupFileId(1680049900000, "0123abcd", UUID.randomUUID()), "backup contents")
+            WebDavBackup.upload(dav.config, backup)
+            val phone = SyncDevice(temporary.newFolder(), client)
+            val tablet = SyncDevice(temporary.newFolder(), WebDavClient(dav.config))
+            phone.data = records("原名", listOf("旧收藏"), "原有歌曲")
+            assertTrue(phone.sync().isEmpty())
+            assertTrue(tablet.sync().isEmpty())
+
+            phone.data = records("通勤", listOf("旧收藏", "手机收藏"), "原有歌曲", "手机新曲")
+            tablet.data = records("轻音乐", listOf("平板收藏"), "原有歌曲", "平板新曲")
+            val phoneWrite = async { phone.sync() }
+            val tabletWrite = async { tablet.sync() }
+            phoneWrite.await()
+            tabletWrite.await()
+
+            val conflict = tablet.sync().single()
+            assertEquals(setOf("通勤", "轻音乐"), setOf(conflict.localLabel, conflict.remoteLabel))
+            assertTrue(tablet.sync(mapOf(conflict.key to (conflict.localLabel == "轻音乐"))).isEmpty())
+            assertTrue(phone.sync().isEmpty())
+            for (device in listOf(phone, tablet)) {
+                val library = device.data.getJSONObject("library")
+                val playlist = library.getJSONArray("playlists").getJSONObject(0)
+                assertEquals("轻音乐", playlist.getString("name"))
+                assertEquals(setOf("原有歌曲", "手机新曲", "平板新曲"), trackIds(playlist.getJSONArray("songs")))
+                assertEquals(setOf("手机收藏", "平板收藏"), trackIds(library.getJSONArray("favorites")))
+            }
+            assertTrue(client.listNames().count { it.startsWith("melora-records-v2-") } >= 3)
+            assertEquals(backup.id.networkName, WebDavBackup.list(dav.config).single().name)
+            assertEquals(backup.text, client.read(backup.id.networkName, 128))
+        }
+    }
+
+    @Test
+    fun backupUploadCanRetryTheSameIdWithoutOverwritingOtherContent() = runBlocking {
+        DavFixture().use { dav ->
+            val id = BackupFileId(1680049900000, "0123abcd", UUID.randomUUID())
+            val backup = BackupSnapshot(id, "first backup")
+            dav.dropResponseAfterNextPut = true
+            val dropped = runCatching { WebDavBackup.upload(dav.config, backup) }.exceptionOrNull()
+            assertTrue(dropped is WebDavException)
+            assertTrue(dropped?.message.orEmpty().contains("PUT"))
+            WebDavBackup.upload(dav.config, backup)
+            val error = assertThrows(IllegalStateException::class.java) {
+                runBlocking { WebDavBackup.upload(dav.config, BackupSnapshot(id, "other backup")) }
+            }
+            assertTrue(error.message.orEmpty().contains("同名备份"))
+            assertEquals(1, dav.methods.count { it == "PUT" })
+            assertEquals(backup.text, WebDavClient(dav.config).read(id.networkName, 128))
         }
     }
 
@@ -122,9 +212,9 @@ class WebDavClientTest {
             val first = "melora-backup-1680049900000-0123abcd-1c2bed1a-0ef5-41af-b62e-ec6cd66f1409.json"
             val latest = "melora-backup-1680049900001-bcde1234-ccdf9dbf-2c5a-4f4c-84eb-3ff7a687df50.json"
             val unrelated = "melora-backup-1680049900002-feed1234-383bfbcb-0953-4851-ab08-3847f0b99823.json"
-            client.put(first, "old", expectedEtag = null)
-            client.put(latest, "new", expectedEtag = null)
-            client.put("records.json", "{}", expectedEtag = null)
+            client.writeFile(first, "old")
+            client.writeFile(latest, "new")
+            client.writeFile("records.json", "{}")
             dav.additionalResponses = davResource("https://foreign.example.test/dav/Melora/$unrelated") +
                 davResource("/dav/Melora-other/$unrelated") +
                 davResource("/dav/Melora/nested/$unrelated") +
@@ -175,7 +265,7 @@ class WebDavClientTest {
                 runBlocking {
                     val client = WebDavClient(dav.config)
                     client.ensureFolder()
-                    client.put("records.json", "x".repeat(129), expectedEtag = null)
+                    client.writeFile("records.json", "x".repeat(129))
                     client.read("records.json", 128)
                 }
             }
@@ -194,21 +284,45 @@ class WebDavClientTest {
         }
     }
 
+    private class SyncDevice(private val directory: File, client: WebDavClient) {
+        private val id = UUID.randomUUID().toString()
+        private val remote = client.recordFiles()
+        var data = RecordSyncMerge.project(JSONObject(), JSONArray())
+
+        suspend fun sync(choices: Map<String, Boolean> = emptyMap()): List<RecordConflict> =
+            WebDavSyncLedger(directory).sync(id, remote, { data }, { expected, target, prepare, commit ->
+                check(RecordSyncMerge.contentEquals(data, expected))
+                prepare()
+                data = target
+                commit()
+                true
+            }, choices)
+    }
+
+    private fun records(name: String, favorites: List<String>, vararg songs: String): JSONObject {
+        fun song(id: String) = JSONObject().put("source", "wy").put("songmid", id).put("name", id)
+        val playlist = JSONObject().put("id", "weekly").put("name", name).put("songs", JSONArray(songs.map(::song)))
+        return RecordSyncMerge.project(JSONObject().put("playlists", JSONArray(listOf(playlist)))
+            .put("favorites", JSONArray(favorites.map(::song))), JSONArray())
+    }
+
+    private fun trackIds(rows: JSONArray): Set<String> =
+        (0 until rows.length()).mapTo(hashSetOf()) { rows.getJSONObject(it).getString("songmid") }
+
     private class DavFixture(
-        private val weakEtags: Boolean = false,
-        private val ignoreIfMatch: Boolean = false,
+        private val etag: String? = null,
         private val chunkedReads: Boolean = false,
         private val redirectReads: Boolean = false,
         private val mkcolStatus: Int = 201,
         private val folderExistsAfterMkcol: Boolean = true,
+        private val deleteStatus: Int? = null,
+        private val hideProbeFiles: Boolean = false,
     ) : AutoCloseable {
-        private data class File(val text: String, val etag: String)
-
-        private val files = mutableMapOf<String, File>()
-        private var revision = 0
+        private val files = mutableMapOf<String, String>()
         private var folderExists = false
         val methods = CopyOnWriteArrayList<String>()
         @Volatile var additionalResponses = ""
+        @Volatile var dropResponseAfterNextPut = false
         private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
             createContext("/") { exchange -> exchange.use(::respond) }
             start()
@@ -232,7 +346,8 @@ class WebDavClientTest {
                         return
                     }
                     val children = if (exchange.requestHeaders.getFirst("Depth") == "1") {
-                        files.keys.joinToString("") { davResource("/dav/Melora/$it") } + additionalResponses
+                        files.keys.filterNot { hideProbeFiles && it.startsWith("melora-test-") }
+                            .joinToString("") { davResource("/dav/Melora/$it") } + additionalResponses
                     } else ""
                     exchange.reply(
                         207,
@@ -251,8 +366,8 @@ class WebDavClientTest {
                     }
                     val file = files[name]
                     if (file == null) exchange.reply(404) else {
-                        exchange.responseHeaders.add("ETag", if (weakEtags) "W/${file.etag}" else file.etag)
-                        exchange.reply(200, file.text, chunkedReads)
+                        etag?.let { exchange.responseHeaders.add("ETag", it) }
+                        exchange.reply(200, file, chunkedReads)
                     }
                 }
                 "PUT" -> {
@@ -261,16 +376,19 @@ class WebDavClientTest {
                     val ifMatch = exchange.requestHeaders.getFirst("If-Match")
                     when {
                         !folderExists -> exchange.reply(409)
-                        ifNoneMatch == "*" && previous != null -> exchange.reply(412)
-                        ifMatch != null && !ignoreIfMatch && ifMatch != previous?.etag -> exchange.reply(412)
+                        ifNoneMatch != null || ifMatch != null -> exchange.reply(400)
                         else -> {
                             val text = exchange.requestBody.bufferedReader(Charsets.UTF_8).readText()
-                            files[name] = File(text, "\"r${++revision}\"")
+                            files[name] = text
+                            if (dropResponseAfterNextPut) {
+                                dropResponseAfterNextPut = false
+                                return
+                            }
                             exchange.reply(if (previous == null) 201 else 204)
                         }
                     }
                 }
-                "DELETE" -> exchange.reply(if (files.remove(name) == null) 404 else 204)
+                "DELETE" -> exchange.reply(deleteStatus ?: if (files.remove(name) == null) 404 else 204)
                 else -> exchange.reply(405)
             }
         }

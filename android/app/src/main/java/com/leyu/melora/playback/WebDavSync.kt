@@ -11,7 +11,6 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -24,7 +23,6 @@ import java.text.DateFormat
 import java.util.Date
 
 internal object WebDavSync {
-    private const val FILE_NAME = "melora-records-v1.json"
     private const val SCOPE = "enabled-scope"
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val changes = Channel<Unit>(Channel.CONFLATED)
@@ -36,6 +34,9 @@ internal object WebDavSync {
     private val _status = MutableStateFlow("")
     val status = _status.asStateFlow()
 
+    private val _conflicts = MutableStateFlow<List<RecordConflict>>(emptyList())
+    val conflicts = _conflicts.asStateFlow()
+
     private fun preferences(context: Context) = context.getSharedPreferences("webdav-sync", Context.MODE_PRIVATE)
 
     @Synchronized
@@ -45,8 +46,16 @@ internal object WebDavSync {
         _enabled.value = preferences(app).contains(SCOPE)
         started = true
         scope.launch {
-            combine(UserLibrary.revisions, BookListeningProgress.updates) { library, books -> library to books }
-                .drop(1).collect { if (enabled.value) changes.trySend(Unit) }
+            UserLibrary.revisions.drop(1).collect { if (enabled.value) changes.trySend(Unit) }
+        }
+        scope.launch {
+            // 断点每几秒刷新。一个收听时段批量发布一次，手动同步与前台恢复仍立即读取最新断点。
+            BookListeningProgress.updates.drop(1).collect {
+                if (enabled.value) {
+                    delay(120_000)
+                    if (enabled.value) changes.trySend(Unit)
+                }
+            }
         }
         scope.launch {
             var retryDelay = 30_000L
@@ -87,7 +96,7 @@ internal object WebDavSync {
         operations.withLock {
             val key = if (value) {
                 val config = requireNotNull(WebDavConfigStore.load(context)) { "请先保存 WebDAV 配置" }
-                check(WebDavBackup.test(config).canSync) { "服务器支持备份，但无法保护多设备同时写入" }
+                WebDavBackup.test(config)
                 config.scopeKey
             } else null
             setEnabledScope(context, key)
@@ -100,25 +109,22 @@ internal object WebDavSync {
     private fun setEnabledScope(context: Context, key: String?) {
         check(preferences(context).edit().putString(SCOPE, key).commit()) { "无法保存同步开关" }
         _enabled.value = key != null
+        if (key == null) _conflicts.value = emptyList()
     }
 
     suspend fun syncNow(context: Context) = withContext(Dispatchers.IO) { attempt(context) }
 
+    suspend fun resolve(context: Context, choices: Map<String, Boolean>) = withContext(Dispatchers.IO) {
+        operations.withLock {
+            check(enabled.value) { "请先开启同步我的记录" }
+            synchronize(context, choices)
+        }
+    }
+
     private suspend fun attempt(context: Context): Boolean = operations.withLock {
         if (!enabled.value) return@withLock true
         try {
-            _status.value = "正在同步…"
-            val config = requireNotNull(WebDavConfigStore.load(context)) { "请重新保存 WebDAV 配置" }
-            check(config.scopeKey == preferences(context).getString(SCOPE, null)) { "目标目录已变更，请重新开启同步" }
-            val client = WebDavClient(config)
-            client.ensureFolder()
-            val ledger = WebDavSyncLedger(File(context.noBackupFilesDir, "records-${config.scopeKey}"))
-            syncRecords(ledger, WebDavConfigStore.deviceId(context),
-                capture = { capture(context).portable },
-                apply = { sent, agreed, commit -> applyAgreement(context, sent, agreed, commit) },
-                read = { client.read(FILE_NAME, MAX_BACKUP_BYTES) },
-                write = { text, etag -> client.put(FILE_NAME, text, etag) })
-            _status.value = "上次同步 ${DateFormat.getTimeInstance(DateFormat.SHORT).format(Date())}"
+            synchronize(context, emptyMap())
             true
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -126,6 +132,21 @@ internal object WebDavSync {
             _status.value = "同步失败 · ${error.localizedMessage ?: "请检查网络和配置"}"
             false
         }
+    }
+
+    private suspend fun synchronize(context: Context, choices: Map<String, Boolean>) {
+        val config = requireNotNull(WebDavConfigStore.load(context)) { "请重新保存 WebDAV 配置" }
+        check(config.scopeKey == preferences(context).getString(SCOPE, null)) { "目标目录已变更，请重新开启同步" }
+        val client = WebDavClient(config)
+        client.ensureFolder()
+        val ledger = WebDavSyncLedger(File(context.noBackupFilesDir, "records-${config.scopeKey}"))
+        val conflicts = ledger.sync(WebDavConfigStore.deviceId(context), client.recordFiles(),
+            capture = { capture(context).portable },
+            apply = { sent, agreed, prepare, commit -> applyAgreement(context, sent, agreed, prepare, commit) },
+            choices = choices)
+        _conflicts.value = conflicts
+        _status.value = if (conflicts.isEmpty()) "上次同步 ${DateFormat.getTimeInstance(DateFormat.SHORT).format(Date())}"
+            else "等待处理同步冲突"
     }
 
     private data class Capture(val library: JSONObject, val portable: JSONObject, val libraryRevision: Long, val booksRevision: Long)
@@ -140,30 +161,27 @@ internal object WebDavSync {
         return Capture(library, RecordSyncMerge.project(library, raw.books), raw.libraryRevision, raw.booksRevision)
     }
 
-    /** 网络请求期间的拖动、收藏与取消收藏仍保留为尚未上传的本地修改。 */
-    private fun applyAgreement(context: Context, sent: JSONObject, agreed: JSONObject, commit: () -> Unit) {
-        if (RecordSyncMerge.contentEquals(sent, agreed)) {
+    private fun applyAgreement(context: Context, sent: JSONObject, agreed: JSONObject,
+                               prepare: () -> Unit, commit: () -> Unit): Boolean {
+        val current = capture(context)
+        if (!RecordSyncMerge.contentEquals(current.portable, sent)) return false
+        val library = RecordSyncMerge.applyLibrary(current.library, agreed)
+        val libraryText = if (RecordSyncMerge.contentEquals(current.library, library)) null else library.toString()
+        return BackupStateLock.write {
+            if (UserLibrary.revisions.value != current.libraryRevision ||
+                BookListeningProgress.updates.value != current.booksRevision) return@write false
+            prepare()
+            if (libraryText != null) UserLibrary.replaceFromBackup(libraryText)
+            BookListeningProgress.applySync(context, sent.getJSONArray("books"), agreed.getJSONArray("books"))
             commit()
-            return
+            true
         }
-        repeat(4) {
-            val current = capture(context)
-            val merged = if (RecordSyncMerge.contentEquals(current.portable, sent)) agreed
-                else RecordSyncMerge.merge(sent, agreed, current.portable)
-            val library = RecordSyncMerge.applyLibrary(current.library, merged)
-            val libraryText = if (RecordSyncMerge.contentEquals(current.library, library)) null else library.toString()
-            val before = current.portable.getJSONArray("books")
-            val after = merged.getJSONArray("books")
-            val applied = BackupStateLock.write {
-                if (UserLibrary.revisions.value != current.libraryRevision ||
-                    BookListeningProgress.updates.value != current.booksRevision) return@write false
-                if (libraryText != null) UserLibrary.replaceFromBackup(libraryText)
-                BookListeningProgress.applySync(context, before, after)
-                commit()
-                true
-            }
-            if (applied) return
-        }
-        error("本机记录正在变更，稍后将重新同步")
     }
+}
+
+internal fun WebDavClient.recordFiles(): RecordFiles = object : RecordFiles {
+    override suspend fun list() = listNames()
+    override suspend fun read(name: String) = this@recordFiles.read(name, MAX_BACKUP_BYTES)
+    override suspend fun write(name: String, text: String) = writeFile(name, text)
+    override suspend fun delete(name: String) = deleteFile(name)
 }

@@ -24,8 +24,6 @@ import org.xml.sax.InputSource
 import org.xml.sax.SAXException
 import org.xml.sax.helpers.DefaultHandler
 
-internal class WebDavDocument(val text: String, val etag: String?)
-
 internal class WebDavException(message: String, val status: Int? = null) : IOException(message)
 
 internal class WebDavClient(config: WebDavConfig) {
@@ -49,25 +47,26 @@ internal class WebDavClient(config: WebDavConfig) {
                 WebDavException("服务器已返回创建成功（HTTP 201），但查询子目录仍返回 404。请核对 WebDAV 路径。", 404)
             }
         }
-        if (resources.none { it.isFolder && it.segments == folderSegments }) {
-            throw WebDavException("服务器已响应目录查询（HTTP 207），但未返回与目标路径匹配的目录信息。")
-        }
+        checkFolder(resources)
     }
 
-    suspend fun listNames(): List<String> = properties(depth = 1).orEmpty()
-        .filter { !it.isFolder && it.segments.size == folderSegments.size + 1 && it.segments.dropLast(1) == folderSegments }
-        .map { it.segments.last() }
-        .distinct()
+    suspend fun listNames(): List<String> {
+        val resources = properties(depth = 1)
+            ?: throw WebDavException("WebDAV 目标目录已不存在", 404)
+        checkFolder(resources)
+        return resources.asSequence()
+            .filter { !it.isFolder && it.segments.size == folderSegments.size + 1 && it.segments.dropLast(1) == folderSegments }
+            .map { it.segments.last() }
+            .distinct()
+            .toList()
+    }
 
-    suspend fun read(name: String, maxBytes: Int): WebDavDocument? {
+    suspend fun read(name: String, maxBytes: Int): String? {
         require(maxBytes in 1..MAX_BACKUP_BYTES)
         return request("GET", fileUrl(name)).execute { response ->
             when (response.code) {
                 404 -> null
-                200 -> WebDavDocument(
-                    response.readText(maxBytes),
-                    response.headers.values("ETag").singleOrNull()?.takeIf(::isStrongEtag),
-                )
+                200 -> response.readText(maxBytes)
                 else -> response.fail()
             }
         }
@@ -86,28 +85,25 @@ internal class WebDavClient(config: WebDavConfig) {
         }
     }
 
-    /** null 只允许创建新文件；已有文件每次更新都需匹配原强 ETag。 */
-    suspend fun put(name: String, text: String, expectedEtag: String?): Boolean {
+    /** 文件名由调用方分配。重试应核对已有内容并使用相同的文件名。 */
+    suspend fun writeFile(name: String, text: String) {
         require(text.length <= MAX_BACKUP_BYTES) { "WebDAV 文件超过大小限制" }
         val bytes = text.toByteArray(Charsets.UTF_8)
         require(bytes.size <= MAX_BACKUP_BYTES) { "WebDAV 文件超过大小限制" }
-        require(expectedEtag == null || isStrongEtag(expectedEtag)) { "服务器未提供可用于同步的强 ETag" }
-        return request("PUT", fileUrl(name), bytes.toRequestBody(jsonType)).apply {
-            if (expectedEtag == null) header("If-None-Match", "*") else header("If-Match", expectedEtag)
-        }.execute { response ->
-            when (response.code) {
-                200, 201, 204 -> true
-                412 -> false
-                else -> response.fail()
-            }
+        request("PUT", fileUrl(name), bytes.toRequestBody(jsonType)).execute { response ->
+            if (response.code != 200 && response.code != 201 && response.code != 204) response.fail()
         }
     }
 
-    /** 仅由配置测试清理自己的探测文件。 */
-    suspend fun deleteProbe(name: String) {
-        require(name.startsWith("melora-test-"))
+    suspend fun deleteFile(name: String) {
         request("DELETE", fileUrl(name)).execute { response ->
-            if (response.code !in setOf(200, 204, 404)) response.fail()
+            if (response.code != 200 && response.code != 204 && response.code != 404) response.fail()
+        }
+    }
+
+    private fun checkFolder(resources: List<WebDavResource>) {
+        if (resources.none { it.isFolder && it.segments == folderSegments }) {
+            throw WebDavException("服务器已响应目录查询（HTTP 207），但未返回与目标路径匹配的目录信息。")
         }
     }
 
@@ -133,16 +129,19 @@ internal class WebDavClient(config: WebDavConfig) {
             authorization?.let { header("Authorization", it) }
         }
 
-    private suspend fun <T> Request.Builder.execute(read: (Response) -> T): T = try {
-        httpClient.newCall(build()).readResponse(read)
-    } catch (error: WebDavException) {
-        throw error
-    } catch (error: SSLException) {
-        throw webDavTlsError(error)
-    } catch (_: SocketTimeoutException) {
-        throw WebDavException("WebDAV 连接超时，请检查网络和服务器地址")
-    } catch (_: IOException) {
-        throw WebDavException("无法连接 WebDAV，请检查网络和服务器地址")
+    private suspend fun <T> Request.Builder.execute(read: (Response) -> T): T {
+        val request = build()
+        return try {
+            httpClient.newCall(request).readResponse(read)
+        } catch (error: WebDavException) {
+            throw error
+        } catch (error: SSLException) {
+            throw webDavTlsError(error)
+        } catch (_: SocketTimeoutException) {
+            throw WebDavException("WebDAV ${request.method} 请求超时，请检查网络和服务器地址")
+        } catch (_: IOException) {
+            throw WebDavException("WebDAV ${request.method} 请求中断，请检查网络和服务器地址")
+        }
     }
 
     private companion object {
@@ -172,19 +171,20 @@ internal fun webDavTlsError(error: SSLException): WebDavException {
     return WebDavException(message).also { it.initCause(error) }
 }
 
-private fun Response.fail(): Nothing = throw WebDavException(
-    when (code) {
-        301, 302, 303, 307, 308 -> "WebDAV 地址发生重定向，请填写最终的服务器地址"
-        401 -> "WebDAV 登录失败，请检查账号和密码"
-        403 -> "WebDAV 账号无权访问目标目录"
-        404 -> "WebDAV 文件或目录不存在"
-        409 -> "WebDAV 父目录不存在，请检查服务器地址和子文件夹"
-        423 -> "WebDAV 文件已锁定，请稍后重试"
-        507 -> "WebDAV 服务器存储空间不足"
-        else -> "WebDAV 请求失败（HTTP $code）"
-    },
-    status = code,
-)
+private fun Response.fail(): Nothing {
+    val detail = when (code) {
+        301, 302, 303, 307, 308 -> "地址发生重定向，请填写最终的服务器地址"
+        401 -> "登录失败，请检查账号和密码"
+        403 -> "账号没有此操作的权限"
+        404 -> "文件或目录不存在"
+        405, 501 -> "服务器不支持此操作"
+        409 -> "父目录不存在，请检查服务器地址和子文件夹"
+        423 -> "文件已锁定，请稍后重试"
+        507 -> "服务器存储空间不足"
+        else -> "请求失败"
+    }
+    throw WebDavException("WebDAV ${request.method}（HTTP $code）· $detail", code)
+}
 
 private fun Response.readText(limit: Int): String {
     if (body.contentLength() > limit) throw WebDavException("WebDAV 文件超过大小限制")
@@ -196,9 +196,6 @@ private fun Response.readText(limit: Int): String {
         throw WebDavException("WebDAV 文件超过大小限制")
     }
 }
-
-private fun isStrongEtag(tag: String): Boolean = tag.length in 2..1024 &&
-    tag.first() == '"' && tag.last() == '"' && tag.substring(1, tag.lastIndex).all { it == '!' || it in '#'..'~' }
 
 private data class WebDavResource(val segments: List<String>, val isFolder: Boolean)
 
