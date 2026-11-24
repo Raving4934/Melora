@@ -23,6 +23,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.mutableStateOf
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -31,6 +32,8 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.leyu.melora.playback.BackupRestoreTransaction
 import com.leyu.melora.playback.MeloraSettings
+import com.leyu.melora.playback.UpdateChecker
+import com.leyu.melora.playback.UpdateResult
 import com.leyu.melora.playback.local.LocalTagFiller
 import com.leyu.melora.playback.lx.LxInspector
 import com.leyu.melora.playback.lx.LxScriptStore
@@ -40,12 +43,16 @@ import com.leyu.melora.ui.common.SongListStateProvider
 import com.leyu.melora.ui.common.LocalResetRootBack
 import com.leyu.melora.ui.common.RootBackCallback
 import com.leyu.melora.ui.common.shouldResetRootBackOnKeyEvent
+import com.leyu.melora.ui.settings.AboutModal
+import com.leyu.melora.ui.settings.AboutModalSheet
 import com.leyu.melora.ui.theme.MeloraTheme
 import com.leyu.melora.ui.theme.AdaptiveDisplay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private var backHint: Toast? = null
+    private val automaticAppUpdate = mutableStateOf<UpdateResult?>(null)
     private val rootBackCallback = RootBackCallback(
         nowMillis = SystemClock::elapsedRealtime,
         showHint = {
@@ -128,12 +135,28 @@ class MainActivity : ComponentActivity() {
                         ) {
                             SongListStateProvider {
                                 MeloraApp(initialTab = initialTab)
+                                automaticAppUpdate.value?.let { release ->
+                                    AboutModalSheet(
+                                        modal = AboutModal.Update,
+                                        initialRelease = release,
+                                        onDismiss = { automaticAppUpdate.value = null },
+                                    )
+                                }
                             }
                         }
                     }
                 }
             }
             runDebugActions()
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                MeloraSettings.autoCheckAppUpdates.collectLatest { enabled ->
+                    automaticAppUpdate.value = if (enabled) {
+                        automaticAppUpdate.value ?: UpdateChecker.checkAutomatically(this@MainActivity)
+                    } else {
+                        null
+                    }
+                }
+            }
         }
     }
 

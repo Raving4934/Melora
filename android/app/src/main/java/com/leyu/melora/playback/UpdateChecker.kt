@@ -1,9 +1,14 @@
 package com.leyu.melora.playback
 
+import android.content.Context
+import androidx.core.content.edit
+import com.leyu.melora.BuildConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
@@ -38,6 +43,10 @@ object UpdateChecker {
     private const val RELEASE_PAGE_SIZE = 100
     private const val CHECK_TIMEOUT_MS = 30_000L
     private const val TIMEOUT_MESSAGE = "检查超时，请稍后重试。"
+    private const val AUTOMATIC_PREFS = "melora-app-update"
+    private const val LAST_AUTOMATIC_CHECK = "lastAutomaticCheck"
+    private val automaticCheckInterval = TimeUnit.DAYS.toMillis(1)
+    private val automaticCheckLock = Mutex()
     // 每页读取 100 条；若 NAS Release 超过一页，依赖 GitHub Link rel=next 继续查找，后续仍可改用 tags endpoint。
     private const val RELEASES_PAGE_URL = "https://github.com/$GITHUB_REPO/releases"
     private val androidTagPattern = Regex("^android-v(\\d+(?:\\.\\d+)*)$")
@@ -50,6 +59,26 @@ object UpdateChecker {
             .readTimeout(15, TimeUnit.SECONDS)
             .callTimeout(15, TimeUnit.SECONDS)
             .build()
+    }
+
+    internal suspend fun checkAutomatically(
+        context: Context,
+        nowMillis: () -> Long = System::currentTimeMillis,
+        checkRelease: suspend () -> UpdateResult = { check(BuildConfig.VERSION_NAME) },
+    ): UpdateResult? = withContext(Dispatchers.IO) {
+        automaticCheckLock.withLock {
+            if (!MeloraSettings.autoCheckAppUpdates.value) return@withLock null
+            val prefs = context.applicationContext.getSharedPreferences(AUTOMATIC_PREFS, Context.MODE_PRIVATE)
+            val now = nowMillis()
+            val lastCheck = prefs.getLong(LAST_AUTOMATIC_CHECK, 0L)
+            if (now - lastCheck in 0L until automaticCheckInterval) return@withLock null
+
+            val result = checkRelease()
+            currentCoroutineContext().ensureActive()
+            if (!MeloraSettings.autoCheckAppUpdates.value) return@withLock null
+            prefs.edit { putLong(LAST_AUTOMATIC_CHECK, now) }
+            result.takeIf { it.hasUpdate && !it.checkFailed }
+        }
     }
 
     suspend fun check(currentVersion: String): UpdateResult = withContext(Dispatchers.IO) {

@@ -114,6 +114,7 @@ object MeloraSettings {
     val notificationLyrics = MutableStateFlow(false)
     // 歌曲来源显示名称：默认显示别名（盒子音乐等），关闭后显示原名
     val sourceAliasEnabled = MutableStateFlow(true)
+    internal val autoCheckAppUpdates = MutableStateFlow(false)
 
     // --- 本地歌曲 ---
     val localUseMediaStore = MutableStateFlow(true)
@@ -126,6 +127,7 @@ object MeloraSettings {
 
     private fun load() {
         autoPlayOnStart.value = prefs.getBoolean(KEY_AUTO_PLAY, false)
+        autoCheckAppUpdates.value = prefs.getBoolean(KEY_AUTO_CHECK_APP_UPDATES, false)
         restoreLastPage.value = prefs.getBoolean(KEY_RESTORE_LAST_PAGE, true)
         startupPage.value = StartupPage.fromTab(prefs.getInt(KEY_STARTUP_TAB, StartupPage.LocalSongs.tab))
             ?: StartupPage.LocalSongs
@@ -311,9 +313,14 @@ object MeloraSettings {
     fun updateLyricBackground(value: Boolean) = update { lyricBackground.value = value; persist { putBoolean(KEY_LYRICS_BACKGROUND, value) } }
     fun updateNotificationLyrics(value: Boolean) = update { notificationLyrics.value = value; persist { putBoolean(KEY_NOTIFICATION_LYRICS, value) } }
     fun updateSourceAlias(value: Boolean) = update { sourceAliasEnabled.value = value; persist { putBoolean(KEY_SOURCE_ALIAS, value) } }
+    internal fun updateAutoCheckAppUpdates(enabled: Boolean) = update {
+        autoCheckAppUpdates.value = enabled
+        persist { putBoolean(KEY_AUTO_CHECK_APP_UPDATES, enabled) }
+    }
 
     const val DEFAULT_DOWNLOAD_PATH = "/storage/emulated/0/Music/Melora"
     internal const val KEY_AUTO_PLAY = "basic.autoPlayOnStart"
+    internal const val KEY_AUTO_CHECK_APP_UPDATES = "update.autoCheckAppUpdates"
     internal const val KEY_RESTORE_LAST_PAGE = "basic.restoreLastPage"
     internal const val KEY_STARTUP_TAB = "basic.startupTab"
     internal const val KEY_LAST_TAB = "basic.lastTab"

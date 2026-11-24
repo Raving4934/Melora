@@ -142,6 +142,26 @@ class BackupDocumentTest {
     }
 
     @Test
+    fun automaticAppUpdatePreferenceSurvivesBackupAndLegacyRestore() {
+        val initial = MeloraSettings.autoCheckAppUpdates.value
+        val theme = MeloraSettings.themeMode.value
+        try {
+            MeloraSettings.updateAutoCheckAppUpdates(true)
+            val exported = BackupSettings.collect()
+            assertTrue(exported.get("autoCheckAppUpdates") is Boolean)
+            MeloraSettings.updateAutoCheckAppUpdates(false)
+
+            val restored = JSONObject().put("autoCheckAppUpdates", exported.get("autoCheckAppUpdates"))
+            BackupSettings.apply(BackupSettings.prepare(restored, emptySet(), emptySet()).first)
+            BackupSettings.apply(BackupSettings.prepare(JSONObject(), emptySet(), emptySet()).first)
+            assertTrue(MeloraSettings.autoCheckAppUpdates.value)
+        } finally {
+            MeloraSettings.updateAutoCheckAppUpdates(initial)
+            MeloraSettings.themeMode.value = theme
+        }
+    }
+
+    @Test
     fun invalidSettingsRejectTheWholeDocumentWithoutPublishingEarlierFields() {
         val before = MeloraSettings.showExitButton.value
         for ((key, value) in listOf("downloadConcurrentTasks" to -1, "lastTab" to 30, "lyricAlpha" to 200, "localFolders" to JSONArray().put(42))) {

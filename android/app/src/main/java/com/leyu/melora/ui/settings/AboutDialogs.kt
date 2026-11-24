@@ -70,6 +70,7 @@ import androidx.core.net.toUri
 import com.leyu.melora.BuildConfig
 import com.leyu.melora.playback.CrashLogger
 import com.leyu.melora.playback.PlaybackController
+import com.leyu.melora.playback.UpdateResult
 import com.leyu.melora.playback.ApkUpdater
 import com.leyu.melora.playback.ApkUpdatePhase
 import com.leyu.melora.playback.ApkUpdateState
@@ -100,6 +101,7 @@ internal enum class AboutModal(val title: String) {
 @Composable
 internal fun AboutModalSheet(
     modal: AboutModal,
+    initialRelease: UpdateResult? = null,
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true)
@@ -155,7 +157,7 @@ internal fun AboutModalSheet(
 
             // 内容区
             when (modal) {
-                AboutModal.Update -> UpdateContent()
+                AboutModal.Update -> UpdateContent(initialRelease)
                 AboutModal.Privacy -> PrivacyPolicyContent()
                 AboutModal.Licenses -> OpenSourceLicensesContent()
                 AboutModal.Disclaimer -> DisclaimerContent()
@@ -168,9 +170,9 @@ internal fun AboutModalSheet(
 
 // ---------------- 1. 检测更新 ----------------
 @Composable
-private fun UpdateContent() {
+private fun UpdateContent(initialRelease: UpdateResult?) {
     val context = LocalContext.current
-    val updater = remember(context.applicationContext) { ApkUpdater.create(context) }
+    val updater = remember(context.applicationContext, initialRelease) { ApkUpdater.create(context, initialRelease) }
     val state by updater.state.collectAsStateWithLifecycle()
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         updater.permissionReturned()
@@ -178,7 +180,7 @@ private fun UpdateContent() {
     // 不能把 Activity 返回或启动成功误报为安装成功；是否安装由系统负责。
     val installerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { }
     DisposableEffect(updater) {
-        updater.checkForUpdates()
+        if (initialRelease == null) updater.checkForUpdates()
         onDispose { updater.close() }
     }
     LaunchedEffect(updater, state.phase) {

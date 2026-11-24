@@ -25,6 +25,7 @@ internal object BackupSettings {
 
     private val fields = listOf(
         field("autoPlayOnStart", MeloraSettings.KEY_AUTO_PLAY, MeloraSettings.autoPlayOnStart, ::backupBoolean),
+        field("autoCheckAppUpdates", MeloraSettings.KEY_AUTO_CHECK_APP_UPDATES, MeloraSettings.autoCheckAppUpdates, ::backupBoolean),
         field("restoreLastPage", MeloraSettings.KEY_RESTORE_LAST_PAGE, MeloraSettings.restoreLastPage, ::backupBoolean),
         field("startupTab", MeloraSettings.KEY_STARTUP_TAB, MeloraSettings.startupPage, { value ->
             StartupPage.fromTab(backupNumber("startupTab", value).toInt()) ?: error("启动页面无效")

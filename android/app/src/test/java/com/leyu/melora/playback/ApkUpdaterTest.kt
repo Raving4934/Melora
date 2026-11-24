@@ -207,13 +207,28 @@ class ApkUpdaterTest {
         } finally { updater.close() }
     }
 
+    @Test fun discoveredReleaseCanDownloadImmediately() = runBlocking {
+        val updater = updater(
+            temporary.newFolder(),
+            checkRelease = { error("已发现新版，无需再次查询") },
+            initialRelease = release,
+        )
+        try {
+            assertEquals(ApkUpdatePhase.Available, updater.state.value.phase)
+            assertEquals(release, updater.state.value.release)
+            updater.download()
+            assertNotNull(updater.await(ApkUpdatePhase.Ready).apk)
+        } finally { updater.close() }
+    }
+
     private fun updater(
         directory: File,
         download: suspend (String, File, (Long, Long?) -> Unit) -> Unit = { _, file, _ -> file.writeText("complete") },
         validate: (File) -> Unit = { check(it.readText() == "complete") },
         canInstall: () -> Boolean = { true },
         checkRelease: suspend () -> UpdateResult = { release },
-    ) = ApkUpdater(directory, checkRelease, download, validate, canInstall, Dispatchers.Unconfined)
+        initialRelease: UpdateResult? = null,
+    ) = ApkUpdater(directory, checkRelease, download, validate, canInstall, Dispatchers.Unconfined, initialRelease)
 
     private suspend fun ApkUpdater.await(phase: ApkUpdatePhase) = withTimeout(5_000) { state.first { it.phase == phase } }
     private suspend fun eventually(condition: () -> Boolean) = withTimeout(5_000) { while (!condition()) delay(10) }

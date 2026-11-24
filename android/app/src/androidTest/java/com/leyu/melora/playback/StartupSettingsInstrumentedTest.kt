@@ -8,11 +8,14 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.leyu.melora.startup.StartupPage
 import com.leyu.melora.startup.resolveStartupTab
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -152,6 +155,42 @@ class StartupSettingsInstrumentedTest {
         assertEquals(7, initialTab(hasSavedState = true))
     }
 
+    @Test
+    fun automaticAppUpdatesAreOptInAndThrottled() = runBlocking {
+        MeloraSettings.init(context)
+        var now = 1_800_000_000_000L
+        var queries = 0
+        val available = UpdateResult(true, "android-v99.0", "0.2.3", "", "", "")
+        val checkRelease: suspend () -> UpdateResult = {
+            queries++
+            if (queries == 1) available else available.copy(hasUpdate = false, checkFailed = true)
+        }
+        suspend fun check() = UpdateChecker.checkAutomatically(context, { now }, checkRelease)
+
+        assertFalse(MeloraSettings.autoCheckAppUpdates.value)
+        assertNull(check())
+        assertEquals(0, queries)
+        MeloraSettings.updateAutoCheckAppUpdates(true)
+        assertTrue(context.settingsPrefs.getBoolean(MeloraSettings.KEY_AUTO_CHECK_APP_UPDATES, false))
+        MeloraSettings.reloadAfterRestore()
+        assertEquals(available, check())
+
+        now += TimeUnit.DAYS.toMillis(1) - 1
+        assertNull(check())
+        assertEquals(1, queries)
+        now++
+        assertNull(check())
+        assertEquals(2, queries)
+        assertNull(check())
+        assertEquals(2, queries)
+
+        MeloraSettings.updateAutoCheckAppUpdates(false)
+        now += TimeUnit.DAYS.toMillis(1)
+        assertNull(check())
+        assertEquals(2, queries)
+        assertFalse(context.settingsPrefs.getBoolean(MeloraSettings.KEY_AUTO_CHECK_APP_UPDATES, true))
+    }
+
     private fun initialTab(hasSavedState: Boolean): Int = resolveStartupTab(
         explicitTab = null,
         lastTab = MeloraSettings.lastTab.value,
@@ -162,17 +201,20 @@ class StartupSettingsInstrumentedTest {
 
     private class StartupContext(base: Context) : ContextWrapper(base) {
         private val prefix = "isolated-startup-settings-tests.${UUID.randomUUID()}."
+        private val openedPrefs = mutableMapOf<String, SharedPreferences>()
         val settingsPrefs: SharedPreferences
             get() = getSharedPreferences(MeloraSettings.PREFS, Context.MODE_PRIVATE)
 
         override fun getApplicationContext(): Context = this
         override fun getSharedPreferences(name: String, mode: Int): SharedPreferences =
-            super.getSharedPreferences(prefix + name, mode)
+            openedPrefs.getOrPut(prefix + name) { super.getSharedPreferences(prefix + name, mode) }
 
         fun cleanup() {
             // 同步此前 apply 写入后只删除这个测试实例的设置文件。
-            check(settingsPrefs.edit().commit())
-            super.deleteSharedPreferences(prefix + MeloraSettings.PREFS)
+            openedPrefs.forEach { (name, prefs) ->
+                check(prefs.edit().commit())
+                super.deleteSharedPreferences(name)
+            }
         }
     }
 }

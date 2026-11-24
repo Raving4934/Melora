@@ -56,10 +56,14 @@ internal class ApkUpdater(
     private val validateApk: (File) -> Unit,
     private val canInstall: () -> Boolean,
     dispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
+    initialRelease: UpdateResult? = null,
 ) : AutoCloseable {
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val lock = Any()
-    private val mutableState = MutableStateFlow(ApkUpdateState())
+    private val mutableState = MutableStateFlow(
+        initialRelease?.let { ApkUpdateState(ApkUpdatePhase.Available, release = it, message = it.message) }
+            ?: ApkUpdateState(),
+    )
     val state = mutableState.asStateFlow()
     private var generation = 0L
     private var task: Job? = null
@@ -223,7 +227,7 @@ internal class ApkUpdater(
     }
 
     companion object {
-        fun create(context: Context): ApkUpdater {
+        fun create(context: Context, initialRelease: UpdateResult? = null): ApkUpdater {
             val app = context.applicationContext
             return ApkUpdater(
                 directory = File(app.filesDir, APK_UPDATE_DIRECTORY),
@@ -231,6 +235,7 @@ internal class ApkUpdater(
                 downloadApk = ::downloadUpdateApk,
                 validateApk = { validateUpdateApk(app, it) },
                 canInstall = { app.packageManager.canRequestPackageInstalls() },
+                initialRelease = initialRelease,
             )
         }
     }

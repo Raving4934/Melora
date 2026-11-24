@@ -560,6 +560,7 @@ internal fun DesktopLyricsSubPage(onBack: () -> Unit) {
 @Composable
 internal fun OtherSettingsSubPage(onBack: () -> Unit) {
     val context = LocalContext.current
+    val checkAppUpdates by MeloraSettings.autoCheckAppUpdates.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var cacheStats by remember { mutableStateOf(CacheManager.cachedStats ?: CacheStats(0L, 0L, 0L, 0L)) }
     var cacheBusy by remember { mutableStateOf(true) }
@@ -642,6 +643,14 @@ internal fun OtherSettingsSubPage(onBack: () -> Unit) {
     }
 
     SettingsSubPageScaffold(title = "其他设置", onBack = onBack) {
+        item { SectionCaption("自动更新") }
+        item {
+            SettingsCard(contentPadding = PaddingValues(vertical = 4.dp)) {
+                SwitchItem("自动检查软件更新", "打开应用时检查新版本，有更新时提醒", checkAppUpdates) {
+                    MeloraSettings.updateAutoCheckAppUpdates(it)
+                }
+            }
+        }
         item {
             SectionCaption("存储空间")
         }
