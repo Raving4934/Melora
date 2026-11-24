@@ -190,6 +190,26 @@ class NotificationMetadataTest {
     }
 
     @Test
+    fun positionTicksOnlyReadTheCurrentOccurrenceInALongQueue() {
+        val queue = Queue(*Array(1_000) { "track$it" })
+        queue.currentIndex = 862
+        val lyric = lyric("track862")
+        syncNotificationMetadata(queue.player, lyric, true, false)
+        assertEquals(1_000, queue.reads)
+        repeat(10) { tick ->
+            queue.positionMs = tick * 500L
+            syncNotificationMetadata(queue.player, lyric, true, false, currentOnly = true)
+        }
+        assertEquals(1_010, queue.reads)
+        assertEquals(listOf(862, 862), queue.edits)
+        assertEquals("TRACK862 line 2", queue.items[862].mediaMetadata.artist)
+
+        val empty = Queue()
+        syncNotificationMetadata(empty.player, lyric, true, false, currentOnly = true)
+        assertEquals(0, empty.reads)
+    }
+
+    @Test
     fun emptyOrUnregisteredQueuesAreSafeAndDoNotInventTrackMetadata() {
         val empty = Queue()
         repeat(3) { syncNotificationMetadata(empty.player, lyric("a"), true, false) }
@@ -247,6 +267,7 @@ class NotificationMetadataTest {
         var currentIndex = if (items.isEmpty()) -1 else 0
         var positionMs = 0L
         var mode = PlayMode.List
+        var reads = 0
         val edits = mutableListOf<Int>()
         val player = Proxy.newProxyInstance(Player::class.java.classLoader, arrayOf(Player::class.java)) { _, method, args ->
             when (method.name) {
@@ -254,7 +275,10 @@ class NotificationMetadataTest {
                 "getCurrentMediaItemIndex" -> currentIndex
                 "getCurrentMediaItem" -> items.getOrNull(currentIndex)
                 "getCurrentPosition" -> positionMs
-                "getMediaItemAt" -> items[args!![0] as Int]
+                "getMediaItemAt" -> {
+                    reads++
+                    items[args!![0] as Int]
+                }
                 "replaceMediaItem" -> {
                     val index = args!![0] as Int
                     items[index] = args[1] as MediaItem

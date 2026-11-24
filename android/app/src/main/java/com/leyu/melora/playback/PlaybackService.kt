@@ -9,7 +9,6 @@ import androidx.core.net.toUri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.TrackSelectionParameters
-import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -37,6 +36,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 @androidx.annotation.OptIn(UnstableApi::class, androidx.media3.common.util.ExperimentalApi::class)
@@ -87,6 +88,7 @@ class PlaybackService : MediaSessionService() {
             while (isActive) {
                 delay(500)
                 audioOutputMonitor?.check()
+                if (MeloraSettings.notificationLyrics.value) refreshNotificationMetadata(currentOnly = true)
             }
         }
         player.followAudioFocusSettings(serviceScope)
@@ -125,28 +127,18 @@ class PlaybackService : MediaSessionService() {
             .build()
 
         player.addListener(object : Player.Listener {
-            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                refreshCustomLayout()
+            override fun onEvents(player: Player, events: Player.Events) {
+                if (events.containsAny(Player.EVENT_MEDIA_ITEM_TRANSITION, Player.EVENT_MEDIA_METADATA_CHANGED)) refreshCustomLayout()
+                if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) refreshNotificationMetadata()
             }
-
-            override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
-                refreshCustomLayout()
-            }
-
         })
-        // 收藏状态变化（应用内或系统按钮）实时同步图标
-        serviceScope.launch {
-            UserLibrary.favoriteUids.collectLatest { refreshCustomLayout() }
-        }
-        // 音效预设切换（应用内）立即生效
-        serviceScope.launch {
-            MeloraSettings.audioEffectPreset.collect(effects::select)
-        }
-        // 通知元数据由实际播放器唯一写入；不能用远端控制器的时间线投影反向替换播放项。
+        serviceScope.launch { UserLibrary.favoriteUids.collectLatest { refreshCustomLayout() } }
+        serviceScope.launch { MeloraSettings.audioEffectPreset.collect(effects::select) }
+        // 目录或设置变动时同步整队；时钟只更新实际播放器当前窗口的歌词。
         TrackRegistry.onArtwork(artworkListener)
         serviceScope.launch {
             combine(
-                PlaybackController.state,
+                PlaybackController.state.map { it.queue to it.currentIndex }.distinctUntilChanged(),
                 PlaybackController.lyric,
                 MeloraSettings.notificationLyrics,
                 MeloraSettings.showNotificationCover,
@@ -155,13 +147,14 @@ class PlaybackService : MediaSessionService() {
         refreshCustomLayout()
     }
 
-    private fun refreshNotificationMetadata() {
+    private fun refreshNotificationMetadata(currentOnly: Boolean = false) {
         val player = mediaSession?.player ?: return
         syncNotificationMetadata(
             player,
             PlaybackController.lyric.value,
             MeloraSettings.notificationLyrics.value,
             MeloraSettings.showNotificationCover.value,
+            currentOnly,
         )
     }
 
@@ -357,10 +350,13 @@ internal fun syncNotificationMetadata(
     lyric: PlayerLyric?,
     lyricsEnabled: Boolean,
     coverEnabled: Boolean,
+    currentOnly: Boolean = false,
 ) {
     val currentIndex = player.currentMediaItemIndex
     val positionMs = player.currentPosition
-    for (index in 0 until player.mediaItemCount) {
+    val indices = 0 until player.mediaItemCount
+    if (currentOnly && currentIndex !in indices) return
+    for (index in if (currentOnly) currentIndex..currentIndex else indices) {
         val item = player.getMediaItemAt(index)
         val track = TrackRegistry.get(item.mediaId) ?: continue
         val artist = if (index == currentIndex) {
