@@ -112,14 +112,30 @@ class BookChapterPagingTest {
 
     @Test fun missingUidNeverFallsBackToAnotherChapterAndRepeatedPagesStopSearch() = kotlinx.coroutines.runBlocking {
         val requests = mutableListOf<Int>()
-        assertNull(findBookChapterPage(1, { it.uid == "missing" }) { page ->
-            requests += page
-            chapters(page, 1..100)
-        })
+        val repeated = runCatching {
+            findBookChapterPage(1, { it.uid == "missing" }) { page ->
+                requests += page
+                chapters(page, 1..100)
+            }
+        }.exceptionOrNull()
+        assertEquals("目录返回了重复内容，请重试", repeated?.message)
         assertEquals(listOf(1, 2), requests)
         assertNull(findBookChapterPage(5, { it.uid == "missing" }) { page ->
             chapters(page, 1..100).copy(hasMore = false)
         })
+    }
+
+    @Test fun incompleteCatalogCanRetryInsteadOfDeclaringTheChapterMissing() = kotlinx.coroutines.runBlocking {
+        val target = chapter(101, 2)
+        val failure = runCatching {
+            findBookChapterPage(2, { it.uid == target.uid }) { page ->
+                if (page == 1) chapters(1, 1..100) else KwBookApi.BookChapters(emptyList(), false, page = page)
+            }
+        }.exceptionOrNull()
+        assertEquals("目录读取不完整，请重试", failure?.message)
+        val found = findBookChapterPage(2, { it.uid == target.uid }) { page -> chapters(page, 101..200) }
+        assertEquals(2, found?.page)
+        assertTrue(found!!.items.any { it.uid == target.uid })
     }
 
     @Test fun endRangeDoesNotWrapBackwardsWhenSavedPageExceedsNewTotal() {

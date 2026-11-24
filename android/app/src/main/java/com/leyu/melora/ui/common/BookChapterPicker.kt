@@ -84,7 +84,6 @@ import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.ui.theme.MeloraAppearance
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.ensureActive
 
 internal object BookCatalogPaging {
     const val PAGE_SIZE = BOOK_CATALOG_PAGE_SIZE
@@ -193,28 +192,6 @@ internal fun bookEpisodeNumber(title: String): Int? {
         }
     }
     return (result + section + number).takeIf { it > 0 }
-}
-
-/** 页码只用于缩小查找范围，实际匹配由UID或标题集号决定；没有匹配就保留原位置。 */
-internal suspend fun findBookChapterPage(
-    hintPage: Int,
-    matches: (OnlineSong) -> Boolean,
-    load: suspend (Int) -> KwBookApi.BookChapters,
-): KwBookApi.BookChapters? {
-    val hint = hintPage.coerceAtLeast(1)
-    val hinted = load(hint)
-    if (hinted.items.any(matches)) return hinted.copy(page = hint)
-    val seen = hashSetOf<String>()
-    var page = 1
-    while (true) {
-        kotlinx.coroutines.currentCoroutineContext().ensureActive()
-        val result = if (page == hint) hinted else load(page)
-        if (result.items.any(matches)) return result.copy(page = page)
-        if (result.items.isEmpty() || !result.hasMore || result.items.all { it.uid in seen }) return null
-        // 收齐该页ID，避免服务端反复返回同页导致无界查找。
-        seen.addAll(result.items.map { it.uid })
-        page++
-    }
 }
 
 /** 听书目录在共用播放操作行中插入选集与排序，不再另起一行。 */

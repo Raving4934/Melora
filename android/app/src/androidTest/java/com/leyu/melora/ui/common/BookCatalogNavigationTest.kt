@@ -103,6 +103,26 @@ class BookCatalogNavigationTest {
         assertEquals(playing, PlaybackController.state.value.current?.uid)
     }
 
+    @Test fun incompleteChapterLookupRetainsTheDirectoryAndCanRetry() {
+        var recovered = false
+        PlaybackController.consumeMessage()
+        try {
+            show { number ->
+                if (number == 2 && !recovered) KwBookApi.BookChapters(emptyList(), false, page = number)
+                else page(number)
+            }
+            jump(101)
+            compose.waitUntil(5_000) { PlaybackController.state.value.message == "目录读取不完整，请重试" }
+            compose.onNodeWithText("目录 1–100").assertExists()
+            compose.runOnIdle { recovered = true }
+            jump(101)
+            awaitChapter(101)
+            compose.onNodeWithText("目录 101–200").assertExists()
+        } finally {
+            PlaybackController.consumeMessage()
+        }
+    }
+
     @Test fun locatingAChapterHighlightsOnlyItsRowAndClearsAfterFadeOrPageChange() {
         val playing = PlaybackController.state.value.current?.uid
         show()
