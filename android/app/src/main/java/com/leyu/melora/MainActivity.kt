@@ -116,6 +116,7 @@ class MainActivity : ComponentActivity() {
                 lastTab = MeloraSettings.lastTab.value,
                 restoreLastPage = MeloraSettings.restoreLastPage.value,
                 hasSavedInstanceState = savedInstanceState != null,
+                startupPage = MeloraSettings.startupPage.value,
             )
             setContent {
                 AdaptiveDisplay {

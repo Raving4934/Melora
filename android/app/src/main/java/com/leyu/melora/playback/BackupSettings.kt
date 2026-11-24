@@ -3,6 +3,7 @@ package com.leyu.melora.playback
 import android.annotation.SuppressLint
 import android.content.SharedPreferences
 import com.leyu.melora.playback.local.LocalSortField
+import com.leyu.melora.startup.StartupPage
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
@@ -25,6 +26,9 @@ internal object BackupSettings {
     private val fields = listOf(
         field("autoPlayOnStart", MeloraSettings.KEY_AUTO_PLAY, MeloraSettings.autoPlayOnStart, ::backupBoolean),
         field("restoreLastPage", MeloraSettings.KEY_RESTORE_LAST_PAGE, MeloraSettings.restoreLastPage, ::backupBoolean),
+        field("startupTab", MeloraSettings.KEY_STARTUP_TAB, MeloraSettings.startupPage, { value ->
+            StartupPage.fromTab(backupNumber("startupTab", value).toInt()) ?: error("启动页面无效")
+        }, StartupPage::tab),
         field("lastTab", MeloraSettings.KEY_LAST_TAB, MeloraSettings.lastTab, { backupNumber("lastTab", it).toInt() }),
         field("showExitButton", MeloraSettings.KEY_SHOW_EXIT, MeloraSettings.showExitButton, ::backupBoolean),
         field("themeMode", THEME_MODE_PREFERENCE, MeloraSettings.themeMode, { ThemeMode.restore(it as? String, null, MeloraSettings.themeMode.value) }, ThemeMode::storageValue),
@@ -149,7 +153,7 @@ private fun backupNumber(name: String, value: Any): Number {
     val number = (value as? Number)?.toDouble() ?: (value as? String)?.toDoubleOrNull()
         ?: error("$name 数值无效")
     val range = when (name) {
-        "lastTab" -> 0.0..7.0
+        "lastTab", "startupTab" -> 0.0..7.0
         "playlistSort" -> 0.0..1.0
         "downloadConcurrentTasks" -> 1.0..5.0
         "maxCacheMb" -> 0.0..1_048_576.0

@@ -19,6 +19,17 @@ class StartupTabPolicyTest {
     }
 
     @Test
+    fun allSixStartupPagesApplyOnlyOnFreshLaunchWithoutAnExplicitTab() {
+        assertEquals(listOf(0, 1, 3, 4, 5, 6), StartupPage.entries.map { it.tab })
+        for (page in StartupPage.entries) {
+            assertEquals(page.tab, resolveStartupTab(null, 7, restoreLastPage = false, hasSavedInstanceState = false, startupPage = page))
+            assertEquals(7, resolveStartupTab(null, 7, restoreLastPage = true, hasSavedInstanceState = false, startupPage = page))
+            assertEquals(7, resolveStartupTab(null, 7, restoreLastPage = false, hasSavedInstanceState = true, startupPage = page))
+            assertEquals(2, resolveStartupTab(2, 7, restoreLastPage = false, hasSavedInstanceState = false, startupPage = page))
+        }
+    }
+
+    @Test
     fun explicitNavigationWinsRegardlessOfRestoreSettingOrSavedState() {
         for (tab in 0..7) {
             for (restore in listOf(false, true)) {

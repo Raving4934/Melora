@@ -1,5 +1,6 @@
 package com.leyu.melora.playback
 
+import com.leyu.melora.startup.StartupPage
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -12,6 +13,7 @@ class StartupSettingsPersistenceTest {
     @Test
     fun defaultsEnableLastPageRestore() {
         assertTrue(MeloraSettings.restoreLastPage.value)
+        assertEquals(StartupPage.LocalSongs, MeloraSettings.startupPage.value)
         assertEquals("basic.restoreLastPage", MeloraSettings.KEY_RESTORE_LAST_PAGE)
     }
 
@@ -43,13 +45,16 @@ class StartupSettingsPersistenceTest {
         for (enabled in listOf(false, true)) {
             MeloraSettings.updateRestoreLastPage(enabled)
             MeloraSettings.updateLastTab(7)
+            MeloraSettings.updateStartupPage(StartupPage.Library)
             val exported = BackupSettings.collect()
             val startupFields = JSONObject()
                 .put("restoreLastPage", exported.get("restoreLastPage"))
                 .put("lastTab", exported.get("lastTab"))
+                .put("startupTab", exported.get("startupTab"))
             val backup = JSONObject(startupFields.toString())
             MeloraSettings.updateRestoreLastPage(!enabled)
             MeloraSettings.updateLastTab(5)
+            MeloraSettings.updateStartupPage(StartupPage.Search)
 
             val (prepared, notice) = BackupSettings.prepare(backup, emptySet(), emptySet())
             assertEquals("", notice)
@@ -57,18 +62,22 @@ class StartupSettingsPersistenceTest {
 
             assertEquals(enabled, MeloraSettings.restoreLastPage.value)
             assertEquals(7, MeloraSettings.lastTab.value)
+            assertEquals(StartupPage.Library, MeloraSettings.startupPage.value)
         }
     }
 
     @Test
     fun oldOrPartialBackupsWithoutTheSwitchKeepItsCurrentValue() = withStartupSettings {
+        MeloraSettings.updateStartupPage(StartupPage.Playlists)
         for (enabled in listOf(false, true)) {
             MeloraSettings.updateRestoreLastPage(enabled)
             for (legacy in listOf(JSONObject(), JSONObject().put("lastTab", 2))) {
                 val prepared = BackupSettings.prepare(legacy, emptySet(), emptySet()).first
                 assertFalse(prepared.has("restoreLastPage"))
+                assertFalse(prepared.has("startupTab"))
                 BackupSettings.apply(prepared)
                 assertEquals(enabled, MeloraSettings.restoreLastPage.value)
+                assertEquals(StartupPage.Playlists, MeloraSettings.startupPage.value)
             }
             assertEquals(2, MeloraSettings.lastTab.value)
         }
@@ -98,15 +107,26 @@ class StartupSettingsPersistenceTest {
         }
     }
 
+    @Test
+    fun backupCannotSupplyAPageOutsideTheStartupChoices() = withStartupSettings {
+        for (value in listOf(-1, 2, 7, 8, 1.5, "invalid")) {
+            val backup = JSONObject().put("startupTab", value)
+            assertThrows(RuntimeException::class.java) { BackupSettings.validate(backup) }
+        }
+        assertEquals(StartupPage.LocalSongs, MeloraSettings.startupPage.value)
+    }
+
     private inline fun withStartupSettings(block: () -> Unit) {
         val originalRestore = MeloraSettings.restoreLastPage.value
         val originalTab = MeloraSettings.lastTab.value
+        val originalPage = MeloraSettings.startupPage.value
         val originalTheme = MeloraSettings.themeMode.value
         try {
             block()
         } finally {
             MeloraSettings.restoreLastPage.value = originalRestore
             MeloraSettings.lastTab.value = originalTab
+            MeloraSettings.startupPage.value = originalPage
             MeloraSettings.themeMode.value = originalTheme
         }
     }

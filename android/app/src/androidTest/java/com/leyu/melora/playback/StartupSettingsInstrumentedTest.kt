@@ -5,6 +5,7 @@ import android.content.ContextWrapper
 import android.content.SharedPreferences
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.leyu.melora.startup.StartupPage
 import com.leyu.melora.startup.resolveStartupTab
 import java.util.UUID
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -135,11 +136,28 @@ class StartupSettingsInstrumentedTest {
         }
     }
 
+    @Test
+    fun startupPageSurvivesReloadAndLeavesLastTabForRecreation() {
+        MeloraSettings.init(context)
+        assertEquals(StartupPage.LocalSongs, MeloraSettings.startupPage.value)
+        MeloraSettings.updateLastTab(7)
+        MeloraSettings.updateRestoreLastPage(false)
+        MeloraSettings.updateStartupPage(StartupPage.Audiobooks)
+        assertEquals(4, context.settingsPrefs.getInt(MeloraSettings.KEY_STARTUP_TAB, -1))
+        MeloraSettings.startupPage.value = StartupPage.LocalSongs
+        initializedField.setBoolean(null, false)
+        MeloraSettings.init(context)
+        assertEquals(StartupPage.Audiobooks, MeloraSettings.startupPage.value)
+        assertEquals(4, initialTab(hasSavedState = false))
+        assertEquals(7, initialTab(hasSavedState = true))
+    }
+
     private fun initialTab(hasSavedState: Boolean): Int = resolveStartupTab(
         explicitTab = null,
         lastTab = MeloraSettings.lastTab.value,
         restoreLastPage = MeloraSettings.restoreLastPage.value,
         hasSavedInstanceState = hasSavedState,
+        startupPage = MeloraSettings.startupPage.value,
     )
 
     private class StartupContext(base: Context) : ContextWrapper(base) {

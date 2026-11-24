@@ -69,6 +69,8 @@ import com.leyu.melora.playback.formatCacheBytes
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.PlayerCoverStyle
+import com.leyu.melora.startup.StartupPage
+import com.leyu.melora.ui.navigationIcon
 import com.leyu.melora.ui.common.runCatchingCancellable
 import com.leyu.melora.ui.common.MeloraAboutMark
 import com.leyu.melora.ui.theme.MeloraAppearance
@@ -84,6 +86,7 @@ internal fun BasicSettingsSubPage(onBack: () -> Unit) {
     val showSongCovers by MeloraSettings.showSongCovers.collectAsStateWithLifecycle()
     val showExitButton by MeloraSettings.showExitButton.collectAsStateWithLifecycle()
     val restoreLastPage by MeloraSettings.restoreLastPage.collectAsStateWithLifecycle()
+    val startupPage by MeloraSettings.startupPage.collectAsStateWithLifecycle()
     val pullToRefresh by MeloraSettings.pullToRefresh.collectAsStateWithLifecycle()
     val playerThemeMode by MeloraSettings.playerThemeMode.collectAsStateWithLifecycle()
     val keepScreenAwake by MeloraSettings.keepScreenAwake.collectAsStateWithLifecycle()
@@ -132,8 +135,12 @@ internal fun BasicSettingsSubPage(onBack: () -> Unit) {
                 }
                 SettingsDivider(Modifier.padding(horizontal = 14.dp))
 
-                SwitchItem("启动时恢复上次页面", "关闭后，重新启动进入本地音乐", restoreLastPage) {
+                SwitchItem("启动时恢复上次页面", "记住上次离开时所在的页面", restoreLastPage) {
                     MeloraSettings.updateRestoreLastPage(it)
+                }
+                if (!restoreLastPage) {
+                    SettingsDivider(Modifier.padding(horizontal = 14.dp))
+                    StartupPageSetting(startupPage, MeloraSettings::updateStartupPage)
                 }
                 SettingsDivider(Modifier.padding(horizontal = 14.dp))
 
@@ -147,7 +154,6 @@ internal fun BasicSettingsSubPage(onBack: () -> Unit) {
                 }
             }
         }
-
         item {
             SectionCaption("播放界面")
         }
@@ -195,6 +201,19 @@ internal fun BasicSettingsSubPage(onBack: () -> Unit) {
         }
     }
 }
+
+@Composable
+internal fun StartupPageSetting(selected: StartupPage, onSelect: (StartupPage) -> Unit) {
+    SettingsChoiceMenu(
+        title = "启动页面",
+        value = selected,
+        options = StartupPage.entries,
+        label = StartupPage::label,
+        icon = StartupPage::navigationIcon,
+        onSelect = onSelect,
+    )
+}
+
 // 下载设置：路径/音质/跳过同名/自动换源/并发数/命名格式/嵌入标签
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

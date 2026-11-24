@@ -114,6 +114,7 @@ import com.leyu.melora.playback.DesktopLyricService
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.UserLibrary
+import com.leyu.melora.startup.StartupPage
 import com.leyu.melora.ui.common.PageBackHandler
 import com.leyu.melora.ui.common.LocalPageActive
 import com.leyu.melora.ui.common.LocalResetRootBack
@@ -196,6 +197,8 @@ private val tabs = listOf(
     MainTabItem("我的列表", Icons.Outlined.FavoriteBorder, Color(0xFF3949AB)),
     MainTabItem("设置", Icons.Outlined.Settings, Color(0xFF546E7A)),
 )
+
+internal val StartupPage.navigationIcon: ImageVector get() = tabs[tab].icon
 
 internal enum class DiscoverCatalog(val tab: Int) {
     Playlists(3), Leaderboards(1), Audiobooks(4);
