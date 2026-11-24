@@ -20,6 +20,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.leyu.melora.playback.sdk.OnlinePlaylist
 import com.leyu.melora.ui.search.PlatformSource
 import com.leyu.melora.ui.search.SearchCategory
+import com.leyu.melora.ui.search.SearchResults
 import com.leyu.melora.ui.search.SearchResultsContent
 import com.leyu.melora.ui.theme.MeloraTheme
 import org.json.JSONObject
@@ -76,8 +77,8 @@ class ResponsiveGridLayoutInstrumentedTest {
                         SearchResultsContent(
                             listState = rememberLazyListState(), category = category.value, submitted = "测试",
                             selectedPlatform = PlatformSource.Kuwo, loading = loading.value, error = null,
-                            playlists = playlists, songs = emptyList(), hasMore = false, loadingMore = false,
-                            favoriteUids = emptySet(), onRetry = {}, onLoadMore = {}, onOpenPlaylist = {},
+                            results = SearchResults(page = 1, playlists = playlists),
+                            favoriteUids = emptySet(), onLoadPage = {}, onOpenPlaylist = {},
                             onMoreSong = {}, onPlaySong = {},
                         )
                     }
@@ -99,7 +100,7 @@ class ResponsiveGridLayoutInstrumentedTest {
         compose.runOnIdle { windowWidth.value = 1440.dp }
         assertColumns(2)
         compose.runOnIdle { loading.value = true }
-        compose.waitForIdle()
+        assertColumns(2)
         compose.runOnIdle { loading.value = false; category.value = SearchCategory.Audiobook }
         assertColumns(2)
         compose.runOnIdle { paneWidth.value = 1112.dp }

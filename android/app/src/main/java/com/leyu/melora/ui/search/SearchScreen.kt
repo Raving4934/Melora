@@ -12,18 +12,17 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.clearText
+import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -34,7 +33,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.UserLibrary
-import com.leyu.melora.playback.sdk.KwBookApi
 import com.leyu.melora.playback.sdk.OnlineCache
 import com.leyu.melora.playback.sdk.OnlinePlaylist
 import com.leyu.melora.playback.sdk.OnlineRepository
@@ -44,9 +42,8 @@ import com.leyu.melora.ui.common.PlaylistDetailContent
 import com.leyu.melora.ui.common.SongMoreSheet
 import com.leyu.melora.ui.common.runCatchingCancellable
 import com.leyu.melora.playback.UiTrack
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 
 internal val SearchChromeHeaderHeight =
     SearchTopBarHeight +
@@ -57,6 +54,7 @@ internal val SearchChromeHeaderHeight =
 internal fun searchExpectedTopBarHeight(suggestionsVisible: Boolean) =
     if (suggestionsVisible) null else SearchChromeHeaderHeight
 
+private data class SearchPageRequest(val page: Int, val error: String? = null)
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -67,26 +65,21 @@ fun SearchScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
 
-    var selectedPlatform by remember {
-        mutableStateOf(
-            PlatformSource.entries.firstOrNull { it.id == MeloraSettings.searchPlatform.value }
-                ?: PlatformSource.All,
-        )
-    }
+    val platformId by MeloraSettings.searchPlatform.collectAsStateWithLifecycle()
+    val selectedPlatform = PlatformSource.entries.firstOrNull { it.id == platformId } ?: PlatformSource.All
     var platformMenuExpanded by remember { mutableStateOf(false) }
 
-    val queryState = remember { TextFieldState() }
-    val query = queryState.text.toString()
-    var submitted by remember { mutableStateOf("") }
+    val queryState = rememberTextFieldState()
+    var submitted by rememberSaveable { mutableStateOf("") }
     val searchHistory by UserLibrary.searchHistory.collectAsStateWithLifecycle()
 
-    var suggestions by remember { mutableStateOf<List<String>>(emptyList()) }
+    val suggestionText = queryState.text.toString().trim().takeUnless { it == submitted }.orEmpty()
+    var suggestions by remember(suggestionText, selectedPlatform, category) { mutableStateOf(emptyList<String>()) }
     val recommendationSources = if (selectedPlatform == PlatformSource.All) platformIds else listOf(selectedPlatform.id)
-    val sourceKey = if (selectedPlatform == PlatformSource.All) "all" else selectedPlatform.id
+    val sourceKey = selectedPlatform.id
     val hotKey = "searchHot.${category.name}.$sourceKey"
     // 搜索意图改变后不能继续命中另一组热词/历史的推荐结果。
     val intentKey = searchHistory.take(3).hashCode()
@@ -107,88 +100,37 @@ fun SearchScreen(
         mutableStateOf(OnlineCache.peek<List<OnlinePlaylist>>(hotPlaylistKey).orEmpty())
     }
     var hotPlaylistsLoading by remember(hotPlaylistKey) { mutableStateOf(hotPlaylists.isEmpty()) }
-    var songs by remember { mutableStateOf<List<OnlineSong>>(emptyList()) }
-    var playlists by remember { mutableStateOf<List<OnlinePlaylist>>(emptyList()) }
-    var page by remember { mutableIntStateOf(1) }
-    var hasMore by remember { mutableStateOf(false) }
-    var loading by remember { mutableStateOf(false) }
-    var loadingMore by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var searchJob by remember { mutableStateOf<Job?>(null) }
-    var searchRequestId by remember { mutableIntStateOf(0) }
     var openedPlaylist by remember { mutableStateOf<OnlinePlaylist?>(null) }
     var moreSong by remember { mutableStateOf<OnlineSong?>(null) }
 
     val searching = submitted.isNotBlank()
-    val idleListState = rememberLazyListState()
-    val resultListState = rememberLazyListState()
+    val searchKey = Triple(submitted, category, selectedPlatform)
+    var results by remember(searchKey) { mutableStateOf(SearchResults()) }
+    var request by remember(searchKey) { mutableStateOf<SearchPageRequest?>(SearchPageRequest(1)) }
+    val idleListState = key(category, selectedPlatform) { rememberLazyListState() }
+    val resultListState = key(searchKey) { rememberLazyListState() }
     val scrollToTop = rememberFastScrollToTop(if (searching) resultListState else idleListState)
     val favoriteUids by UserLibrary.favoriteUids.collectAsStateWithLifecycle()
 
-    fun cancelSearch() {
-        searchRequestId++
-        searchJob?.cancel()
-        searchJob = null
-        loading = false
-        loadingMore = false
-    }
-
-    fun runSearch(keyword: String, targetPage: Int, append: Boolean) {
-        if (keyword.isBlank() || (append && searchJob?.isActive == true)) return
-        searchJob?.cancel()
-        val requestId = ++searchRequestId
-        val requestCategory = category
-        val requestPlatform = selectedPlatform
-        searchJob = scope.launch {
-            if (append) loadingMore = true else {
-                loading = true
-                hasMore = false
-            }
-            error = null
-            try {
-                when (requestCategory) {
-                    SearchCategory.Song -> {
-                        val onUpdate: ((SongSearchOutcome) -> Unit)? =
-                            if (requestPlatform == PlatformSource.All && !append) { outcome ->
-                                if (requestId == searchRequestId) {
-                                    songs = outcome.songs
-                                    if (songs.isNotEmpty()) loading = false
-                                }
-                            } else null
-                        val outcome = searchSongs(context, requestPlatform, keyword, targetPage, onUpdate)
-                        if (requestId != searchRequestId) return@launch
-                        songs = if (append) (songs + outcome.songs).distinctBy(OnlineSong::uid) else outcome.songs
-                        hasMore = outcome.hasMore
+    // 换词、换类和换平台会取消旧请求，失败请求保留页码供原位重试。
+    val current = request
+    LaunchedEffect(searchKey, current) {
+        if (!searching || current == null || current.error != null) return@LaunchedEffect
+        try {
+            val onUpdate: ((SearchResults) -> Unit)? =
+                if (category == SearchCategory.Song && selectedPlatform == PlatformSource.All && current.page == 1) {
+                    { partial ->
+                        if (request === current && !partial.isEmpty) results = partial.copy(hasMore = false)
                     }
-                    SearchCategory.Playlist -> {
-                        val outcome = searchPlaylists(context, requestPlatform, keyword, targetPage)
-                        if (requestId != searchRequestId) return@launch
-                        playlists = if (append) {
-                            (playlists + outcome.playlists).distinctBy { "${it.source}_${it.id}" }
-                        } else {
-                            outcome.playlists
-                        }
-                        hasMore = outcome.hasMore
-                    }
-                    SearchCategory.Audiobook -> {
-                        val outcome = KwBookApi.search(keyword, targetPage)
-                        if (requestId != searchRequestId) return@launch
-                        playlists = if (append) (playlists + outcome.items).distinctBy(OnlinePlaylist::id) else outcome.items
-                        hasMore = outcome.hasMore
-                    }
-                }
-                page = targetPage
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (failure: Throwable) {
-                if (requestId == searchRequestId) error = failure.message ?: "搜索失败，请稍后重试"
-            } finally {
-                if (requestId == searchRequestId) {
-                    loading = false
-                    loadingMore = false
-                    searchJob = null
-                }
-            }
+                } else null
+            val next = searchResultPage(context, category, selectedPlatform, submitted, current.page, onUpdate)
+            ensureActive()
+            if (request !== current) return@LaunchedEffect
+            results = results.withPage(next)
+            request = null
+        } catch (failure: Exception) {
+            ensureActive()
+            if (request === current) request = current.copy(error = failure.message ?: "搜索失败，请稍后重试")
         }
     }
 
@@ -283,6 +225,7 @@ fun SearchScreen(
         if (searching || category != SearchCategory.Playlist) return@LaunchedEffect
         OnlineCache.get<List<OnlinePlaylist>>(hotPlaylistKey, 15 * 60 * 1000L)?.let {
             hotPlaylists = it
+            hotPlaylistsLoading = false
             return@LaunchedEffect
         }
         hotPlaylistsLoading = true
@@ -295,42 +238,16 @@ fun SearchScreen(
     }
 
     // 输入联想：防抖后请求平台搜索建议
-    LaunchedEffect(query, selectedPlatform, category) {
-        val text = query.trim()
-        if (text.isEmpty() || text == submitted) {
-            suggestions = emptyList()
-            return@LaunchedEffect
-        }
-        kotlinx.coroutines.delay(280)
+    LaunchedEffect(suggestionText, selectedPlatform, category) {
+        if (suggestionText.isEmpty()) return@LaunchedEffect
+        delay(280)
         suggestions = runCatchingCancellable {
             OnlineRepository.tipSearch(
                 context,
                 if (selectedPlatform == PlatformSource.All) "kw" else selectedPlatform.id,
-                text,
+                suggestionText,
             )
         }.getOrDefault(emptyList()).take(8)
-    }
-
-    LaunchedEffect(category, selectedPlatform) {
-        idleListState.scrollToItem(0)
-        resultListState.scrollToItem(0)
-    }
-    LaunchedEffect(submitted) {
-        if (submitted.isNotBlank()) resultListState.scrollToItem(0)
-    }
-
-    // 关键词/分类/平台变化时刷新结果
-    LaunchedEffect(submitted, category, selectedPlatform) {
-        if (submitted.isBlank()) {
-            cancelSearch()
-        } else {
-            songs = emptyList()
-            playlists = emptyList()
-            page = 1
-            hasMore = false
-            loadingMore = false
-            runSearch(submitted, 1, append = false)
-        }
     }
 
     fun submit(keyword: String) {
@@ -338,16 +255,11 @@ fun SearchScreen(
         if (text.isEmpty()) return
         UserLibrary.addSearchKeyword(text)
         if (queryState.text.toString() != text) queryState.setTextAndPlaceCursorAtEnd(text)
-        if (submitted == text) {
-            runSearch(text, 1, append = false)
-        } else {
-            submitted = text
-        }
+        if (submitted == text) request = SearchPageRequest(1) else submitted = text
         keyboardController?.hide()
         focusManager.clearFocus()
     }
 
-    val visibleSuggestions = suggestions.takeIf { query.isNotBlank() && query.trim() != submitted }.orEmpty()
     DetailPageHost(
         target = openedPlaylist,
         modifier = modifier.fillMaxSize(),
@@ -362,7 +274,7 @@ fun SearchScreen(
         content = {
             ChromeScaffold(
                 modifier = Modifier.fillMaxSize(),
-                expectedTopBarHeight = searchExpectedTopBarHeight(visibleSuggestions.isNotEmpty()),
+                expectedTopBarHeight = searchExpectedTopBarHeight(suggestions.isNotEmpty()),
                 topBar = {
                     Column(
                         modifier = Modifier
@@ -386,19 +298,14 @@ fun SearchScreen(
                                 queryState = queryState,
                                 selectedPlatform = selectedPlatform,
                                 platformMenuExpanded = platformMenuExpanded,
-                                suggestions = visibleSuggestions,
+                                suggestions = suggestions,
                                 onSubmit = { submit(it) },
                                 onClear = {
                                     queryState.clearText()
                                     submitted = ""
-                                    cancelSearch()
-                                    songs = emptyList()
-                                    playlists = emptyList()
-                                    error = null
                                 },
                                 onPlatformMenuExpandedChange = { platformMenuExpanded = it },
                                 onPlatformChange = { platform ->
-                                    selectedPlatform = platform
                                     MeloraSettings.updateSearchPlatform(platform.id)
                                     platformMenuExpanded = false
                                 },
@@ -438,15 +345,15 @@ fun SearchScreen(
                             category = category,
                             submitted = submitted,
                             selectedPlatform = selectedPlatform,
-                            loading = loading,
-                            error = error,
-                            playlists = playlists,
-                            songs = songs,
-                            hasMore = hasMore,
-                            loadingMore = loadingMore,
+                            results = results,
+                            loading = request != null && request?.error == null,
+                            error = request?.error,
                             favoriteUids = favoriteUids,
-                            onRetry = { runSearch(submitted, 1, append = false) },
-                            onLoadMore = { runSearch(submitted, page + 1, append = true) },
+                            onLoadPage = {
+                                val pending = request
+                                if (pending?.error != null) request = SearchPageRequest(pending.page)
+                                else if (pending == null && results.hasMore) request = SearchPageRequest(results.page + 1)
+                            },
                             onOpenPlaylist = { openedPlaylist = it },
                             onMoreSong = { moreSong = it },
                             onPlaySong = { song ->

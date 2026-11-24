@@ -1,5 +1,6 @@
 package com.leyu.melora.ui.search
 
+import android.content.Context
 import androidx.compose.ui.graphics.Color
 import com.leyu.melora.playback.sdk.KwBookApi
 import com.leyu.melora.playback.sdk.OnlineCache
@@ -8,12 +9,10 @@ import com.leyu.melora.playback.sdk.OnlineRepository
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.sdk.SongPage
 import com.leyu.melora.ui.common.runCatchingCancellable
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.joinAll
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
 import java.util.Locale
 
 
@@ -46,36 +45,64 @@ internal suspend fun audiobookScenarioWords(): List<String> {
     return if (words.isNotEmpty()) words.take(6) else audiobookKeywords
 }
 
-internal data class SongSearchOutcome(val songs: List<OnlineSong>, val hasMore: Boolean)
-internal data class PlaylistSearchOutcome(val playlists: List<OnlinePlaylist>, val hasMore: Boolean)
+internal data class SearchResults(
+    val page: Int = 0,
+    val songs: List<OnlineSong> = emptyList(),
+    val playlists: List<OnlinePlaylist> = emptyList(),
+    val hasMore: Boolean = false,
+) {
+    val isEmpty: Boolean get() = songs.isEmpty() && playlists.isEmpty()
 
-internal val platformIds = listOf("kw", "kg", "wy", "tx", "mg")
+    fun withPage(next: SearchResults): SearchResults = if (next.page == 1) next else next.copy(
+        songs = (songs + next.songs).distinctBy(OnlineSong::uid),
+        playlists = (playlists + next.playlists).distinctBy { it.source to it.id },
+    )
+}
+
+internal val platformIds = PlatformSource.entries.filter { it != PlatformSource.All }.map(PlatformSource::id)
 private const val SEARCH_CACHE_TTL_MS = 10 * 60 * 1000L
 
 internal fun songSearchCacheKey(source: String, keyword: String, page: Int): String =
     "search:songs:$source:${keyword.trim().lowercase(Locale.ROOT)}:$page"
 
 private suspend fun cachedSongSearch(
-    context: android.content.Context,
+    context: Context,
     source: String,
     keyword: String,
     page: Int,
     timeoutMs: Long = 25_000L,
-): SongPage = OnlineCache.refresh(songSearchCacheKey(source, keyword, page), SEARCH_CACHE_TTL_MS) {
+): SongPage = OnlineCache.refresh(
+    songSearchCacheKey(source, keyword, page), SEARCH_CACHE_TTL_MS, cancelWhenUnobserved = true,
+) {
     OnlineRepository.search(context, source, keyword, page, 30, timeoutMs = timeoutMs)
 }
 
-/** 首屏渐进返回与后续分页共用一条聚合链路；同来源刷新替换快照，不追加过时歌曲。 */
-internal suspend fun searchSongs(
-    context: android.content.Context,
+internal suspend fun searchResultPage(
+    context: Context,
+    category: SearchCategory,
     platform: PlatformSource,
     keyword: String,
     page: Int,
-    onUpdate: ((SongSearchOutcome) -> Unit)? = null,
-): SongSearchOutcome = supervisorScope {
+    onUpdate: ((SearchResults) -> Unit)? = null,
+): SearchResults = when (category) {
+    SearchCategory.Song -> searchSongs(context, platform, keyword, page, onUpdate)
+    SearchCategory.Playlist -> searchPlaylists(context, platform, keyword, page)
+    SearchCategory.Audiobook -> KwBookApi.search(keyword, page).let {
+        SearchResults(page, playlists = it.items, hasMore = it.hasMore)
+    }
+}
+
+/** 首屏渐进返回与后续分页共用一条聚合链路；同来源刷新替换快照，不追加过时歌曲。 */
+private suspend fun searchSongs(
+    context: Context,
+    platform: PlatformSource,
+    keyword: String,
+    page: Int,
+    onUpdate: ((SearchResults) -> Unit)?,
+): SearchResults = coroutineScope {
     val targets = if (platform == PlatformSource.All) platformIds else listOf(platform.id)
     val pages = linkedMapOf<String, SongPage>()
-    fun outcome(): SongSearchOutcome {
+    fun outcome(): SearchResults {
         val available = if (onUpdate == null) targets.mapNotNull(pages::get) else pages.values
         val songs = buildList {
             val uids = hashSetOf<String>()
@@ -88,7 +115,8 @@ internal suspend fun searchSongs(
                 add(song)
             }
         }
-        return SongSearchOutcome(
+        return SearchResults(
+            page = page,
             songs = songs,
             hasMore = available.any { it.hasMore(loadedCount = (page - 1) * it.pageSize + it.rawCount) },
         )
@@ -98,40 +126,39 @@ internal suspend fun searchSongs(
         pages[source] = result.copy(page = page)
         onUpdate?.invoke(outcome())
     }
-    targets.map { source ->
-        launch {
+    val results = targets.map { source ->
+        async {
             if (onUpdate != null) {
                 OnlineCache.peek<SongPage>(songSearchCacheKey(source, keyword, page))?.let { accept(source, it) }
             }
-            val fresh = recoverSearch {
+            runCatchingCancellable {
                 cachedSongSearch(context, source, keyword, page, timeoutMs = if (onUpdate == null) 25_000L else 6_000L)
+            }.onSuccess { fresh ->
+                ensureActive()
+                if (fresh != pages[source]) accept(source, fresh)
             }
-            if (fresh != null && fresh != pages[source]) accept(source, fresh)
         }
-    }.joinAll()
+    }.awaitAll()
+    // 缓存预览或任一来源成功时保留可用结果；全部失败要暴露真实错误，不能推进空页游标。
+    if (pages.isEmpty()) results.first().getOrThrow()
     outcome()
 }
 
-internal suspend fun searchPlaylists(
-    context: android.content.Context,
+private suspend fun searchPlaylists(
+    context: Context,
     platform: PlatformSource,
     keyword: String,
     page: Int,
-): PlaylistSearchOutcome = supervisorScope {
+): SearchResults = coroutineScope {
     val targets = if (platform == PlatformSource.All) platformIds else listOf(platform.id)
-    val pages = targets.map { source ->
-        async { recoverSearch { OnlineRepository.songlistSearch(context, source, keyword, page) } }
-    }.awaitAll().filterNotNull()
-    PlaylistSearchOutcome(
-        playlists = pages.flatMap { it.list }.distinctBy { "${it.source}_${it.id}" },
+    val results = targets.map { source ->
+        async { runCatchingCancellable { OnlineRepository.songlistSearch(context, source, keyword, page) } }
+    }.awaitAll()
+    val pages = results.mapNotNull { it.getOrNull() }
+    if (pages.isEmpty()) results.first().getOrThrow()
+    SearchResults(
+        page = page,
+        playlists = pages.flatMap { it.list }.distinctBy { it.source to it.id },
         hasMore = pages.any { it.list.isNotEmpty() },
     )
-}
-
-internal suspend fun <T> recoverSearch(block: suspend () -> T): T? = try {
-    block()
-} catch (cancelled: CancellationException) {
-    throw cancelled
-} catch (_: Throwable) {
-    null
 }

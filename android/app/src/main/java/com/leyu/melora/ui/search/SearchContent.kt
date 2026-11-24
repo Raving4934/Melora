@@ -19,14 +19,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Surface
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -65,130 +63,97 @@ internal fun SearchResultsContent(
     category: SearchCategory,
     submitted: String,
     selectedPlatform: PlatformSource,
+    results: SearchResults,
     loading: Boolean,
     error: String?,
-    playlists: List<OnlinePlaylist>,
-    songs: List<OnlineSong>,
-    hasMore: Boolean,
-    loadingMore: Boolean,
     favoriteUids: Set<String>,
-    onRetry: () -> Unit,
-    onLoadMore: () -> Unit,
+    onLoadPage: () -> Unit,
     onOpenPlaylist: (OnlinePlaylist) -> Unit,
     onMoreSong: (OnlineSong) -> Unit,
     onPlaySong: (OnlineSong) -> Unit,
 ) {
-    when {
-        loading -> BoxWithConstraints(
-            modifier = Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current),
-        ) {
-            SearchResultsSkeleton(
-                category = category,
-                availableWidth = maxWidth,
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
-        error != null -> ErrorState(error, onRetry = { onRetry() }, modifier = Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current))
-        category == SearchCategory.Playlist || category == SearchCategory.Audiobook -> {
-            if (playlists.isEmpty()) {
+    val viewport = Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current)
+    if (results.isEmpty) {
+        when {
+            loading && results.page == 0 -> BoxWithConstraints(viewport) {
+                SearchResultsSkeleton(category, maxWidth, Modifier.fillMaxSize())
+            }
+            error != null -> ErrorState(error, modifier = viewport, onRetry = onLoadPage)
+            else -> Column(viewport) {
+                val emptyMessage = when (category) {
+                    SearchCategory.Song -> "没有找到「$submitted」相关内容"
+                    SearchCategory.Playlist -> "没有找到「$submitted」相关歌单"
+                    SearchCategory.Audiobook -> "没有找到「$submitted」相关有声专辑"
+                }
                 EmptyState(
-                    if (category == SearchCategory.Audiobook) "没有找到「$submitted」相关有声专辑" else "没有找到「$submitted」相关歌单",
-                    Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current),
+                    if (results.hasMore) "当前页暂无匹配内容，可继续加载" else emptyMessage,
+                    Modifier.weight(1f),
                 )
+                if (results.hasMore) LoadMoreFooter(loading, false, onLoadPage)
+            }
+        }
+        return
+    }
+
+    val songResults = category == SearchCategory.Song
+    val source = sourceAliasDisplay(selectedPlatform.id, selectedPlatform.label)
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val columns = if (songResults) 1 else responsiveGridColumns(maxWidth, horizontalSpacing = 10.dp)
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = if (songResults) Arrangement.Top else Arrangement.spacedBy(10.dp),
+            contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
+        ) {
+            item("count") {
+                Text(
+                    text = when (category) {
+                        SearchCategory.Song -> "歌曲结果 · 来自【$source】 · ${results.songs.size} 首"
+                        SearchCategory.Playlist -> "歌单结果 · 来自【$source】 · ${results.playlists.size} 个"
+                        SearchCategory.Audiobook -> "有声专辑 · 来自【酷我】 · ${results.playlists.size} 个"
+                    },
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = TextSub,
+                    modifier = Modifier.padding(vertical = if (songResults) 6.dp else 4.dp),
+                )
+            }
+            if (songResults) {
+                items(results.songs, key = OnlineSong::uid) { song ->
+                    OnlineSongRow(
+                        song = song,
+                        showAlbum = true,
+                        isFavorite = song.uid in favoriteUids,
+                        onMore = { onMoreSong(song) },
+                        onClick = { onPlaySong(song) },
+                        platformDotColor = if (selectedPlatform == PlatformSource.All) {
+                            PlatformSource.entries.firstOrNull { it.id == song.source }?.color
+                        } else null,
+                    )
+                }
             } else {
-                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                    val columns = responsiveGridColumns(maxWidth, horizontalSpacing = 10.dp)
-                    val rows = playlists.chunked(columns)
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                        contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
-                    ) {
-                        item {
-                            Text(
-                                text = if (category == SearchCategory.Audiobook) {
-                                    "有声专辑 · 来自【酷我】 · ${playlists.size} 个"
-                                } else {
-                                    "歌单结果 · 来自【${sourceAliasDisplay(selectedPlatform.id, selectedPlatform.label)}】 · ${playlists.size} 个"
-                                },
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = TextSub,
-                                modifier = Modifier.padding(vertical = 4.dp),
-                            )
-                        }
-                        itemsIndexed(rows) { rowIndex, rowItems ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            ) {
-                                rowItems.forEach { playlist ->
-                                    if (category == SearchCategory.Audiobook) {
-                                        OnlineAudiobookCard(
-                                            playlist = playlist,
-                                            onClick = { onOpenPlaylist(playlist) },
-                                            modifier = Modifier.weight(1f),
-                                        )
-                                    } else {
-                                        OnlinePlaylistCard(
-                                            playlist = playlist,
-                                            onClick = { onOpenPlaylist(playlist) },
-                                            modifier = Modifier.weight(1f),
-                                        )
-                                    }
-                                }
-                                repeat(columns - rowItems.size) {
-                                    Spacer(Modifier.weight(1f))
-                                }
-                            }
-                            if (rowIndex == rows.lastIndex && hasMore) {
-                                LoadMoreFooter(loadingMore) { onLoadMore() }
+                items(results.playlists.chunked(columns), key = { row ->
+                    val first = row.first()
+                    "playlist:${first.source}:${first.id}"
+                }) { row ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        row.forEach { playlist ->
+                            if (category == SearchCategory.Audiobook) {
+                                OnlineAudiobookCard(playlist, { onOpenPlaylist(playlist) }, Modifier.weight(1f))
+                            } else {
+                                OnlinePlaylistCard(playlist, { onOpenPlaylist(playlist) }, Modifier.weight(1f))
                             }
                         }
+                        repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
                     }
                 }
             }
-        }
-        else -> {
-            if (songs.isEmpty()) {
-                EmptyState("没有找到「$submitted」相关内容", Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current))
-            } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
-                ) {
-                    item {
-                        Text(
-                            text = "歌曲结果 · 来自【${sourceAliasDisplay(selectedPlatform.id, selectedPlatform.label)}】 · ${songs.size} 首",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = TextSub,
-                            modifier = Modifier.padding(vertical = 6.dp),
-                        )
-                    }
-                    itemsIndexed(songs, key = { _, song -> song.uid }) { index, song ->
-                        OnlineSongRow(
-                            song = song,
-                            showAlbum = true,
-                            isFavorite = song.uid in favoriteUids,
-                            onMore = { onMoreSong(song) },
-                            onClick = { onPlaySong(song) },
-                            platformDotColor = if (selectedPlatform == PlatformSource.All) {
-                                PlatformSource.entries.firstOrNull { it.id == song.source }?.color
-                            } else null,
-                        )
-                        if (index == songs.lastIndex && hasMore) {
-                            LoadMoreFooter(loadingMore) { onLoadMore() }
-                        }
-                    }
-                }
+            if (results.hasMore || loading || error != null) {
+                item("more") { LoadMoreFooter(loading, error != null, onLoadPage) }
             }
         }
     }
 }
-
 
 @Composable
 private fun SearchResultsSkeleton(
@@ -233,7 +198,7 @@ private fun SearchResultHeaderSkeleton(verticalPadding: Dp) {
 }
 
 @Composable
-private fun LoadMoreFooter(loading: Boolean, onLoadMore: () -> Unit) {
+private fun LoadMoreFooter(loading: Boolean, failed: Boolean, onLoadMore: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -242,7 +207,11 @@ private fun LoadMoreFooter(loading: Boolean, onLoadMore: () -> Unit) {
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            if (loading) "正在加载…" else "加载更多",
+            text = when {
+                loading -> "正在加载…"
+                failed -> "加载失败，点击重试"
+                else -> "加载更多"
+            },
             fontSize = 13.sp,
             color = TextSub,
         )
