@@ -32,6 +32,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.leyu.melora.playback.BackupRestoreTransaction
 import com.leyu.melora.playback.MeloraSettings
+import com.leyu.melora.playback.PlaylistAutoUpdate
 import com.leyu.melora.playback.UpdateChecker
 import com.leyu.melora.playback.UpdateResult
 import com.leyu.melora.playback.local.LocalTagFiller
@@ -234,6 +235,7 @@ class MainActivity : ComponentActivity() {
             // 进程可能仍在而播放服务已退出；重进界面也必须走同一个队列恢复入口。
             com.leyu.melora.playback.PlaybackController.init(this@MainActivity)
             com.leyu.melora.playback.PlaybackController.checkLocalQueue(this@MainActivity)
+            PlaylistAutoUpdate.onForeground(this@MainActivity)
         }
     }
 

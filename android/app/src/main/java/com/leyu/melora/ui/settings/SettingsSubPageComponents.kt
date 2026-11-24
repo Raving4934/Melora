@@ -67,6 +67,7 @@ import com.leyu.melora.playback.CacheStats
 import com.leyu.melora.playback.formatCacheBytes
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlaybackController
+import com.leyu.melora.playback.PlaylistAutoUpdate
 import com.leyu.melora.playback.PlayerCoverStyle
 import com.leyu.melora.startup.StartupPage
 import com.leyu.melora.ui.navigationIcon
@@ -560,6 +561,7 @@ internal fun DesktopLyricsSubPage(onBack: () -> Unit) {
 @Composable
 internal fun OtherSettingsSubPage(onBack: () -> Unit) {
     val context = LocalContext.current
+    val updatePlaylists by PlaylistAutoUpdate.enabled.collectAsStateWithLifecycle()
     val checkAppUpdates by MeloraSettings.autoCheckAppUpdates.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var cacheStats by remember { mutableStateOf(CacheManager.cachedStats ?: CacheStats(0L, 0L, 0L, 0L)) }
@@ -646,6 +648,10 @@ internal fun OtherSettingsSubPage(onBack: () -> Unit) {
         item { SectionCaption("自动更新") }
         item {
             SettingsCard(contentPadding = PaddingValues(vertical = 4.dp)) {
+                SwitchItem("自动更新导入的歌单", "打开应用时检查原歌单，每天最多一次", updatePlaylists) {
+                    PlaylistAutoUpdate.setEnabled(context, it)
+                }
+                SettingsDivider(Modifier.padding(horizontal = 16.dp))
                 SwitchItem("自动检查软件更新", "打开应用时检查新版本，有更新时提醒", checkAppUpdates) {
                     MeloraSettings.updateAutoCheckAppUpdates(it)
                 }

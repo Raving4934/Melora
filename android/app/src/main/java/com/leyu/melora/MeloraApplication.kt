@@ -20,6 +20,7 @@ import com.leyu.melora.playback.CrashLogger
 import com.leyu.melora.playback.DownloadCenter
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlaybackController
+import com.leyu.melora.playback.PlaylistAutoUpdate
 import com.leyu.melora.playback.UserLibrary
 import com.leyu.melora.playback.local.LocalTagFiller
 import com.leyu.melora.playback.local.LocalMediaStore
@@ -79,6 +80,7 @@ class MeloraApplication : Application(), SingletonImageLoader.Factory {
                         async { runStartupStep("历史音源迁移") { removeLegacyPresetSources() } },
                     ).forEach { it.await() }
                 }
+                runStartupStep("歌单更新") { PlaylistAutoUpdate.init(this@MeloraApplication) }
                 withContext(Dispatchers.Main.immediate) {
                     runStartupStep("播放控制器") { PlaybackController.init(this@MeloraApplication) }
                     runStartupStep("音源预热") { LxScriptPool.warmEnabled(this@MeloraApplication) }

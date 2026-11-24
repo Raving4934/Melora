@@ -1,6 +1,6 @@
 package com.leyu.melora.ui.my
 
-internal const val PLAYLIST_UPDATE_RULES = "保留本地名称和额外歌曲，按原歌单排序；本地删除但原歌单仍有的歌曲会恢复。仅手动更新，不定时同步。"
+internal const val PLAYLIST_UPDATE_RULES = "按原歌单更新歌曲，保留本地名称、额外添加的歌曲和手动移除记录。可在「其他设置 → 自动更新」开启自动更新。"
 
 internal enum class PlaylistUpdateAction { READ, CONFIRM, DISMISS }
 

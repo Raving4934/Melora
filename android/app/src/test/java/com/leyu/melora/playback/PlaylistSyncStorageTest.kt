@@ -24,12 +24,35 @@ class PlaylistSyncStorageTest {
         val first = UserLibrary.playlists.value.first()
         assertEquals(link, first.importSource)
         assertEquals(setOf("wy_a", "wy_removedLocally"), first.lastSyncedUids)
+        assertEquals(setOf("wy_removedLocally"), first.excludedImportedUids)
         assertNull(UserLibrary.playlists.value.last().importSource)
         assertNull(UserLibrary.playlists.value.last().lastSyncedUids)
         val backup = parseBackupDocument(JSONObject().put("library", UserLibrary.exportSnapshot()).toString())
         UserLibrary.replaceFromBackup(backup.library!!)
         assertEquals(link, UserLibrary.playlists.value.first().importSource)
         assertEquals(first.lastSyncedUids, UserLibrary.playlists.value.first().lastSyncedUids)
+        assertEquals(first.excludedImportedUids, UserLibrary.playlists.value.first().excludedImportedUids)
+    }
+
+    @Test fun manualRemovalSurvivesSourceChangesAndBackupUntilExplicitlyAddedBack() = isolated {
+        val playlist = UserLibrary.createImportedPlaylist("自定名称", remote("a", "b"))
+        UserLibrary.removeFromPlaylist(playlist.id, "wy_a")
+        kotlinx.coroutines.runBlocking {
+            var current = UserLibrary.playlists.value.single()
+            current = UserLibrary.commitPlaylistSync(previewPlaylistSync(current, remote("b", "c")))
+            assertEquals(setOf("wy_a"), current.excludedImportedUids)
+            val backup = parseBackupDocument(JSONObject().put("library", UserLibrary.backupSnapshot()).toString())
+            UserLibrary.replaceFromBackup(backup.library!!)
+            current = UserLibrary.playlists.value.single()
+            current = UserLibrary.commitPlaylistSync(previewPlaylistSync(current, remote("a", "b", "c")))
+            assertEquals(listOf("wy_b", "wy_c"), current.songs.map { it.uid })
+
+            assertEquals(1, UserLibrary.addToPlaylist(playlist.id, listOf(song("a"))))
+            current = UserLibrary.playlists.value.single()
+            assertTrue(current.excludedImportedUids.isEmpty())
+            current = UserLibrary.commitPlaylistSync(previewPlaylistSync(current, remote("a", "b", "c")))
+            assertEquals(listOf("wy_a", "wy_b", "wy_c"), current.songs.map { it.uid })
+        }
     }
 
     @Test fun importedSourceComesFromLoadedResultAndStoresOnlyKnownRemoteUids() = isolated { file ->
@@ -241,6 +264,47 @@ class PlaylistSyncStorageTest {
         assertEquals(setOf("wy_b", "wy_c"), UserLibrary.playlists.value.first().lastSyncedUids)
     }
 
+    @Test fun automaticUpdateAppliesToReloadedPlaylistAndKeepsConcurrentEditsAndDeletions() = isolated { file ->
+        val edit = UserLibrary.createImportedPlaylist("导入歌单", remote("a"))
+        val deletedSource = PlaylistImportLink.parse("https://music.163.com/#/playlist?id=456")
+        val deleted = UserLibrary.createImportedPlaylist("要删除的歌单", remote("deleted").copy(importSource = deletedSource))
+        val requested = mutableListOf<String>()
+        kotlinx.coroutines.runBlocking {
+            updateImportedPlaylists(
+                playlistIds = listOf(edit.id, deleted.id),
+                currentPlaylist = { id -> UserLibrary.playlists.value.firstOrNull { it.id == id } },
+                claimAttempt = { true },
+                read = { source ->
+                    requested += source
+                    when (source) {
+                        link.value -> {
+                            UserLibrary.renamePlaylist(edit.id, "本地改名")
+                            UserLibrary.addToPlaylist(edit.id, listOf(song("manual")))
+                            val edited = UserLibrary.playlists.value.first()
+                            UserLibrary.replaceFromBackup(UserLibrary.exportSnapshot())
+                            assertNotSame(edited, UserLibrary.playlists.value.first())
+                            remote("b")
+                        }
+                        deletedSource.value -> {
+                            UserLibrary.deletePlaylist(deleted.id)
+                            remote("wouldResurrect").copy(importSource = deletedSource)
+                        }
+                        else -> error("读取了意外来源")
+                    }
+                },
+                commit = UserLibrary::commitPlaylistSync,
+                onFailure = { throw it },
+            )
+        }
+        assertEquals(listOf(link.value, deletedSource.value), requested)
+        val saved = UserLibrary.playlists.value.single()
+        assertEquals(edit.id, saved.id)
+        assertEquals("本地改名", saved.name)
+        assertEquals(listOf("wy_b", "wy_manual"), saved.songs.map { it.uid })
+        UserLibrary.replaceFromBackup(file.readText())
+        assertEquals(listOf("wy_b", "wy_manual"), UserLibrary.playlists.value.single().songs.map { it.uid })
+    }
+
     @Test fun failedWriteKeepsPrimaryBackupAndPublishedStateAndCanRetry() = isolated { file ->
         val before = UserLibrary.createImportedPlaylist("原歌单", remote("a"))
         val preview = previewPlaylistSync(before, remote("b"))
@@ -299,6 +363,8 @@ class PlaylistSyncStorageTest {
             JSONObject().put("importSource", validSource).put("lastSyncedUids", JSONArray().put("wy_a").put(42)),
             JSONObject().put("importSource", validSource).put("lastSyncedUids", "wrong-type"),
             JSONObject().put("lastSyncedUids", JSONArray().put("wy_a")),
+            JSONObject().put("importSource", validSource).put("excludedImportedUids", JSONArray().put(42)),
+            JSONObject().put("excludedImportedUids", JSONArray().put("wy_a")),
         )
         variants.forEach { node ->
             node.put("id", "x").put("name", "x").put("songs", JSONArray())

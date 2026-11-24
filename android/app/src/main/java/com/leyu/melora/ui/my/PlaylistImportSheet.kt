@@ -344,7 +344,7 @@ internal fun PlaylistImportSheet(
                                     }
                                     ready.warning?.let { Text(it, color = MeloraAppearance.accent, fontSize = 12.sp, lineHeight = 18.sp) }
                                 } else if (error == null) {
-                                    Text(ready.warning ?: "保存为独立歌单并记录来源，可从歌单菜单手动更新；不会自动同步。",
+                                    Text(ready.warning ?: "保存后可从歌单菜单手动更新，也可在「其他设置 → 自动更新」开启自动更新。",
                                         color = if (ready.warning == null) TextSub else MeloraAppearance.accent, fontSize = 12.sp, lineHeight = 18.sp)
                                 }
                                 if (ready.importSource?.identity()?.isCanonical == false) {

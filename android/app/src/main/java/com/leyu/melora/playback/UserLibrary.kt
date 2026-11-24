@@ -29,6 +29,8 @@ object UserLibrary {
         val importSource: PlaylistImportLink? = null,
         /** null means no known remote baseline, not an empty remote playlist. */
         val lastSyncedUids: Set<String>? = null,
+        val excludedImportedUids: Set<String> = emptySet(),
+        val locallyAddedUids: Set<String> = emptySet(),
     )
 
     /** 收藏的音乐专辑（聚合页实体）：无平台专辑 id，按 名称+歌手+平台 作为唯一键。 */
@@ -133,7 +135,10 @@ object UserLibrary {
     internal fun backupSnapshot(): String = synchronized(lock) {
         val entries = favorites.value.size.toLong() + recents.value.size + favoritePlaylists.value.size +
             favoriteAlbums.value.size + favoriteArtists.value.size + recentContainers.value.size + searchHistory.value.size +
-            playlists.value.sumOf { it.songs.size.toLong() + 1 + (it.lastSyncedUids?.size ?: 0) }
+            playlists.value.sumOf {
+                it.songs.size.toLong() + 1 + it.lastSyncedUids.orEmpty().size +
+                    it.excludedImportedUids.size + it.locallyAddedUids.size
+            }
         require(entries <= 50_000) { "用户库超过50000条备份限制" }
         boundedBackupJson(buildRoot())
     }
@@ -533,15 +538,28 @@ object UserLibrary {
         val additions = songs.filter { knownUids.add(it.uid) }
         if (additions.isEmpty()) return@mutate 0
 
-        playlists = playlists.map {
-            if (it.id == id) it.copy(songs = it.songs + additions) else it
+        val addedUids = additions.mapTo(linkedSetOf()) { it.uid }
+        val localAdditions = if (playlist.importSource == null) emptySet() else {
+            playlist.locallyAddedUids + (addedUids - playlist.lastSyncedUids.orEmpty())
         }
+        val updated = playlist.copy(songs = playlist.songs + additions,
+            excludedImportedUids = playlist.excludedImportedUids - addedUids, locallyAddedUids = localAdditions)
+        playlists = playlists.map { if (it.id == id) updated else it }
         additions.size
     }
 
-    fun removeFromPlaylist(id: String, uid: String) = mutate {
-        playlists = playlists.map {
-            if (it.id == id) it.copy(songs = it.songs.filterNot { item -> item.uid == uid }) else it
+    fun removeFromPlaylist(id: String, uid: String) {
+        mutate(shouldPersist = { it }) {
+            val playlist = playlists.firstOrNull { it.id == id } ?: return@mutate false
+            val songs = playlist.songs.filterNot { it.uid == uid }
+            if (songs.size == playlist.songs.size) return@mutate false
+            val exclusions = if (uid in playlist.lastSyncedUids.orEmpty()) {
+                playlist.excludedImportedUids + uid
+            } else playlist.excludedImportedUids
+            val updated = playlist.copy(songs = songs, excludedImportedUids = exclusions,
+                locallyAddedUids = playlist.locallyAddedUids - uid)
+            playlists = playlists.map { if (it.id == id) updated else it }
+            true
         }
     }
 }

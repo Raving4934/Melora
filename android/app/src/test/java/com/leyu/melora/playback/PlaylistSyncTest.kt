@@ -13,7 +13,7 @@ class PlaylistSyncTest {
     private fun remote(vararg ids: String) = PlaylistImportResult("网易云音乐", "远端改名", null,
         ids.map { song(it) }, ids.size, 0, null, link)
     private fun local() = UserLibrary.UserPlaylist("same-id", "手动改名", listOf(song("a"), song("b"), song("extra")),
-        link, setOf("wy_a", "wy_b"))
+        link, setOf("wy_a", "wy_b"), locallyAddedUids = setOf("wy_extra"))
 
     @Test fun incompleteReadsAreNeverAnUpdatePreview() = runBlocking {
         val incomplete = listOf(
@@ -94,11 +94,14 @@ class PlaylistSyncTest {
         assertFalse(next.firstBinding)
     }
 
-    @Test fun locallyDeletedRemoteSongsReturnAndRemoteExtrasAreNotDuplicated() {
-        val before = local().copy(songs = listOf(song("b"), song("extra"), song("extra")))
+    @Test fun locallyDeletedRemoteSongsStayExcludedAndRemoteExtrasAreNotDuplicated() {
+        val before = local().copy(songs = listOf(song("b"), song("extra"), song("extra")),
+            excludedImportedUids = setOf("wy_a"))
         val result = previewPlaylistSync(before, remote("extra", "a", "b", "b"))
-        assertEquals(listOf("wy_extra", "wy_a", "wy_b"), result.updated.songs.map { it.uid })
-        assertEquals(listOf("wy_a"), result.added.map { it.uid })
+        assertEquals(listOf("wy_extra", "wy_b"), result.updated.songs.map { it.uid })
+        assertEquals(setOf("wy_a"), result.updated.excludedImportedUids)
+        assertEquals(setOf("wy_extra", "wy_a", "wy_b"), result.updated.lastSyncedUids)
+        assertTrue(result.added.isEmpty())
         assertTrue(result.removed.isEmpty())
     }
 
@@ -109,6 +112,14 @@ class PlaylistSyncTest {
         val changed = remote("a", "b")
         changed.songs.first().raw.put("name", "新元数据")
         assertTrue(previewPlaylistSync(before, changed).hasChanges)
+    }
+
+    @Test fun locallyAddedSongsSurviveBeingAddedAndRemovedByTheOriginalPlaylist() {
+        val overlap = previewPlaylistSync(local(), remote("a", "b", "extra")).updated
+        val next = previewPlaylistSync(overlap, remote("a", "b"))
+        assertEquals(listOf("wy_a", "wy_b", "wy_extra"), next.updated.songs.map { it.uid })
+        assertEquals(setOf("wy_extra"), next.updated.locallyAddedUids)
+        assertTrue(next.removed.isEmpty())
     }
 
     @Test fun duplicateLegacyRemovalsAppearOnlyOnceInDifferenceList() {
