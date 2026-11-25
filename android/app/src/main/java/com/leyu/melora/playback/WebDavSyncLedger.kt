@@ -10,10 +10,10 @@ private const val LEGACY_PREFIX = "00000000-0000-0000-"
 private const val CHECKOUT = "checkout.json"
 
 internal interface RecordFiles {
-    suspend fun list(): List<String>
+    suspend fun listNames(): List<String>
     suspend fun read(name: String): String?
-    suspend fun write(name: String, text: String)
-    suspend fun delete(name: String)
+    suspend fun writeFile(name: String, text: String)
+    suspend fun deleteFile(name: String)
 }
 
 /** prepare 和 commit 均在同一次本机记录写锁内执行；本机已变更时整个操作返回 false。 */
@@ -61,21 +61,22 @@ internal class WebDavSyncLedger(private val directory: File) {
         return name
     }
 
-    private suspend fun replica(name: String, remote: RecordFiles): RecordReplica {
+    private suspend fun replica(name: String, remote: RecordFiles): RecordReplica? {
         val file = cached(name)
-        if (file.isFile) {
-            try { return RecordReplica.decode(name, cachedText(name)) } catch (_: Exception) {
-                // 磁盘副本损坏时用服务端的同一哈希修复，保留原件直到校验新副本成功。
-            }
+        // 磁盘副本损坏时用服务端的同一哈希修复，保留原件直到校验新副本成功。
+        if (file.isFile) runCatching { RecordReplica.decode(name, cachedText(name)) }.getOrNull()?.let { return it }
+        val text = remote.read(name) ?: return null
+        return try {
+            RecordReplica.decode(name, text).also { writeTextAtomically(file, text) }
+        } catch (_: IncompleteRecordReplica) {
+            null
         }
-        val text = requireNotNull(remote.read(name)) { "无法读回设备记录，目录可能刚刚更新，请重试" }
-        return RecordReplica.decode(name, text).also { writeTextAtomically(file, text) }
     }
 
     private suspend fun publish(name: String, remote: RecordFiles) {
         val text = cachedText(name)
         // 文件名包含内容哈希。回包丢失或留下不完整的 UTF-8 时，原样重传同一文件。
-        remote.write(name, text)
+        remote.writeFile(name, text)
         check(remote.read(name) == text) { "服务器未完整保存设备记录，请重试" }
     }
 
@@ -84,10 +85,7 @@ internal class WebDavSyncLedger(private val directory: File) {
         val afterName = snapshot(after)
         check(apply(sent, after, {
             save("applying", JSONObject().put("sent", sentName).put("after", afterName).put("next", state.json()))
-        }, {
-            save(CHECKOUT, state.json())
-            check(File(directory, "applying").delete())
-        })) { "本机记录已更新，稍后重新合并" }
+        }, { finishApplying(state) })) { "本机记录已更新，稍后重新合并" }
     }
 
     private fun recover(capture: () -> JSONObject, apply: ApplyRecords, choices: Map<String, Boolean>): List<RecordConflict> {
@@ -97,35 +95,44 @@ internal class WebDavSyncLedger(private val directory: File) {
         val after = view(pending.getString("after"))
         val current = capture()
         // 崩溃可能发生在写入用户库和听书断点之间。重放不覆盖重启后新增的编辑。
-        val saved = pending.optJSONObject("choices")
-        val decisions = saved?.keys()?.asSequence()?.associateWith(saved::getBoolean).orEmpty() + choices
+        val decisions = pending.optJSONObject("choices").decisions() + choices
         val recovered = RecordSyncMerge.review(before, current, after) { decisions[it.key] }
         if (recovered.conflicts.isNotEmpty()) {
             save("applying", pending.put("choices", JSONObject(decisions)))
             return recovered.conflicts
         }
-        check(apply(current, recovered.records, {}, {
-            save(CHECKOUT, state.json())
-            check(File(directory, "applying").delete())
-        })) { "本机记录正在更新，请重试" }
+        check(apply(current, recovered.records, {}, { finishApplying(state) })) { "本机记录正在更新，请重试" }
         return emptyList()
     }
 
-    private fun latest(names: Collection<String>): Map<String, String> {
-        val versions = names.distinct().mapNotNull { name ->
-            RecordReplica.filename.matchEntire(name)?.let { Triple(it.groupValues[1], it.groupValues[2].toLong(), name) }
-        }
-        return versions.groupBy { it.first }.mapValues { (_, items) ->
-            val seq = items.maxOf { it.second }
-            items.filter { it.second == seq }.singleOrNull()?.third ?: error("同一设备存在互斥的同步版本，请检查目录")
+    private fun finishApplying(state: Checkout) {
+        save(CHECKOUT, state.json())
+        check(File(directory, "applying").delete())
+    }
+
+    private suspend fun latest(names: Collection<String>, device: String, load: suspend (String) -> RecordReplica?) = buildMap {
+        val byDevice = names.distinct().mapNotNull { name ->
+            val match = RecordReplica.filename.matchEntire(name) ?: return@mapNotNull null
+            val sequence = match.groupValues[2].toLongOrNull() ?: return@mapNotNull null
+            Triple(match.groupValues[1], sequence, name)
+        }.groupBy { it.first }
+        for ((actor, files) in byDevice) {
+            // 目录里可能还留着中断的 PUT。只接纳校验完整的远端版本。
+            for (version in files.groupBy { it.second }.toSortedMap(reverseOrder()).values) {
+                val name = version.singleOrNull()?.third ?: error("同一设备存在互斥的同步版本，请检查目录")
+                if (load(name) != null) {
+                    put(actor, name)
+                    break
+                }
+                check(actor != device) { "本机同步版本已变更，请检查设备标识" }
+            }
         }
     }
 
     private suspend fun migrate(
-        device: String, listed: List<String>, remote: RecordFiles, capture: () -> JSONObject, apply: ApplyRecords,
-        choices: Map<String, Boolean>,
+        device: String, heads: Map<String, String>, remote: RecordFiles, records: MutableMap<String, RecordReplica?>,
+        capture: () -> JSONObject, apply: ApplyRecords, choices: Map<String, Boolean>,
     ): List<RecordConflict> {
-        val heads = latest(listed)
         // v1 已把 agreed 移到 base.json 表示本地事务完成，即使旧 journal 还没清理。
         val oldTransaction = if (File(directory, "pending/agreed").isFile) File(directory, "pending/id").readText() else null
         val legacy = if (heads.isEmpty() || oldTransaction != null) remote.read(LEGACY_FILE)?.let(::backupObject) else null
@@ -136,13 +143,13 @@ internal class WebDavSyncLedger(private val directory: File) {
             val doc = RecordSyncMerge.validateRemote(legacy)
             val digest = RecordReplica.hash(boundedBackupJson(doc))
             val actor = LEGACY_PREFIX + digest.take(4) + "-" + digest.substring(4, 16)
-            val origin = RecordHeads(emptyList()).edit(RecordReplica(actor), recordDocument(), doc)
-            val name = stage(origin.copy(sequence = 1L))
+            val origin = RecordHeads(emptyList()).edit(RecordReplica(actor), recordDocument(), doc).copy(sequence = 1L)
+            val name = stage(origin)
             publish(name, remote)
             seeds[actor] = name
+            records[name] = origin
         }
-        val ancestors = seeds.values.map { replica(it, remote) }
-        val seeded = RecordHeads(ancestors).view(RecordReplica(device), emptyMap()).records
+        val seeded = RecordHeads(seeds.values.map { requireNotNull(records.getValue(it)) }).view(RecordReplica(device), emptyMap()).records
         val sent = capture()
         val base = if (oldTransaction != null && (oldTransaction.isEmpty() || oldTransaction == receipt))
             json("pending/sent") else json("base.json")
@@ -153,8 +160,7 @@ internal class WebDavSyncLedger(private val directory: File) {
             return agreed.conflicts
         }
         // 本地基线先指向旧云端种子。迁移后的净本机修改在下一步发布，离线重启也不会丢。
-        applyView(sent, agreed.records, Checkout(snapshot(seeded), seeds, emptyMap()),
-            apply)
+        applyView(sent, agreed.records, Checkout(snapshot(seeded), seeds, emptyMap()), apply)
         File(directory, "migration-choices").delete()
         return emptyList()
     }
@@ -164,27 +170,29 @@ internal class WebDavSyncLedger(private val directory: File) {
         require(RecordReplica.actor.matches(device) && !device.startsWith(LEGACY_PREFIX))
         val interrupted = recover(capture, apply, choices)
         if (interrupted.isNotEmpty()) return interrupted
-        val listed = remote.list()
-        if (json(CHECKOUT) == null) {
-            val saved = json("migration-choices")
-            val pending = saved?.keys()?.asSequence()?.associateWith(saved::getBoolean).orEmpty() + choices
-            val conflicts = migrate(device, listed, remote, capture, apply, pending)
+        val listed = remote.listNames()
+        val records = mutableMapOf<String, RecordReplica?>()
+        suspend fun load(name: String) = if (name in records) records[name] else replica(name, remote).also { records[name] = it }
+        val saved = json(CHECKOUT)
+        val initialHeads = if (saved == null) latest(listed, device, ::load) else null
+        if (initialHeads != null) {
+            val conflicts = migrate(device, initialHeads, remote, records, capture, apply, json("migration-choices").decisions() + choices)
             if (conflicts.isNotEmpty()) return conflicts
         }
-        var state = Checkout.read(requireNotNull(json(CHECKOUT)))
-        val prior = state.files.mapValues { (_, name) -> replica(name, remote) }
+        var state = Checkout.read(saved ?: requireNotNull(json(CHECKOUT)))
+        val prior = state.files.values.map { name -> requireNotNull(load(name)) { "无法读回设备记录，请重试" } }
         val local = capture()
-        val mine = prior[device] ?: RecordReplica(device)
-        val edited = RecordHeads(prior.values).edit(mine, view(state.view), local)
+        val mine = state.files[device]?.let(records::get) ?: RecordReplica(device)
+        val edited = RecordHeads(prior).edit(mine, view(state.view), local)
         if (edited !== mine) {
             val file = stage(edited)
+            records[file] = edited
             state = state.copy(view = snapshot(local), files = state.files + (device to file))
             save(CHECKOUT, state.json()) // 持久发件箱，网络请求之前落盘
         }
-        var files = latest(listed + state.files.values)
+        var files = latest((initialHeads?.values ?: listed) + state.files.values, device, ::load)
         check(files[device] == state.files[device]) { "本机同步版本已变更，请检查设备标识" }
-        val replicas = files.mapValues { (id, name) -> if (id == device) edited else prior[id]?.takeIf { state.files[id] == name } ?: replica(name, remote) }
-        val merged = RecordHeads(replicas.values).view(edited, state.choices + choices)
+        val merged = RecordHeads(files.values.map { requireNotNull(records.getValue(it)) }).view(edited, state.choices + choices)
         val ownFile = if (merged.decided !== edited) stage(merged.decided) else files[device]
         if (ownFile != null) files = files + (device to ownFile)
         val target = Checkout(snapshot(merged.records), files, merged.pending)
@@ -199,7 +207,7 @@ internal class WebDavSyncLedger(private val directory: File) {
         // 仅回收本机旧的完整批次。无 DELETE 权限也能同步，读者始终取各安装的最高版本。
         val owned = listed.filter { name -> name != ownFile && RecordReplica.filename.matchEntire(name)?.groupValues?.get(1) == device }
         for (name in owned.takeIf { ownFile in listed }.orEmpty().take(8)) {
-            try { remote.delete(name) } catch (cancelled: CancellationException) { throw cancelled }
+            try { remote.deleteFile(name) } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: java.io.IOException) { break }
         }
         val keep = files.values.toSet() + target.view
@@ -207,3 +215,5 @@ internal class WebDavSyncLedger(private val directory: File) {
         return merged.conflicts
     }
 }
+
+private fun JSONObject?.decisions() = this?.let { it.keys().asSequence().associateWith(it::getBoolean) }.orEmpty()

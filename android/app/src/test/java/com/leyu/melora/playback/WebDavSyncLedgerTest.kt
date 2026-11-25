@@ -18,14 +18,18 @@ class WebDavSyncLedgerTest {
         var truncate = false
         var writes = 0
         var listing: List<String>? = null
-        override suspend fun list() = listing ?: files.keys.toList().reversed()
-        override suspend fun read(name: String) = files[name]
-        override suspend fun write(name: String, text: String) {
+        var unavailable: String? = null
+        override suspend fun listNames() = listing ?: files.keys.toList().reversed()
+        override suspend fun read(name: String): String? {
+            if (name == unavailable) throw IOException("server unavailable")
+            return files[name]
+        }
+        override suspend fun writeFile(name: String, text: String) {
             files[name] = if (truncate) text.take(text.length / 2) else text
             writes++
             if (loseReply) { loseReply = false; throw IOException("response lost") }
         }
-        override suspend fun delete(name: String) { files.remove(name) }
+        override suspend fun deleteFile(name: String) { files.remove(name) }
     }
 
     private class Device(val folder: File, n: Int) {
@@ -83,6 +87,66 @@ class WebDavSyncLedgerTest {
         val b = device(2)
         b.sync(server)
         assertEquals(ids(a.data), ids(b.data))
+    }
+
+    @Test fun otherDevicesContinueSynchronizingWhileANewerUploadIsIncomplete() = runBlocking {
+        val server = Server()
+        val phone = device(1)
+        val tablet = device(2)
+        phone.data = songs("old")
+        phone.sync(server)
+        tablet.sync(server)
+
+        phone.data = songs("old", "phone")
+        server.truncate = true
+        assertTrue(runCatching { phone.sync(server) }.isFailure)
+        server.truncate = false
+
+        tablet.data = songs("old", "tablet")
+        tablet.sync(server)
+        val newcomer = device(3)
+        newcomer.sync(server)
+        assertEquals(setOf("old", "tablet"), ids(newcomer.data))
+
+        phone.sync(server)
+        tablet.sync(server)
+        newcomer.sync(server)
+        assertEquals(setOf("old", "phone", "tablet"), ids(tablet.data))
+        assertEquals(ids(tablet.data), ids(newcomer.data))
+    }
+
+    @Test fun missingListedHeadFallsBackButUnreadableOrInvalidCompleteHeadFails() = runBlocking {
+        val server = Server()
+        val phone = device(1)
+        val tablet = device(2)
+        phone.data = songs("old")
+        phone.sync(server)
+        tablet.sync(server)
+
+        val previous = server.files.keys.single()
+        val incompatible = JSONObject(server.files.getValue(previous)).put("sequence", 2).put("version", 3).toString()
+        val next = "melora-records-v2-${phone.id}-2-${RecordReplica.hash(incompatible)}.json"
+        server.listing = listOf(next)
+        tablet.sync(server)
+        assertEquals(setOf("old"), ids(tablet.data))
+
+        server.unavailable = next
+        assertEquals("server unavailable", runCatching { tablet.sync(server) }.exceptionOrNull()?.message)
+        server.unavailable = null
+        server.files[next] = incompatible
+        assertTrue(runCatching { tablet.sync(server) }.exceptionOrNull() is IllegalArgumentException)
+    }
+
+    @Test fun competingNamesAtTheSameVersionStillStopSync() = runBlocking {
+        val server = Server()
+        val phone = device(1)
+        phone.data = songs("kept")
+        phone.sync(server)
+        val full = server.files.values.single()
+        val other = full + "\n"
+        val fork = "melora-records-v2-${phone.id}-1-${RecordReplica.hash(other)}.json"
+        server.files[fork] = other.take(8)
+        assertTrue(runCatching { device(2).sync(server) }.exceptionOrNull()?.message.orEmpty().contains("互斥"))
     }
 
     @Test fun simultaneousFirstUploadsAndStaleListingsConvergeWithoutOverwrite() = runBlocking {

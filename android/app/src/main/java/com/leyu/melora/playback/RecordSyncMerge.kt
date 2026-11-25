@@ -94,8 +94,7 @@ internal object RecordSyncMerge {
                 survivingEntries(before), survivingEntries(ours), survivingEntries(theirs),
                 identify = { rowKey(field, it) },
             ) { key, original, left, right ->
-                if (base == null) mergeUnbasedRow(field, key, left, right, choices)
-                else mergeRow(field, key, original, left, right, choices)
+                mergeRow(field, key, original, left, right, base != null, choices)
             }
             val ordered = when (field) {
                 "recents" -> rows.sortedByDescending { it.optLong("playedAt") }.take(UserLibrary.MAX_RECENTS)
@@ -108,41 +107,25 @@ internal object RecordSyncMerge {
             base?.entries("books").orEmpty(), local.entries("books"), remote.entries("books"),
             identify = { rowKey("books", it) },
         ) { key, original, left, right ->
-            if (base == null) mergeUnbasedRow("books", key, left, right, choices)
-            else mergeRow("books", key, original, left, right, choices)
+            mergeRow("books", key, original, left, right, base != null, choices)
         }
         return RecordMergeResult(document(merged, JSONArray(books)).also(::validate), choices.conflicts)
     }
 
-    /** 两个明确的版本之间缺少共同基线时，保留无法判断是添加还是删除的差异。 */
-    fun reviewUnbasedRow(
-        field: String,
-        key: String,
+    /** 并发分支的 null 表示明确删除。只有已知共同基线时才能以缺项判断谁修改了这一行。 */
+    fun reviewRow(
+        key: RecordKey,
+        original: JSONObject?,
         left: JSONObject?,
         right: JSONObject?,
+        based: Boolean,
         choose: (RecordConflict) -> Boolean?,
     ): Pair<JSONObject?, List<RecordConflict>> {
         val choices = MergeChoices(choose)
-        return mergeUnbasedRow(field, key, left, right, choices) to choices.conflicts
-    }
-
-    private fun mergeUnbasedRow(
-        field: String,
-        key: String,
-        left: JSONObject?,
-        right: JSONObject?,
-        choices: MergeChoices,
-    ): JSONObject? {
-        val timeKey = historyTimeKey(field)
-        return when {
-            contentEquals(left, right) -> left
-            left == null || right == null -> choices.row(field, key, null, left, right)
-            timeKey != null -> newer(left, right, timeKey)
-            field == "playlists" && !samePlaylistEdits(left, right) -> choices.row(field, key, null, left, right)
-            field == "books" && !sameBookPoint(left, right) -> choices.row(field, key, null, left, right)
-            field == "books" -> newer(left, right, "updatedAt")
-            else -> right
-        }
+        fun merge() = mergeRow(key.field, key.id, original.takeIf { based }, left, right, based, choices)
+        val result = if (based) resolveDelta(original, left, right, ::merge)
+            else if (contentEquals(left, right)) left else merge()
+        return result to choices.conflicts
     }
 
     fun applyLibrary(current: JSONObject, merged: JSONObject): JSONObject {
@@ -222,22 +205,22 @@ internal object RecordSyncMerge {
         original: JSONObject?,
         left: JSONObject?,
         right: JSONObject?,
+        based: Boolean,
         choices: MergeChoices,
     ): JSONObject? {
         val timeKey = historyTimeKey(field)
         if (left == null || right == null) {
             val remaining = requireNotNull(left ?: right)
+            if (!based) return choices.row(field, id, null, left, right)
             val before = requireNotNull(original)
-            return when {
-                field == "playlists" && !samePlaylistEdits(before, remaining) -> choices.row(field, id, before, left, right)
-                field == "books" && !sameBookPoint(before, remaining) -> choices.row(field, id, before, left, right)
-                timeKey != null && remaining.optLong(timeKey) > before.optLong(timeKey) -> remaining
-                else -> null
-            }
+            if (!sameVersion(field, before, remaining)) return choices.row(field, id, before, left, right)
+            return remaining.takeIf { timeKey != null && it.optLong(timeKey) > before.optLong(timeKey) }
         }
         return when {
-            field == "playlists" -> mergePlaylist(original, left, right, choices)
-            field == "books" -> mergeBook(id, original, left, right, choices)
+            !based && !sameVersion(field, left, right) -> choices.row(field, id, null, left, right)
+            based && field == "playlists" -> mergePlaylist(original, left, right, choices)
+            based && field == "books" -> mergeBook(id, original, left, right, choices)
+            field == "books" -> newer(left, right, "updatedAt")
             timeKey != null -> newer(left, right, timeKey)
             else -> right
         }
@@ -454,12 +437,15 @@ internal object RecordSyncMerge {
             val initial = before[key]
             val local = ours[key]
             val remote = theirs[key]
-            when {
-                contentEquals(initial, local) -> remote
-                contentEquals(initial, remote) || contentEquals(local, remote) -> local
-                else -> resolve(key, initial, local, remote)
-            }
+            resolveDelta(initial, local, remote) { resolve(key, initial, local, remote) }
         }
+    }
+
+    private inline fun resolveDelta(before: JSONObject?, left: JSONObject?, right: JSONObject?,
+                                    changed: () -> JSONObject?): JSONObject? = when {
+        contentEquals(before, left) -> right
+        contentEquals(before, right) || contentEquals(left, right) -> left
+        else -> changed()
     }
 
     private fun rowsEqual(first: List<JSONObject>, second: List<JSONObject>): Boolean =
@@ -490,8 +476,11 @@ internal object RecordSyncMerge {
         else -> null
     }
 
-    private fun samePlaylistEdits(first: JSONObject, second: JSONObject): Boolean =
-        playlistEdits(first) == playlistEdits(second)
+    private fun sameVersion(field: String, left: JSONObject, right: JSONObject) = when (field) {
+        "playlists" -> playlistEdits(left) == playlistEdits(right)
+        "books" -> sameBookPoint(left, right)
+        else -> true
+    }
 
     private fun playlistEdits(row: JSONObject): List<Any?> = listOf(
         row.getString("name"),

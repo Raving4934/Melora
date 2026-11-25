@@ -286,7 +286,7 @@ class WebDavClientTest {
 
     private class SyncDevice(private val directory: File, client: WebDavClient) {
         private val id = UUID.randomUUID().toString()
-        private val remote = client.recordFiles()
+        private val remote: RecordFiles = client
         var data = RecordSyncMerge.project(JSONObject(), JSONArray())
 
         suspend fun sync(choices: Map<String, Boolean> = emptyMap()): List<RecordConflict> =

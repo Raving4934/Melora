@@ -50,7 +50,7 @@ class WebDavSyncInstrumentedTest {
 
                 var tablet = RecordSyncMerge.project(library("tablet-only"), JSONArray())
                 WebDavSyncLedger(File(storage, "tablet")).sync(
-                    UUID.randomUUID().toString(), client.recordFiles(), capture = { tablet },
+                    UUID.randomUUID().toString(), client, capture = { tablet },
                     apply = { _, after, prepare, commit ->
                         prepare()
                         tablet = after

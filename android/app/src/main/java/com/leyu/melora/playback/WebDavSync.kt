@@ -140,7 +140,7 @@ internal object WebDavSync {
         val client = WebDavClient(config)
         client.ensureFolder()
         val ledger = WebDavSyncLedger(File(context.noBackupFilesDir, "records-${config.scopeKey}"))
-        val conflicts = ledger.sync(WebDavConfigStore.deviceId(context), client.recordFiles(),
+        val conflicts = ledger.sync(WebDavConfigStore.deviceId(context), client,
             capture = { capture(context).portable },
             apply = { sent, agreed, prepare, commit -> applyAgreement(context, sent, agreed, prepare, commit) },
             choices = choices)
@@ -177,11 +177,4 @@ internal object WebDavSync {
             true
         }
     }
-}
-
-internal fun WebDavClient.recordFiles(): RecordFiles = object : RecordFiles {
-    override suspend fun list() = listNames()
-    override suspend fun read(name: String) = this@recordFiles.read(name, MAX_BACKUP_BYTES)
-    override suspend fun write(name: String, text: String) = writeFile(name, text)
-    override suspend fun delete(name: String) = deleteFile(name)
 }

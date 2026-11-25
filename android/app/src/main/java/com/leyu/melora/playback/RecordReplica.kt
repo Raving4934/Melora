@@ -8,6 +8,8 @@ import java.security.MessageDigest
 internal typealias RecordClock = Map<String, Long>
 internal data class RecordKey(val field: String, val id: String)
 internal data class RecordStamp(val device: String, val sequence: Long)
+internal class IncompleteRecordReplica : IllegalArgumentException("设备记录上传未完成")
+
 internal data class RecordEdit(
     val clock: RecordClock,
     val ancestor: RecordClock,
@@ -39,7 +41,10 @@ internal data class RecordReplica(
 
         fun decode(name: String, text: String): RecordReplica {
             val (device, sequence, digest) = requireNotNull(filename.matchEntire(name)).destructured
-            require(hash(text) == digest) { "同步文件内容与文件名校验值不一致，请重试" }
+            if (hash(text) != digest) {
+                if (runCatching { backupObject(text) }.isFailure) throw IncompleteRecordReplica()
+                throw IllegalArgumentException("同步文件内容与文件名校验值不一致，请重试")
+            }
             val json = backupObject(text)
             require(json.getInt("version") == 2 && json.getString("device") == device &&
                 json.strictLong("sequence") == sequence.toLong()) { "设备记录版本不匹配" }
@@ -184,11 +189,7 @@ internal class RecordHeads(replicas: Collection<RecordReplica>) {
             val competingPlayback = rewind && (before == null ||
                 (value?.let { RecordSyncMerge.sameBookPoint(before, it) } != true &&
                     other?.let { RecordSyncMerge.sameBookPoint(before, it) } != true))
-            val pair = if (anchor != null && !competingPlayback) {
-                fun doc(row: JSONObject?) = recordDocument(row?.let { mapOf(key to it) }.orEmpty())
-                val result = RecordSyncMerge.review(doc(before), doc(value), doc(other), select)
-                recordRows(result.records)[key] to result.conflicts
-            } else RecordSyncMerge.reviewUnbasedRow(key.field, key.id, value, other, select)
+            val pair = RecordSyncMerge.reviewRow(key, before, value, other, anchor != null && !competingPlayback, select)
             value = pair.first
             conflicts += pair.second
         }
@@ -230,9 +231,7 @@ internal class RecordHeads(replicas: Collection<RecordReplica>) {
             val ancestor = if (sameBranch) branch.ancestor else context
             val before = if (sameBranch) branch.before else oldValue
             val value = if (unresolved && branch != null) {
-                fun doc(row: JSONObject?) = recordDocument(row?.let { mapOf(key to it) }.orEmpty())
-                val rebased = RecordSyncMerge.review(doc(oldValue), doc(branch.value), doc(newValue)) { false }
-                recordRows(rebased.records)[key]
+                RecordSyncMerge.reviewRow(key, oldValue, branch.value, newValue, based = true) { false }.first
             } else newValue
             val rewind = if (key.field == "books" && value != null) {
                 if (oldValue != null && RecordSyncMerge.bookChapter(oldValue) == RecordSyncMerge.bookChapter(value) &&

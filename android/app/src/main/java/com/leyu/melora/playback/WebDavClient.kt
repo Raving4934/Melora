@@ -24,9 +24,9 @@ import org.xml.sax.InputSource
 import org.xml.sax.SAXException
 import org.xml.sax.helpers.DefaultHandler
 
-internal class WebDavException(message: String, val status: Int? = null) : IOException(message)
+internal class WebDavException(message: String, val status: Int? = null, cause: Throwable? = null) : IOException(message, cause)
 
-internal class WebDavClient(config: WebDavConfig) {
+internal class WebDavClient(config: WebDavConfig) : RecordFiles {
     private val configuration = config.validated()
     private val folder = configuration.folderUrl()
     private val folderSegments = folder.pathSegments.dropLast(1)
@@ -50,7 +50,7 @@ internal class WebDavClient(config: WebDavConfig) {
         checkFolder(resources)
     }
 
-    suspend fun listNames(): List<String> {
+    override suspend fun listNames(): List<String> {
         val resources = properties(depth = 1)
             ?: throw WebDavException("WebDAV 目标目录已不存在", 404)
         checkFolder(resources)
@@ -59,6 +59,12 @@ internal class WebDavClient(config: WebDavConfig) {
             .map { it.segments.last() }
             .distinct()
             .toList()
+    }
+
+    override suspend fun read(name: String): String? = try {
+        read(name, MAX_BACKUP_BYTES)
+    } catch (error: WebDavException) {
+        if (error.cause is CharacterCodingException && RecordReplica.filename.matches(name)) null else throw error
     }
 
     suspend fun read(name: String, maxBytes: Int): String? {
@@ -86,7 +92,7 @@ internal class WebDavClient(config: WebDavConfig) {
     }
 
     /** 文件名由调用方分配。重试应核对已有内容并使用相同的文件名。 */
-    suspend fun writeFile(name: String, text: String) {
+    override suspend fun writeFile(name: String, text: String) {
         require(text.length <= MAX_BACKUP_BYTES) { "WebDAV 文件超过大小限制" }
         val bytes = text.toByteArray(Charsets.UTF_8)
         require(bytes.size <= MAX_BACKUP_BYTES) { "WebDAV 文件超过大小限制" }
@@ -95,7 +101,7 @@ internal class WebDavClient(config: WebDavConfig) {
         }
     }
 
-    suspend fun deleteFile(name: String) {
+    override suspend fun deleteFile(name: String) {
         request("DELETE", fileUrl(name)).execute { response ->
             if (response.code != 200 && response.code != 204 && response.code != 404) response.fail()
         }
@@ -168,7 +174,7 @@ internal fun webDavTlsError(error: SSLException): WebDavException {
     }
     val message = if (certificateFailure) "WebDAV 证书验证失败，请检查域名、证书和手机时间"
         else "WebDAV HTTPS 握手或连接中断，请检查网络、代理和服务器的 HTTPS 端口"
-    return WebDavException(message).also { it.initCause(error) }
+    return WebDavException(message, cause = error)
 }
 
 private fun Response.fail(): Nothing {
@@ -190,8 +196,8 @@ private fun Response.readText(limit: Int): String {
     if (body.contentLength() > limit) throw WebDavException("WebDAV 文件超过大小限制")
     return try {
         body.byteStream().use { it.readBackupText(limit) }
-    } catch (_: CharacterCodingException) {
-        throw WebDavException("WebDAV 文件须采用 UTF-8 编码")
+    } catch (error: CharacterCodingException) {
+        throw WebDavException("WebDAV 文件须采用 UTF-8 编码", cause = error)
     } catch (_: IllegalArgumentException) {
         throw WebDavException("WebDAV 文件超过大小限制")
     }

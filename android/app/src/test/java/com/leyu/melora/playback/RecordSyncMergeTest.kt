@@ -286,11 +286,12 @@ class RecordSyncMergeTest {
         val local = playlist("same", "歌单", song("a"))
         val remote = playlist("same", "歌单", song("b"))
         val key = RecordSyncMerge.rowKey("playlists", local)
-        val pending = RecordSyncMerge.reviewUnbasedRow("playlists", key, local, remote) { null }
+        val row = RecordKey("playlists", key)
+        val pending = RecordSyncMerge.reviewRow(row, null, local, remote, based = false) { null }
         assertEquals(local, pending.first)
         val conflict = pending.second.single()
         assertNotEquals(conflict.localLabel, conflict.remoteLabel)
-        val resolved = RecordSyncMerge.reviewUnbasedRow("playlists", key, local, remote) { it.key != conflict.key }
+        val resolved = RecordSyncMerge.reviewRow(row, null, local, remote, based = false) { it.key != conflict.key }
         assertEquals(remote, resolved.first)
         assertTrue(resolved.second.isEmpty())
     }
