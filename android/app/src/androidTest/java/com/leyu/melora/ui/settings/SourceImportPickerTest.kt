@@ -3,6 +3,7 @@ package com.leyu.melora.ui.settings
 import android.content.Intent
 import android.webkit.MimeTypeMap
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.test.assertIsToggleable
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasScrollAction
@@ -44,6 +45,11 @@ class SourceImportPickerTest {
         val intent = ActivityResultContracts.OpenDocument().createIntent(context, selected)
         assertEquals(Intent.ACTION_OPEN_DOCUMENT, intent.action)
         return requireNotNull(intent.getStringArrayExtra(Intent.EXTRA_MIME_TYPES))
+    }
+
+    @Test fun autoSwitchIdentifiesItselfToAccessibilityServices() {
+        compose.setContent { MeloraTheme { LxSourceScreen() } }
+        compose.onNodeWithContentDescription("自动换源").assertIsToggleable().assertIsEnabled()
     }
 
     @Test fun scriptPickerOnlyAllowsJavaScriptTypes() {

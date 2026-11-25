@@ -60,7 +60,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -88,6 +87,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -111,7 +112,6 @@ private val TextMain: Color get() = MeloraAppearance.textMain
 private val TextSub: Color get() = MeloraAppearance.textSub
 private val CardBg: Color get() = MeloraAppearance.card
 private val BrandBlue: Color get() = MeloraAppearance.brand
-private val DividerSoft: Color get() = MeloraAppearance.divider
 
 private data class SourceActionStatus(
     val message: String,
@@ -337,8 +337,8 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
     ) {
         item { SectionCaption("音源行为") }
         item {
-            SettingsCard {
-                SwitchRow(
+            SettingsCard(contentPadding = PaddingValues(0.dp)) {
+                SwitchItem(
                     title = "自动换源",
                     subtitle = if (autoSwitch) {
                         "已开启的源解析失败时，自动尝试其他已安装音源"
@@ -346,9 +346,11 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
                         "仅使用已开启的源，解析失败不切换"
                     },
                     checked = autoSwitch,
+                    subtitleSize = 12.sp,
+                    labelEndPadding = 12.dp,
                     onCheckedChange = { MeloraSettings.updateAutoSwitchSource(it) },
                 )
-                HorizontalDivider(color = DividerSoft, thickness = 0.6.dp, modifier = Modifier.padding(horizontal = 14.dp))
+                SettingsDivider(Modifier.padding(horizontal = 14.dp))
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -393,16 +395,16 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
         item { SectionCaption(if (scripts.isEmpty()) "已安装音源" else "已安装音源 · ${scripts.size}") }
         if (scripts.isEmpty()) {
             item {
-                SettingsCard {
+                SettingsCard(contentPadding = PaddingValues(0.dp)) {
                     InfoText("还没有音源脚本。点击下方「导入音源脚本」选择音源脚本文件（.js）即可开始使用。")
                 }
             }
         } else {
             item {
-                SettingsCard {
+                SettingsCard(contentPadding = PaddingValues(0.dp)) {
                     scripts.forEachIndexed { index, script ->
                         key(script.id) {
-                            if (index > 0) SettingsDivider()
+                            if (index > 0) SettingsDivider(Modifier.padding(start = 68.dp, end = 16.dp))
                             SourceRow(
                                 script = script,
                                 enabled = !busy,
@@ -463,7 +465,7 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
 
         item { SectionCaption("导入与导出") }
         item {
-            SettingsCard {
+            SettingsCard(contentPadding = PaddingValues(0.dp)) {
                 ActionRow(
                     icon = Icons.Rounded.Add,
                     label = "导入音源脚本",
@@ -473,7 +475,7 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
                 ) {
                     importChooserOpen = true
                 }
-                SettingsDivider()
+                SettingsDivider(Modifier.padding(start = 68.dp, end = 16.dp))
                 ActionRow(
                     icon = Icons.Rounded.Upload,
                     label = if (scripts.isEmpty()) "导出全部音源" else "导出全部音源（${scripts.size} 个）",
@@ -481,7 +483,7 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
                     tint = Color(0xFF7C3AED),
                     enabled = scripts.isNotEmpty() && !busy,
                 ) { bundleExporter.launch("melora-sources.json") }
-                SettingsDivider()
+                SettingsDivider(Modifier.padding(start = 68.dp, end = 16.dp))
                 ActionRow(
                     icon = Icons.Rounded.Refresh,
                     label = "重新加载音源",
@@ -520,54 +522,6 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
                     onFailure = onImportFailure,
                 )
             },
-        )
-    }
-}
-
-@Composable
-private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
-    Surface(
-        shape = RoundedCornerShape(20.dp),
-        color = CardBg,
-        shadowElevation = 0.dp,
-        border = MeloraAppearance.cardBorder,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(content = content)
-    }
-}
-
-@Composable
-private fun SettingsDivider() {
-    HorizontalDivider(
-        modifier = Modifier.padding(start = 68.dp, end = 16.dp),
-        color = DividerSoft,
-        thickness = 0.6.dp,
-    )
-}
-
-@Composable
-private fun SwitchRow(
-    title: String,
-    subtitle: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-            Text(title, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = TextMain)
-            Text(subtitle, fontSize = 12.sp, color = TextSub, modifier = Modifier.padding(top = 2.dp))
-        }
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = meloraSwitchColors(),
         )
     }
 }
@@ -946,6 +900,7 @@ private fun SourceRow(
         Spacer(Modifier.width(8.dp))
         Switch(
             checked = script.enabled,
+            modifier = Modifier.semantics { contentDescription = script.name },
             onCheckedChange = onToggle,
             enabled = enabled,
             colors = meloraSwitchColors(),

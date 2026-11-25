@@ -58,6 +58,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leyu.melora.ui.common.ChromeScaffold
@@ -298,11 +299,12 @@ internal fun SettingsPreferenceLabel(
     title: String,
     subtitle: String?,
     modifier: Modifier = Modifier,
+    subtitleSize: TextUnit = 11.sp,
 ) {
     Column(modifier) {
         Text(title, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = SettingsTextMain)
         if (subtitle != null) {
-            Text(subtitle, fontSize = 11.sp, color = SettingsTextSub, modifier = Modifier.padding(top = 2.dp))
+            Text(subtitle, fontSize = subtitleSize, color = SettingsTextSub, modifier = Modifier.padding(top = 2.dp))
         }
     }
 }
@@ -313,6 +315,8 @@ internal fun SwitchItem(
     subtitle: String? = null,
     checked: Boolean,
     enabled: Boolean = true,
+    subtitleSize: TextUnit = 11.sp,
+    labelEndPadding: Dp = 0.dp,
     onCheckedChange: (Boolean) -> Unit,
 ) {
     Row(
@@ -322,7 +326,7 @@ internal fun SwitchItem(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        SettingsPreferenceLabel(title, subtitle, Modifier.weight(1f))
+        SettingsPreferenceLabel(title, subtitle, Modifier.weight(1f).padding(end = labelEndPadding), subtitleSize)
         Switch(
             checked = checked,
             enabled = enabled,
