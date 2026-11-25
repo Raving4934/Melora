@@ -196,7 +196,7 @@ class SearchDataTest {
             val failed = async(start = CoroutineStart.UNDISPATCHED) {
                 runCatching { loadSongs(PlatformSource.Kuwo, keyword, 2) }
             }
-            yield() // 同一运行队列中分页请求已加入这条失败的在途读取。
+            awaitSearchObserving(key)
             release.complete(Unit)
             assertEquals("第二页读取中断", withTimeout(5_000) { failed.await() }.exceptionOrNull()?.message)
             failedRefresh.await()
@@ -211,12 +211,61 @@ class SearchDataTest {
         }
     }
 
+    @Test fun aggregateKeepsAFailedSourceReachableAfterTheOtherSourcesEnd() = runBlocking {
+        val delayedSource = "mg"
+        platformIds.filterNot { it == delayedSource }.forEach { cache(it, 2, 1, 31, 2) }
+        val key = songSearchCacheKey(delayedSource, keyword, 2)
+        val release = CompletableDeferred<Unit>()
+        val failedRefresh = async(start = CoroutineStart.UNDISPATCHED) {
+            runCatching {
+                OnlineCache.refresh<SongPage>(key, -1) {
+                    release.await()
+                    throw IOException("一个音源的第二页读取失败")
+                }
+            }
+        }
+        try {
+            val secondPage = async(start = CoroutineStart.UNDISPATCHED) {
+                loadSongs(PlatformSource.All, keyword, 2)
+            }
+            awaitSearchObserving(key)
+            release.complete(Unit)
+            val partial = withTimeout(5_000) { secondPage.await() }
+            assertEquals(platformIds.size - 1, partial.songs.size)
+            assertTrue("已经结束的音源不能让失败音源的第二页失去入口", partial.hasMore)
+            assertEquals(mapOf(delayedSource to 2), partial.nextSourcePages)
+
+            failedRefresh.await()
+            cache(delayedSource, 2, 1, 31, 2)
+            val retried = searchResultPage(
+                context, SearchCategory.Song, PlatformSource.All, keyword, 3, sourcePages = partial.nextSourcePages,
+            )
+            assertEquals(listOf("mg_2-0"), retried.songs.map(OnlineSong::uid))
+            assertFalse(retried.hasMore)
+        } finally {
+            release.complete(Unit)
+            failedRefresh.cancelAndJoin()
+        }
+    }
+
     private suspend fun loadSongs(
         platform: PlatformSource,
         term: String,
         page: Int,
         onUpdate: ((SearchResults) -> Unit)? = null,
     ) = searchResultPage(context, SearchCategory.Song, platform, term, page, onUpdate)
+
+    private suspend fun awaitSearchObserving(key: String) {
+        fun Any.field(name: String): Any? =
+            javaClass.getDeclaredField(name).apply { isAccessible = true }.get(this)
+
+        val lock = checkNotNull(OnlineCache.field("lock"))
+        val flights = checkNotNull(OnlineCache.field("refreshing"))
+        val requests = flights.field("requests") as Map<*, *>
+        withTimeout(5_000) {
+            while (synchronized(lock) { requests[key]?.field("waiters") != 2 }) yield()
+        }
+    }
 
     /** 仅测试调整缓存写入时间，不等待真实10分钟，也不引入生产时钟/网络测试分支。 */
     private fun expire(key: String) {

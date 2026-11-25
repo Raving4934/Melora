@@ -121,7 +121,8 @@ fun SearchScreen(
                         if (request === current && !partial.isEmpty) results = partial.copy(hasMore = false)
                     }
                 } else null
-            val next = searchResultPage(context, category, selectedPlatform, submitted, current.page, onUpdate)
+            val next = searchResultPage(context, category, selectedPlatform, submitted, current.page, onUpdate,
+                sourcePages = results.nextSourcePages.takeIf { current.page > 1 })
             ensureActive()
             if (request !== current) return@LaunchedEffect
             results = results.withPage(next)
@@ -336,7 +337,7 @@ fun SearchScreen(
                             favoriteUids = favoriteUids,
                             onLoadPage = {
                                 val pending = request
-                                if (pending?.error != null) request = SearchPageRequest(pending.page)
+                                if (pending?.error != null) request = pending.copy(error = null)
                                 else if (pending == null && results.hasMore) request = SearchPageRequest(results.page + 1)
                             },
                             onOpenPlaylist = { openedPlaylist = it },

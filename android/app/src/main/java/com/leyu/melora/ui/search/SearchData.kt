@@ -11,13 +11,8 @@ import com.leyu.melora.playback.sdk.PLAYLIST_SEARCH_PAGE_SIZE
 import com.leyu.melora.playback.sdk.PlaylistPage
 import com.leyu.melora.playback.sdk.SongPage
 import com.leyu.melora.ui.common.runCatchingCancellable
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.firstOrNull
-import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -56,6 +51,7 @@ internal data class SearchResults(
     val songs: List<OnlineSong> = emptyList(),
     val playlists: List<OnlinePlaylist> = emptyList(),
     val hasMore: Boolean = false,
+    val nextSourcePages: Map<String, Int> = emptyMap(),
 ) {
     val isEmpty: Boolean get() = songs.isEmpty() && playlists.isEmpty()
 
@@ -88,6 +84,7 @@ private suspend fun cachedSongSearch(
     OnlineRepository.search(context, source, keyword, page, 30, timeoutMs = timeoutMs)
 }
 
+/** 仅成功的来源前进，失败来源保留本页。首页与续页使用相同聚合逻辑。 */
 internal suspend fun searchResultPage(
     context: Context,
     category: SearchCategory,
@@ -95,12 +92,46 @@ internal suspend fun searchResultPage(
     keyword: String,
     page: Int,
     onUpdate: ((SearchResults) -> Unit)? = null,
-): SearchResults = when (category) {
-    SearchCategory.Song -> searchSongs(context, platform, keyword, page, onUpdate)
-    SearchCategory.Playlist -> searchPlaylists(context, platform, keyword, page)
-    SearchCategory.Audiobook -> cachedCatalogPage("books:kw", keyword, page) { KwBookApi.search(keyword, page) }.let {
-        SearchResults(page, playlists = it.items, hasMore = it.hasMore)
+    sourcePages: Map<String, Int>? = null,
+): SearchResults {
+    val sources = if (category == SearchCategory.Audiobook) listOf(PlatformSource.Kuwo.id) else platform.searchSources
+    val requested = sourcePages ?: sources.associateWith { page }
+    val remaining = requested.toMutableMap()
+    val available = linkedMapOf<String, SearchResults>()
+    val failures = mutableMapOf<String, Throwable>()
+
+    fun outcome(): SearchResults {
+        val pages = if (onUpdate != null) available.values else requested.keys.mapNotNull(available::get)
+        val uids = hashSetOf<String>()
+        val titlesAndSingers = hashSetOf<Pair<String, String>>()
+        val songs = buildList {
+            for (song in pages.asSequence().flatMap { it.songs }) {
+                // 只有进入结果的歌曲才占用两个键，跳过的同名记录仍可能有可展示的别名。
+                if (song.uid in uids || !titlesAndSingers.add(song.name to song.singer)) continue
+                uids.add(song.uid)
+                add(song)
+            }
+        }
+        return SearchResults(
+            page = page,
+            songs = songs,
+            playlists = pages.flatMap { it.playlists }.distinctBy { it.source to it.id },
+            hasMore = remaining.isNotEmpty(),
+            nextSourcePages = remaining.toMap(),
+        )
     }
+
+    searchSourcePages(context, category, keyword, requested, previewSongs = onUpdate != null)
+        .collect { (source, result, preview) ->
+            result.onSuccess { response ->
+                if (!preview) {
+                    if (response.hasMore) remaining[source] = requested.getValue(source) + 1 else remaining.remove(source)
+                }
+                if (available.put(source, response) != response) onUpdate?.invoke(outcome())
+            }.onFailure { failures[source] = it }
+        }
+    if (available.isEmpty()) requested.keys.firstNotNullOfOrNull(failures::get)?.let { throw it }
+    return outcome()
 }
 
 /** 输入联想与正式搜索共用目录首页；继续翻页时直接读取音源。 */
@@ -132,8 +163,9 @@ internal suspend fun searchSuggestions(
         SearchCategory.Playlist -> {
             // 聚合时按返回顺序追加名称，慢源不会拖住首批联想或挪动已显示的行。
             var titles = emptyList<String>()
-            playlistSearchPages(context, platform, keyword, 1).firstOrNull { (_, result) ->
-                val items = result.getOrNull()?.list.orEmpty()
+            val requested = platform.searchSources.associateWith { 1 }
+            searchSourcePages(context, category, keyword, requested).firstOrNull { (_, result) ->
+                val items = result.getOrNull()?.playlists.orEmpty()
                 val next = (titles.asSequence() + items.asSequence().map(OnlinePlaylist::name)).suggestionLabels()
                 if (next.size > titles.size) {
                     titles = next
@@ -150,85 +182,48 @@ internal suspend fun searchSuggestions(
 private fun Sequence<String>.suggestionLabels(): List<String> =
     map(String::trim).filter(String::isNotEmpty).distinct().take(SUGGESTION_LIMIT).toList()
 
-/** 首屏渐进返回与后续分页共用一条聚合链路；同来源刷新替换快照，不追加过时歌曲。 */
-private suspend fun searchSongs(
-    context: Context,
-    platform: PlatformSource,
-    keyword: String,
-    page: Int,
-    onUpdate: ((SearchResults) -> Unit)?,
-): SearchResults = coroutineScope {
-    val targets = platform.searchSources
-    val pages = linkedMapOf<String, SongPage>()
-    fun outcome(): SearchResults {
-        val available = if (onUpdate == null) targets.mapNotNull(pages::get) else pages.values
-        val songs = buildList {
-            val uids = hashSetOf<String>()
-            val titlesAndSingers = hashSetOf<String>()
-            for (song in available.asSequence().flatMap { it.entries }) {
-                val uid = song.uid
-                // 只有进入结果的歌曲才占用两个键，跳过的同名记录仍可能有可展示的别名。
-                if (uid in uids || !titlesAndSingers.add("${song.name}|${song.singer}")) continue
-                uids.add(uid)
-                add(song)
-            }
-        }
-        return SearchResults(
-            page = page,
-            songs = songs,
-            hasMore = available.any { it.hasMore(loadedCount = (page - 1) * it.pageSize + it.rawCount) },
-        )
-    }
-    fun accept(source: String, result: SongPage) {
-        // 页码由请求决定；部分平台不返回page，不能让后续页被误认为第一页。
-        pages[source] = result.copy(page = page)
-        onUpdate?.invoke(outcome())
-    }
-    val results = targets.map { source ->
-        async {
-            if (onUpdate != null) {
-                OnlineCache.peek<SongPage>(songSearchCacheKey(source, keyword, page))?.let { accept(source, it) }
-            }
-            runCatchingCancellable {
-                cachedSongSearch(context, source, keyword, page, timeoutMs = if (onUpdate == null) 25_000L else 6_000L)
-            }.onSuccess { fresh ->
-                ensureActive()
-                if (fresh != pages[source]) accept(source, fresh)
-            }
-        }
-    }.awaitAll()
-    // 缓存预览或任一来源成功时保留可用结果；全部失败要暴露真实错误，不能推进空页游标。
-    if (pages.isEmpty()) results.first().getOrThrow()
-    outcome()
-}
+private data class SourceSearchPage(
+    val source: String,
+    val result: Result<SearchResults>,
+    val cached: Boolean = false,
+)
 
-private fun playlistSearchPages(
+private fun SongPage.toSearchPage(cursor: Int) = SearchResults(
+    page = cursor,
+    songs = entries,
+    hasMore = copy(page = cursor).hasMore(loadedCount = (cursor - 1) * pageSize + rawCount),
+)
+
+private fun searchSourcePages(
     context: Context,
-    platform: PlatformSource,
+    category: SearchCategory,
     keyword: String,
-    page: Int,
+    requested: Map<String, Int>,
+    previewSongs: Boolean = false,
 ) = channelFlow {
-    platform.searchSources.forEachIndexed { index, source ->
-        launch {
-            val result = runCatchingCancellable {
-                cachedCatalogPage("playlists:$source", keyword, page) { OnlineRepository.songlistSearch(context, source, keyword, page) }
+    for ((source, cursor) in requested) launch {
+        if (category == SearchCategory.Song && previewSongs) {
+            OnlineCache.peek<SongPage>(songSearchCacheKey(source, keyword, cursor))?.let {
+                send(SourceSearchPage(source, Result.success(it.toSearchPage(cursor)), cached = true))
             }
-            send(IndexedValue(index, result))
         }
+        val result = runCatchingCancellable {
+            when (category) {
+                SearchCategory.Song -> cachedSongSearch(
+                    context, source, keyword, cursor, timeoutMs = if (previewSongs) 6_000L else 25_000L,
+                ).toSearchPage(cursor)
+                SearchCategory.Playlist -> cachedCatalogPage("playlists:$source", keyword, cursor) {
+                    OnlineRepository.songlistSearch(context, source, keyword, cursor)
+                }.let { page ->
+                    SearchResults(cursor, playlists = page.list, hasMore = page.hasMoreSearchResults(cursor))
+                }
+                SearchCategory.Audiobook -> cachedCatalogPage("books:kw", keyword, cursor) {
+                    KwBookApi.search(keyword, cursor)
+                }.let { page -> SearchResults(cursor, playlists = page.items, hasMore = page.hasMore) }
+            }
+        }
+        send(SourceSearchPage(source, result))
     }
-}
-
-private suspend fun searchPlaylists(
-    context: Context, platform: PlatformSource, keyword: String, page: Int,
-): SearchResults {
-    val results = playlistSearchPages(context, platform, keyword, page).toList().sortedBy { it.index }.map { it.value }
-    val pages = results.mapNotNull { it.getOrNull() }
-    if (pages.isEmpty()) results.first().getOrThrow()
-    return SearchResults(
-        page = page,
-        playlists = pages.flatMap { it.list }.distinctBy { it.source to it.id },
-        hasMore = pages.any { it.hasMoreSearchResults(page) },
-    )
 }
 
 internal fun PlaylistPage.hasMoreSearchResults(requestedPage: Int): Boolean =
