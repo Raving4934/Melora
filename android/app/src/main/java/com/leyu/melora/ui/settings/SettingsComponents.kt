@@ -37,12 +37,12 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.SliderState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -64,6 +64,7 @@ import com.leyu.melora.ui.common.ChromeScaffold
 import com.leyu.melora.ui.common.chromeContentPadding
 import com.leyu.melora.BuildConfig
 import com.leyu.melora.ui.theme.MeloraAppearance
+import com.leyu.melora.ui.theme.meloraSwitchColors
 
 internal val SettingsTextMain: Color get() = MeloraAppearance.textMain
 internal val SettingsTextSub: Color get() = MeloraAppearance.textSub
@@ -169,7 +170,7 @@ internal fun SettingsMainMenu(
     onNavigate: (SettingsSubPage) -> Unit,
 ) {
     val primaryEntries = listOf(
-        SettingsMenuEntry(Icons.Outlined.Tune, Color(0xFF2563EB), "基本设置", "主题、徽标、启动页面与播放界面", SettingsSubPage.Basic),
+        SettingsMenuEntry(Icons.Outlined.Tune, Color(0xFF2563EB), "基本设置", "主题、音质徽标、播放界面与行为", SettingsSubPage.Basic),
         SettingsMenuEntry(Icons.Outlined.Code, Color(0xFF059669), "自定义源", "管理音源脚本、离线源导入与导出", SettingsSubPage.CustomSource),
         SettingsMenuEntry(Icons.Outlined.PlayCircle, Color(0xFFD97706), "播放设置", "启动播放、播放进度、音质偏好", SettingsSubPage.Playback),
         SettingsMenuEntry(Icons.Outlined.Download, Color(0xFF0D9488), "下载设置", "下载路径、音质、命名与嵌入标签", SettingsSubPage.Download),
@@ -231,7 +232,7 @@ private fun SettingsMenuGroup(
                 onClick = { onNavigate(entry.destination) },
             )
             if (index < entries.lastIndex) {
-                SettingsDivider(Modifier.padding(start = 56.dp))
+                SettingsDivider(Modifier.padding(start = 66.dp))
             }
         }
     }
@@ -261,6 +262,10 @@ internal fun SettingsEntryItem(
     enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
+    val dark = MeloraAppearance.isDark
+    val resolvedIconBg = if (dark) MeloraAppearance.softFill else iconTint.copy(alpha = 0.12f)
+    val resolvedIconTint = if (dark) MeloraAppearance.textMain.copy(alpha = 0.85f) else iconTint
+    val chevronTint = if (dark) MeloraAppearance.textMuted else SettingsTextSub
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -272,10 +277,10 @@ internal fun SettingsEntryItem(
             modifier = Modifier
                 .size(36.dp)
                 .clip(CircleShape)
-                .background(iconTint.copy(alpha = 0.12f)),
+                .background(resolvedIconBg),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(20.dp))
+            Icon(icon, contentDescription = null, tint = resolvedIconTint, modifier = Modifier.size(20.dp))
         }
         androidx.compose.foundation.layout.Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
@@ -284,7 +289,7 @@ internal fun SettingsEntryItem(
                 Text(desc, fontSize = 12.sp, color = SettingsTextSub, modifier = Modifier.padding(top = 2.dp))
             }
         }
-        Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null, tint = SettingsTextSub, modifier = Modifier.size(20.dp))
+        Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null, tint = chevronTint, modifier = Modifier.size(20.dp))
     }
 }
 
@@ -323,11 +328,7 @@ internal fun SwitchItem(
             enabled = enabled,
             onCheckedChange = onCheckedChange,
             modifier = Modifier.semantics { contentDescription = title },
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = Color.White,
-                checkedTrackColor = SettingsBrandBlue,
-                uncheckedTrackColor = MeloraAppearance.softFill,
-            ),
+            colors = meloraSwitchColors(),
         )
     }
 }
@@ -340,6 +341,7 @@ internal fun SettingsChoiceRow(
     modifier: Modifier = Modifier,
     spacing: Dp = 8.dp,
 ) {
+    val colors = MaterialTheme.colorScheme
     Row(
         modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(spacing),
@@ -349,7 +351,8 @@ internal fun SettingsChoiceRow(
             Surface(
                 onClick = { onSelect(value) },
                 shape = RoundedCornerShape(10.dp),
-                color = if (isSelected) SettingsBrandBlue else MeloraAppearance.softFill,
+                color = if (isSelected) colors.primary else MeloraAppearance.softFill,
+                contentColor = if (isSelected) colors.onPrimary else SettingsTextMain,
                 modifier = Modifier.weight(1f),
             ) {
                 Box(
@@ -362,7 +365,6 @@ internal fun SettingsChoiceRow(
                         text = label,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium,
-                        color = if (isSelected) Color.White else SettingsTextMain,
                         maxLines = 1,
                         textAlign = TextAlign.Center,
                     )
@@ -381,6 +383,9 @@ internal fun CacheClearRow(
     enabled: Boolean = true,
     onClear: () -> Unit,
 ) {
+    val dark = MeloraAppearance.isDark
+    val resolvedIconBg = if (dark) MeloraAppearance.softFill else iconTint.copy(alpha = 0.12f)
+    val resolvedIconTint = if (dark) MeloraAppearance.textMain.copy(alpha = 0.85f) else iconTint
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -391,10 +396,10 @@ internal fun CacheClearRow(
             modifier = Modifier
                 .size(30.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .background(iconTint.copy(alpha = 0.12f)),
+                .background(resolvedIconBg),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(16.dp))
+            Icon(icon, contentDescription = null, tint = resolvedIconTint, modifier = Modifier.size(16.dp))
         }
         Spacer(Modifier.width(12.dp))
         Text(

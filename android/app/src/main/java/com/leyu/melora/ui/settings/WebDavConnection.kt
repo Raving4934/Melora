@@ -52,6 +52,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -184,7 +185,6 @@ private fun WebDavConnectionEditor(
     MeloraBottomSheet(
         onDismissRequest = { if (action != ConnectionAction.Save) onDismiss() },
         sheetState = sheet,
-        containerColor = MeloraAppearance.canvas,
     ) {
         val focusManager = LocalFocusManager.current
         val keyboard = LocalSoftwareKeyboardController.current
@@ -298,7 +298,8 @@ private fun WebDavConnectionEditor(
 @Composable
 private fun WebDavIcon() {
     Box(
-        modifier = Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(MeloraAppearance.tintBlue),
+        modifier = Modifier.size(40.dp).clip(RoundedCornerShape(12.dp))
+            .background(if (MeloraAppearance.isDark) Color(0xFF222226) else MeloraAppearance.tintBlue),
         contentAlignment = Alignment.Center,
     ) {
         Icon(Icons.Outlined.CloudQueue, null, tint = SettingsBrandBlue, modifier = Modifier.size(22.dp))

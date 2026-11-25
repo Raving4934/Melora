@@ -6,6 +6,7 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -41,8 +42,8 @@ import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.SheetValue
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.IconButton
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
@@ -115,6 +116,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.delay
+import com.leyu.melora.ui.theme.LightSheetFrost
 import com.leyu.melora.ui.theme.MeloraAppearance
 
 val CanvasBackground: Color get() = MeloraAppearance.canvas
@@ -179,6 +181,16 @@ fun SongArtwork(
         if (crossfade) url else ImageRequest.Builder(context).data(url).crossfade(false).build()
     }
     // 只重建失败的图片请求，沿用 AsyncImage 的约束采样和 URL 缓存键；封面布局不变。
+    val shape = RoundedCornerShape(cornerRadius.dp)
+    val borderModifier = if (cornerRadius > 0 && style == PlayerCoverStyle.Default) {
+        Modifier.border(
+            0.5.dp,
+            if (MeloraAppearance.isDark) Color(0x14FFFFFF) else Color(0x0F000000),
+            shape,
+        )
+    } else {
+        Modifier
+    }
     key(url, attempt) {
         AsyncImage(
             model = model,
@@ -189,7 +201,7 @@ fun SongArtwork(
                 failed = false
                 onResult?.invoke(it.painter)
             },
-            modifier = modifier.clip(RoundedCornerShape(cornerRadius.dp)),
+            modifier = modifier.clip(shape).then(borderModifier),
         )
     }
 }
@@ -579,25 +591,12 @@ fun SongMoreSheet(
         return
     }
 
+    val dark = MeloraAppearance.isDark
     MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = MeloraAppearance.canvas,
-        dragHandle = {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 10.dp, bottom = 6.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(width = 36.dp, height = 4.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(MeloraAppearance.textSub.copy(alpha = 0.25f)),
-                )
-            }
-        },
+        lightFrostTint = if (!dark) LightSheetFrost.tint else Color.Unspecified,
+        dragHandle = { MeloraSheetHandle() },
     ) {
         Column(modifier = Modifier.verticalScroll(rememberScrollState()).padding(bottom = 28.dp)) {
             // 头部：48dp 封面缩略图 + 歌名/歌手与专辑
@@ -641,14 +640,12 @@ fun SongMoreSheet(
                 }
             }
 
-            Spacer(Modifier.height(10.dp))
-            HorizontalDivider(color = MeloraAppearance.divider, thickness = 0.6.dp, modifier = Modifier.padding(horizontal = 20.dp))
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(20.dp))
 
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 14.dp),
+                    .padding(horizontal = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 if (isBook) {
@@ -662,7 +659,7 @@ fun SongMoreSheet(
                         closeSheet { onDismiss(); PlaybackController.restartBookChapter(context, song) }
                     }
                     if (book != null && onOpenBookAlbum != null) {
-                        SheetAction(Icons.AutoMirrored.Outlined.MenuBook, BrandBlue, "查看专辑") {
+                        SheetAction(Icons.AutoMirrored.Outlined.MenuBook, BrandBlue, "查看专辑", showArrow = true) {
                             closeSheet { onDismiss(); onOpenBookAlbum(book) }
                         }
                     }
@@ -682,7 +679,6 @@ fun SongMoreSheet(
                         tint = if (isFavorite) AccentRed else BrandBlue,
                         label = if (isFavorite) "取消收藏" else "收藏到我的列表",
                         subtitle = if (isFavorite) "从「我的列表」收藏夹中移除" else "保存到「我的列表」收藏夹",
-                        showArrow = false,
                     ) {
                         closeSheet {
                             UserLibrary.toggleFavorite(song)
@@ -694,7 +690,6 @@ fun SongMoreSheet(
                         tint = Color(0xFF0284C7),
                         label = "下一首播放",
                         subtitle = "加入当前播放队列的下一顺位",
-                        showArrow = false,
                     ) {
                         closeSheet {
                             PlaybackController.addToQueueNext(context, UiTrack.fromOnline(song))
@@ -706,6 +701,7 @@ fun SongMoreSheet(
                         tint = Color(0xFF7C3AED),
                         label = "添加到歌单",
                         subtitle = "收录到自建歌单中分类管理",
+                        showArrow = true,
                     ) {
                         closeSheet { showPlaylistPicker = true }
                     }
@@ -729,7 +725,6 @@ fun SongMoreSheet(
                         tint = Color(0xFF1E88E5),
                         label = if (isBook) "下载本集" else if (matchedLocal != null) "下载更高音质" else "下载音频",
                         subtitle = if (isBook) null else if (matchedLocal != null) "先检查音质提升，无更优版本不新增记录" else "按下载设置保存",
-                        showArrow = false,
                     ) {
                         val needsStorage = Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
                             ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
@@ -780,12 +775,18 @@ internal fun SheetAction(
     label: String,
     subtitle: String? = null,
     iconBg: Color? = null,
-    showArrow: Boolean = true,
+    showArrow: Boolean = false,
     onClick: () -> Unit,
 ) {
-    val effectiveBg = iconBg ?: if (tint == AccentRed) Color(0xFFFFECEF) else tint.copy(alpha = 0.10f)
-    val effectiveTint = if (tint == AccentRed) AccentRed else tint
-    val labelColor = if (tint == AccentRed) AccentRed else TextMain
+    val dark = MeloraAppearance.isDark
+    val destructive = tint == AccentRed
+    val iconBackground = when {
+        destructive -> MeloraAppearance.tintRed
+        dark -> Color(0xFF222226)
+        else -> iconBg ?: tint.copy(alpha = 0.10f)
+    }
+    val resolvedIconTint = if (dark && !destructive) MeloraAppearance.textMain.copy(alpha = 0.86f) else tint
+    val labelColor = if (destructive) MaterialTheme.colorScheme.error else TextMain
 
     Surface(
         onClick = onClick,
@@ -803,10 +804,10 @@ internal fun SheetAction(
                 modifier = Modifier
                     .size(38.dp)
                     .clip(RoundedCornerShape(11.dp))
-                    .background(effectiveBg),
+                    .background(iconBackground),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(icon, contentDescription = null, tint = effectiveTint, modifier = Modifier.size(19.dp))
+                Icon(icon, contentDescription = null, tint = resolvedIconTint, modifier = Modifier.size(19.dp))
             }
             Spacer(Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -821,7 +822,7 @@ internal fun SheetAction(
                     Text(
                         text = subtitle,
                         fontSize = 12.sp,
-                        color = if (tint == AccentRed) AccentRed.copy(alpha = 0.75f) else TextSub,
+                        color = if (destructive) TextMain else TextSub,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -894,22 +895,7 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
     MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = MeloraAppearance.canvas,
-        dragHandle = {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp, bottom = 4.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(width = 36.dp, height = 4.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(MeloraAppearance.textSub.copy(alpha = 0.25f)),
-                )
-            }
-        },
+        dragHandle = { MeloraSheetHandle(topPadding = 8.dp, bottomPadding = 4.dp) },
     ) {
         Column(
             modifier = Modifier
@@ -940,10 +926,11 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
                         .padding(start = 14.dp, end = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    val hintColor = if (adding) TextMuted else TextSub
                     Icon(
                         Icons.Outlined.AddCircleOutline,
                         contentDescription = null,
-                        tint = TextMuted,
+                        tint = hintColor,
                         modifier = Modifier.size(18.dp),
                     )
                     Spacer(Modifier.width(10.dp))
@@ -970,7 +957,7 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
                                     Text(
                                         "新建歌单名称…",
                                         fontSize = 13.sp,
-                                        color = TextMuted,
+                                        color = hintColor,
                                     )
                                 }
                                 innerTextField()
@@ -981,13 +968,12 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
                         Surface(
                             onClick = { addSongs(null) },
                             shape = RoundedCornerShape(14.dp),
-                            color = BrandBlue,
+                            color = MaterialTheme.colorScheme.primary,
                         ) {
                             Text(
                                 "创建并添加",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = Color.White,
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                             )
                         }

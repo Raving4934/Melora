@@ -39,6 +39,7 @@ import com.leyu.melora.playback.sdk.PlaylistImportResult
 import com.leyu.melora.playback.sdk.PlaylistImporter
 import com.leyu.melora.ui.common.BrandBlue
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.MeloraSheetHandle
 import com.leyu.melora.ui.common.rememberMeloraBottomSheetState
 import com.leyu.melora.ui.common.rememberSheetDismiss
 import com.leyu.melora.ui.common.SongArtwork
@@ -68,8 +69,8 @@ internal fun PlaylistUpdateSheet(
     val sheet = rememberMeloraBottomSheetState(skipPartiallyExpanded = true,
         confirmValueChange = { !controller.state.value.saving })
     val closeSheet = rememberSheetDismiss(sheet)
-    MeloraBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, containerColor = MeloraAppearance.canvas,
-        dragHandle = { PlaylistSheetHandle() }) {
+    MeloraBottomSheet(onDismissRequest = onDismiss, sheetState = sheet,
+        dragHandle = { MeloraSheetHandle(bottomPadding = 14.dp) }) {
         PlaylistUpdateContent(playlist, controller,
             onDismiss = { closeSheet(onDismiss) },
             onUpdated = { updated -> closeSheet { onUpdated(updated) } })

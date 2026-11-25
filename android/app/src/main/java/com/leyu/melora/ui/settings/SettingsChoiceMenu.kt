@@ -34,6 +34,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
@@ -58,7 +60,9 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import com.leyu.melora.ui.common.LocalPageActive
-import com.leyu.melora.ui.theme.MeloraAppearance
+import com.leyu.melora.ui.common.glassBackdropSource
+import com.leyu.melora.ui.common.glassPanelModifier
+import com.leyu.melora.ui.common.glassScrimAlpha
 
 @Composable
 internal fun <T> SettingsChoiceMenu(
@@ -206,6 +210,7 @@ private fun AnchoredChoicePopup(
         }
     }
 
+    val scrimAlpha = if (glassBackdropSource(SettingsCardBg) != null) glassScrimAlpha(SettingsCardBg) else 0.32f
     Popup(
         popupPositionProvider = position,
         onDismissRequest = onDismiss,
@@ -213,19 +218,21 @@ private fun AnchoredChoicePopup(
             focusable = true,
             clippingEnabled = false,
             excludeFromSystemGesture = false,
-            scrimAlpha = 0.32f,
+            scrimAlpha = scrimAlpha,
         ),
     ) {
         CompositionLocalProvider(LocalDensity provides density) {
+            val shape = RoundedCornerShape(20.dp)
             Surface(
                 modifier = Modifier.widthIn(max = with(density) { (right - left).toDp() })
                     .heightIn(max = with(density) { maxHeight.toDp() })
                     .widthIn(min = 132.dp).width(IntrinsicSize.Max)
+                    .shadow(8.dp, shape, clip = false)
+                    .then(glassPanelModifier(SettingsCardBg, shape, backdropScrim = Color.Black.copy(alpha = scrimAlpha)))
                     .semantics { paneTitle = title },
-                shape = RoundedCornerShape(16.dp),
-                color = SettingsCardBg,
-                shadowElevation = 8.dp,
-                border = MeloraAppearance.cardBorder,
+                shape = shape,
+                color = Color.Transparent,
+                contentColor = SettingsTextMain,
                 content = content,
             )
         }

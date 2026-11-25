@@ -3,6 +3,12 @@ package com.leyu.melora.ui.playlist
 import com.leyu.melora.ui.common.MeloraBottomSheet
 import com.leyu.melora.ui.common.rememberMeloraBottomSheetState
 import com.leyu.melora.ui.common.rememberSheetDismiss
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -26,8 +32,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -42,7 +48,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -55,12 +63,14 @@ import com.leyu.melora.playback.sdk.OnlineRepository
 import com.leyu.melora.playback.sdk.Tag
 import com.leyu.melora.playback.sdk.TagInfo
 import com.leyu.melora.ui.common.ChromeActionSurface
-import com.leyu.melora.ui.common.ShimmerBox
 import com.leyu.melora.ui.common.sourceAliasDisplay
 import com.leyu.melora.ui.common.runCatchingCancellable
+import com.leyu.melora.ui.theme.DarkGlass
+import com.leyu.melora.ui.theme.LightSheetFrost
 import com.leyu.melora.ui.theme.MeloraAppearance
+import kotlinx.coroutines.delay
 
-private const val TAG_CACHE_TTL = 15 * 60 * 1000L
+private val AllPlaylists = Tag("", "全部歌单")
 
 /**
  * 歌单页顶栏右侧三件套（互相独立）：
@@ -212,27 +222,28 @@ private fun PlaylistCategorySheet(onDismiss: () -> Unit) {
     val selectedTagId by MeloraSettings.playlistTagId.collectAsStateWithLifecycle()
     val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true)
     val closeSheet = rememberSheetDismiss(sheetState)
-    var tagInfo by remember(platformId) {
-        mutableStateOf(OnlineCache.get<TagInfo>("playlistTags.$platformId", TAG_CACHE_TTL) ?: TagInfo(emptyList(), emptyList()))
-    }
-    var loadingTags by remember(platformId) { mutableStateOf(tagInfo.hotTag.isEmpty() && tagInfo.tags.isEmpty()) }
-
-    LaunchedEffect(platformId) {
-        if (tagInfo.hotTag.isNotEmpty() || tagInfo.tags.isNotEmpty()) return@LaunchedEffect
-        loadingTags = true
-        runCatchingCancellable { OnlineRepository.playlistTags(context, platformId) }
-            .onSuccess {
-                tagInfo = it
-                if (it.hotTag.isNotEmpty()) OnlineCache.put("playlistTags.$platformId", it)
-            }
-        loadingTags = false
+    val cacheKey = "playlistTags.$platformId"
+    var tagInfo by remember(cacheKey) { mutableStateOf(OnlineCache.peek<TagInfo>(cacheKey)) }
+    LaunchedEffect(cacheKey) {
+        val cached = OnlineCache.get<TagInfo>(cacheKey, OnlineCache.CATALOG_TTL_MS)
+        if (cached != null) {
+            tagInfo = cached
+            return@LaunchedEffect
+        }
+        val fresh = runCatchingCancellable { OnlineRepository.playlistTags(context, platformId) }.getOrNull()
+        if (fresh != null && (fresh.hotTag.isNotEmpty() || fresh.tags.any { it.list.isNotEmpty() })) {
+            OnlineCache.put(cacheKey, fresh)
+            tagInfo = fresh
+        } else if (tagInfo == null) {
+            tagInfo = TagInfo(emptyList(), emptyList())
+        }
     }
 
     MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = MeloraAppearance.canvas,
         tonalElevation = 0.dp,
+        lightFrostTint = LightSheetFrost.categoryTint,
     ) {
         Column(
             modifier = Modifier
@@ -245,99 +256,54 @@ private fun PlaylistCategorySheet(onDismiss: () -> Unit) {
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Medium,
                 color = MeloraAppearance.textMain,
-                modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
+                modifier = Modifier.padding(top = 4.dp, bottom = 18.dp),
             )
-            HorizontalDivider(color = MeloraAppearance.divider, thickness = 0.6.dp)
-            Spacer(Modifier.height(10.dp))
 
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(440.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                if (loadingTags) {
-                    PlaylistCategorySkeleton()
-                } else {
-                    // 1. 热门推荐分组（“全部歌单”置于首位）
-                    val hotList = listOf(Tag("", "全部歌单")) + tagInfo.hotTag
-                    CategoryGroupSection(
-                        title = "热门推荐",
-                        tags = hotList,
-                        selectedTagId = selectedTagId,
-                        onSelectTag = { tag ->
-                            closeSheet {
-                                MeloraSettings.updatePlaylistTag(tag.id, tag.name)
-                                onDismiss()
-                            }
-                        },
-                    )
-
-                    // 2. 平台各维度分组（如语种、曲风、场景、主题等）
-                    tagInfo.tags.forEach { group ->
-                        if (group.list.isNotEmpty()) {
-                            CategoryGroupSection(
-                                title = group.name,
-                                tags = group.list,
-                                selectedTagId = selectedTagId,
-                                onSelectTag = { tag ->
-                                    closeSheet {
-                                        MeloraSettings.updatePlaylistTag(tag.id, tag.name)
-                                        onDismiss()
-                                    }
-                                },
-                            )
-                        }
-                    }
+            PlaylistCategoryList(tagInfo, selectedTagId) { tag ->
+                closeSheet {
+                    MeloraSettings.updatePlaylistTag(tag.id, tag.name)
+                    onDismiss()
                 }
             }
         }
     }
 }
 
-
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun PlaylistCategorySkeleton() {
-    val chipLabels = listOf("全部歌单", "华语", "流行", "摇滚", "轻音乐", "影视专区")
+internal fun PlaylistCategoryList(tagInfo: TagInfo?, selectedTagId: String, onSelectTag: (Tag) -> Unit) {
+    val loading = tagInfo == null
+    var slowLoad by remember(loading) { mutableStateOf(false) }
+    LaunchedEffect(loading) {
+        if (loading) {
+            delay(400)
+            slowLoad = true
+        }
+    }
+    val alpha = animateFloatAsState(if (loading) 0f else 1f, tween(160), label = "playlistTags")
+    val reveal = Modifier.graphicsLayer { this.alpha = alpha.value }
     Column(
-        modifier = Modifier.clearAndSetSemantics {},
+        modifier = Modifier.fillMaxWidth().height(440.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        repeat(3) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Box {
-                    Text(
-                        text = "分类标题",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.Transparent,
-                    )
-                    ShimmerBox(
-                        modifier = Modifier
-                            .align(Alignment.CenterStart)
-                            .width(64.dp)
-                            .height(12.dp),
-                        cornerRadius = 4.dp,
-                    )
-                }
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    chipLabels.forEach { label ->
-                        Box {
-                            Text(
-                                text = label,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = Color.Transparent,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                            )
-                            ShimmerBox(Modifier.matchParentSize(), cornerRadius = 10.dp)
-                        }
+        CategoryGroupSection("热门推荐", headingEnd = {
+            AnimatedVisibility(slowLoad, enter = fadeIn(), exit = fadeOut(tween(120))) {
+                CircularProgressIndicator(
+                    modifier = Modifier.padding(start = 8.dp).size(12.dp)
+                        .semantics { contentDescription = "正在加载分类" },
+                    color = MeloraAppearance.textSub, strokeWidth = 1.5.dp,
+                )
+            }
+        }) {
+            TagChip(AllPlaylists.name, selectedTagId == AllPlaylists.id, onClick = { onSelectTag(AllPlaylists) })
+            tagInfo?.hotTag?.forEach { tag ->
+                TagChip(tag.name, selectedTagId == tag.id, modifier = reveal, onClick = { onSelectTag(tag) })
+            }
+        }
+        tagInfo?.tags?.forEach { group ->
+            if (group.list.isNotEmpty()) {
+                CategoryGroupSection(group.name, modifier = reveal) {
+                    group.list.forEach { tag ->
+                        TagChip(tag.name, selectedTagId == tag.id, onClick = { onSelectTag(tag) })
                     }
                 }
             }
@@ -349,47 +315,48 @@ private fun PlaylistCategorySkeleton() {
 @Composable
 private fun CategoryGroupSection(
     title: String,
-    tags: List<Tag>,
-    selectedTagId: String,
-    onSelectTag: (Tag) -> Unit,
+    modifier: Modifier = Modifier,
+    headingEnd: @Composable () -> Unit = {},
+    content: @Composable () -> Unit,
 ) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Text(
-            text = title,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-            color = MeloraAppearance.textSub,
-            modifier = Modifier.padding(bottom = 8.dp),
-        )
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(modifier = Modifier.padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(title, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MeloraAppearance.textSub)
+            headingEnd()
+        }
         FlowRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            tags.forEach { tag ->
-                TagChip(
-                    label = tag.name,
-                    isSelected = selectedTagId == tag.id,
-                    onClick = { onSelectTag(tag) },
-                )
-            }
-        }
+        ) { content() }
     }
 }
 
 @Composable
-private fun TagChip(label: String, isSelected: Boolean, onClick: () -> Unit) {
+private fun TagChip(label: String, isSelected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val dark = MeloraAppearance.isDark
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(10.dp),
-        color = if (isSelected) MeloraAppearance.brand else MeloraAppearance.card,
-        border = if (isSelected) null else MeloraAppearance.chipBorder,
+        color = when {
+            dark -> if (isSelected) DarkGlass.selectedFill else DarkGlass.chip
+            isSelected -> LightSheetFrost.blue
+            else -> LightSheetFrost.chip
+        },
+        contentColor = if (isSelected) {
+            if (dark) DarkGlass.selectedText else Color.White
+        } else MeloraAppearance.textMain,
+        border = when {
+            dark -> BorderStroke(0.5.dp, if (isSelected) DarkGlass.selectedEdge else DarkGlass.border)
+            isSelected -> null
+            else -> LightSheetFrost.chipBorder
+        },
+        modifier = modifier.semantics { selected = isSelected },
     ) {
         Text(
             text = label,
             fontSize = 12.sp,
             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-            color = if (isSelected) Color.White else MeloraAppearance.textMain,
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
         )
     }

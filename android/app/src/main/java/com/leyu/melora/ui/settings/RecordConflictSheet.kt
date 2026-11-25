@@ -75,7 +75,6 @@ internal fun RecordConflictSheet(
     MeloraBottomSheet(
         onDismissRequest = { if (!working) onDismiss() },
         sheetState = sheet,
-        containerColor = MeloraAppearance.canvas,
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().heightIn(max = 600.dp)

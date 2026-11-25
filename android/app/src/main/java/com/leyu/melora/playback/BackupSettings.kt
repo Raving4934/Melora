@@ -34,7 +34,8 @@ internal object BackupSettings {
         field("showExitButton", MeloraSettings.KEY_SHOW_EXIT, MeloraSettings.showExitButton, ::backupBoolean),
         field("themeMode", THEME_MODE_PREFERENCE, MeloraSettings.themeMode, { ThemeMode.restore(it as? String, null, MeloraSettings.themeMode.value) }, ThemeMode::storageValue),
         field("hideStatusBar", MeloraSettings.KEY_HIDE_STATUS_BAR, MeloraSettings.hideStatusBar, ::backupBoolean),
-        field("blurTopBar", MeloraSettings.KEY_BLUR_TOP_BAR, MeloraSettings.blurTopBar, ::backupBoolean),
+        field("componentBlurMode", MeloraSettings.KEY_COMPONENT_BLUR_MODE, MeloraSettings.componentBlurMode,
+            { ComponentBlurMode.restore(backupString(it), MeloraSettings.componentBlurMode.value) }, ComponentBlurMode::storageValue),
         field("showSongCovers", MeloraSettings.KEY_SHOW_SONG_COVERS, MeloraSettings.showSongCovers, ::backupBoolean),
         field("qualityBadgeMode", MeloraSettings.KEY_QUALITY_BADGE_MODE, MeloraSettings.qualityBadgeMode,
             { QualityBadgeMode.restore(it as? String, MeloraSettings.qualityBadgeMode.value) }, QualityBadgeMode::storageValue),
@@ -101,6 +102,10 @@ internal object BackupSettings {
             (it as? Boolean) ?: (it as? String)?.lowercase()?.toBooleanStrictOrNull()
         }
         input.put("themeMode", ThemeMode.restore(input.opt("themeMode") as? String, legacyTheme, MeloraSettings.themeMode.value).storageValue)
+        if (!input.has("componentBlurMode") && input.has("blurTopBar")) {
+            val mode = ComponentBlurMode.fromLegacy(backupBoolean(input.get("blurTopBar")))
+            input.put("componentBlurMode", mode.storageValue)
+        }
         if (!input.has("playQualityWifi") && input.has("playQuality")) input.put("playQualityWifi", input.get("playQuality"))
         val prepared = JSONObject()
         fields.forEach { field ->

@@ -8,6 +8,7 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import com.leyu.melora.MeloraApplication
+import com.leyu.melora.playback.ComponentBlurMode
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.UserLibrary
 import java.io.File
@@ -49,7 +50,7 @@ class LibraryFixtureProvider : ContentProvider() {
         )
         MeloraSettings.updateAutoPlay(false)
         MeloraSettings.updateShowSongCovers(true)
-        MeloraSettings.updateBlurTopBar(arg != "solid")
+        MeloraSettings.updateComponentBlurMode(if (arg == "solid") ComponentBlurMode.Off else ComponentBlurMode.Header)
         return Bundle().apply { putInt("songs", songs.size) }
     }
 

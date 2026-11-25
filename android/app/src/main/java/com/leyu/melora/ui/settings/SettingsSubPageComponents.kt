@@ -2,7 +2,6 @@ package com.leyu.melora.ui.settings
 
 import android.content.Intent
 import com.leyu.melora.ui.common.rememberDesktopLyricsToggle
-import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -65,6 +64,7 @@ import com.leyu.melora.playback.AudioQualityBadge
 import com.leyu.melora.playback.AudioQualityTier
 import com.leyu.melora.playback.CacheManager
 import com.leyu.melora.playback.CacheStats
+import com.leyu.melora.playback.ComponentBlurMode
 import com.leyu.melora.playback.formatCacheBytes
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlaybackController
@@ -77,6 +77,7 @@ import com.leyu.melora.ui.common.BadgePill
 import com.leyu.melora.ui.common.runCatchingCancellable
 import com.leyu.melora.ui.common.MeloraAboutMark
 import com.leyu.melora.ui.theme.MeloraAppearance
+import com.leyu.melora.ui.theme.componentBlurSupported
 import kotlinx.coroutines.launch
 
 // 1. 二级菜单：基本设置
@@ -85,7 +86,7 @@ import kotlinx.coroutines.launch
 internal fun BasicSettingsSubPage(onBack: () -> Unit) {
     val themeMode by MeloraSettings.themeMode.collectAsStateWithLifecycle()
     val hideStatusBar by MeloraSettings.hideStatusBar.collectAsStateWithLifecycle()
-    val blurTopBar by MeloraSettings.blurTopBar.collectAsStateWithLifecycle()
+    val blurMode by MeloraSettings.componentBlurMode.collectAsStateWithLifecycle()
     val showSongCovers by MeloraSettings.showSongCovers.collectAsStateWithLifecycle()
     val qualityBadgeMode by MeloraSettings.qualityBadgeMode.collectAsStateWithLifecycle()
     val showExitButton by MeloraSettings.showExitButton.collectAsStateWithLifecycle()
@@ -96,12 +97,6 @@ internal fun BasicSettingsSubPage(onBack: () -> Unit) {
     val keepScreenAwake by MeloraSettings.keepScreenAwake.collectAsStateWithLifecycle()
     val miniLyricsEnabled by MeloraSettings.miniLyricsEnabled.collectAsStateWithLifecycle()
     val playerCoverStyle by MeloraSettings.playerCoverStyle.collectAsStateWithLifecycle()
-
-    val blurTopBarSubtitle = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        "滚动内容在顶栏内渐变模糊"
-    } else {
-        "当前系统使用渐变材质兼容显示"
-    }
 
     SettingsSubPageScaffold(title = "基本设置", onBack = onBack) {
         item {
@@ -129,9 +124,7 @@ internal fun BasicSettingsSubPage(onBack: () -> Unit) {
                 }
                 SettingsDivider(Modifier.padding(horizontal = 14.dp))
 
-                SwitchItem("模糊标题栏", blurTopBarSubtitle, blurTopBar) {
-                    MeloraSettings.updateBlurTopBar(it)
-                }
+                ComponentBlurSetting(blurMode, MeloraSettings::updateComponentBlurMode)
                 SettingsDivider(Modifier.padding(horizontal = 14.dp))
 
                 SwitchItem("显示单曲封面", "在歌曲列表中加载单曲封面", showSongCovers) {
@@ -149,8 +142,13 @@ internal fun BasicSettingsSubPage(onBack: () -> Unit) {
                         BadgePill(AudioQualityBadge(AudioQualityTier.HiRes, "HI-RES", "192 kHz"), mode = mode)
                     },
                 )
-                SettingsDivider(Modifier.padding(horizontal = 14.dp))
-
+            }
+        }
+        item {
+            SectionCaption("行为")
+        }
+        item {
+            SettingsCard(contentPadding = PaddingValues(vertical = 4.dp)) {
                 SwitchItem("启动时恢复上次页面", "记住上次离开时所在的页面", restoreLastPage) {
                     MeloraSettings.updateRestoreLastPage(it)
                 }
@@ -216,6 +214,25 @@ internal fun BasicSettingsSubPage(onBack: () -> Unit) {
             }
         }
     }
+}
+
+@Composable
+private fun ComponentBlurSetting(selected: ComponentBlurMode, onSelect: (ComponentBlurMode) -> Unit) {
+    SettingsChoiceMenu(
+        title = "模糊组件",
+        subtitle = "需要 Android 13 及以上版本",
+        value = if (componentBlurSupported) selected else ComponentBlurMode.Off,
+        options = ComponentBlurMode.entries,
+        enabled = componentBlurSupported,
+        label = { mode ->
+            when (mode) {
+                ComponentBlurMode.Off -> "关闭"
+                ComponentBlurMode.Header -> "模糊标题栏"
+                ComponentBlurMode.All -> "模糊所有组件"
+            }
+        },
+        onSelect = onSelect,
+    )
 }
 
 @Composable

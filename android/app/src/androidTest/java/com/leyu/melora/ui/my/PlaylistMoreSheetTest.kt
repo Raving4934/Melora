@@ -8,6 +8,7 @@ import androidx.compose.ui.unit.Density
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.leyu.melora.playback.UserLibrary
 import com.leyu.melora.playback.sdk.OnlineSong
+import com.leyu.melora.ui.awaitStable
 import com.leyu.melora.ui.boundsInSameFrame
 import com.leyu.melora.ui.theme.MeloraTheme
 import org.json.JSONObject
@@ -52,13 +53,14 @@ class PlaylistMoreSheetTest {
 
     @Test fun appendActionFollowsPlayAllAndDoesNotPlayOrEditPlaylist() {
         show()
-        compose.waitForIdle()
+        val appendAction = compose.onNodeWithText("添加全部歌曲到播放队列")
+        compose.awaitStable(appendAction)
         val (play, append) = compose.boundsInSameFrame(
             compose.onNodeWithText("播放全部").assertIsDisplayed(),
-            compose.onNodeWithText("添加全部歌曲到播放队列").assertIsDisplayed(),
+            appendAction.assertIsDisplayed(),
         )
         assertTrue(append.top > play.top)
-        compose.onNodeWithText("添加全部歌曲到播放队列").performClick()
+        appendAction.performClick()
         compose.runOnIdle { assertEquals(listOf("dismiss", "append"), actions) }
     }
 

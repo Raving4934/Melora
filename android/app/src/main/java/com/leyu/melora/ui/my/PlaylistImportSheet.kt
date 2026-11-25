@@ -54,6 +54,7 @@ import com.leyu.melora.playback.sdk.PlaylistImportResult
 import com.leyu.melora.playback.sdk.PlaylistImporter
 import com.leyu.melora.ui.common.BrandBlue
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.MeloraSheetHandle
 import com.leyu.melora.ui.common.rememberMeloraBottomSheetState
 import com.leyu.melora.ui.common.rememberSheetDismiss
 import com.leyu.melora.ui.common.SongArtwork
@@ -207,8 +208,8 @@ internal fun PlaylistImportSheet(
         }
     }
     MeloraBottomSheet(
-        onDismissRequest = { job?.cancel(); onDismiss() }, sheetState = sheet, containerColor = MeloraAppearance.canvas,
-        dragHandle = { PlaylistSheetHandle() },
+        onDismissRequest = { job?.cancel(); onDismiss() }, sheetState = sheet,
+        dragHandle = { MeloraSheetHandle(bottomPadding = 14.dp) },
     ) {
         AnimatedContent(
             targetState = updateTarget,
@@ -296,7 +297,7 @@ internal fun PlaylistImportSheet(
                                     modifier = Modifier.fillMaxWidth().height(84.dp).padding(horizontal = 12.dp, vertical = 8.dp).testTag("playlist-import-link"),
                                     decorator = { field ->
                                         Box {
-                                            if (linkText.isBlank()) Text("粘贴链接或整段分享文字", color = MeloraAppearance.textMuted, fontSize = 14.sp, lineHeight = 21.sp)
+                                            if (linkText.isBlank()) Text("粘贴链接或整段分享文字", color = TextSub, fontSize = 14.sp, lineHeight = 21.sp)
                                             field()
                                         }
                                     },
@@ -407,13 +408,6 @@ internal fun PlaylistImportSheet(
 }
 
 @Composable
-internal fun PlaylistSheetHandle() {
-    Box(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 14.dp), contentAlignment = Alignment.Center) {
-        Box(Modifier.size(36.dp, 4.dp).clip(RoundedCornerShape(2.dp)).background(MeloraAppearance.textSub.copy(alpha = 0.25f)))
-    }
-}
-
-@Composable
 internal fun PlaylistSheetHeader(
     icon: ImageVector,
     title: String,
@@ -421,7 +415,11 @@ internal fun PlaylistSheetHeader(
     onImportClick: (() -> Unit)? = null,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(MeloraAppearance.tintBlue), Alignment.Center) {
+        Box(
+            Modifier.size(40.dp).clip(RoundedCornerShape(12.dp))
+                .background(if (MeloraAppearance.isDark) Color(0xFF222226) else MeloraAppearance.tintBlue),
+            Alignment.Center,
+        ) {
             Icon(icon, null, tint = BrandBlue, modifier = Modifier.size(22.dp))
         }
         Spacer(Modifier.width(12.dp))
@@ -461,12 +459,13 @@ internal fun PlaylistSheetActions(
     secondaryTag: String = "playlist-import-cancel",
 ) {
     val submitEnabled = confirmEnabled && !busy
+    val colors = MaterialTheme.colorScheme
     Row(
         modifier = modifier.fillMaxWidth().height(IntrinsicSize.Max).heightIn(min = 48.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Surface(onClick = onSecondary, enabled = secondaryEnabled, shape = RoundedCornerShape(24.dp),
-            color = MeloraAppearance.card, border = MeloraAppearance.cardBorder,
+            color = Color.Transparent, border = MeloraAppearance.chipBorder,
             modifier = Modifier.weight(1f).fillMaxHeight().testTag(secondaryTag)) {
             Box(contentAlignment = Alignment.Center) {
                 Text(secondaryText, color = if (secondaryEnabled) TextMain else MeloraAppearance.textMuted, fontSize = 14.sp, lineHeight = 18.sp, maxLines = 2,
@@ -474,10 +473,11 @@ internal fun PlaylistSheetActions(
             }
         }
         Surface(onClick = onConfirm, enabled = submitEnabled, shape = RoundedCornerShape(24.dp),
-            color = if (submitEnabled) BrandBlue else MeloraAppearance.softFill,
+            color = if (submitEnabled) colors.primary else MeloraAppearance.softFill,
+            contentColor = if (submitEnabled) colors.onPrimary else TextSub,
             modifier = Modifier.weight(1.6f).fillMaxHeight().testTag(submitTag)) {
             Box(contentAlignment = Alignment.Center) {
-                Text(confirmText, color = if (submitEnabled) Color.White else TextSub, fontSize = 14.sp,
+                Text(confirmText, fontSize = 14.sp,
                     lineHeight = 18.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
             }

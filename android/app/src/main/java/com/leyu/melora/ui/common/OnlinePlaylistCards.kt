@@ -101,15 +101,14 @@ fun OnlinePlaylistCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .fillMaxHeight(0.62f)
+                    .fillMaxHeight(0.68f)
                     .align(Alignment.BottomCenter)
                     .background(
                         Brush.verticalGradient(
-                            listOf(
-                                Color.Transparent,
-                                Color.Black.copy(alpha = 0.38f),
-                                Color.Black.copy(alpha = 0.78f),
-                            ),
+                            0f to Color.Transparent,
+                            0.42f to Color.Black.copy(alpha = 0.42f),
+                            0.76f to Color.Black.copy(alpha = 0.76f),
+                            1f to Color.Black.copy(alpha = 0.88f),
                         ),
                     ),
             )
@@ -185,7 +184,7 @@ fun OnlinePlaylistCard(
     }
 }
 
-/** 有声专辑网格卡（全幅封面版）：封面铺满整卡，「有声」角标+热度+标题/集数叠在封面上。 */
+/** 有声专辑网格卡（全幅封面版）：封面铺满整卡，热度+标题/集数叠在封面上。 */
 @Composable
 fun OnlineAudiobookCard(
     playlist: OnlinePlaylist,
@@ -214,32 +213,17 @@ fun OnlineAudiobookCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .fillMaxHeight(0.62f)
+                    .fillMaxHeight(0.68f)
                     .align(Alignment.BottomCenter)
                     .background(
                         Brush.verticalGradient(
-                            listOf(
-                                Color.Transparent,
-                                Color.Black.copy(alpha = 0.38f),
-                                Color.Black.copy(alpha = 0.78f),
-                            ),
+                            0f to Color.Transparent,
+                            0.42f to Color.Black.copy(alpha = 0.42f),
+                            0.76f to Color.Black.copy(alpha = 0.76f),
+                            1f to Color.Black.copy(alpha = 0.88f),
                         ),
                     ),
             )
-
-            Surface(
-                shape = RoundedCornerShape(topStart = 12.dp, bottomEnd = 8.dp),
-                color = Color(0xCC7C3AED),
-                modifier = Modifier.align(Alignment.TopStart),
-            ) {
-                Text(
-                    text = "有声",
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                )
-            }
 
             if (playlist.playCountLabel.isNotBlank()) {
                 Surface(

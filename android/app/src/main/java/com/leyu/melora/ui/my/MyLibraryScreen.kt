@@ -1,6 +1,7 @@
 package com.leyu.melora.ui.my
 
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.MeloraSheetHandle
 import com.leyu.melora.ui.common.rememberMeloraBottomSheetState
 import com.leyu.melora.ui.common.bookAlbumOf
 import com.leyu.melora.playback.bookId
@@ -97,6 +98,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.SheetValue
@@ -839,7 +841,7 @@ private fun RecentAggregateCard(
                 .fillMaxWidth()
                 .aspectRatio(1f)
                 .clip(RoundedCornerShape(14.dp))
-                .background(Color(0xFF1F242E)),
+                .background(Color(0xFF1C1C20)),
         ) {
             if (!cover.isNullOrBlank()) {
                 SongArtwork(cover, "recent-aggregate", Modifier.fillMaxSize(), cornerRadius = 14)
@@ -1677,6 +1679,7 @@ private fun SwipeToRevealDeleteCard(
     content: @Composable () -> Unit,
 ) {
     val density = LocalDensity.current
+    val colors = MaterialTheme.colorScheme
     val deleteButtonWidth = 72.dp
     val spacing = 8.dp
     val totalRevealWidth = deleteButtonWidth + spacing
@@ -1719,7 +1722,7 @@ private fun SwipeToRevealDeleteCard(
                     modifier = Modifier
                         .width(deleteButtonWidth)
                         .clip(shape)
-                        .background(AccentRed)
+                        .background(colors.error)
                         .clickable {
                             settleJob?.cancel()
                             offsetX = 0f
@@ -1734,7 +1737,7 @@ private fun SwipeToRevealDeleteCard(
                         Icon(
                             Icons.Outlined.Delete,
                             contentDescription = "删除本地文件或下载任务",
-                            tint = Color.White,
+                            tint = colors.onError,
                             modifier = Modifier.size(20.dp),
                         )
                         Spacer(Modifier.height(3.dp))
@@ -1742,7 +1745,7 @@ private fun SwipeToRevealDeleteCard(
                             text = "删除",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Medium,
-                            color = Color.White,
+                            color = colors.onError,
                         )
                     }
                 }
@@ -1969,22 +1972,7 @@ private fun DownloadRecordSheet(
     MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = MeloraAppearance.canvas,
-        dragHandle = {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 10.dp, bottom = 6.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(width = 36.dp, height = 4.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(MeloraAppearance.divider),
-                )
-            }
-        },
+        dragHandle = { MeloraSheetHandle(color = MeloraAppearance.divider) },
     ) {
         Column(modifier = Modifier.padding(bottom = 28.dp)) {
             // 头部卡片：48dp 封面/下载图标 + 任务名与状态详情
@@ -2006,7 +1994,7 @@ private fun DownloadRecordSheet(
                         modifier = Modifier
                             .size(48.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(BrandBlue.copy(alpha = 0.12f)),
+                            .background(if (MeloraAppearance.isDark) Color(0xFF222226) else BrandBlue.copy(alpha = 0.12f)),
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
@@ -2038,9 +2026,7 @@ private fun DownloadRecordSheet(
                 }
             }
 
-            Spacer(Modifier.height(10.dp))
-            HorizontalDivider(color = MeloraAppearance.divider, thickness = 0.6.dp, modifier = Modifier.padding(horizontal = 20.dp))
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(20.dp))
 
             Column(
                 modifier = Modifier
@@ -2175,6 +2161,7 @@ private fun DownloadRecordSheet(
                         tint = Color(0xFF7C3AED),
                         label = "添加到歌单",
                         subtitle = "收录到自建歌单中分类管理",
+                        showArrow = true,
                     ) {
                         closeSheet(onAddToPlaylist)
                     }
@@ -2213,8 +2200,7 @@ internal fun PlaylistEditSheet(
     MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = MeloraAppearance.canvas,
-        dragHandle = { PlaylistSheetHandle() },
+        dragHandle = { MeloraSheetHandle(bottomPadding = 14.dp) },
     ) {
         LaunchedEffect(sheetState) {
             snapshotFlow {
@@ -2276,7 +2262,7 @@ internal fun PlaylistEditSheet(
                                     Text(
                                         text = "歌单名称…",
                                         fontSize = 15.sp,
-                                        color = TextMuted,
+                                        color = TextSub,
                                     )
                                 }
                                 innerTextField()
@@ -2315,7 +2301,7 @@ internal fun PlaylistEditSheet(
                                 name.setTextAndPlaceCursorAtEnd(tag)
                             },
                             shape = RoundedCornerShape(14.dp),
-                            color = MeloraAppearance.softFill,
+                            color = MeloraAppearance.card,
                             border = MeloraAppearance.chipBorder,
                         ) {
                             Text(
@@ -2359,22 +2345,7 @@ internal fun PlaylistMoreSheet(
     MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = MeloraAppearance.canvas,
-        dragHandle = {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 10.dp, bottom = 6.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(width = 36.dp, height = 4.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(MeloraAppearance.divider),
-                )
-            }
-        },
+        dragHandle = { MeloraSheetHandle(color = MeloraAppearance.divider) },
     ) {
         Column(modifier = Modifier.verticalScroll(rememberScrollState()).padding(bottom = 28.dp)) {
             // 头部卡片：48dp 歌单封面/图集 + 歌单名与歌曲数量
@@ -2397,7 +2368,7 @@ internal fun PlaylistMoreSheet(
                         modifier = Modifier
                             .size(48.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(BrandBlue.copy(alpha = 0.12f)),
+                            .background(if (MeloraAppearance.isDark) Color(0xFF222226) else BrandBlue.copy(alpha = 0.12f)),
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
@@ -2429,9 +2400,7 @@ internal fun PlaylistMoreSheet(
                 }
             }
 
-            Spacer(Modifier.height(10.dp))
-            HorizontalDivider(color = MeloraAppearance.divider, thickness = 0.6.dp, modifier = Modifier.padding(horizontal = 20.dp))
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(20.dp))
 
             Column(
                 modifier = Modifier
@@ -2460,6 +2429,7 @@ internal fun PlaylistMoreSheet(
                     tint = Color(0xFF0284C7),
                     label = "重命名歌单",
                     subtitle = "修改该歌单的显示名称",
+                    showArrow = true,
                     onClick = { closeSheet { onDismiss(); onRename() } },
                 )
                 if (playlist.importSource != null && onUpdate != null) SheetAction(
@@ -2467,6 +2437,7 @@ internal fun PlaylistMoreSheet(
                     tint = BrandBlue,
                     label = "从原歌单更新",
                     subtitle = "先读取完整歌单，预览差异后确认",
+                    showArrow = true,
                     onClick = { closeSheet { onDismiss(); onUpdate() } },
                 )
                 SheetAction(
@@ -2495,22 +2466,7 @@ private fun PlaylistDeleteConfirmSheet(
     MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = MeloraAppearance.canvas,
-        dragHandle = {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp, bottom = 4.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(width = 36.dp, height = 4.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(MeloraAppearance.divider),
-                )
-            }
-        },
+        dragHandle = { MeloraSheetHandle(color = MeloraAppearance.divider, topPadding = 8.dp, bottomPadding = 4.dp) },
     ) {
         Column(
             modifier = Modifier
@@ -2567,13 +2523,13 @@ private fun PlaylistDeleteConfirmSheet(
                 Surface(
                     onClick = { closeSheet(onConfirm) },
                     shape = RoundedCornerShape(22.dp),
-                    color = AccentRed,
+                    color = MaterialTheme.colorScheme.error,
                     modifier = Modifier
                         .weight(1f)
                         .height(44.dp),
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Text("确认删除", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                        Text("确认删除", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }

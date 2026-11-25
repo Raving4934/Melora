@@ -1,6 +1,7 @@
 package com.leyu.melora.ui.local
 
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.MeloraSheetHandle
 import com.leyu.melora.ui.common.rememberMeloraBottomSheetState
 import com.leyu.melora.ui.common.rememberSheetDismiss
 import androidx.compose.foundation.background
@@ -44,7 +45,6 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.LocalTextStyle
@@ -124,7 +124,7 @@ internal fun LocalSearchPage(
                             .padding(horizontal = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Icon(Icons.Outlined.Search, contentDescription = null, tint = TextMuted, modifier = Modifier.size(17.dp))
+                        Icon(Icons.Outlined.Search, contentDescription = null, tint = TextSub, modifier = Modifier.size(17.dp))
                         Spacer(Modifier.width(8.dp))
                         val inputStyle = LocalTextStyle.current.copy(
                             fontSize = 13.sp,
@@ -143,7 +143,7 @@ internal fun LocalSearchPage(
                                     if (query.isEmpty()) {
                                         Text(
                                             if (content == null) "搜索本地歌曲" else "在 ${songs.size} 首歌曲中搜索",
-                                            style = inputStyle.copy(color = TextMuted),
+                                            style = inputStyle.copy(color = TextSub),
                                             maxLines = 1,
                                         )
                                     }
@@ -289,23 +289,9 @@ internal fun LocalSortSheet(
     MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = MeloraAppearance.card,
+        containerColor = MeloraAppearance.sheetCard,
         tonalElevation = 0.dp,
-        dragHandle = {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 10.dp, bottom = 6.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(width = 36.dp, height = 4.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(MeloraAppearance.divider),
-                )
-            }
-        },
+        dragHandle = { MeloraSheetHandle(color = MeloraAppearance.divider) },
     ) {
         Column(
             modifier = Modifier
@@ -347,11 +333,7 @@ internal fun LocalSortSheet(
                 }
             }
 
-            HorizontalDivider(
-                color = MeloraAppearance.divider,
-                thickness = 0.6.dp,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-            )
+            Spacer(Modifier.height(16.dp))
 
             Column(
                 modifier = Modifier

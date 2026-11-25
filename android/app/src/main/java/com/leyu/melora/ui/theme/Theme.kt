@@ -5,16 +5,21 @@ import android.os.Build
 import android.view.ViewTreeObserver
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SwitchColors
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.core.view.WindowCompat
@@ -22,21 +27,67 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.window.DialogWindowProvider
+import com.leyu.melora.playback.ComponentBlurMode
 import com.leyu.melora.playback.MeloraSettings
 
 private val LightColors = lightColorScheme(
     primary = MeloraBlue,
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFEFF4FE),
+    onPrimaryContainer = Color(0xFF1E3A8A),
     secondary = MeloraIndigo,
+    onSecondary = Color.White,
+    secondaryContainer = Color(0xFFEEF0FF),
+    onSecondaryContainer = Color(0xFF312E81),
     background = MeloraSurfaceLight,
+    onBackground = Color(0xFF111827),
     surface = MeloraSurfaceLight,
+    onSurface = Color(0xFF111827),
+    surfaceVariant = Color(0xFFF1F3F6),
+    onSurfaceVariant = Color(0xFF6B7280),
+    surfaceContainerLowest = Color.White,
+    surfaceContainerLow = Color(0xFFF9FAFB),
+    surfaceContainer = Color(0xFFF4F5F7),
+    surfaceContainerHigh = Color(0xFFEEF0F4),
+    surfaceContainerHighest = Color(0xFFE5E7EB),
+    outline = Color(0xFFC9CFD9),
+    outlineVariant = Color(0xFFE5E7EB),
+    error = Color(0xFFD32F2F),
+    onError = Color.White,
+    errorContainer = Color(0xFFFEE2E2),
+    scrim = Color.Black,
 )
 
 private val DarkColors = darkColorScheme(
     primary = MeloraBlueDark,
-    secondary = MeloraIndigo,
+    onPrimary = Color(0xFF081736),
+    primaryContainer = Color(0xFF1C2536),
+    onPrimaryContainer = Color(0xFFDCE7FF),
+    secondary = MeloraIndigoDark,
+    onSecondary = Color(0xFF101342),
+    secondaryContainer = Color(0xFF1E1E21),
+    onSecondaryContainer = Color(0xFFE2E6FF),
     background = MeloraSurfaceDark,
+    onBackground = Color(0xFFEBEBEF),
     surface = MeloraSurfaceDark,
+    onSurface = Color(0xFFEBEBEF),
+    surfaceVariant = Color(0xFF1E1E22),
+    onSurfaceVariant = Color(0xFF9898A0),
+    surfaceContainerLowest = Color(0xFF070709),
+    surfaceContainerLow = MeloraCardDark,
+    surfaceContainer = Color(0xFF141416),
+    surfaceContainerHigh = Color(0xFF1E1E22),
+    surfaceContainerHighest = Color(0xFF26262A),
+    outline = Color(0xFF3F3F46),
+    outlineVariant = Color(0xFF27272B),
+    error = Color(0xFFF2635C),
+    onError = Color(0xFF410E0B),
+    errorContainer = Color(0xFF2D191D),
+    scrim = Color.Black,
 )
+
+internal val componentBlurSupported: Boolean get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+internal val LocalComponentBlurMode = compositionLocalOf { ComponentBlurMode.Off }
 
 @Composable
 fun MeloraTheme(
@@ -58,7 +109,22 @@ fun MeloraTheme(
     // 同步全局外观调色板，使硬编码设计令牌随主题切换。
     SideEffect { MeloraAppearance.isDark = darkTheme }
 
-    MaterialTheme(colorScheme = colorScheme, content = content)
+    val blurMode by MeloraSettings.componentBlurMode.collectAsStateWithLifecycle()
+    CompositionLocalProvider(LocalComponentBlurMode provides if (componentBlurSupported) blurMode else ComponentBlurMode.Off) {
+        MaterialTheme(colorScheme = colorScheme, content = content)
+    }
+}
+
+@Composable
+internal fun meloraSwitchColors(): SwitchColors {
+    val colors = MaterialTheme.colorScheme
+    return SwitchDefaults.colors(
+        checkedThumbColor = colors.onPrimary,
+        checkedTrackColor = colors.primary,
+        uncheckedThumbColor = colors.onSurfaceVariant,
+        uncheckedTrackColor = colors.surfaceVariant,
+        uncheckedBorderColor = colors.onSurfaceVariant,
+    )
 }
 
 /** 临时窗口策略随播放子树传入 Dialog，不写入用户的全局设置。 */

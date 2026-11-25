@@ -405,23 +405,23 @@ fun DiscoverScreen(
                                                 .height(DISCOVER_TOP_CARD_HEIGHT_DP.dp),
                                             verticalArrangement = Arrangement.spacedBy(DISCOVER_TOP_STACK_GAP_DP.dp),
                                         ) {
-                                            // 上卡：百万热播 (珊瑚红 + 火焰浮印，真实播放量 ≥ 100 万的歌单页)
+                                            // 上卡：百万热播 (柔和珊瑚红 + 火焰浮印，真实播放量 ≥ 100 万的歌单页)
                                             WatermarkGradientCard(
                                                 title = "百万热播",
                                                 icon = Icons.Outlined.Whatshot,
                                                 gradient = Brush.linearGradient(
-                                                    listOf(Color(0xFFFF6456), Color(0xFFFF5252)),
+                                                    listOf(Color(0xFFD86B68), Color(0xFFBC5352)),
                                                 ),
                                                 onClick = { millionDetail = Unit },
                                                 modifier = Modifier.weight(1f),
                                             )
 
-                                            // 下卡：新歌推荐 (明快暖橙 + 音符浮水印)
+                                            // 下卡：新歌推荐 (柔和暖琥珀 + 音符浮水印)
                                             WatermarkGradientCard(
                                                 title = "新歌推荐",
                                                 icon = Icons.Outlined.MusicNote,
                                                 gradient = Brush.linearGradient(
-                                                    listOf(Color(0xFFFFA726), Color(0xFFFF9100)),
+                                                    listOf(Color(0xFFA65E19), Color(0xFFD68D3E)),
                                                 ),
                                                 onClick = {
                                                     openedSongsPage = DiscoverSongs("新歌推荐", "近期新歌精选 30 首", "17", "discover.new", "discover.new.list")
@@ -437,23 +437,23 @@ fun DiscoverScreen(
                                                 .height(DISCOVER_TOP_CARD_HEIGHT_DP.dp),
                                             verticalArrangement = Arrangement.spacedBy(DISCOVER_TOP_STACK_GAP_DP.dp),
                                         ) {
-                                            // 上卡：歌单广场 (淡紫渐变 + 歌单浮水印)
+                                            // 上卡：歌单广场 (柔和雾紫渐变 + 歌单浮水印)
                                             WatermarkGradientCard(
                                                 title = "歌单广场",
                                                 icon = Icons.AutoMirrored.Outlined.QueueMusic,
                                                 gradient = Brush.linearGradient(
-                                                    listOf(Color(0xFFBA68C8), Color(0xFF9C27B0)),
+                                                    listOf(Color(0xFF9575B8), Color(0xFF77589C)),
                                                 ),
                                                 onClick = { onNavigateToTab(3) }, // 跳转歌单
                                                 modifier = Modifier.weight(1f),
                                             )
 
-                                            // 下卡：官方榜单 (鲜绿渐变 + 奖杯/榜单浮水印)
+                                            // 下卡：官方榜单 (柔和鼠尾草绿渐变 + 榜单浮水印)
                                             WatermarkGradientCard(
                                                 title = "官方榜单",
                                                 icon = Icons.Outlined.Leaderboard,
                                                 gradient = Brush.linearGradient(
-                                                    listOf(Color(0xFF00E676), Color(0xFF00C853)),
+                                                    listOf(Color(0xFF4BA87A), Color(0xFF368B61)),
                                                 ),
                                                 onClick = { onNavigateToTab(1) }, // 跳转排行榜
                                                 modifier = Modifier.weight(1f),
@@ -538,15 +538,14 @@ fun DiscoverScreen(
                                                         Box(
                                                             modifier = Modifier
                                                                 .fillMaxWidth()
-                                                                .fillMaxHeight(0.62f)
+                                                                .fillMaxHeight(0.68f)
                                                                 .align(Alignment.BottomCenter)
                                                                 .background(
                                                                     Brush.verticalGradient(
-                                                                        listOf(
-                                                                            Color.Transparent,
-                                                                            Color.Black.copy(alpha = 0.38f),
-                                                                            Color.Black.copy(alpha = 0.78f),
-                                                                        ),
+                                                                        0f to Color.Transparent,
+                                                                        0.42f to Color.Black.copy(alpha = 0.42f),
+                                                                        0.76f to Color.Black.copy(alpha = 0.76f),
+                                                                        1f to Color.Black.copy(alpha = 0.88f),
                                                                     ),
                                                                 ),
                                                         )

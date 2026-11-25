@@ -110,7 +110,7 @@ internal fun AboutModalSheet(
     MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = SettingsCardBg,
+        containerColor = MeloraAppearance.sheetCard,
         dragHandle = null,
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
     ) {
@@ -152,8 +152,6 @@ internal fun AboutModalSheet(
                     )
                 }
             }
-
-            HorizontalDivider(color = SettingsDividerSoft, thickness = 0.6.dp)
 
             // 内容区
             when (modal) {

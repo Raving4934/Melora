@@ -55,7 +55,7 @@ object MeloraSettings {
     val showExitButton = MutableStateFlow(true)
     val themeMode = MutableStateFlow(ThemeMode.Auto)
     val hideStatusBar = MutableStateFlow(false)
-    val blurTopBar = MutableStateFlow(false)
+    val componentBlurMode = MutableStateFlow(ComponentBlurMode.Off)
     val showSongCovers = MutableStateFlow(false)
     val qualityBadgeMode = MutableStateFlow(QualityBadgeMode.Compact)
     val pullToRefresh = MutableStateFlow(true)
@@ -136,7 +136,7 @@ object MeloraSettings {
         showExitButton.value = prefs.getBoolean(KEY_SHOW_EXIT, true)
         themeMode.value = loadThemeMode(prefs)
         hideStatusBar.value = prefs.getBoolean(KEY_HIDE_STATUS_BAR, false)
-        blurTopBar.value = prefs.getBoolean(KEY_BLUR_TOP_BAR, false)
+        componentBlurMode.value = loadComponentBlurMode(prefs)
         showSongCovers.value = prefs.getBoolean(KEY_SHOW_SONG_COVERS, false)
         qualityBadgeMode.value = QualityBadgeMode.restore(prefs.getString(KEY_QUALITY_BADGE_MODE, null))
         pullToRefresh.value = prefs.getBoolean(KEY_PULL_REFRESH, true)
@@ -216,7 +216,10 @@ object MeloraSettings {
     fun updateShowExit(value: Boolean) = update { showExitButton.value = value; persist { putBoolean(KEY_SHOW_EXIT, value) } }
     fun updateThemeMode(value: ThemeMode) = update { themeMode.value = value; persist { putString(THEME_MODE_PREFERENCE, value.storageValue) } }
     fun updateHideStatusBar(value: Boolean) = update { hideStatusBar.value = value; persist { putBoolean(KEY_HIDE_STATUS_BAR, value) } }
-    fun updateBlurTopBar(value: Boolean) = update { blurTopBar.value = value; persist { putBoolean(KEY_BLUR_TOP_BAR, value) } }
+    fun updateComponentBlurMode(value: ComponentBlurMode) = update {
+        componentBlurMode.value = value
+        persist { putString(KEY_COMPONENT_BLUR_MODE, value.storageValue) }
+    }
     fun updateShowSongCovers(value: Boolean) = update { showSongCovers.value = value; persist { putBoolean(KEY_SHOW_SONG_COVERS, value) } }
     fun updateQualityBadgeMode(value: QualityBadgeMode) = update {
         qualityBadgeMode.value = value
@@ -332,7 +335,7 @@ object MeloraSettings {
     internal const val KEY_LAST_TAB = "basic.lastTab"
     internal const val KEY_SHOW_EXIT = "basic.showExitButton"
     internal const val KEY_HIDE_STATUS_BAR = "basic.hideStatusBar"
-    internal const val KEY_BLUR_TOP_BAR = "basic.blurTopBar"
+    internal const val KEY_COMPONENT_BLUR_MODE = "basic.componentBlurMode"
     internal const val KEY_SHOW_SONG_COVERS = "basic.showSongCovers"
     internal const val KEY_QUALITY_BADGE_MODE = "basic.qualityBadgeMode"
     internal const val KEY_PULL_REFRESH = "basic.pullToRefresh"

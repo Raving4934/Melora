@@ -47,14 +47,13 @@ internal data class PlayerColors(
     val segmentTrack: Color,
     val softFill: Color,
     val tintBlue: Color,
-    val cardBorder: BorderStroke,
     val chipBorder: BorderStroke,
     val backdrop: PlayerBackdropOverlay,
 )
 
-private val DarkBackdropFallback = Color(0xFF13151A)
+private val DarkBackdropFallback = Color(0xFF111113)
 private val LightBackdropFallback = Color(0xFFF0F2F3)
-private val DarkInkFallback = Color(0xFFF2F4F7)
+private val DarkInkFallback = Color(0xFFEBEBEF)
 private val LightInkFallback = Color(0xFF24313A)
 
 /** 无封面时的兼容令牌；动态令牌通过 [playerColorsFor] 派生。 */
@@ -120,15 +119,14 @@ private fun buildDarkPlayerColors(tone: Color?): PlayerColors {
         // 弹层/设置选择器继续使用原播放器蓝色，不随封面变色。
         accent = Color(0xFF1E88E5),
         accentSoft = Color(0xFF42A5F5),
-        sheetBackground = Color(0xFF1B1E24),
-        sheetText = Color(0xFFF2F4F7),
-        sheetTextMuted = Color(0xFF9BA4B4),
-        sheetTextFaint = Color(0xFF6C7482),
-        segmentTrack = Color(0xFF22262E),
-        softFill = Color(0xFF232830),
-        tintBlue = Color(0xFF1C2739),
-        cardBorder = BorderStroke(0.6.dp, Color(0xFF282F3B)),
-        chipBorder = BorderStroke(0.5.dp, Color(0xFF2A313E)),
+        sheetBackground = Color(0xFF161618),
+        sheetText = Color(0xFFEBEBEF),
+        sheetTextMuted = Color(0xFF9898A0),
+        sheetTextFaint = Color(0xFF63636B),
+        segmentTrack = Color(0xFF1E1E22),
+        softFill = Color(0xFF222226),
+        tintBlue = Color(0xFF1C2536),
+        chipBorder = BorderStroke(0.5.dp, Color(0xFF2C2C31)),
         backdrop = PlayerBackdropOverlay(
             baseColor = background,
             artworkAlpha = if (tone == null) 0.82f else 0.78f,
@@ -170,7 +168,6 @@ private fun buildLightPlayerColors(tone: Color?): PlayerColors {
         segmentTrack = Color(0xFFE5E7EB),
         softFill = Color(0xFFF1F3F6),
         tintBlue = Color(0xFFEFF4FE),
-        cardBorder = BorderStroke(0.6.dp, Color.Black.copy(alpha = 0.08f)),
         chipBorder = BorderStroke(0.5.dp, Color.Black.copy(alpha = 0.10f)),
         backdrop = PlayerBackdropOverlay(
             baseColor = background,
@@ -357,20 +354,8 @@ internal val FullPlayerSheetTintBlue: Color
     get() = LocalPlayerColors.current.tintBlue
 
 @get:Composable
-internal val FullPlayerSheetCard: Color
-    get() = if (LocalPlayerColors.current.isDark) {
-        Color.Black.copy(alpha = 0.24f)
-    } else {
-        Color.White
-    }
-
-@get:Composable
 internal val FullPlayerSheetAccentRed: Color
     get() = Color(0xFFE53935)
-
-@get:Composable
-internal val FullPlayerSheetCardBorder: BorderStroke
-    get() = LocalPlayerColors.current.cardBorder
 
 @get:Composable
 internal val FullPlayerSheetChipBorder: BorderStroke

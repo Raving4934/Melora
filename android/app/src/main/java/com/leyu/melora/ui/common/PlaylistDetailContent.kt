@@ -127,7 +127,7 @@ fun PlaylistDetailContent(
         val listState = rememberLazyListState()
         val scrollToTop = rememberFastScrollToTop(listState)
         val controlBarHazeState = rememberHazeState()
-        val blurEnabled by MeloraSettings.blurTopBar.collectAsStateWithLifecycle()
+        val blurEnabled = componentHeadersBlurred()
         val bodyHazeModifier = if (blurEnabled) {
             Modifier.hazeSource(controlBarHazeState)
         } else {

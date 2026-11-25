@@ -34,6 +34,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -66,12 +67,15 @@ import androidx.compose.ui.unit.sp
 import com.leyu.melora.ui.common.BrandBlue
 import com.leyu.melora.ui.common.CardWhite
 import com.leyu.melora.ui.common.chromeHeaderBlurred
+import com.leyu.melora.ui.common.chromePillBlur
+import com.leyu.melora.ui.common.glassPanelModifier
 import com.leyu.melora.ui.common.DividerSoft
 import com.leyu.melora.ui.common.TextMain
 import com.leyu.melora.ui.common.TextMuted
 import com.leyu.melora.ui.common.TextSub
 import com.leyu.melora.ui.common.sourceAliasDisplay
 import com.leyu.melora.ui.common.sourceAliasDisplayMusic
+import com.leyu.melora.ui.theme.LightSheetFrost
 import com.leyu.melora.ui.theme.MeloraAppearance
 
 internal val SearchInputSectionHeight = 48.dp
@@ -91,6 +95,9 @@ internal fun SearchInputSection(
     onPlatformChange: (PlatformSource) -> Unit,
 ) {
     var capsuleWidthPx by remember { mutableIntStateOf(0) }
+    val blurred = chromeHeaderBlurred()
+    val controlFill = if (blurred) MeloraAppearance.softFill.copy(alpha = 0.72f) else MeloraAppearance.softFill
+    val placeholderColor = if (blurred) TextMain.copy(alpha = 0.76f) else TextSub
     Column(modifier = Modifier.fillMaxWidth()) {
         // --- 1. 跑道型一体化搜索胶囊 ---
         Box(
@@ -98,13 +105,15 @@ internal fun SearchInputSection(
         ) {
             Surface(
                 shape = RoundedCornerShape(24.dp),
-                color = CardWhite,
+                color = Color.Transparent,
                 shadowElevation = 0.dp,
                 // 模糊栏内不加外围描边，避免胶囊两端出现额外暗沿；内部控件边界保留。
-                border = if (chromeHeaderBlurred()) null else MeloraAppearance.cardBorder,
+                border = if (blurred) null else MeloraAppearance.cardBorder,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(SearchInputSectionHeight),
+                    .height(SearchInputSectionHeight)
+                    .clip(RoundedCornerShape(24.dp))
+                    .chromePillBlur(CardWhite),
             ) {
                 Row(
                     modifier = Modifier
@@ -118,7 +127,7 @@ internal fun SearchInputSection(
                     if (category != SearchCategory.Audiobook) {
                         Surface(
                             shape = RoundedCornerShape(16.dp),
-                            color = MeloraAppearance.softFill,
+                            color = controlFill,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(16.dp))
                                 .clickable { onPlatformMenuExpandedChange(true) },
@@ -179,7 +188,7 @@ internal fun SearchInputSection(
                                             SearchCategory.Audiobook -> "搜索有声书、小说、评书..."
                                         },
                                         fontSize = 13.sp,
-                                        color = TextMuted,
+                                        color = placeholderColor,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
                                     )
@@ -208,7 +217,7 @@ internal fun SearchInputSection(
                     val hasQuery = queryState.text.isNotBlank()
                     Surface(
                         shape = CircleShape,
-                        color = if (hasQuery) BrandBlue else MeloraAppearance.softFill,
+                        color = if (hasQuery) MaterialTheme.colorScheme.primary else controlFill,
                         modifier = Modifier
                             .size(32.dp)
                             .clip(CircleShape)
@@ -218,7 +227,7 @@ internal fun SearchInputSection(
                             Icon(
                                 Icons.Outlined.Search,
                                 contentDescription = "搜索",
-                                tint = if (hasQuery) Color.White else TextSub,
+                                tint = if (hasQuery) MaterialTheme.colorScheme.onPrimary else TextSub,
                                 modifier = Modifier.size(17.dp),
                             )
                         }
@@ -298,18 +307,28 @@ private fun SearchPlatformMenu(
 ) {
     val contentDensity = LocalDensity.current
     val windowScale = contentDensity.density / LocalResources.current.displayMetrics.density
+    val shape = RoundedCornerShape(20.dp * windowScale)
+    val light = !MeloraAppearance.isDark
+    val selectedText = if (light) LightSheetFrost.activeText else BrandBlue
+    val selectedFill = if (light) LightSheetFrost.activeCard else BrandBlue.copy(alpha = 0.09f)
+    val optionFill = if (light) LightSheetFrost.card else MeloraAppearance.softFill
     DropdownMenu(
         expanded = expanded && anchorWidthPx > 0,
         onDismissRequest = onDismiss,
         offset = DpOffset(0.dp, 8.dp),
-        shape = RoundedCornerShape(20.dp * windowScale),
-        containerColor = CardWhite,
+        shape = shape,
+        containerColor = Color.Transparent,
+        tonalElevation = 0.dp,
         modifier = Modifier.layout { measurable, constraints ->
             // 锚点与原生 Popup 共享像素坐标，宽度只受 Popup 窗口的可用空间限制。
             val width = constraints.constrainWidth(anchorWidthPx)
             val menu = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
             layout(menu.width, menu.height) { menu.placeRelative(0, 0) }
-        },
+        }.then(glassPanelModifier(
+            baseColor = if (light) LightSheetFrost.base else CardWhite,
+            shape = shape,
+            frostTint = if (light) LightSheetFrost.tint else Color.Unspecified,
+        )),
     ) {
         CompositionLocalProvider(LocalDensity provides contentDensity) {
             BoxWithConstraints(
@@ -358,7 +377,12 @@ private fun SearchPlatformMenu(
                                     selected = selected,
                                     onClick = { onSelect(platform) },
                                     shape = RoundedCornerShape(12.dp),
-                                    color = if (selected) BrandBlue.copy(alpha = 0.09f) else MeloraAppearance.softFill,
+                                    color = if (selected) selectedFill else optionFill,
+                                    border = when {
+                                        !light -> null
+                                        selected -> LightSheetFrost.activeBorder
+                                        else -> LightSheetFrost.cardBorder
+                                    },
                                     modifier = Modifier.weight(1f).semantics { role = Role.RadioButton },
                                 ) {
                                     Row(
@@ -370,7 +394,7 @@ private fun SearchPlatformMenu(
                                         Text(
                                             text = label,
                                             style = if (selected) selectedLabelStyle else labelStyle,
-                                            color = if (selected) BrandBlue else TextMain,
+                                            color = if (selected) selectedText else TextMain,
                                             modifier = Modifier.weight(1f),
                                         )
                                         Box(Modifier.size(checkSize), contentAlignment = Alignment.Center) {
@@ -378,7 +402,7 @@ private fun SearchPlatformMenu(
                                                 Icon(
                                                     Icons.Outlined.Check,
                                                     contentDescription = null,
-                                                    tint = BrandBlue,
+                                                    tint = selectedText,
                                                     modifier = Modifier.fillMaxSize(),
                                                 )
                                             }

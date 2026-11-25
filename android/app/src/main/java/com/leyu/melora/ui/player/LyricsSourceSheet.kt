@@ -32,6 +32,7 @@ import com.leyu.melora.playback.local.LocalMediaStore
 import com.leyu.melora.playback.local.LocalTagFiller
 import com.leyu.melora.playback.local.tagExtension
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.MeloraSheetHandle
 import com.leyu.melora.ui.common.rememberMeloraBottomSheetState
 import com.leyu.melora.ui.common.sourceAliasDisplay
 import com.leyu.melora.ui.theme.SystemBarsVisibility
@@ -74,11 +75,7 @@ internal fun LyricsSourceSheet(track: UiTrack, onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true),
         containerColor = colors.sheetBackground,
-        dragHandle = {
-            Box(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 6.dp), contentAlignment = Alignment.Center) {
-                Box(Modifier.size(32.dp, 4.dp).background(colors.textSecondary.copy(alpha = 0.35f), RoundedCornerShape(2.dp)))
-            }
-        },
+        dragHandle = { MeloraSheetHandle(color = colors.textSecondary.copy(alpha = 0.35f), width = 32.dp) },
     ) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp, vertical = 12.dp)
             .testTag("lyrics-source-sheet"), verticalArrangement = Arrangement.spacedBy(12.dp)) {

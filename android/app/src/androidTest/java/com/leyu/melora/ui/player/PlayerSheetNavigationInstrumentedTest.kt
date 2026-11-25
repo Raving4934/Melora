@@ -1,5 +1,6 @@
 package com.leyu.melora.ui.player
 
+import android.graphics.Bitmap
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -11,6 +12,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -23,7 +26,13 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.filters.SdkSuppress
+import androidx.test.platform.app.InstrumentationRegistry
+import com.leyu.melora.playback.AudioEffects
+import com.leyu.melora.playback.ComponentBlurMode
+import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlaybackController
+import com.leyu.melora.playback.ThemeMode
 import com.leyu.melora.playback.PlayerLyric
 import com.leyu.melora.playback.LyricLine
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,10 +40,16 @@ import org.junit.After
 import com.leyu.melora.playback.PlayerUiState
 import com.leyu.melora.playback.UiTrack
 import com.leyu.melora.ui.awaitStable
+import com.leyu.melora.ui.boundsInSameFrame
+import com.leyu.melora.ui.common.LocalGlassBackdrop
 import com.leyu.melora.ui.common.LocalSongListState
 import com.leyu.melora.ui.common.SongListState
 import com.leyu.melora.ui.theme.MeloraTheme
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
+import java.io.File
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -62,16 +77,25 @@ class PlayerSheetNavigationInstrumentedTest {
             List(count) { LyricLine(it * 2_000L, "测试歌词第 $it 行") }, "test")
     }
 
-    private fun show(wide: Boolean = false, forcePortrait: Boolean = false, queueSize: Int = 1, currentIndex: Int = 0) {
+    private fun show(
+        wide: Boolean = false,
+        forcePortrait: Boolean = false,
+        queueSize: Int = 1,
+        currentIndex: Int = 0,
+        glassSheets: Boolean = false,
+    ) {
         val shared = SongListState(mutableStateOf(emptyList()), mutableStateOf(false), mutableStateOf(null))
         restoration.setContent {
+            val glassSource = if (glassSheets) rememberHazeState() else null
             CompositionLocalProvider(
                 LocalSongListState provides shared,
+                LocalGlassBackdrop provides glassSource,
                 LocalDensity provides if (wide) Density(1f) else LocalDensity.current,
             ) {
                 back = rememberPlayerSheetBackState()
                 MeloraTheme {
-                    BoxWithConstraints(Modifier.fillMaxSize()) {
+                    val backdrop = if (glassSource == null) Modifier else Modifier.hazeSource(glassSource)
+                    BoxWithConstraints(Modifier.fillMaxSize().then(backdrop)) {
                         val hostModifier = if (forcePortrait) {
                             Modifier.size(
                                 minOf(maxWidth, 480.dp, maxHeight * 0.65f),
@@ -254,6 +278,136 @@ class PlayerSheetNavigationInstrumentedTest {
                 abs(actual.alpha - magenta.alpha) >= 0.08f,
         )
     }
+
+    @Test fun backdropBlendsDuringDragAndRetracesWhenReversed() {
+        val originalAppTheme = MeloraSettings.themeMode.value
+        val originalPlayerTheme = MeloraSettings.playerThemeMode.value
+        try {
+            MeloraSettings.themeMode.value = ThemeMode.Dark
+            MeloraSettings.playerThemeMode.value = ThemeMode.Light
+            show(forcePortrait = true)
+            expand()
+
+            fun sampleAt(progress: Float): Color {
+                val top = compose.runOnIdle {
+                    val sheet = back.sheet
+                    val travel = sheet.anchors.positionOf(PlayerSheetAnchor.Collapsed)
+                    sheet.dispatchRawDelta(travel * (1f - progress) - sheet.offset)
+                    sheet.offset.toInt()
+                }
+                compose.waitForIdle()
+                val pixels = compose.onNodeWithTag("player-test-host").captureToImage().toPixelMap()
+                return pixels[pixels.width / 2, top + 10]
+            }
+
+            val light = sampleAt(0.8f)
+            val halfway = sampleAt(0.48f)
+            val mini = sampleAt(0.16f)
+            assertTrue("Expected a light player and dark mini bar", light.red - mini.red > 0.6f)
+            assertTrue("Backdrop must blend before the mini controls appear",
+                halfway.red in (mini.red + 0.15f)..(light.red - 0.15f))
+            assertEquals("The mini bar should already have its final background",
+                mini, sampleAt(0.06f))
+            assertEquals("The same drag position must reproduce the same color",
+                halfway.red, sampleAt(0.48f).red, 0.01f)
+        } finally {
+            MeloraSettings.themeMode.value = originalAppTheme
+            MeloraSettings.playerThemeMode.value = originalPlayerTheme
+        }
+    }
+
+    @SdkSuppress(minSdkVersion = 33)
+    @Test fun darkPlayerEffectSheetUsesMistBlueWithLightAppTheme() =
+        verifyPlayerEffectSheet(ThemeMode.Dark)
+
+    @SdkSuppress(minSdkVersion = 33)
+    @Test fun lightPlayerEffectSheetUsesPlanBFrostWithDarkAppTheme() =
+        verifyPlayerEffectSheet(ThemeMode.Light)
+
+    private fun verifyPlayerEffectSheet(theme: ThemeMode) {
+        val originalBlur = MeloraSettings.componentBlurMode.value
+        val originalAppTheme = MeloraSettings.themeMode.value
+        val originalPlayerTheme = MeloraSettings.playerThemeMode.value
+        val originalPreset = MeloraSettings.audioEffectPreset.value
+        val dark = theme == ThemeMode.Dark
+        try {
+            MeloraSettings.componentBlurMode.value = ComponentBlurMode.All
+            MeloraSettings.themeMode.value = if (dark) ThemeMode.Light else ThemeMode.Dark
+            MeloraSettings.playerThemeMode.value = theme
+            MeloraSettings.audioEffectPreset.value = "pop"
+            show(glassSheets = true)
+            expand()
+
+            compose.onNode(
+                hasContentDescription("音效设置") or hasContentDescription("音效已开启"),
+            ).performClick()
+            val dialog = compose.onNode(isDialog())
+            val title = compose.onNodeWithText("声学调音")
+            val pop = compose.onNode(hasText("流行音乐") and hasClickAction())
+            val vocal = compose.onNode(hasText("清澈人声") and hasClickAction())
+            compose.awaitStable(title)
+            pop.assertIsSelected()
+            vocal.assertIsNotSelected()
+
+            val (root, card, inactiveCard) = compose.boundsInSameFrame(dialog, pop, vocal)
+            val screenshot = dialog.captureToImage()
+            val cache = InstrumentationRegistry.getInstrumentation().targetContext.cacheDir
+            val filename = if (dark) "dark-player-eq.png" else "light-plan-b-player-eq.png"
+            File(cache, filename).outputStream().use {
+                screenshot.asAndroidBitmap().compress(Bitmap.CompressFormat.PNG, 100, it)
+            }
+            val pixels = screenshot.toPixelMap()
+            val inset = with(compose.density) { 6.dp.roundToPx() }
+            val left = (card.left - root.left).roundToInt()
+            val y = (card.center.y - root.top).roundToInt()
+            val panel = pixels[left - inset, y]
+            val actual = pixels[left + inset, y]
+            val selectedTint = if (dark) Color(0xFF72A0FF).copy(alpha = 0.20f) else Color(0xFF3567E8).copy(alpha = 0.12f)
+            val expected = selectedTint.compositeOver(panel)
+            if (dark) {
+                assertTrue("浅色应用中的深色播放器应使用深色调音抽屉，实测 $panel",
+                    maxOf(panel.red, panel.green, panel.blue) < 0.24f)
+            } else {
+                val frost = Color(0xFFF6F7FA).copy(alpha = 0.78f)
+                val scrim = Color(0xFF0F172A).copy(alpha = 0.10f)
+                val darkest = frost.compositeOver(scrim.compositeOver(Color.Black))
+                val lightest = frost.compositeOver(scrim.compositeOver(Color.White))
+                assertTrue("深色应用中的浅色播放器应使用方案 B 雾面，实测 $panel",
+                    panel.red in (darkest.red - 0.015f)..(lightest.red + 0.015f) &&
+                        panel.green in (darkest.green - 0.015f)..(lightest.green + 0.015f) &&
+                        panel.blue in (darkest.blue - 0.015f)..(lightest.blue + 0.015f))
+                assertEquals("浅色调音抽屉遮罩", 0.10f, pixels[pixels.width / 2, pixels.height / 8].alpha, 0.015f)
+            }
+            assertTrue("已选音效预设填充，预期 $expected，实测 $actual",
+                colorDistance(actual, expected) < if (dark) 0.04f else 0.027f)
+            val inactiveX = (inactiveCard.left - root.left).roundToInt()
+            val inactiveY = (inactiveCard.center.y - root.top).roundToInt()
+            val inactiveFill = pixels[inactiveX + inset, inactiveY]
+            val inactiveTint = if (dark) Color.White.copy(alpha = 0.04f) else Color(0xFF0F172A).copy(alpha = 0.045f)
+            val expectedInactiveFill = inactiveTint.compositeOver(pixels[inactiveX - inset, inactiveY])
+            assertTrue("未选音效预设填充，预期 $expectedInactiveFill，实测 $inactiveFill",
+                colorDistance(inactiveFill, expectedInactiveFill) < 0.016f)
+
+            vocal.performClick()
+            compose.waitUntil(5_000) { MeloraSettings.audioEffectPreset.value == "vocal" }
+            vocal.assertIsSelected()
+            pop.assertIsNotSelected()
+            vocal.performClick()
+            compose.waitUntil(5_000) { MeloraSettings.audioEffectPreset.value == AudioEffects.OFF }
+            vocal.assertIsNotSelected()
+            compose.onNodeWithText("原声直出").assertIsDisplayed()
+            Espresso.pressBack()
+            dialog.assertDoesNotExist()
+        } finally {
+            MeloraSettings.componentBlurMode.value = originalBlur
+            MeloraSettings.updateAudioEffectPreset(originalPreset)
+            MeloraSettings.playerThemeMode.value = originalPlayerTheme
+            MeloraSettings.themeMode.value = originalAppTheme
+        }
+    }
+
+    private fun colorDistance(a: Color, b: Color) =
+        maxOf(abs(a.red - b.red), abs(a.green - b.green), abs(a.blue - b.blue))
 
     @Test fun miniExpandAndSystemBackKeepTheMovingPanelOpaque() {
         show(forcePortrait = true)

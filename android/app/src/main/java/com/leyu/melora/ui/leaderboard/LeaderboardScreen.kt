@@ -903,13 +903,7 @@ private fun GenreBoardCard(
                 ),
         ) {
             if (!board.img.isNullOrBlank()) {
-                // 平台真实榜单封面；统一保留底部名称，避免透明或无字封面失去识别信息
                 SongArtwork(board.img, "genre-board-${board.bangid}", Modifier.fillMaxSize(), cornerRadius = 16)
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.18f)),
-                )
             } else {
                 Text(
                     text = board.name.take(2),
@@ -920,36 +914,21 @@ private fun GenreBoardCard(
                 )
             }
 
-            // 底部渐变遮罩：三列紧凑布局下仍保证榜单名可读
+            // 底部渐变遮罩：兼顾封面通透度与三列紧凑卡片内白字可读性
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .fillMaxHeight(0.55f)
+                    .fillMaxHeight(0.62f)
                     .align(Alignment.BottomCenter)
                     .background(
                         Brush.verticalGradient(
-                            listOf(
-                                Color.Transparent,
-                                Color.Black.copy(alpha = 0.38f),
-                                Color.Black.copy(alpha = 0.78f),
-                            ),
+                            0f to Color.Transparent,
+                            0.42f to Color.Black.copy(alpha = 0.44f),
+                            0.76f to Color.Black.copy(alpha = 0.78f),
+                            1f to Color.Black.copy(alpha = 0.88f),
                         ),
                     ),
             )
-
-            Surface(
-                shape = RoundedCornerShape(topStart = 12.dp, bottomEnd = 9.dp),
-                color = tagColor,
-                modifier = Modifier.align(Alignment.TopStart),
-            ) {
-                Text(
-                    text = "榜",
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
-                )
-            }
 
             Box(
                 modifier = Modifier
@@ -964,7 +943,6 @@ private fun GenreBoardCard(
                 )
             }
 
-            // 三列卡片只保留必要的榜单名，去掉重复的“官方榜单”副标题
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomStart)

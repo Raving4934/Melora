@@ -39,7 +39,9 @@ import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
+import com.leyu.melora.ui.theme.MeloraTheme
+import com.leyu.melora.ui.theme.componentBlurSupported
+import com.leyu.melora.playback.ThemeMode
 import androidx.compose.material3.Text
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
@@ -57,6 +59,7 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.leyu.melora.playback.ComponentBlurMode
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.local.LocalSong
 import com.leyu.melora.playback.local.LocalSortField
@@ -85,12 +88,12 @@ import kotlin.math.sqrt
 @RunWith(AndroidJUnit4::class)
 class LocalEmptyAndInputLayoutTest {
     @get:Rule val compose = createComposeRule()
-    private val previousBlur = MeloraSettings.blurTopBar.value
-    private val previousDark = MeloraAppearance.isDark
+    private val previousBlur = MeloraSettings.componentBlurMode.value
+    private val previousTheme = MeloraSettings.themeMode.value
     private val shared = SongListState(mutableStateOf(emptyList<LocalSong>()), mutableStateOf(false), mutableStateOf(null))
     @After fun restore() {
-        MeloraSettings.blurTopBar.value = previousBlur
-        MeloraAppearance.isDark = previousDark
+        MeloraSettings.componentBlurMode.value = previousBlur
+        MeloraSettings.themeMode.value = previousTheme
     }
 
     private data class StripeSample(val mean: Float, val contrast: Float)
@@ -208,7 +211,7 @@ class LocalEmptyAndInputLayoutTest {
     @Test fun searchRouteAndQueryRestoreTogetherAndReopeningStartsEmpty() {
         val restoration = StateRestorationTester(compose)
         restoration.setContent {
-            MaterialTheme {
+            MeloraTheme {
                 CompositionLocalProvider(LocalSongListState provides shared) {
                     LocalSongsPage(content = LocalSongsContent(), onOpenDrawer = {})
                 }
@@ -229,7 +232,7 @@ class LocalEmptyAndInputLayoutTest {
     @Test fun openingSearchBeforeSortFinishesNeverReportsAnEmptyLibrary() {
         val content = mutableStateOf<LocalSongsContent?>(null)
         compose.setContent {
-            MaterialTheme {
+            MeloraTheme {
                 CompositionLocalProvider(LocalSongListState provides shared) {
                     LocalSongsPage(content = content.value, onOpenDrawer = {})
                 }
@@ -250,7 +253,7 @@ class LocalEmptyAndInputLayoutTest {
         compose.setContent {
             list = rememberLazyListState()
             minimumPadding = with(LocalDensity.current) { (110.dp + 24.dp).roundToPx() }
-            MaterialTheme {
+            MeloraTheme {
                 CompositionLocalProvider(LocalSongListState provides shared) {
                     LocalSongsListContent(
                         content = LocalSongsContent(),
@@ -263,7 +266,7 @@ class LocalEmptyAndInputLayoutTest {
             }
         }
         for (blur in listOf(false, true)) {
-            compose.runOnIdle { MeloraSettings.blurTopBar.value = blur }
+            compose.runOnIdle { MeloraSettings.componentBlurMode.value = if (blur) ComponentBlurMode.Header else ComponentBlurMode.Off }
             compose.onNodeWithText("还没有本地歌曲").assertIsDisplayed()
             compose.runOnIdle {
                 assertTrue("空态不能绘制到固定栏背后", list.layoutInfo.beforeContentPadding >= minimumPadding)
@@ -275,10 +278,10 @@ class LocalEmptyAndInputLayoutTest {
     @Test fun chromeBlurUpdatesSourceClearsRemovedContentAndKeepsLayoutWhenToggled() {
         val sourceColor = mutableStateOf(Color.Red)
         val showSource = mutableStateOf(true)
-        compose.runOnIdle { MeloraSettings.blurTopBar.value = true }
+        compose.runOnIdle { MeloraSettings.componentBlurMode.value = ComponentBlurMode.Header }
         compose.setContent {
             val source = rememberHazeState()
-            MaterialTheme {
+            MeloraTheme {
                 ChromeScaffold(
                     modifier = Modifier.requiredSize(240.dp, 300.dp),
                     containerColor = Color.White, headerColor = Color.White,
@@ -295,15 +298,15 @@ class LocalEmptyAndInputLayoutTest {
             predicate(pixels[pixels.width / 2, pixels.height * 3 / 5])
         }
         fun awaitWhite() = awaitColor { it.red > 0.95f && it.green > 0.95f && it.blue > 0.95f }
-        val supportsBlur = HazeBlurDefaults.isBlurEnabledByDefault()
+        val supportsBlur = componentBlurSupported && HazeBlurDefaults.isBlurEnabledByDefault()
         if (supportsBlur) awaitColor { it.red > it.blue + 0.15f } else awaitWhite()
         val bounds = header.getUnclippedBoundsInRoot()
         compose.runOnIdle { sourceColor.value = Color.Blue }
         if (supportsBlur) awaitColor { it.blue > it.red + 0.15f } else awaitWhite()
-        compose.runOnIdle { MeloraSettings.blurTopBar.value = false }
+        compose.runOnIdle { MeloraSettings.componentBlurMode.value = ComponentBlurMode.Off }
         awaitWhite()
         assertEquals(bounds, header.getUnclippedBoundsInRoot())
-        compose.runOnIdle { MeloraSettings.blurTopBar.value = true }
+        compose.runOnIdle { MeloraSettings.componentBlurMode.value = ComponentBlurMode.Header }
         if (supportsBlur) awaitColor { it.blue > it.red + 0.15f } else awaitWhite()
         assertEquals(bounds, header.getUnclippedBoundsInRoot())
         compose.runOnIdle { showSource.value = false }
@@ -311,14 +314,14 @@ class LocalEmptyAndInputLayoutTest {
     }
 
     @OptIn(dev.chrisbanes.haze.ExperimentalHazeApi::class)
-    @SdkSuppress(minSdkVersion = 31)
+    @SdkSuppress(minSdkVersion = 33)
     @Test fun mergedSecondaryRowFadesInsideHeaderWithoutCoveringBody() {
         val clicks = mutableStateOf(0)
-        compose.runOnIdle { MeloraSettings.blurTopBar.value = false }
+        compose.runOnIdle { MeloraSettings.componentBlurMode.value = ComponentBlurMode.Off }
         compose.setContent {
             val source = rememberHazeState()
             val canvas = MeloraAppearance.canvas
-            MaterialTheme {
+            MeloraTheme {
                 Box(Modifier.fillMaxSize().testTag("stripe-fixture")) {
                     ChromeScaffold(
                         modifier = Modifier.fillMaxSize(), containerColor = canvas, headerColor = canvas,
@@ -347,12 +350,12 @@ class LocalEmptyAndInputLayoutTest {
         val header = compose.onNodeWithTag("merged-header")
         for (dark in listOf(false, true)) {
             compose.runOnIdle {
-                MeloraAppearance.isDark = dark
-                MeloraSettings.blurTopBar.value = false
+                MeloraSettings.themeMode.value = if (dark) ThemeMode.Dark else ThemeMode.Light
+                MeloraSettings.componentBlurMode.value = ComponentBlurMode.Off
             }
             compose.waitForIdle()
             val bounds = header.getUnclippedBoundsInRoot()
-            compose.runOnIdle { MeloraSettings.blurTopBar.value = true }
+            compose.runOnIdle { MeloraSettings.componentBlurMode.value = ComponentBlurMode.Header }
             awaitChromeFade(bounds.bottom.value, "合并双行 dark=$dark")
             assertEquals("模糊开关不能改变双行标题栏布局", bounds, header.getUnclippedBoundsInRoot())
             compose.onNodeWithTag("merged-tail-button").performTouchInput { click(center) }
@@ -361,18 +364,18 @@ class LocalEmptyAndInputLayoutTest {
     }
 
     @OptIn(dev.chrisbanes.haze.ExperimentalHazeApi::class)
-    @SdkSuppress(minSdkVersion = 31)
+    @SdkSuppress(minSdkVersion = 33)
     @Test fun firstChromePaddedSongRowStaysSharpInPlaceAndHeaderStaysBlurredAfterScroll() {
         lateinit var list: LazyListState
         compose.runOnIdle {
-            MeloraSettings.blurTopBar.value = false
-            MeloraAppearance.isDark = false
+            MeloraSettings.componentBlurMode.value = ComponentBlurMode.Off
+            MeloraSettings.themeMode.value = ThemeMode.Light
         }
         compose.setContent {
             list = rememberLazyListState()
             val source = rememberHazeState()
             val canvas = MeloraAppearance.canvas
-            MaterialTheme {
+            MeloraTheme {
                 Box(Modifier.fillMaxSize().testTag("local-row-fixture")) {
                     ChromeScaffold(
                         modifier = Modifier.fillMaxSize(), containerColor = canvas, headerColor = canvas,
@@ -468,7 +471,7 @@ class LocalEmptyAndInputLayoutTest {
             val sample = stripeSample(fixture.captureToImage().toPixelMap(), fixtureBounds, headerBounds.bottom.value - 42f)
             sample.contrast < 0.12f && sample.mean in 0.05f..0.95f
         }
-        compose.runOnIdle { MeloraSettings.blurTopBar.value = true }
+        compose.runOnIdle { MeloraSettings.componentBlurMode.value = ComponentBlurMode.Header }
         awaitHeaderBlur()
         val after = fixture.captureToImage().toPixelMap()
         val positionsAfter = listOf(
@@ -491,15 +494,15 @@ class LocalEmptyAndInputLayoutTest {
     }
 
     @OptIn(dev.chrisbanes.haze.ExperimentalHazeApi::class)
-    @SdkSuppress(minSdkVersion = 31)
+    @SdkSuppress(minSdkVersion = 33)
     @Test fun pinnedFloatingRowFadesInsideWithoutChangingLayoutOrBlockingClicks() {
         val pinned = mutableStateOf(false)
         val clicks = mutableStateOf(0)
-        compose.runOnIdle { MeloraSettings.blurTopBar.value = true }
+        compose.runOnIdle { MeloraSettings.componentBlurMode.value = ComponentBlurMode.Header }
         compose.setContent {
             val source = rememberHazeState()
             val canvas = MeloraAppearance.canvas
-            MaterialTheme {
+            MeloraTheme {
                 Box(Modifier.fillMaxSize().testTag("stripe-fixture")) {
                     ChromeScaffold(
                         modifier = Modifier.fillMaxSize(), containerColor = canvas, headerColor = canvas,
@@ -528,7 +531,7 @@ class LocalEmptyAndInputLayoutTest {
         val bar = compose.onNodeWithTag("floating-chrome-bar")
         for (dark in listOf(false, true)) {
             compose.runOnIdle {
-                MeloraAppearance.isDark = dark
+                MeloraSettings.themeMode.value = if (dark) ThemeMode.Dark else ThemeMode.Light
                 pinned.value = false
             }
             compose.waitForIdle()
@@ -554,13 +557,13 @@ class LocalEmptyAndInputLayoutTest {
     }
 
     @OptIn(dev.chrisbanes.haze.ExperimentalHazeApi::class)
-    @SdkSuppress(minSdkVersion = 31)
+    @SdkSuppress(minSdkVersion = 33)
     @Test fun singleRowChromeKeepsItsOriginalFadeAndDoesNotGrowATail() {
-        compose.runOnIdle { MeloraSettings.blurTopBar.value = true }
+        compose.runOnIdle { MeloraSettings.componentBlurMode.value = ComponentBlurMode.Header }
         compose.setContent {
             val source = rememberHazeState()
             val canvas = MeloraAppearance.canvas
-            MaterialTheme {
+            MeloraTheme {
                 Box(Modifier.fillMaxSize().testTag("stripe-fixture")) {
                     ChromeScaffold(
                         modifier = Modifier.fillMaxSize(), containerColor = canvas, headerColor = canvas,
@@ -572,7 +575,7 @@ class LocalEmptyAndInputLayoutTest {
         }
         val header = compose.onNodeWithTag("single-header")
         for (dark in listOf(false, true)) {
-            compose.runOnIdle { MeloraAppearance.isDark = dark }
+            compose.runOnIdle { MeloraSettings.themeMode.value = if (dark) ThemeMode.Dark else ThemeMode.Light }
             compose.waitForIdle()
             val bounds = header.getUnclippedBoundsInRoot()
             var samples: List<StripeSample>? = null
@@ -603,16 +606,16 @@ class LocalEmptyAndInputLayoutTest {
     }
 
     @OptIn(dev.chrisbanes.haze.ExperimentalHazeApi::class)
-    @SdkSuppress(minSdkVersion = 31)
+    @SdkSuppress(minSdkVersion = 33)
     @Test fun startBleedRendersBlurOutsideThePaneThroughTheNestedPageHost() {
         assumeTrue("需要设备支持真实模糊像素", HazeBlurDefaults.isBlurEnabledByDefault())
         val direction = mutableStateOf(LayoutDirection.Ltr)
         val bleed = mutableStateOf(0.dp)
         val canvas = Color(0xFF202020)
-        compose.runOnIdle { MeloraSettings.blurTopBar.value = true }
+        compose.runOnIdle { MeloraSettings.componentBlurMode.value = ComponentBlurMode.Header }
         compose.setContent {
             val source = rememberHazeState()
-            MaterialTheme {
+            MeloraTheme {
                 CompositionLocalProvider(
                     LocalChromeStartBleed provides bleed.value,
                     LocalLayoutDirection provides direction.value,
@@ -722,7 +725,7 @@ class LocalEmptyAndInputLayoutTest {
         compose.setContent {
             val density = LocalDensity.current
             tolerance = density.density
-            MaterialTheme {
+            MeloraTheme {
                 CompositionLocalProvider(
                     LocalDensity provides Density(density.density, scale.value),
                     LocalSongListState provides shared,

@@ -11,14 +11,17 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Surface
+import androidx.compose.material3.contentColorFor
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
@@ -26,6 +29,7 @@ import androidx.compose.ui.unit.constrainHeight
 import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogWindowProvider
 
 /** 确认弹窗统一沿用调用页面的尺寸；原生 Dialog 仍负责返回、焦点和窗口安全区。 */
 @Composable
@@ -40,13 +44,22 @@ internal fun MeloraAlertDialog(
 ) {
     val density = LocalDensity.current
     val dialogPaneTitle = stringResource(android.R.string.dialog_alert_title)
+    val useGlass = glassBackdropSource(containerColor) != null
+    val glassScrim = if (useGlass) Color.Black.copy(alpha = glassScrimAlpha(containerColor)) else Color.Transparent
     Dialog(onDismissRequest = onDismissRequest) {
+        if (useGlass) {
+            val window = (LocalView.current.parent as? DialogWindowProvider)?.window
+            SideEffect { window?.setDimAmount(glassScrim.alpha) }
+        }
         CompositionLocalProvider(LocalDensity provides density) {
+            val material = if (useGlass) glassPanelModifier(containerColor, shape, backdropScrim = glassScrim) else Modifier
             Surface(
                 modifier = Modifier.widthIn(min = 280.dp, max = 560.dp)
-                    .semantics { paneTitle = dialogPaneTitle },
+                    .semantics { paneTitle = dialogPaneTitle }
+                    .then(material),
                 shape = shape,
-                color = containerColor,
+                color = if (useGlass) Color.Transparent else containerColor,
+                contentColor = contentColorFor(containerColor),
                 tonalElevation = AlertDialogDefaults.TonalElevation,
             ) {
                 Column(Modifier.padding(24.dp)) {

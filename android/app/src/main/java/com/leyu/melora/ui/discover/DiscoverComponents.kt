@@ -325,7 +325,7 @@ internal fun DailyRecommendCard(
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(18.dp),
-        color = Color(0xFF1E2430),
+        color = Color(0xFF1C1C20),
         shadowElevation = 0.dp,
         border = MeloraAppearance.cardBorder,
         modifier = Modifier
@@ -347,11 +347,14 @@ internal fun DailyRecommendCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(104.dp)
+                    .height(116.dp)
                     .align(Alignment.BottomCenter)
                     .background(
                         Brush.verticalGradient(
-                            listOf(Color.Transparent, Color(0x66111827), Color(0xE8111827)),
+                            0f to Color.Transparent,
+                            0.40f to Color(0x730B0B0D),
+                            0.75f to Color(0xC80B0B0D),
+                            1f to Color(0xEB0B0B0D),
                         ),
                     ),
             )
@@ -444,7 +447,7 @@ internal fun GuessYouLikeCard(
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(18.dp),
-        color = Color(0xFF1E2430),
+        color = Color(0xFF1C1C20),
         shadowElevation = 0.dp,
         border = MeloraAppearance.cardBorder,
         modifier = Modifier
@@ -466,11 +469,14 @@ internal fun GuessYouLikeCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(104.dp)
+                    .height(116.dp)
                     .align(Alignment.BottomCenter)
                     .background(
                         Brush.verticalGradient(
-                            listOf(Color.Transparent, Color(0x66111827), Color(0xE8111827)),
+                            0f to Color.Transparent,
+                            0.40f to Color(0x730B0B0D),
+                            0.75f to Color(0xC80B0B0D),
+                            1f to Color(0xEB0B0B0D),
                         ),
                     ),
             )
@@ -535,7 +541,7 @@ internal fun WatermarkGradientCard(
             Icon(
                 icon,
                 contentDescription = null,
-                tint = Color.White.copy(alpha = 0.26f),
+                tint = Color.White.copy(alpha = 0.20f),
                 modifier = Modifier
                     .size(72.dp)
                     .align(Alignment.BottomEnd)

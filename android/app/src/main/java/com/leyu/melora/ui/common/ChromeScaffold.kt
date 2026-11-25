@@ -54,8 +54,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.offset
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.ui.theme.MeloraAppearance
 import dev.chrisbanes.haze.ExperimentalHazeApi
 import dev.chrisbanes.haze.HazeInput
@@ -79,6 +77,7 @@ private val LocalChromeSystemTopInset = compositionLocalOf { 0.dp }
 internal fun chromeHeaderTopInset(parentHeader: Dp, systemTop: Dp, stackOnParent: Boolean): Dp =
     if (stackOnParent) parentHeader else systemTop
 private val LocalChromeBlurEnabled = compositionLocalOf { false }
+private val LocalChromeBlurSource = compositionLocalOf<HazeState?> { null }
 private val LocalChromeGeometry = compositionLocalOf<ChromeHeaderGeometry?> { null }
 private val LocalChromeDepth = compositionLocalOf { 0 }
 
@@ -110,6 +109,32 @@ internal fun chromeHeaderBlurred(): Boolean = LocalChromeBlurEnabled.current
 @Composable
 internal fun chromeHeaderColor(): Color =
     if (chromeHeaderBlurred()) Color.Transparent else MeloraAppearance.canvas
+
+/** 为浮在模糊顶栏内的圆角胶囊提供均匀高半径磨砂玻璃底（不受顶栏底部淡出遮罩影响）。 */
+@Composable
+internal fun Modifier.chromePillBlur(
+    surface: Color,
+): Modifier {
+    val base = background(surface)
+    if (!chromeHeaderBlurred()) return base
+    val source = LocalChromeBlurSource.current ?: return base
+    val blurStyle = remember(surface) {
+        HazeBlurStyle {
+            backgroundColor(surface)
+            colorEffects(listOf(HazeColorEffect.tint(surface.copy(alpha = 0.78f))))
+            blurRadius(28.dp)
+            noiseFactor(0f)
+            fallbackColorEffect(HazeColorEffect.tint(surface))
+            progressive(null)
+            mask(null)
+        }
+    }
+    return base.hazeBlur(
+        input = HazeInput.Sources(source, retention = HazeSourceRetention.ClearWhenUnavailable),
+        style = blurStyle,
+        performanceMode = HazePerformanceMode.Quality,
+    )
+}
 
 /** 导航/操作栏统一使用透明动作面；样式不依赖模糊开关或吸顶状态。 */
 @Composable
@@ -205,10 +230,10 @@ internal fun ChromeScaffold(
     expectedTopBarHeight: Dp? = null,
     hasSecondaryRow: Boolean = false,
     topBar: @Composable () -> Unit = {},
-    bottomBar: @Composable () -> Unit = {},
+    bottomBar: (@Composable () -> Unit)? = null,
     content: @Composable BoxScope.() -> Unit,
 ) {
-    val enabled by MeloraSettings.blurTopBar.collectAsStateWithLifecycle()
+    val enabled = componentHeadersBlurred()
     val inheritedTop = LocalChromeTopInset.current
     val direction = LocalLayoutDirection.current
     val density = LocalDensity.current
@@ -280,18 +305,23 @@ internal fun ChromeScaffold(
                         Column(Modifier.clipToBounds().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
                             // 只占一次系统 inset，底色/模糊由外层统一绘制，系统图标不属于采样内容。
                             if (root) Spacer(Modifier.fillMaxWidth().height(systemTop))
-                            CompositionLocalProvider(LocalChromeBlurEnabled provides enabled) { topBar() }
+                            CompositionLocalProvider(
+                                LocalChromeBlurEnabled provides enabled,
+                                LocalChromeBlurSource provides activeSource,
+                            ) { topBar() }
                         }
                     }
                 }
             },
             bottomBar = {
-                Box(Modifier.layout { measurable, constraints ->
-                    val bar = measurable.measure(constraints.offset(horizontal = -startBleedPx))
-                    // 空槽必须仍为0×0，否则Scaffold会误判存在底栏并撤销系统导航栏留白。
-                    val width = if (bar.width == 0 && bar.height == 0) 0 else bar.width + startBleedPx
-                    layout(width, bar.height) { bar.placeRelative(startBleedPx, 0) }
-                }) { bottomBar() }
+                // Scaffold 仅在整个槽没有布局节点时提供系统底部安全区。
+                if (bottomBar != null) {
+                    Box(Modifier.layout { measurable, constraints ->
+                        val bar = measurable.measure(constraints.offset(horizontal = -startBleedPx))
+                        val width = if (bar.height == 0 && bar.width == 0) 0 else bar.width + startBleedPx
+                        layout(width, bar.height) { bar.placeRelative(startBleedPx, 0) }
+                    }) { bottomBar() }
+                }
             },
         ) { padding ->
             val headerBottom = chromeContentTopInset(
@@ -443,7 +473,7 @@ internal fun ChromeFloatingBar(
     modifier: Modifier = Modifier,
     content: @Composable BoxScope.() -> Unit,
 ) {
-    val enabled by MeloraSettings.blurTopBar.collectAsStateWithLifecycle()
+    val enabled = componentHeadersBlurred()
     val geometry = checkNotNull(LocalChromeGeometry.current)
     val depth = LocalChromeDepth.current
     val owner = remember { Any() }

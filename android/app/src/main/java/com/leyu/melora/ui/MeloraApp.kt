@@ -39,6 +39,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -96,7 +97,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.LayerOutsets
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -143,6 +143,7 @@ import com.leyu.melora.ui.common.LocalChromeStartBleed
 import com.leyu.melora.ui.common.DetailPageHost
 import com.leyu.melora.ui.common.chromeHeaderColor
 import com.leyu.melora.ui.player.ContinuousPlayerSheet
+import com.leyu.melora.ui.player.MiniPlayerContentHeight
 import com.leyu.melora.ui.player.PlayerSheetAnchor
 import com.leyu.melora.ui.player.rememberPlayerSheetBackState
 import com.leyu.melora.ui.theme.SystemBarsAppearance
@@ -154,7 +155,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import com.leyu.melora.ui.theme.MeloraAppearance
 
-private val MiniPlayerHeight = 64.dp
 private val PrimaryTopBarHeight = 64.dp
 // 统一全局背景底色：高端暖灰画布 (0xFFF4F5F7)
 private val CanvasBackground: Color get() = MeloraAppearance.canvas
@@ -162,8 +162,8 @@ private val TextDark: Color get() = MeloraAppearance.textMain
 private val TextGray: Color get() = MeloraAppearance.textSub
 
 // 侧栏便当卡片：统一使用发丝微描边，彻底消除单向物理阴影带来的发脏不均
-private val DrawerCardColor: Color get() = if (MeloraAppearance.isDark) Color(0xFF1E232C) else Color.White
-private val DrawerSelectedFill: Color get() = if (MeloraAppearance.isDark) Color(0xFF2A313C) else MeloraAppearance.softFill
+private val DrawerCardColor: Color get() = if (MeloraAppearance.isDark) MeloraAppearance.card else Color.White
+private val DrawerSelectedFill: Color get() = if (MeloraAppearance.isDark) Color(0xFF242428) else MeloraAppearance.softFill
 
 internal fun shouldUsePersistentDrawer(windowWidth: Dp, windowHeight: Dp): Boolean =
     windowWidth >= 600.dp && windowHeight >= 480.dp
@@ -321,7 +321,7 @@ private fun Modifier.drawerSwipeable(
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun MeloraApp(initialTab: Int = 5) {
+fun MeloraApp(initialTab: Int = 5, modifier: Modifier = Modifier) {
     val localSongsContent = rememberLocalSongsContent(
         songs = LocalSongListState.current.localSongs.value,
         sortField = MeloraSettings.localSortField.collectAsStateWithLifecycle().value,
@@ -404,6 +404,7 @@ fun MeloraApp(initialTab: Int = 5) {
 
     // 与播放层使用同一状态，清空后同时撤销底栏占位和所有旧曲目展示。
     val hasActivePlayback = playerState.current != null
+    val playerNavigationInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val playerSheetBackState = if (hasActivePlayback) rememberPlayerSheetBackState() else null
     val playerOwnsBack = playerSheetBackState?.ownsBack == true
 
@@ -458,7 +459,7 @@ fun MeloraApp(initialTab: Int = 5) {
 
     SourceAliasProvider {
         Box(
-            modifier = Modifier
+            modifier = modifier
                 .fillMaxSize()
                 .background(CanvasBackground),
         ) {
@@ -485,7 +486,7 @@ fun MeloraApp(initialTab: Int = 5) {
                     top = if (isCompactLandscape) WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 8.dp else 36.dp,
                 )
                 .navigationBarsPadding()
-                .padding(bottom = MiniPlayerHeight + 24.dp),
+                .padding(bottom = MiniPlayerContentHeight + 24.dp),
             verticalArrangement = Arrangement.spacedBy(if (isCompactLandscape) 8.dp else 12.dp),
         ) {
             // Bento Card 1: 顶部项目品牌卡片
@@ -518,7 +519,7 @@ fun MeloraApp(initialTab: Int = 5) {
             // 横屏/大字体时以剩余高度为上限，不再把后面的入口挤到屏幕外。
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 DrawerSurface(Modifier.fillMaxWidth()) {
-                    Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Column(Modifier.verticalScroll(rememberScrollState()).padding(vertical = 6.dp)) {
                         tabs.forEachIndexed { index, item ->
                             DrawerItemEntry(
                                 item = item,
@@ -555,7 +556,7 @@ fun MeloraApp(initialTab: Int = 5) {
                         Icon(
                             Icons.Outlined.Info,
                             contentDescription = null,
-                            tint = Color(0xFFE53935),
+                            tint = MeloraAppearance.accent,
                             modifier = Modifier.size(18.dp),
                         )
                         Spacer(Modifier.width(12.dp))
@@ -599,15 +600,9 @@ fun MeloraApp(initialTab: Int = 5) {
                             scope = scope,
                         ),
                     ),
-                bottomBar = {
-                    if (hasActivePlayback) {
-                        Spacer(
-                            Modifier
-                                .navigationBarsPadding()
-                                .height(MiniPlayerHeight),
-                        )
-                    }
-                },
+                bottomBar = if (hasActivePlayback && !imeVisible) {
+                    { Spacer(Modifier.navigationBarsPadding().height(MiniPlayerContentHeight)) }
+                } else null,
             ) {
                 Box(
                     modifier = Modifier
@@ -743,7 +738,7 @@ fun MeloraApp(initialTab: Int = 5) {
             exit = fadeOut(tween(160)) + slideOutVertically(tween(180)) { it / 2 },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = if (hasActivePlayback) 88.dp else 32.dp)
+                .padding(bottom = if (hasActivePlayback) MiniPlayerContentHeight + maxOf(24.dp, playerNavigationInset + 8.dp) else 32.dp)
                 .padding(horizontal = 24.dp),
         ) {
             val message = playerState.message.orEmpty()
@@ -776,10 +771,10 @@ fun MeloraApp(initialTab: Int = 5) {
                     }
                 }
 
-                // 浅色模式采用纯净浅色半透明（0xF2FFFFFF）+ 细微浅边；深色模式纯黑（0xFF000000）+ 细微亮边；shadowElevation 归零彻底干掉怪光晕
-                val capsuleBg = if (isDark) Color(0xFF000000) else Color(0xF2FFFFFF)
-                val capsuleBorder = if (isDark) Color(0x2BFFFFFF) else Color(0x14000000)
-                val textColor = if (isDark) Color(0xFFF9FAFB) else Color(0xFF111827)
+                // 浅色模式采用纯净浅色半透明（0xF2FFFFFF）+ 细微浅边；深色模式中性深炭（0xFF18181B）+ 细微亮边；shadowElevation 归零彻底干掉怪光晕
+                val capsuleBg = if (isDark) Color(0xFF18181B) else Color(0xF2FFFFFF)
+                val capsuleBorder = if (isDark) Color(0x1AFFFFFF) else Color(0x14000000)
+                val textColor = if (isDark) MeloraAppearance.textMain else Color(0xFF111827)
 
                 Surface(
                     shape = RoundedCornerShape(22.dp),
@@ -880,33 +875,43 @@ private fun LeaderboardPlatformFilter(onOpenPlatformPicker: () -> Unit) {
 // 侧栏列表项：精致微徽标设计
 @Composable
 private fun DrawerItemEntry(item: MainTabItem, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val dark = MeloraAppearance.isDark
+    val iconBg = when {
+        dark && selected -> MeloraAppearance.brand.copy(alpha = 0.16f)
+        dark -> Color(0xFF222226)
+        else -> item.color.copy(alpha = 0.12f)
+    }
+    val iconTint = when {
+        dark && selected -> MeloraAppearance.brand
+        dark -> MeloraAppearance.textSub
+        else -> item.color
+    }
+    val labelColor = when {
+        selected && dark -> MeloraAppearance.brand
+        selected -> MeloraAppearance.brand.copy(alpha = 0.75f)
+        else -> TextDark
+    }
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .background(
-                if (selected) DrawerSelectedFill else Color.Transparent,
-            )
+            .padding(horizontal = 8.dp, vertical = 2.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (selected) DrawerSelectedFill else Color.Transparent)
             .selectable(selected = selected, role = Role.Tab, onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
                 .size(34.dp)
                 .clip(CircleShape)
-                .background(
-                    if (MeloraAppearance.isDark) {
-                        item.color.copy(alpha = 0.22f)
-                    } else {
-                        item.color.copy(alpha = 0.12f)
-                    },
-                ),
+                .background(iconBg),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 item.icon,
                 contentDescription = null,
-                tint = if (MeloraAppearance.isDark) lerp(item.color, Color.White, 0.18f) else item.color,
+                tint = iconTint,
                 modifier = Modifier.size(18.dp),
             )
         }
@@ -915,7 +920,7 @@ private fun DrawerItemEntry(item: MainTabItem, selected: Boolean, modifier: Modi
             text = item.label,
             fontSize = 14.sp,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-            color = if (selected) MeloraAppearance.brand.copy(alpha = 0.75f) else TextDark,
+            color = labelColor,
         )
     }
 }

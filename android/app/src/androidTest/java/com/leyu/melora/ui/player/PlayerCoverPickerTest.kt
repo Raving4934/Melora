@@ -47,6 +47,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.leyu.melora.playback.PlayerCoverStyle
 import com.leyu.melora.playback.ThemeMode
 import com.leyu.melora.playback.UiTrack
+import com.leyu.melora.ui.theme.MeloraAppearance
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -57,6 +58,38 @@ import kotlin.math.abs
 @RunWith(AndroidJUnit4::class)
 class PlayerCoverPickerTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test
+    fun lighterPlayerPickerHasOnlyItsScrimInBothAppThemes() {
+        val originalDark = MeloraAppearance.isDark
+        try {
+            compose.setContent {
+                PlayerAppearanceProvider(dark = false) {
+                    PlayerCoverPicker(
+                        selected = PlayerCoverStyle.Default,
+                        track = null,
+                        immersive = false,
+                        motionEnabled = false,
+                        themeMode = ThemeMode.Light,
+                        onThemeModeChange = {},
+                        onSelect = {},
+                        onToggleImmersive = {},
+                        onDismiss = {},
+                    )
+                }
+            }
+            val picker = compose.onNodeWithTag("player-cover-picker")
+            for (appDark in listOf(false, true)) {
+                compose.runOnIdle { MeloraAppearance.isDark = appDark }
+                compose.awaitStable(picker)
+                // 在居中的标题旁取样，此处只有窗口遮罩透出。
+                val pixel = picker.captureToImage().toPixelMap()[2, 2]
+                assertEquals("Picker background alpha when appDark=$appDark", 0.82f, pixel.alpha, 0.02f)
+            }
+        } finally {
+            compose.runOnIdle { MeloraAppearance.isDark = originalDark }
+        }
+    }
 
     @Test
     fun optionsExposeSelectionAndKeepCallbacksIndependent() {
@@ -86,12 +119,16 @@ class PlayerCoverPickerTest {
             PlayerCoverStyle.Circle to "player-cover-circle",
             PlayerCoverStyle.Vinyl to "player-cover-vinyl",
         )
+        fun awaitPickerClosed() = compose.waitUntil("等待抽屉收起后的回调", timeoutMillis = 5_000) {
+            !visible.value
+        }
         compose.onNodeWithTag("player-cover-default").assertIsNotSelected()
         compose.onNodeWithTag("player-cover-circle").assertIsSelected()
         compose.onNodeWithTag("player-cover-vinyl").assertIsNotSelected()
         options.forEach { (style, tag) ->
             compose.awaitStable(tag)
             compose.onNodeWithTag(tag).assertIsDisplayed().performClick()
+            awaitPickerClosed()
             compose.runOnIdle {
                 assertEquals(style, selected.value)
                 assertEquals(style, selections.last())
@@ -107,6 +144,7 @@ class PlayerCoverPickerTest {
         }
         compose.runOnIdle { assertEquals(options.map { it.first }, selections.toList()) }
         compose.onNodeWithTag("player-cover-immersive").performScrollTo().also { compose.awaitStable(it) }.performClick()
+        awaitPickerClosed()
         compose.runOnIdle {
             assertEquals(3, selections.size)
             assertEquals(1, immersiveCount.intValue)
@@ -116,6 +154,7 @@ class PlayerCoverPickerTest {
         compose.runOnIdle { visible.value = true }
         compose.awaitStable("player-cover-picker")
         compose.onNodeWithTag("player-cover-cancel").performScrollTo().also { compose.awaitStable(it) }.performClick()
+        awaitPickerClosed()
         compose.runOnIdle {
             assertEquals(3, selections.size)
             assertEquals(1, immersiveCount.intValue)

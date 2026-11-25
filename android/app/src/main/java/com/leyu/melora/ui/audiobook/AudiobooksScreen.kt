@@ -71,10 +71,10 @@ private val DefaultRanks = listOf(
 )
 private data class Shortcut(val tabId: String, val label: String, val icon: ImageVector, val colors: List<Color>)
 private val Shortcuts = listOf(
-    Shortcut("20", "VIP会员榜", Icons.Outlined.WorkspacePremium, listOf(Color(0xFFFFA726), Color(0xFFFF9100))),
-    Shortcut("14", "口碑榜", Icons.Outlined.StarOutline, listOf(Color(0xFFBA68C8), Color(0xFF9C27B0))),
-    Shortcut("1", "有声小说榜", Icons.Outlined.AutoStories, listOf(Color(0xFF42A5F5), Color(0xFF1E88E5))),
-    Shortcut("15", "畅销榜", Icons.AutoMirrored.Outlined.TrendingUp, listOf(Color(0xFFFF6456), Color(0xFFFF5252))),
+    Shortcut("20", "VIP会员榜", Icons.Outlined.WorkspacePremium, listOf(Color(0xFFA65E19), Color(0xFFD68D3E))),
+    Shortcut("14", "口碑榜", Icons.Outlined.StarOutline, listOf(Color(0xFF9575B8), Color(0xFF77589C))),
+    Shortcut("1", "有声小说榜", Icons.Outlined.AutoStories, listOf(Color(0xFF5A8EC9), Color(0xFF4172AD))),
+    Shortcut("15", "畅销榜", Icons.AutoMirrored.Outlined.TrendingUp, listOf(Color(0xFFD86B68), Color(0xFFBC5352))),
 )
 
 internal sealed interface BookDetail {
@@ -381,15 +381,27 @@ private fun RankPage(tab: KwBookApi.BookRankTab, onBack: () -> Unit, onOpen: (On
 private fun RankCategorySheet(tab: KwBookApi.BookRankTab, selectedTag: String, onSelect: (Int) -> Unit, onDismiss: () -> Unit) {
     val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true)
     val closeSheet = rememberSheetDismiss(sheetState)
-    MeloraBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = MeloraAppearance.canvas, tonalElevation = 0.dp) {
+    val colors = MaterialTheme.colorScheme
+    MeloraBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, tonalElevation = 0.dp) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
             Text(tab.name, fontSize = 19.sp, fontWeight = FontWeight.Medium, color = TextMain)
             Text("选择${tab.name}分类", fontSize = 12.sp, color = TextSub, modifier = Modifier.padding(top = 3.dp, bottom = 18.dp))
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 tab.tags.forEachIndexed { tagIndex, item ->
                     val selected = item.id == selectedTag
-                    Surface(onClick = { closeSheet { onSelect(tagIndex) } }, shape = RoundedCornerShape(11.dp), color = if (selected) BrandBlue else MeloraAppearance.card, border = if (selected) null else MeloraAppearance.chipBorder) {
-                        Text(item.name, fontSize = 12.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium, color = if (selected) Color.White else TextSub, modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp))
+                    Surface(
+                        onClick = { closeSheet { onSelect(tagIndex) } },
+                        shape = RoundedCornerShape(11.dp),
+                        color = if (selected) colors.primary else MeloraAppearance.card,
+                        contentColor = if (selected) colors.onPrimary else TextSub,
+                        border = if (selected) null else MeloraAppearance.chipBorder,
+                    ) {
+                        Text(
+                            item.name,
+                            fontSize = 12.sp,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                        )
                     }
                 }
             }
@@ -444,7 +456,12 @@ private fun RecentCard(
             else Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color(0xFF5B4BCE), Color(0xFF312E81))))) {
                 Icon(Icons.Outlined.Headphones, null, tint = Color.White.copy(alpha = .25f), modifier = Modifier.align(Alignment.Center).size(66.dp))
             }
-            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(.18f), Color.Black.copy(.84f)))))
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
+                0f to Color.Black.copy(0.10f),
+                0.38f to Color.Black.copy(0.28f),
+                0.70f to Color.Black.copy(0.78f),
+                1f to Color.Black.copy(0.92f),
+            )))
             Surface(shape = RoundedCornerShape(10.dp), color = Color.Black.copy(.42f), modifier = Modifier.align(Alignment.TopStart).padding(10.dp)) {
                 Text("最近收听", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White, modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp))
             }

@@ -1,35 +1,49 @@
 package com.leyu.melora.ui.common
 
 import androidx.compose.foundation.LocalOverscrollFactory
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.rememberScrollableState
 import androidx.compose.foundation.gestures.scrollable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.SheetValue
+import androidx.compose.material3.contentColorFor
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.isSpecified
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -40,7 +54,13 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
+import com.leyu.melora.ui.theme.DarkGlass
+import com.leyu.melora.ui.theme.LightSheetFrost
+import com.leyu.melora.ui.theme.MeloraAppearance
 import com.leyu.melora.ui.theme.SystemBarsVisibility
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.launch
 
 /** 保留同一个状态与档位，手势阈值和业务确认回调始终读取最新值。 */
@@ -107,20 +127,60 @@ internal fun rememberSheetDismiss(sheetState: SheetState): (() -> Unit) -> Unit 
     }
 }
 
+private val LocalGlassHandleColor = compositionLocalOf { Color.Unspecified }
+
+@Composable
+internal fun MeloraSheetHandle(
+    color: Color = MeloraAppearance.textSub.copy(alpha = 0.25f),
+    width: Dp = 36.dp,
+    topPadding: Dp = 10.dp,
+    bottomPadding: Dp = 6.dp,
+) {
+    val glassColor = LocalGlassHandleColor.current
+    Box(
+        modifier = Modifier.fillMaxWidth().padding(top = topPadding, bottom = bottomPadding),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier.size(width, 4.dp)
+                .background(if (glassColor.isSpecified) glassColor else color, RoundedCornerShape(2.dp)),
+        )
+    }
+}
+
 /** 统一抽屉的边界行为与随位移变化的遮罩，保留原生面板动画、档位及关闭手势。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun MeloraBottomSheet(
     onDismissRequest: () -> Unit,
     sheetState: SheetState,
-    containerColor: Color,
+    containerColor: Color = MeloraAppearance.sheet,
     tonalElevation: Dp = 0.dp,
     shape: Shape = BottomSheetDefaults.ExpandedShape,
     scrimColor: Color = BottomSheetDefaults.ScrimColor,
-    dragHandle: @Composable (() -> Unit)? = { BottomSheetDefaults.DragHandle() },
+    lightFrostTint: Color = Color.Unspecified,
+    dragHandle: @Composable (() -> Unit)? = {
+        val glassColor = LocalGlassHandleColor.current
+        if (glassColor.isSpecified) BottomSheetDefaults.DragHandle(color = glassColor)
+        else BottomSheetDefaults.DragHandle()
+    },
     content: @Composable ColumnScope.() -> Unit,
 ) {
     if (!LocalPageActive.current) return
+    val glassSource = glassBackdropSource(containerColor)
+    val lightFrost = lightFrostTint.isSpecified && containerColor.isSpecified &&
+        containerColor.alpha == 1f && containerColor.luminance() > 0.5f
+    val glassHandleColor = when {
+        lightFrost -> LightSheetFrost.handle
+        glassSource != null && containerColor.luminance() <= 0.5f -> DarkGlass.handle
+        else -> Color.Unspecified
+    }
+    val panelScrim = when {
+        scrimColor != BottomSheetDefaults.ScrimColor -> scrimColor
+        lightFrost -> LightSheetFrost.scrim
+        glassSource != null -> Color.Black.copy(alpha = glassScrimAlpha(containerColor))
+        else -> scrimColor
+    }
     // 窗口沿用系统 Density，避免应用缩放触发 Material 重建窗口及其 Composition。
     val contentDensity = LocalDensity.current
     val context = LocalContext.current
@@ -135,6 +195,7 @@ internal fun MeloraBottomSheet(
         }
     }
     var viewport by remember { mutableStateOf(IntSize.Zero) }
+    var handleHeight by remember(dragHandle != null) { mutableIntStateOf(0) }
     CompositionLocalProvider(LocalDensity provides windowDensity) {
         ModalBottomSheet(
             // 外层位于 Material3 的位移和 Surface 裁剪之前，遮罩不会随面板移动。
@@ -145,7 +206,7 @@ internal fun MeloraBottomSheet(
                     layout(sheet.width, sheet.height) { sheet.place(0, 0) }
                 }
                 .drawBehind {
-                    if (scrimColor == Color.Unspecified || size.height == 0f) return@drawBehind
+                    if (panelScrim == Color.Unspecified || size.height == 0f) return@drawBehind
                     val height = viewport.height.toFloat()
                     val visibleHeight = if (sheetState.hasPartiallyExpandedState) {
                         minOf(size.height, height / 2f)
@@ -155,7 +216,7 @@ internal fun MeloraBottomSheet(
                     val progress = ((height - sheetState.requireOffset()) / visibleHeight)
                         .coerceIn(0f, 1f)
                     drawRect(
-                        color = scrimColor,
+                        color = panelScrim,
                         alpha = progress,
                         topLeft = Offset((size.width - viewport.width) / 2f, 0f),
                         size = Size(viewport.width.toFloat(), height),
@@ -164,13 +225,29 @@ internal fun MeloraBottomSheet(
             onDismissRequest = onDismissRequest,
             sheetState = sheetState,
             sheetMaxWidth = BottomSheetDefaults.SheetMaxWidth * windowScale,
-            containerColor = containerColor,
+            containerColor = when {
+                glassSource != null -> Color.Transparent
+                lightFrost -> LightSheetFrost.base
+                else -> containerColor
+            },
+            contentColor = contentColorFor(containerColor),
             // 保留原生遮罩的点击/无障碍关闭；可视遮罩只由上方物理位移驱动。
             scrimColor = if (scrimColor == Color.Unspecified) Color.Unspecified else Color.Transparent,
             tonalElevation = tonalElevation,
             shape = windowShape,
+            contentWindowInsets = {
+                if (glassSource == null) BottomSheetDefaults.modalWindowInsets else WindowInsets(0, 0, 0, 0)
+            },
             dragHandle = dragHandle?.let { handle ->
-                { CompositionLocalProvider(LocalDensity provides contentDensity, content = handle) }
+                {
+                    CompositionLocalProvider(
+                        LocalDensity provides contentDensity,
+                        LocalGlassHandleColor provides glassHandleColor,
+                    ) {
+                        if (glassSource == null) handle()
+                        else Box(Modifier.onSizeChanged { handleHeight = it.height }) { handle() }
+                    }
+                }
             },
         ) {
             SystemBarsVisibility()
@@ -178,14 +255,36 @@ internal fun MeloraBottomSheet(
                 LocalOverscrollFactory provides null,
                 LocalDensity provides contentDensity,
             ) {
-                Column(
-                    Modifier.fillMaxWidth()
-                        .nestedScroll(SheetBoundaryFlingConnection)
-                        // 静态菜单也通过嵌套滚动交接手势，避免直接拖拽将越界速度注入抽屉。
-                        // 实际滚动距离仍由子列表消费，这里不增加第二份滚动位置。
-                        .scrollable(rememberScrollableState { 0f }, Orientation.Vertical),
-                    content = content,
-                )
+                val nestedSource = if (glassSource == null) null else rememberHazeState()
+                val backdropModifier = if (nestedSource == null) Modifier
+                    else Modifier.zIndex(-1f).hazeSource(nestedSource)
+                Box(Modifier.fillMaxWidth().then(backdropModifier)) {
+                    if (glassSource != null) {
+                        // 由原生面板负责裁切与位移，将底板向上延伸到原生把手区域。
+                        Box(
+                            Modifier.matchParentSize()
+                                .layout { measurable, constraints ->
+                                    val height = constraints.maxHeight + handleHeight
+                                    val panel = measurable.measure(constraints.copy(minHeight = height, maxHeight = height))
+                                    layout(panel.width, constraints.maxHeight) { panel.place(0, -handleHeight) }
+                                }
+                                .then(glassPanelModifier(containerColor, windowShape, backdropScrim = panelScrim,
+                                    frostTint = if (lightFrost) lightFrostTint else Color.Unspecified)),
+                        )
+                    }
+                    val insetsModifier = if (glassSource == null) Modifier
+                        else Modifier.windowInsetsPadding(BottomSheetDefaults.modalWindowInsets)
+                    CompositionLocalProvider(LocalGlassBackdrop provides (nestedSource ?: LocalGlassBackdrop.current)) {
+                        Column(
+                            Modifier.fillMaxWidth()
+                                .then(insetsModifier)
+                                .nestedScroll(SheetBoundaryFlingConnection)
+                                // 静态菜单仍通过嵌套滚动交接手势，滚动距离由子列表消费。
+                                .scrollable(rememberScrollableState { 0f }, Orientation.Vertical),
+                            content = content,
+                        )
+                    }
+                }
             }
         }
     }

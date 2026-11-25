@@ -1,6 +1,7 @@
 package com.leyu.melora.ui.settings
 
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.MeloraSheetHandle
 import com.leyu.melora.ui.common.rememberMeloraBottomSheetState
 import com.leyu.melora.ui.common.rememberSheetDismiss
 import android.net.Uri
@@ -62,10 +63,10 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -97,6 +98,7 @@ import com.leyu.melora.playback.lx.LxScriptStore
 import com.leyu.melora.playback.sdk.LxScriptPool
 import com.leyu.melora.playback.sdk.SourceResolver
 import com.leyu.melora.ui.theme.MeloraAppearance
+import com.leyu.melora.ui.theme.meloraSwitchColors
 import com.leyu.melora.ui.common.runCatchingCancellable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -576,28 +578,7 @@ private fun SwitchRow(
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = Color.White,
-                checkedTrackColor = BrandBlue,
-                uncheckedTrackColor = MeloraAppearance.softFill,
-            ),
-        )
-    }
-}
-
-@Composable
-private fun SourceSheetDragHandle() {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 10.dp, bottom = 6.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(width = 36.dp, height = 4.dp)
-                .clip(RoundedCornerShape(2.dp))
-                .background(MeloraAppearance.divider),
+            colors = meloraSwitchColors(),
         )
     }
 }
@@ -616,8 +597,7 @@ private fun SourceModalSheet(
     MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = MeloraAppearance.canvas,
-        dragHandle = { SourceSheetDragHandle() },
+        dragHandle = { MeloraSheetHandle(color = MeloraAppearance.divider) },
     ) {
         Column(
             modifier = Modifier
@@ -634,7 +614,7 @@ private fun SourceModalSheet(
                     modifier = Modifier
                         .size(46.dp)
                         .clip(RoundedCornerShape(13.dp))
-                        .background(BrandBlue.copy(alpha = 0.12f)),
+                        .background(if (MeloraAppearance.isDark) Color(0xFF222226) else BrandBlue.copy(alpha = 0.12f)),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
@@ -664,13 +644,7 @@ private fun SourceModalSheet(
                     )
                 }
             }
-            Spacer(Modifier.height(10.dp))
-            HorizontalDivider(
-                color = DividerSoft,
-                thickness = 0.6.dp,
-                modifier = Modifier.padding(horizontal = 20.dp),
-            )
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(20.dp))
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -866,6 +840,7 @@ private fun OnlineSourceImportSheet(
         Spacer(Modifier.height(4.dp))
 
         val canSubmit = !busy && url.trim().isNotBlank()
+        val colors = MaterialTheme.colorScheme
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -897,13 +872,14 @@ private fun OnlineSourceImportSheet(
                 },
                 enabled = canSubmit,
                 shape = RoundedCornerShape(12.dp),
-                color = if (canSubmit) BrandBlue else BrandBlue.copy(alpha = 0.22f),
+                color = if (canSubmit) colors.primary else colors.primary.copy(alpha = 0.22f),
+                contentColor = if (canSubmit) colors.onPrimary else Color.White.copy(alpha = 0.65f),
                 modifier = Modifier.weight(1f).height(42.dp),
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     if (busy) {
                         CircularProgressIndicator(
-                            color = Color.White,
+                            color = colors.primary,
                             strokeWidth = 2.dp,
                             modifier = Modifier.size(18.dp),
                         )
@@ -912,7 +888,6 @@ private fun OnlineSourceImportSheet(
                             text = if (isCleartextHttp) "仍要导入" else "立即导入",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = if (canSubmit) Color.White else Color.White.copy(alpha = 0.65f),
                         )
                     }
                 }
@@ -984,11 +959,7 @@ private fun SourceRow(
             checked = script.enabled,
             onCheckedChange = onToggle,
             enabled = enabled,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = Color.White,
-                checkedTrackColor = BrandBlue,
-                uncheckedTrackColor = MeloraAppearance.softFill,
-            ),
+            colors = meloraSwitchColors(),
         )
         IconButton(
             onClick = { sheetOpen = true },
@@ -1012,8 +983,7 @@ private fun SourceRow(
         MeloraBottomSheet(
             onDismissRequest = { sheetOpen = false },
             sheetState = sheetState,
-            containerColor = MeloraAppearance.canvas,
-            dragHandle = { SourceSheetDragHandle() },
+            dragHandle = { MeloraSheetHandle(color = MeloraAppearance.divider) },
         ) {
             Column(
                 modifier = Modifier
@@ -1241,6 +1211,20 @@ private fun SourceSheetAction(
     enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
+    val dark = MeloraAppearance.isDark
+    val destructive = titleColor == Color(0xFFD1606A)
+    val warning = iconTint == MeloraAppearance.accent
+    val resolvedIconBg = when {
+        !dark -> iconBg
+        destructive || warning -> MeloraAppearance.tintRed
+        else -> Color(0xFF222226)
+    }
+    val resolvedIconTint = when {
+        !dark -> iconTint
+        destructive || warning -> MeloraAppearance.accent
+        else -> MeloraAppearance.textMain.copy(alpha = 0.86f)
+    }
+    val resolvedTitleColor = if (dark && destructive) MeloraAppearance.accent else titleColor
     Surface(
         onClick = onClick,
         enabled = enabled,
@@ -1259,19 +1243,19 @@ private fun SourceSheetAction(
                 modifier = Modifier
                     .size(40.dp)
                     .clip(RoundedCornerShape(11.dp))
-                    .background(iconBg),
+                    .background(resolvedIconBg),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(20.dp))
+                Icon(icon, contentDescription = null, tint = resolvedIconTint, modifier = Modifier.size(20.dp))
             }
             Spacer(Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(title, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = titleColor)
+                Text(title, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = resolvedTitleColor)
                 Spacer(Modifier.height(2.dp))
                 Text(
                     subtitle,
                     fontSize = 12.sp,
-                    color = if (titleColor == Color(0xFFD1606A)) Color(0xFFD1606A).copy(alpha = 0.75f) else TextSub,
+                    color = if (destructive) resolvedTitleColor.copy(alpha = 0.78f) else TextSub,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )

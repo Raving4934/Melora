@@ -24,6 +24,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Modifier
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -41,6 +42,8 @@ import com.leyu.melora.playback.lx.LxInspector
 import com.leyu.melora.playback.lx.LxScriptStore
 import com.leyu.melora.startup.resolveStartupTab
 import com.leyu.melora.ui.MeloraApp
+import com.leyu.melora.ui.common.componentSurfacesBlurred
+import com.leyu.melora.ui.common.LocalGlassBackdrop
 import com.leyu.melora.ui.common.SongListStateProvider
 import com.leyu.melora.ui.common.LocalResetRootBack
 import com.leyu.melora.ui.common.RootBackCallback
@@ -49,6 +52,8 @@ import com.leyu.melora.ui.settings.AboutModal
 import com.leyu.melora.ui.settings.AboutModalSheet
 import com.leyu.melora.ui.theme.MeloraTheme
 import com.leyu.melora.ui.theme.AdaptiveDisplay
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
@@ -130,13 +135,18 @@ class MainActivity : ComponentActivity() {
             setContent {
                 AdaptiveDisplay {
                     MeloraTheme {
+                        val glassBackdrop = if (componentSurfacesBlurred()) rememberHazeState() else null
                         // 全局关闭系统"整屏拉伸"（橡皮筋）：纵向/横向滚动都到边即停，手感统一
                         androidx.compose.runtime.CompositionLocalProvider(
                             androidx.compose.foundation.LocalOverscrollFactory provides null,
                             LocalResetRootBack provides ::resetRootBackConfirmation,
+                            LocalGlassBackdrop provides glassBackdrop,
                         ) {
                             SongListStateProvider {
-                                MeloraApp(initialTab = initialTab)
+                                MeloraApp(
+                                    initialTab = initialTab,
+                                    modifier = if (glassBackdrop == null) Modifier else Modifier.hazeSource(glassBackdrop),
+                                )
                                 automaticAppUpdate.value?.let { release ->
                                     AboutModalSheet(
                                         modal = AboutModal.Update,

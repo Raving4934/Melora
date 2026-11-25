@@ -11,7 +11,7 @@ class PlayerAppearanceSettingsTest {
     fun defaultsPreserveExistingSettingsBehavior() {
         assertEquals(ThemeMode.Auto, MeloraSettings.themeMode.value)
         assertFalse(MeloraSettings.hideStatusBar.value)
-        assertFalse(MeloraSettings.blurTopBar.value)
+        assertEquals(ComponentBlurMode.Off, MeloraSettings.componentBlurMode.value)
         assertFalse(MeloraSettings.showSongCovers.value)
         assertEquals(QualityBadgeMode.Compact, MeloraSettings.qualityBadgeMode.value)
         assertTrue(MeloraSettings.showExitButton.value)
@@ -26,7 +26,7 @@ class PlayerAppearanceSettingsTest {
     @Test
     fun exportIncludesAllNewAppearanceFields() = withAppearanceSettings {
         MeloraSettings.hideStatusBar.value = true
-        MeloraSettings.blurTopBar.value = true
+        MeloraSettings.updateComponentBlurMode(ComponentBlurMode.All)
         MeloraSettings.playerThemeMode.value = ThemeMode.Light
         MeloraSettings.keepScreenAwake.value = true
         MeloraSettings.miniLyricsEnabled.value = false
@@ -36,7 +36,8 @@ class PlayerAppearanceSettingsTest {
         val settings = BackupSettings.collect()
 
         assertTrue(settings.getBoolean("hideStatusBar"))
-        assertTrue(settings.getBoolean("blurTopBar"))
+        assertEquals("all", settings.getString("componentBlurMode"))
+        assertFalse(settings.has("blurTopBar"))
         assertEquals("light", settings.getString("playerThemeMode"))
         assertTrue(settings.getBoolean("keepScreenAwake"))
         assertFalse(settings.getBoolean("miniLyricsEnabled"))
@@ -172,7 +173,7 @@ class PlayerAppearanceSettingsTest {
     @Test
     fun missingAndInvalidImportValuesKeepCurrentSelections() = withAppearanceSettings {
         MeloraSettings.hideStatusBar.value = true
-        MeloraSettings.blurTopBar.value = true
+        MeloraSettings.updateComponentBlurMode(ComponentBlurMode.All)
         MeloraSettings.playerThemeMode.value = ThemeMode.Light
         MeloraSettings.keepScreenAwake.value = true
         MeloraSettings.miniLyricsEnabled.value = false
@@ -182,7 +183,7 @@ class PlayerAppearanceSettingsTest {
         BackupSettings.apply(BackupSettings.prepare(JSONObject(), emptySet(), emptySet()).first)
         assertAppearance(
             hideStatusBar = true,
-            blurTopBar = true,
+            componentBlurMode = ComponentBlurMode.All,
             playerThemeMode = ThemeMode.Light,
             keepScreenAwake = true,
             miniLyricsEnabled = false,
@@ -194,16 +195,18 @@ class PlayerAppearanceSettingsTest {
             JSONObject()
                 .put("playerThemeMode", "sepia")
                 .put("playerCoverStyle", "square")
+                .put("componentBlurMode", "unknown")
                 .put("musicPlayMode", "unexpected"), emptySet(), emptySet()).first)
         assertEquals(ThemeMode.Light, MeloraSettings.playerThemeMode.value)
         assertEquals(PlayerCoverStyle.Circle, MeloraSettings.playerCoverStyle.value)
+        assertEquals(ComponentBlurMode.All, MeloraSettings.componentBlurMode.value)
         assertEquals(PlayMode.Single, MeloraSettings.musicPlayMode.value)
     }
 
     @Test
     fun allNewSettingsRoundTripThroughTheRealImportFunction() = withAppearanceSettings {
         MeloraSettings.hideStatusBar.value = true
-        MeloraSettings.blurTopBar.value = false
+        MeloraSettings.updateComponentBlurMode(ComponentBlurMode.Header)
         MeloraSettings.playerThemeMode.value = ThemeMode.Dark
         MeloraSettings.keepScreenAwake.value = true
         MeloraSettings.miniLyricsEnabled.value = false
@@ -212,7 +215,7 @@ class PlayerAppearanceSettingsTest {
         val exported = BackupSettings.collect()
 
         MeloraSettings.hideStatusBar.value = false
-        MeloraSettings.blurTopBar.value = true
+        MeloraSettings.updateComponentBlurMode(ComponentBlurMode.All)
         MeloraSettings.playerThemeMode.value = ThemeMode.Light
         MeloraSettings.keepScreenAwake.value = false
         MeloraSettings.miniLyricsEnabled.value = true
@@ -223,7 +226,7 @@ class PlayerAppearanceSettingsTest {
 
         assertAppearance(
             hideStatusBar = true,
-            blurTopBar = false,
+            componentBlurMode = ComponentBlurMode.Header,
             playerThemeMode = ThemeMode.Dark,
             keepScreenAwake = true,
             miniLyricsEnabled = false,
@@ -233,15 +236,66 @@ class PlayerAppearanceSettingsTest {
     }
 
     @Test
+    fun storedLegacyBlurMigratesToTheNewKeyExactlyOnce() {
+        for ((legacyValue, expected) in listOf(true to ComponentBlurMode.Header, false to ComponentBlurMode.Off)) {
+            val preferences = FakePreferences(mapOf("basic.blurTopBar" to legacyValue))
+
+            assertEquals(expected, loadComponentBlurMode(preferences.sharedPreferences))
+            assertEquals(mapOf(MeloraSettings.KEY_COMPONENT_BLUR_MODE to expected.storageValue), preferences.values)
+            assertEquals(expected, loadComponentBlurMode(preferences.sharedPreferences))
+            assertEquals(1, preferences.applyCount)
+        }
+    }
+
+    @Test
+    fun storedNewBlurModeWinsOverTheLegacyKey() {
+        val key = MeloraSettings.KEY_COMPONENT_BLUR_MODE
+        for (mode in ComponentBlurMode.entries) {
+            val preferences = FakePreferences(mapOf(
+                key to mode.storageValue,
+                "basic.blurTopBar" to (mode == ComponentBlurMode.Off),
+            ))
+
+            assertEquals(mode, loadComponentBlurMode(preferences.sharedPreferences))
+            assertEquals(mapOf(key to mode.storageValue), preferences.values)
+        }
+    }
+
+    @Test
+    fun oldBackupsMigrateLegacyBlurValues() = withAppearanceSettings {
+        for ((legacyValue, expected) in listOf(true to ComponentBlurMode.Header, false to ComponentBlurMode.Off)) {
+            MeloraSettings.updateComponentBlurMode(ComponentBlurMode.All)
+            val prepared = BackupSettings.prepare(JSONObject().put("blurTopBar", legacyValue), emptySet(), emptySet()).first
+
+            assertEquals(expected.storageValue, prepared.getString("componentBlurMode"))
+            assertFalse(prepared.has("blurTopBar"))
+            BackupSettings.apply(prepared)
+            assertEquals(expected, MeloraSettings.componentBlurMode.value)
+        }
+    }
+
+    @Test
+    fun newBackupBlurModeWinsOverTheLegacyKey() = withAppearanceSettings {
+        MeloraSettings.updateComponentBlurMode(ComponentBlurMode.All)
+        val imported = JSONObject().put("componentBlurMode", "off").put("blurTopBar", true)
+
+        BackupSettings.apply(BackupSettings.prepare(imported, emptySet(), emptySet()).first)
+
+        assertEquals(ComponentBlurMode.Off, MeloraSettings.componentBlurMode.value)
+    }
+
+    @Test
     fun obsoleteExperimentalUiFieldsDoNotAffectExistingCoverAndColorSettings() = withAppearanceSettings {
-        val imported = JSONObject().put("playerVisualTheme", "archive")
+        val imported = JSONObject().put("playerVisualTheme", "archive").put("floatingPlayerBar", true)
             .put("playerCoverStyle", "circle").put("playerThemeMode", "dark")
         val prepared = BackupSettings.prepare(imported, emptySet(), emptySet()).first
         assertFalse(prepared.has("playerVisualTheme"))
+        assertFalse(prepared.has("floatingPlayerBar"))
         BackupSettings.apply(prepared)
         assertEquals(PlayerCoverStyle.Circle, MeloraSettings.playerCoverStyle.value)
         assertEquals(ThemeMode.Dark, MeloraSettings.playerThemeMode.value)
         assertFalse(BackupSettings.collect().has("playerVisualTheme"))
+        assertFalse(BackupSettings.collect().has("floatingPlayerBar"))
     }
 
     @Test
@@ -305,14 +359,14 @@ class PlayerAppearanceSettingsTest {
 
     private fun assertAppearance(
         hideStatusBar: Boolean,
-        blurTopBar: Boolean,
+        componentBlurMode: ComponentBlurMode,
         playerThemeMode: ThemeMode,
         keepScreenAwake: Boolean,
         miniLyricsEnabled: Boolean,
         playerCoverStyle: PlayerCoverStyle,
     ) {
         assertEquals(hideStatusBar, MeloraSettings.hideStatusBar.value)
-        assertEquals(blurTopBar, MeloraSettings.blurTopBar.value)
+        assertEquals(componentBlurMode, MeloraSettings.componentBlurMode.value)
         assertEquals(playerThemeMode, MeloraSettings.playerThemeMode.value)
         assertEquals(keepScreenAwake, MeloraSettings.keepScreenAwake.value)
         assertEquals(miniLyricsEnabled, MeloraSettings.miniLyricsEnabled.value)
@@ -326,7 +380,7 @@ class PlayerAppearanceSettingsTest {
         val originalVAlign = MeloraSettings.lyricVAlign.value
         val originalDesktopLyricPosition = MeloraSettings.desktopLyricPosition.value
         val originalHideStatusBar = MeloraSettings.hideStatusBar.value
-        val originalBlurTopBar = MeloraSettings.blurTopBar.value
+        val originalComponentBlurMode = MeloraSettings.componentBlurMode.value
         val originalQualityBadgeMode = MeloraSettings.qualityBadgeMode.value
         val originalPlayerThemeMode = MeloraSettings.playerThemeMode.value
         val originalKeepScreenAwake = MeloraSettings.keepScreenAwake.value
@@ -342,7 +396,7 @@ class PlayerAppearanceSettingsTest {
             MeloraSettings.lyricVAlign.value = originalVAlign
             MeloraSettings.desktopLyricPosition.value = originalDesktopLyricPosition
             MeloraSettings.hideStatusBar.value = originalHideStatusBar
-            MeloraSettings.blurTopBar.value = originalBlurTopBar
+            MeloraSettings.componentBlurMode.value = originalComponentBlurMode
             MeloraSettings.qualityBadgeMode.value = originalQualityBadgeMode
             MeloraSettings.playerThemeMode.value = originalPlayerThemeMode
             MeloraSettings.keepScreenAwake.value = originalKeepScreenAwake

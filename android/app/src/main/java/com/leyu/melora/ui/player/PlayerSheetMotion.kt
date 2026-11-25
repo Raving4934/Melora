@@ -32,8 +32,9 @@ internal val PlayerPageSnapSpec = spring<Float>(
 /** 全屏正文在收起前20%行程内退出，避免控件随封面滑进迷你条。 */
 internal const val PlayerContentFadeStart = 0.8f
 
-/** 迷你条与背景在末段交接；根面板始终不透明，正文不参与这层配色过渡。 */
+/** 迷你控件在靠近收起端时淡入，这一段已经使用迷你条底色。 */
 internal const val PlayerMiniFadeEnd = 0.16f
+internal val MiniPlayerContentHeight = 64.dp
 
 internal enum class PlayerSheetAnchor { Collapsed, Expanded }
 

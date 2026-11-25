@@ -54,10 +54,15 @@ import com.leyu.melora.ui.common.SongSelectionTopBar
 import com.leyu.melora.ui.common.SongSelectionState
 import com.leyu.melora.ui.common.CollectionActionsRow
 import com.leyu.melora.ui.common.CollectionInfoHeader
+import com.leyu.melora.ui.common.MeloraSheetHandle
 import com.leyu.melora.ui.common.albumHeaderCopy
 import com.leyu.melora.ui.common.artistHeaderCopy
+import com.leyu.melora.ui.common.componentHeadersBlurred
 import com.leyu.melora.ui.common.ChromeScaffold
+import com.leyu.melora.ui.theme.DarkGlass
+import com.leyu.melora.ui.theme.LightSheetFrost
 import com.leyu.melora.ui.theme.MeloraAppearance
+import com.leyu.melora.ui.theme.meloraSwitchColors
 import com.leyu.melora.ui.common.LocalChromeTopInset
 import com.leyu.melora.ui.common.chromeContentPadding
 import androidx.compose.ui.layout.LayoutCoordinates
@@ -147,7 +152,6 @@ import androidx.compose.material.icons.rounded.BlurOn
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Slider
@@ -155,7 +159,6 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.SliderState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.LocalTextStyle
@@ -1069,7 +1072,7 @@ internal fun SongsCollectionPage(
     val selection = remember(collection) { SongSelectionState() }
     BackHandler { if (selection.active) selection.finish() else onBack() }
     val controlBarHazeState = rememberHazeState()
-    val blurEnabled by MeloraSettings.blurTopBar.collectAsStateWithLifecycle()
+    val blurEnabled = componentHeadersBlurred()
     val bodyHazeModifier = if (blurEnabled) Modifier.hazeSource(controlBarHazeState) else Modifier
     val favoriteUids by UserLibrary.favoriteUids.collectAsStateWithLifecycle()
     val favoriteAlbums by UserLibrary.favoriteAlbums.collectAsStateWithLifecycle()
@@ -1734,22 +1737,7 @@ private fun TimerSettingsBottomSheet(
     MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = MeloraAppearance.canvas,
-        dragHandle = {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 10.dp, bottom = 6.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(width = 36.dp, height = 4.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(MeloraAppearance.textSub.copy(alpha = 0.25f)),
-                )
-            }
-        },
+        dragHandle = { MeloraSheetHandle() },
     ) {
         Column(
             modifier = Modifier
@@ -1802,9 +1790,7 @@ private fun TimerSettingsBottomSheet(
                 }
             }
 
-            Spacer(Modifier.height(10.dp))
-            HorizontalDivider(color = MeloraAppearance.divider, thickness = 0.6.dp, modifier = Modifier.padding(horizontal = 20.dp))
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(22.dp))
 
             Column(
                 modifier = Modifier
@@ -1878,11 +1864,7 @@ private fun TimerSettingsBottomSheet(
                             if (enabled) PlaybackController.setSleepTimer(timerState.value.toInt(), extendToFinishTrack)
                             else PlaybackController.cancelSleepTimer()
                         },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
-                            checkedTrackColor = MeloraAppearance.brand,
-                            uncheckedTrackColor = MeloraAppearance.softFill,
-                        ),
+                        colors = meloraSwitchColors(),
                     )
                 }
 
@@ -1939,11 +1921,7 @@ private fun TimerSettingsBottomSheet(
                             extendToFinishTrack = value
                             if (sleepTimerEnabled) PlaybackController.setSleepTimer(timerState.value.toInt(), value)
                         },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
-                            checkedTrackColor = MeloraAppearance.brand,
-                            uncheckedTrackColor = MeloraAppearance.softFill,
-                        ),
+                        colors = meloraSwitchColors(),
                     )
                 }
             }
@@ -1973,26 +1951,15 @@ private fun AudioEffectsBottomSheet(
     val selectedPreset = AudioEffects.preset(current)
     val effectState by AudioEffects.state.collectAsStateWithLifecycle()
     val playerState by PlaybackController.state.collectAsStateWithLifecycle()
+    val colors = LocalPlayerColors.current
+    val accent = if (colors.isDark) DarkGlass.selectedText else LightSheetFrost.blue
 
     MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = MeloraAppearance.canvas,
-        dragHandle = {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 10.dp, bottom = 6.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(width = 36.dp, height = 4.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(MeloraAppearance.textSub.copy(alpha = 0.25f)),
-                )
-            }
-        },
+        containerColor = colors.sheetBackground,
+        lightFrostTint = LightSheetFrost.tint,
+        dragHandle = { MeloraSheetHandle(color = colors.sheetTextMuted.copy(alpha = 0.25f)) },
     ) {
         Column(
             modifier = Modifier
@@ -2015,28 +1982,34 @@ private fun AudioEffectsBottomSheet(
                         text = "声学调音",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Medium,
-                        color = MeloraAppearance.textMain,
+                        color = colors.sheetText,
                     )
                     Spacer(Modifier.width(8.dp))
                     Surface(
                         shape = RoundedCornerShape(7.dp),
-                        color = MeloraAppearance.brand.copy(alpha = 0.11f),
+                        color = if (colors.isDark) DarkGlass.selectedFill.copy(alpha = 0.18f) else accent.copy(alpha = 0.11f),
+                        border = if (colors.isDark) BorderStroke(0.5.dp, DarkGlass.selectedEdge.copy(alpha = 0.28f)) else null,
                     ) {
                         Text(
                             text = selectedPreset.label,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold,
-                            color = MeloraAppearance.brand,
+                            color = accent,
                             modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
                         )
                     }
                 }
-                AudioVisualizerBars(active = playerState.playing && effectState.active, enabled = effectState.active)
+                AudioVisualizerBars(
+                    active = playerState.playing && effectState.active,
+                    color = if (effectState.active) accent else colors.sheetTextMuted.copy(alpha = 0.30f),
+                )
             }
 
             Text(
                 text = AudioEffects.statusText(current, effectState),
-                color = if (effectState.phase == AudioEffects.Phase.Failed) MeloraAppearance.accent else MeloraAppearance.textSub,
+                color = if (effectState.phase == AudioEffects.Phase.Failed) {
+                    if (colors.isDark) Color(0xFFF2635C) else FullPlayerSheetAccentRed
+                } else colors.sheetTextMuted,
                 fontSize = 12.sp,
                 lineHeight = 16.sp,
                 maxLines = 2,
@@ -2058,17 +2031,27 @@ private fun AudioEffectsBottomSheet(
                     ) {
                         rowItems.forEach { item ->
                             val isSelected = current == item.id
+                            val selectedDark = colors.isDark && isSelected
+                            val labelColor = when {
+                                selectedDark -> Color(0xFFC7DBFF)
+                                isSelected -> LightSheetFrost.activeText
+                                else -> colors.sheetText
+                            }
 
                             Surface(
                                 onClick = { onToggle(item.id) },
                                 shape = RoundedCornerShape(17.dp),
                                 color = when {
-                                    isSelected -> MeloraAppearance.brand.copy(alpha = 0.08f)
-                                    else -> MeloraAppearance.card
+                                    selectedDark -> DarkGlass.selectedFill
+                                    colors.isDark -> DarkGlass.card
+                                    isSelected -> LightSheetFrost.activeCard
+                                    else -> LightSheetFrost.card
                                 },
                                 border = when {
-                                    isSelected -> BorderStroke(1.5.dp, MeloraAppearance.brand)
-                                    else -> MeloraAppearance.cardBorder
+                                    selectedDark -> BorderStroke(0.5.dp, DarkGlass.selectedEdge.copy(alpha = 0.36f))
+                                    colors.isDark -> BorderStroke(0.5.dp, DarkGlass.border)
+                                    isSelected -> LightSheetFrost.activeBorder
+                                    else -> LightSheetFrost.cardBorder
                                 },
                                 shadowElevation = 0.dp,
                                 modifier = Modifier
@@ -2090,8 +2073,12 @@ private fun AudioEffectsBottomSheet(
                                                 .size(30.dp)
                                                 .clip(RoundedCornerShape(9.dp))
                                                 .background(
-                                                    if (isSelected) MeloraAppearance.brand.copy(alpha = 0.13f)
-                                                    else MeloraAppearance.softFill,
+                                                    when {
+                                                        selectedDark -> DarkGlass.selectedEdge.copy(alpha = 0.22f)
+                                                        colors.isDark -> DarkGlass.icon
+                                                        isSelected -> LightSheetFrost.blue
+                                                        else -> LightSheetFrost.iconWell
+                                                    },
                                                 ),
                                             contentAlignment = Alignment.Center,
                                         ) {
@@ -2099,8 +2086,9 @@ private fun AudioEffectsBottomSheet(
                                                 imageVector = audioEffectIcon(item.id),
                                                 contentDescription = null,
                                                 tint = when {
-                                                    isSelected -> MeloraAppearance.brand
-                                                    else -> MeloraAppearance.textMain
+                                                    selectedDark -> Color(0xFFB4CEFF)
+                                                    isSelected -> Color.White
+                                                    else -> colors.sheetText
                                                 },
                                                 modifier = Modifier.size(17.dp),
                                             )
@@ -2110,10 +2098,7 @@ private fun AudioEffectsBottomSheet(
                                             text = item.label,
                                             fontSize = 14.5.sp,
                                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
-                                            color = when {
-                                                isSelected -> MeloraAppearance.brand
-                                                else -> MeloraAppearance.textMain
-                                            },
+                                            color = labelColor,
                                             modifier = Modifier.weight(1f),
                                         )
                                         // 保留勾选位，开关音效时标题不换行、不跳动。
@@ -2121,7 +2106,7 @@ private fun AudioEffectsBottomSheet(
                                             if (isSelected) Icon(
                                                 imageVector = Icons.Rounded.Check,
                                                 contentDescription = null,
-                                                tint = MeloraAppearance.brand,
+                                                tint = accent,
                                                 modifier = Modifier.fillMaxSize(),
                                             )
                                         }
@@ -2133,7 +2118,7 @@ private fun AudioEffectsBottomSheet(
                                         lineHeight = 14.sp,
                                         maxLines = 2,
                                         overflow = TextOverflow.Ellipsis,
-                                        color = MeloraAppearance.textSub,
+                                        color = if (selectedDark) labelColor.copy(alpha = 0.72f) else colors.sheetTextMuted,
                                     )
                                 }
                             }
@@ -2148,7 +2133,7 @@ private fun AudioEffectsBottomSheet(
 }
 
 @Composable
-private fun AudioVisualizerBars(active: Boolean, enabled: Boolean = true) {
+private fun AudioVisualizerBars(active: Boolean, color: Color) {
     val transition = rememberInfiniteTransition(label = "audio-visualizer")
     val animatedHeights = List(6) { index ->
         transition.animateFloat(
@@ -2178,7 +2163,7 @@ private fun AudioVisualizerBars(active: Boolean, enabled: Boolean = true) {
                     .width(4.dp)
                     .height((if (active) height.value else 6f + (index % 3) * 2f).dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(if (enabled) MeloraAppearance.brand else MeloraAppearance.textSub.copy(alpha = 0.30f)),
+                    .background(color),
             )
         }
     }

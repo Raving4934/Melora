@@ -164,7 +164,7 @@ internal fun BackupDestinationSheet(
             }
         },
         sheetState = sheetState,
-        containerColor = SettingsCardBg,
+        containerColor = MeloraAppearance.sheetCard,
     ) {
         val canChoose = !closing && !finished
         val result = networkResult

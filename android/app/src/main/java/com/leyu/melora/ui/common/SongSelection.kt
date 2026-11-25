@@ -28,6 +28,7 @@ import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -67,14 +68,15 @@ internal fun SongRowSelectionAction(
                 modifier = Modifier.size(20.dp).graphicsLayer { alpha = 1f - progress.value })
         }
         if (showSelection) {
+            val colors = MaterialTheme.colorScheme
             Box(
                 Modifier.size(22.dp).graphicsLayer { alpha = progress.value }
                     .clip(CircleShape)
-                    .background(if (selected) BrandBlue else Color.Transparent)
-                    .border(1.5.dp, if (selected) BrandBlue else TextMuted.copy(alpha = 0.55f), CircleShape),
+                    .background(if (selected) colors.primary else Color.Transparent)
+                    .border(1.5.dp, if (selected) colors.primary else TextMuted.copy(alpha = 0.55f), CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
-                if (selected) Icon(Icons.Rounded.Check, null, tint = Color.White, modifier = Modifier.size(14.dp))
+                if (selected) Icon(Icons.Rounded.Check, null, tint = colors.onPrimary, modifier = Modifier.size(14.dp))
             }
         }
     }
