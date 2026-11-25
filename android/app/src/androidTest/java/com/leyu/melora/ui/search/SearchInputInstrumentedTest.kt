@@ -4,6 +4,7 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.input.TextFieldState
@@ -23,6 +24,7 @@ import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isPopup
+import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -50,6 +52,27 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class SearchInputInstrumentedTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test fun lastSuggestionIsReachableWithLimitedHeight() {
+        val labels = (1..8).map { "歌单 $it" }
+        val submitted = mutableListOf<String>()
+        val query = TextFieldState("歌单")
+        compose.setContent {
+            MeloraTheme {
+                Box(Modifier.height(180.dp)) {
+                    SearchInputSection(
+                        category = SearchCategory.Playlist, queryState = query, selectedPlatform = PlatformSource.Tencent,
+                        platformMenuExpanded = false, suggestions = labels, onSubmit = { submitted += it },
+                        onClear = {}, onPlatformMenuExpandedChange = {}, onPlatformChange = {},
+                    )
+                }
+            }
+        }
+        val last = compose.onNodeWithText(labels.last())
+        assertFalse(last.isDisplayed())
+        last.performScrollTo().assertIsDisplayed().performClick()
+        compose.runOnIdle { assertEquals(listOf(labels.last()), submitted) }
+    }
 
     @Test fun chineseCompositionCanCommitAndSubmitInTheSameImeEventBatch() {
         val queryState = TextFieldState()

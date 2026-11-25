@@ -8,12 +8,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDisplayed
+import androidx.compose.ui.test.isPopup
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performImeAction
@@ -24,10 +29,13 @@ import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
 import com.leyu.melora.playback.MeloraSettings
+import com.leyu.melora.playback.SourceAlias
 import com.leyu.melora.playback.UserLibrary
+import com.leyu.melora.playback.sdk.KwBookApi
 import com.leyu.melora.playback.sdk.OnlineCache
 import com.leyu.melora.playback.sdk.OnlinePlaylist
 import com.leyu.melora.playback.sdk.OnlineSong
+import com.leyu.melora.playback.sdk.PlaylistPage
 import com.leyu.melora.playback.sdk.SongPage
 import com.leyu.melora.ui.awaitStable
 import com.leyu.melora.ui.common.SongListStateProvider
@@ -54,12 +62,9 @@ class SearchScreenInstrumentedTest {
 
     private val keyword = "search-fixture-${System.nanoTime()}"
     private val platform = PlatformSource.Kuwo.id
-    private val hotKey = "searchHot.Song.$platform"
     private val previousPlatform = MeloraSettings.searchPlatform.value
     private val previousHistory = UserLibrary.searchHistory.value
-    private val recommendationKey = "searchRecommend.songs.$platform.${previousHistory.take(3).hashCode()}"
-    private val previousHotWords = OnlineCache.peek<List<String>>(hotKey)
-    private val previousRecommendations = OnlineCache.peek<List<OnlineSong>>(recommendationKey)
+    private val previousCache = mutableMapOf<String, Any?>()
     private val restoration = StateRestorationTester(compose)
     private val libraryFile = UserLibrary::class.java.getDeclaredField("file").apply { isAccessible = true }
     private var previousLibraryFile: Any? = null
@@ -71,20 +76,128 @@ class SearchScreenInstrumentedTest {
         previousLibraryFile = libraryFile.get(UserLibrary)
         libraryFile.set(UserLibrary, File(libraryDirectory, "user-library.json"))
         MeloraSettings.updateSearchPlatform(platform)
-        OnlineCache.put(hotKey, listOf(keyword))
-        OnlineCache.put(recommendationKey, emptyList<OnlineSong>())
+        seedIdlePanels(platform)
     }
 
     @After fun cleanup() {
         OnlineCache.clear("search:songs:$platform:$keyword")
-        if (previousHotWords == null) OnlineCache.clear(hotKey)
-        else OnlineCache.put(hotKey, previousHotWords)
-        if (previousRecommendations == null) OnlineCache.clear(recommendationKey)
-        else OnlineCache.put(recommendationKey, previousRecommendations)
+        for ((key, value) in previousCache) {
+            if (value == null) OnlineCache.clear(key) else OnlineCache.put(key, value)
+        }
         MeloraSettings.updateSearchPlatform(previousPlatform)
         UserLibrary.searchHistory.value = previousHistory
         libraryFile.set(UserLibrary, previousLibraryFile)
         libraryDirectory.deleteRecursively()
+    }
+
+    @Test fun sameKeywordUsesTheActiveCategoryAndPlaylistPlatformForSuggestions() {
+        val tencent = PlatformSource.Tencent.id
+        seedIdlePanels(tencent)
+        MeloraSettings.updateSearchPlatform(tencent)
+        val song = "企鹅歌曲联想 - 演唱者"
+        val tencentPlaylist = "企鹅歌单联想"
+        val kuwoPlaylist = "酷我歌单联想"
+        val book = "酷我听书联想"
+        putFixture("search:tips:$tencent:$keyword", listOf(song))
+        cachePlaylistSearch(tencent, keyword, tencentPlaylist)
+        cachePlaylistSearch(platform, keyword, kuwoPlaylist)
+        cacheBookSearch(keyword, book)
+
+        showSearch()
+        val field = compose.onNode(hasSetTextAction())
+        field.performClick().performTextReplacement(keyword)
+        compose.awaitStable(compose.onNodeWithText(song))
+
+        compose.onNodeWithText(SearchCategory.Playlist.label).performClick()
+        compose.awaitStable(compose.onNodeWithText(tencentPlaylist))
+        compose.onNodeWithText(song).assertDoesNotExist()
+
+        compose.onNodeWithText(SearchCategory.Audiobook.label).performClick()
+        compose.awaitStable(compose.onNodeWithText(book))
+        compose.onNodeWithText(tencentPlaylist).assertDoesNotExist()
+        compose.onNodeWithContentDescription("选择平台").assertDoesNotExist()
+        field.assertTextContains(keyword)
+
+        compose.onNodeWithText(SearchCategory.Playlist.label).performClick()
+        compose.awaitStable(compose.onNodeWithText(tencentPlaylist))
+        compose.onNodeWithContentDescription("选择平台").performClick()
+        val kuwoLabel = SourceAlias.displayMusic(platform, PlatformSource.Kuwo.label)
+        compose.onNode(hasAnyAncestor(isPopup()) and hasText(kuwoLabel) and hasClickAction()).performClick()
+        compose.awaitStable(compose.onNodeWithText(kuwoPlaylist))
+        compose.onNodeWithText(tencentPlaylist).assertDoesNotExist()
+        compose.onNodeWithText(book).assertDoesNotExist()
+    }
+
+    @Test fun delayedSongSuggestionsCannotReplaceSuggestionsAfterEditingAndSwitchingCategory() {
+        val oldKey = "search:tips:$platform:$keyword"
+        val newKeyword = "$keyword-new"
+        val delayedSong = "迟到的歌曲联想 - 演唱者"
+        val newSong = "新输入的歌曲联想 - 演唱者"
+        val newBook = "新输入的有声专辑"
+        putFixture("search:tips:$platform:$newKeyword", listOf(newSong))
+        cacheBookSearch(newKeyword, newBook)
+        val release = CompletableDeferred<Unit>()
+        val oldRequest = CoroutineScope(Dispatchers.Default).async {
+            OnlineCache.refresh<List<String>>(oldKey, -1) {
+                release.await()
+                listOf(delayedSong)
+            }
+        }
+        try {
+            compose.waitUntil(5_000) { OnlineCache.pendingRefresh<List<String>>(oldKey) != null }
+            showSearch()
+            val field = compose.onNode(hasSetTextAction())
+            field.performClick().performTextReplacement(keyword)
+            compose.mainClock.advanceTimeBy(500)
+
+            field.performTextReplacement(newKeyword)
+            compose.awaitStable(compose.onNodeWithText(newSong))
+            compose.onNodeWithText(SearchCategory.Audiobook.label).performClick()
+            compose.awaitStable(compose.onNodeWithText(newBook))
+            release.complete(Unit)
+            runBlocking { withTimeout(5_000) { oldRequest.await() } }
+
+            compose.onNodeWithText(newBook).assertIsDisplayed()
+            compose.onNodeWithText(delayedSong).assertDoesNotExist()
+            compose.onNodeWithText(newSong).assertDoesNotExist()
+            field.assertTextContains(newKeyword)
+        } finally {
+            release.complete(Unit)
+            runBlocking { withTimeout(5_000) { oldRequest.await() } }
+            OnlineCache.clear(oldKey)
+        }
+    }
+
+    @Test fun tappingPlaylistSuggestionSubmitsItsNameInsidePlaylistSearch() {
+        val name = "用于提交的歌单联想"
+        val result = "提交后返回的歌单"
+        cachePlaylistSearch(platform, keyword, name)
+        cachePlaylistSearch(platform, name, result)
+        showSearch(SearchCategory.Playlist)
+        val field = compose.onNode(hasSetTextAction())
+        field.performClick().performTextReplacement(keyword)
+
+        val suggestion = compose.onNodeWithText(name)
+        compose.awaitStable(suggestion)
+        suggestion.performClick()
+        compose.awaitStable(compose.onNodeWithText(result))
+        field.assertTextContains(name)
+        compose.runOnIdle { assertEquals(name, UserLibrary.searchHistory.value.first()) }
+    }
+
+    @Test fun emptyPlaylistSuggestionsStillAllowKeyboardSearch() {
+        val song = "只在歌曲页出现的联想"
+        putFixture("search:tips:$platform:$keyword", listOf(song))
+        cachePlaylistSearch(platform, keyword)
+        showSearch(SearchCategory.Playlist)
+        val field = compose.onNode(hasSetTextAction())
+        field.performClick().performTextReplacement(keyword)
+        compose.mainClock.advanceTimeBy(500)
+        compose.onNodeWithText(song).assertDoesNotExist()
+
+        field.performImeAction()
+        compose.awaitStable(compose.onNodeWithText("没有找到「$keyword」相关歌单"))
+        field.assertTextContains(keyword)
     }
 
     @Test fun failedNextPageKeepsRowsAndRetryAppendsTheSamePage() {
@@ -265,11 +378,49 @@ class SearchScreenInstrumentedTest {
     }
 
     private fun openSearch() {
-        restoration.setContent {
-            MeloraTheme { SongListStateProvider { SearchScreen(SearchCategory.Song, {}, {}) } }
-        }
+        showSearch()
         compose.awaitStable(compose.onNodeWithText(keyword))
         compose.onNodeWithText(keyword).performClick()
+    }
+
+    private fun showSearch(initialCategory: SearchCategory = SearchCategory.Song) {
+        val category = mutableStateOf(initialCategory)
+        restoration.setContent {
+            MeloraTheme {
+                SongListStateProvider {
+                    SearchScreen(category.value, { category.value = it }, {})
+                }
+            }
+        }
+    }
+
+    private fun seedIdlePanels(source: String) {
+        val intent = previousHistory.take(3).hashCode()
+        putFixture("searchHot.Song.$source", listOf(keyword))
+        putFixture("searchHot.Audiobook.$source", emptyList<String>())
+        putFixture("searchHotPlaylists.$source", emptyList<OnlinePlaylist>())
+        putFixture("searchRecommend.songs.$source.$intent", emptyList<OnlineSong>())
+        putFixture("searchRecommend.playlists.$source.$intent", emptyList<OnlinePlaylist>())
+        putFixture("searchRecommend.books", emptyList<OnlinePlaylist>())
+    }
+
+    private fun putFixture(key: String, value: Any) {
+        if (!previousCache.containsKey(key)) previousCache[key] = OnlineCache.peek<Any>(key)
+        OnlineCache.put(key, value)
+    }
+
+    private fun cachePlaylistSearch(source: String, query: String, vararg names: String) {
+        val items = names.mapIndexed { index, name -> collection(source, "suggestion-$index", name) }
+        putFixture("search:playlists:$source:$query:1", PlaylistPage(items, items.size, page = 1))
+    }
+
+    private fun cacheBookSearch(query: String, title: String) {
+        val item = collection(platform, "book_album_suggestion", title)
+        putFixture("search:books:$platform:$query:1", KwBookApi.BookPage(listOf(item), hasMore = false))
+    }
+
+    private fun collection(source: String, id: String, name: String): OnlinePlaylist {
+        return OnlinePlaylist(JSONObject().put("source", source).put("id", id).put("name", name))
     }
 
     private fun resultsList() = compose.onNode(hasScrollToIndexAction())
@@ -304,6 +455,5 @@ class SearchScreenInstrumentedTest {
         return SongPage(songs, total = 0, page = number, allPage = allPages, rawCount = songs.size.coerceAtLeast(1))
     }
 
-    private fun playlist(index: Int) =
-        OnlinePlaylist(JSONObject().put("source", platform).put("id", index.toString()).put("name", "测试歌单 $index"))
+    private fun playlist(index: Int) = collection(platform, index.toString(), "测试歌单 $index")
 }

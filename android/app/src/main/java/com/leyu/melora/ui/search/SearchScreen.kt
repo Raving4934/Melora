@@ -35,7 +35,6 @@ import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.UserLibrary
 import com.leyu.melora.playback.sdk.OnlineCache
 import com.leyu.melora.playback.sdk.OnlinePlaylist
-import com.leyu.melora.playback.sdk.OnlineRepository
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.sdk.Recommender
 import com.leyu.melora.ui.common.PlaylistDetailContent
@@ -69,7 +68,8 @@ fun SearchScreen(
     val focusManager = LocalFocusManager.current
 
     val platformId by MeloraSettings.searchPlatform.collectAsStateWithLifecycle()
-    val selectedPlatform = PlatformSource.entries.firstOrNull { it.id == platformId } ?: PlatformSource.All
+    val selectedPlatform = if (category == SearchCategory.Audiobook) PlatformSource.Kuwo
+        else PlatformSource.entries.firstOrNull { it.id == platformId } ?: PlatformSource.All
     var platformMenuExpanded by remember { mutableStateOf(false) }
 
     val queryState = rememberTextFieldState()
@@ -78,7 +78,7 @@ fun SearchScreen(
 
     val suggestionText = queryState.text.toString().trim().takeUnless { it == submitted }.orEmpty()
     var suggestions by remember(suggestionText, selectedPlatform, category) { mutableStateOf(emptyList<String>()) }
-    val recommendationSources = if (selectedPlatform == PlatformSource.All) platformIds else listOf(selectedPlatform.id)
+    val recommendationSources = selectedPlatform.searchSources
     val sourceKey = selectedPlatform.id
     val hotKey = "searchHot.${category.name}.$sourceKey"
     // 搜索意图改变后不能继续命中另一组热词/历史的推荐结果。
@@ -229,17 +229,13 @@ fun SearchScreen(
         hotPlaylistsLoading = false
     }
 
-    // 输入联想：防抖后请求平台搜索建议
+    // 与输入、分类和来源绑定，切换后马上移除旧联想。
     LaunchedEffect(suggestionText, selectedPlatform, category) {
         if (suggestionText.isEmpty()) return@LaunchedEffect
         delay(280)
         suggestions = runCatchingCancellable {
-            OnlineRepository.tipSearch(
-                context,
-                if (selectedPlatform == PlatformSource.All) "kw" else selectedPlatform.id,
-                suggestionText,
-            )
-        }.getOrDefault(emptyList()).take(8)
+            searchSuggestions(context, category, selectedPlatform, suggestionText) { suggestions = it }
+        }.getOrDefault(emptyList())
     }
 
     fun submit(keyword: String) {
