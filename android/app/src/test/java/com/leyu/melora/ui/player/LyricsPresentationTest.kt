@@ -18,6 +18,12 @@ class LyricsPresentationTest {
     }
 
     @Test
+    fun immersiveDepthKeepsItsOwnBlurRadii() {
+        assertEquals(listOf(0f, 1.3f, 3.25f), (0..2).map { lyricsBlurRadiusDp(it, immersive = false) })
+        assertEquals(listOf(0f, 1.4f, 5f), (0..2).map { lyricsBlurRadiusDp(it, immersive = true) })
+    }
+
+    @Test
     fun portraitAndLandscapeLyricsUseExactlyTheCoverWidth() {
         // 竖屏宽度受限，横屏高度受限；同一side同时用于封面和歌词，不再有额外8dp缩进。
         for ((width, height, lyricsHeight) in listOf(

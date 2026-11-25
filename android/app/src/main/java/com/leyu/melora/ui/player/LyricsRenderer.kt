@@ -246,10 +246,10 @@ private fun immersiveLyricsAlpha(distance: Int): Float = when (distance) {
     else -> 0.56f
 }
 
-private fun immersiveLyricsBlurDp(distance: Int): Float = when (distance) {
+internal fun lyricsBlurRadiusDp(distance: Int, immersive: Boolean): Float = when (distance) {
     0 -> 0f
-    1 -> 2f
-    else -> 5f
+    1 -> if (immersive) 1.4f else 1.3f
+    else -> if (immersive) 5f else 3.25f
 }
 
 /** 全屏与封面 mini 共用同一列表和行渲染。mini 固定视口、不接受拖动，只响应点击进入全屏。 */
@@ -388,7 +388,7 @@ internal fun LyricsViewport(
                         )
                         val depthEnabled = !mini && (immersiveRow || config.isBlurEnabled)
                         val blurRadius = animateFloatAsState(
-                            if (depthEnabled) immersiveLyricsBlurDp(depthDistance) * (if (immersiveRow) 1f else 0.65f) else 0f,
+                            if (depthEnabled) lyricsBlurRadiusDp(depthDistance, immersiveRow) else 0f,
                             if (motionEnabled) tween(180) else snap(), label = "lyricDepthBlur",
                         )
                         val muted = ink.copy(alpha = if (emphasized) 0.38f else 0.50f)

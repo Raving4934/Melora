@@ -413,7 +413,10 @@ class ImmersivePlayerInstrumentedTest {
             showPlayer(forcePortrait = true)
             compose.onNodeWithTag("player-pages").performTouchInput { swipeLeft() }
             val before = compose.onNodeWithTag("player-pages").fetchSemanticsNode().boundsInRoot
+            val ink = DarkPlayerColors.textPrimary
+            assertEquals(ink.copy(alpha = 0.85f), textLayout("词").layoutInput.style.color)
             compose.onNodeWithContentDescription("展开歌词设置").performClick()
+            assertEquals(ink, textLayout("词").layoutInput.style.color)
             compose.onNodeWithContentDescription("开启桌面歌词").assertIsDisplayed().assertIsNotSelected()
             compose.runOnIdle { MeloraSettings.showDesktopLyrics.value = true }
             compose.onNodeWithContentDescription("关闭桌面歌词").assertIsSelected()

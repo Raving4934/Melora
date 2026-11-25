@@ -1464,6 +1464,8 @@ private fun PlayerCoverPage(
                     rotationZ = -0.5f * immersion.value
                     cameraDistance = 16f * density
                 }, contentAlignment = Alignment.Center) {
+                    ImmersiveCoverProgress(position, state.durationMs, immersion, roundness = roundness,
+                        modifier = Modifier.matchParentSize())
                     NowPlayingArtwork(
                         url = track?.artwork, seed = track?.uid ?: "empty", style = coverStyle,
                         modifier = Modifier.fillMaxSize().padding(6.dp * t)
@@ -1485,8 +1487,6 @@ private fun PlayerCoverPage(
                         tonearmAngle = tonearmAngle,
                         recordChange = recordChange,
                     )
-                    ImmersiveCoverProgress(position, state.durationMs, immersion, roundness = roundness,
-                        modifier = Modifier.matchParentSize())
                 }
                 androidx.compose.animation.AnimatedVisibility(
                     visible = controlsVisible && immersive && isVisible,
@@ -1573,6 +1573,7 @@ private fun LyricsSettingsTools(
     val onDesktopLyricsChanged = rememberDesktopLyricsToggle()
     var expanded by remember { mutableStateOf(false) }
     val accent = FullPlayerSheetPrimaryBlue
+    val ink = FullPlayerTextPrimary
     val chipInteraction = remember { MutableInteractionSource() }
     Row(
         modifier = modifier
@@ -1593,12 +1594,14 @@ private fun LyricsSettingsTools(
         ) {
             Box(
                 modifier = Modifier
-                    .size(22.dp)
-                    .clip(RoundedCornerShape(4.dp))
+                    .width(26.dp)
+                    .height(22.dp)
+                    .clip(RoundedCornerShape(11.dp))
+                    .background(if (expanded) accent.copy(alpha = 0.16f) else ink.copy(alpha = 0.10f))
                     .border(
-                        width = 1.dp,
-                        color = if (expanded) accent else FullPlayerTextPrimary.copy(alpha = 0.40f),
-                        shape = RoundedCornerShape(4.dp),
+                        width = 0.5.dp,
+                        color = if (expanded) accent.copy(alpha = 0.36f) else ink.copy(alpha = 0.14f),
+                        shape = RoundedCornerShape(11.dp),
                     ),
                 contentAlignment = Alignment.Center,
             ) {
@@ -1607,7 +1610,7 @@ private fun LyricsSettingsTools(
                     fontSize = 11.sp,
                     lineHeight = 11.sp,
                     fontWeight = FontWeight.Bold,
-                    color = if (expanded) accent else FullPlayerTextPrimary.copy(alpha = 0.93f),
+                    color = if (expanded) ink else ink.copy(alpha = 0.85f),
                     style = LocalTextStyle.current.copy(
                         platformStyle = PlatformTextStyle(includeFontPadding = false),
                         lineHeightStyle = LineHeightStyle(
@@ -1755,7 +1758,7 @@ private fun TimerSettingsBottomSheet(
                     modifier = Modifier
                         .size(44.dp)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(MeloraAppearance.brand.copy(alpha = 0.12f)),
+                        .background(if (MeloraAppearance.isDark) Color(0xFF222226) else MeloraAppearance.brand.copy(alpha = 0.12f)),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
