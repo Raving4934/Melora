@@ -2,10 +2,12 @@ package com.leyu.melora
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.Intent
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.SystemClock
+import android.provider.Settings
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
@@ -25,6 +27,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.core.net.toUri
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -32,7 +35,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.leyu.melora.playback.BackupRestoreTransaction
+import com.leyu.melora.playback.DesktopLyricService
 import com.leyu.melora.playback.MeloraSettings
+import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.PlaylistAutoUpdate
 import com.leyu.melora.playback.UpdateChecker
 import com.leyu.melora.playback.UpdateResult
@@ -56,6 +61,8 @@ import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+
+private const val DESKTOP_LYRIC_PERMISSION_PENDING = "desktopLyricPermissionPending"
 
 class MainActivity : ComponentActivity() {
     private var backHint: Toast? = null
@@ -88,9 +95,36 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    private var desktopLyricPermissionPending = false
+    private val desktopLyricPermissionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        if (!desktopLyricPermissionPending) return@registerForActivityResult
+        desktopLyricPermissionPending = false
+        if (!DesktopLyricService.setEnabled(this, requested = true)) {
+            PlaybackController.postMessage(this, "未获得悬浮窗权限，桌面歌词未开启")
+        }
+    }
+
+    internal fun changeDesktopLyrics(enabled: Boolean) {
+        if (!enabled) desktopLyricPermissionPending = false
+        if (desktopLyricPermissionPending) return
+        val applied = DesktopLyricService.setEnabled(this, enabled)
+        if (!enabled || applied) return
+
+        desktopLyricPermissionPending = true
+        runCatching {
+            desktopLyricPermissionLauncher.launch(
+                Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, "package:$packageName".toUri()),
+            )
+        }.onFailure {
+            desktopLyricPermissionPending = false
+            PlaybackController.postMessage(this, "无法打开悬浮窗权限设置")
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        desktopLyricPermissionPending = savedInstanceState?.getBoolean(DESKTOP_LYRIC_PERMISSION_PENDING) == true
         // 使用公开的 Window.Callback，不覆盖 AndroidX 限制访问的 dispatchKeyEvent。
         // onUserInteraction 也会收到 BACK/触摸 DOWN，不能用它重置二次返回。
         val originalWindowCallback = window.callback
@@ -161,6 +195,7 @@ class MainActivity : ComponentActivity() {
             }
             runDebugActions()
             repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                if (MeloraSettings.showDesktopLyrics.value) DesktopLyricService.setEnabled(this@MainActivity)
                 MeloraSettings.autoCheckAppUpdates.collectLatest { enabled ->
                     automaticAppUpdate.value = if (enabled) {
                         automaticAppUpdate.value ?: UpdateChecker.checkAutomatically(this@MainActivity)
@@ -232,6 +267,11 @@ class MainActivity : ComponentActivity() {
             }
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(DESKTOP_LYRIC_PERMISSION_PENDING, desktopLyricPermissionPending)
+    }
+
     override fun onDestroy() {
         resetRootBackConfirmation()
         recoveryDialog?.dismiss()
@@ -244,8 +284,8 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             (application as MeloraApplication).awaitStartup()
             // 进程可能仍在而播放服务已退出；重进界面也必须走同一个队列恢复入口。
-            com.leyu.melora.playback.PlaybackController.init(this@MainActivity)
-            com.leyu.melora.playback.PlaybackController.checkLocalQueue(this@MainActivity)
+            PlaybackController.init(this@MainActivity)
+            PlaybackController.checkLocalQueue(this@MainActivity)
             PlaylistAutoUpdate.onForeground(this@MainActivity)
             WebDavSync.onForeground(this@MainActivity)
         }

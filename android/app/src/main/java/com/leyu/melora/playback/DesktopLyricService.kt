@@ -100,27 +100,28 @@ class DesktopLyricService : Service() {
         if ((application as? com.leyu.melora.MeloraApplication)?.finishBlockedServiceStart(this, startId) == true) {
             return START_NOT_STICKY
         }
-        return START_STICKY
-    }
-
-    override fun onCreate() {
-        super.onCreate()
-        if ((application as? com.leyu.melora.MeloraApplication)?.restoreFailure != null) return
-        if (!MeloraSettings.showDesktopLyrics.value || !Settings.canDrawOverlays(this)) {
-            stopSelf()
-            return
+        if (lyricView == null) startForegroundNotification()
+        if (!reconcileDesktopLyricSetting { Settings.canDrawOverlays(this) }) {
+            stopSelf(startId)
+            return START_NOT_STICKY
         }
+        if (lyricView != null) return START_STICKY
+
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        startForegroundNotification()
         updateScreenBounds()
         screenInteractive = getSystemService(PowerManager::class.java).isInteractive
-        if (!addOverlay()) { stopSelf(); return }
+        if (!addOverlay()) {
+            MeloraSettings.updateShowDesktopLyrics(false)
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         ContextCompat.registerReceiver(this, screenReceiver,
             IntentFilter().apply { addAction(Intent.ACTION_SCREEN_ON); addAction(Intent.ACTION_SCREEN_OFF) },
             ContextCompat.RECEIVER_NOT_EXPORTED)
         screenReceiverRegistered = true
         observeLyrics()
         observeVisualSettings()
+        return START_STICKY
     }
 
     private fun startForegroundNotification() {
@@ -376,11 +377,7 @@ class DesktopLyricService : Service() {
             },
         )
         iconButton(R.drawable.ic_lyric_close, (18 * density).toInt(), touchSize, "#FF8A93A3".toColorInt()).apply {
-            setOnClickListener {
-                // 关闭桌面歌词：同步设置开关并停止服务
-                MeloraSettings.updateShowDesktopLyrics(false)
-                stopSelf()
-            }
+            setOnClickListener { setEnabled(this@DesktopLyricService, requested = false) }
         }
         val unspecified = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
         panel.measure(unspecified, unspecified)
@@ -430,13 +427,10 @@ class DesktopLyricService : Service() {
 
     private fun observeVisualSettings() {
         scope.launch {
-            combine(MeloraSettings.showDesktopLyrics, MeloraSettings.lockLyrics,
-                MeloraSettings.singleLineLyric, MeloraSettings.lyricFontSize,
+            combine(MeloraSettings.lockLyrics, MeloraSettings.singleLineLyric, MeloraSettings.lyricFontSize,
                 MeloraSettings.lyricMaxLines, MeloraSettings.lyricAlpha, MeloraSettings.lyricHAlign,
                 MeloraSettings.lyricVAlign, MeloraSettings.lyricColorIndex, MeloraSettings.lyricBackground,
-                MeloraSettings.desktopLyricPosition) { Unit }.collect {
-                if (!MeloraSettings.showDesktopLyrics.value) stopSelf() else applyVisualSettings()
-            }
+                MeloraSettings.desktopLyricPosition) { Unit }.collect { applyVisualSettings() }
         }
     }
 
@@ -555,17 +549,24 @@ class DesktopLyricService : Service() {
     companion object {
         private const val NOTIFICATION_ID = 0x4C59
 
-        fun start(context: Context) {
-            if (!Settings.canDrawOverlays(context)) return
-            context.startForegroundService(Intent(context, DesktopLyricService::class.java))
+        internal fun setEnabled(context: Context, requested: Boolean = MeloraSettings.showDesktopLyrics.value): Boolean {
+            val enabled = reconcileDesktopLyricSetting(requested) { Settings.canDrawOverlays(context) }
+            val intent = Intent(context, DesktopLyricService::class.java)
+            if (enabled) context.startForegroundService(intent) else context.stopService(intent)
+            return enabled
         }
-
-        fun stop(context: Context) {
-            context.stopService(Intent(context, DesktopLyricService::class.java))
-        }
-
-
     }
+}
+
+internal inline fun reconcileDesktopLyricSetting(
+    requested: Boolean = MeloraSettings.showDesktopLyrics.value,
+    hasPermission: () -> Boolean,
+): Boolean {
+    val enabled = requested && hasPermission()
+    if (enabled != MeloraSettings.showDesktopLyrics.value) {
+        MeloraSettings.updateShowDesktopLyrics(enabled)
+    }
+    return enabled
 }
 
 internal fun desktopLyricMaxLines(singleLine: Boolean, configured: Float): Int =

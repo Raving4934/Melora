@@ -104,8 +104,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import android.provider.Settings as AndroidSettings
-import com.leyu.melora.playback.DesktopLyricService
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.UserLibrary
@@ -410,10 +408,8 @@ fun MeloraApp(modifier: Modifier = Modifier, initialTab: Int = 5) {
         }
     }
 
-    // 启动恢复与设置联动：自动续播 / 桌面歌词恢复
-    val settingsState = MeloraSettings
     androidx.compose.runtime.LaunchedEffect(Unit) {
-        if (settingsState.autoPlayOnStart.value) {
+        if (MeloraSettings.autoPlayOnStart.value) {
             // 等播放服务把上次队列恢复出来；确实没有可恢复内容才兜底播最近播放
             kotlinx.coroutines.withTimeoutOrNull(2_500) {
                 PlaybackController.state.first { it.ready }
@@ -422,9 +418,6 @@ fun MeloraApp(modifier: Modifier = Modifier, initialTab: Int = 5) {
             if (snapshot.current == null && snapshot.queue.isEmpty() && UserLibrary.recents.value.isNotEmpty()) {
                 PlaybackController.playQueue(context, UserLibrary.recents.value.toUiTracks(), 0)
             }
-        }
-        if (settingsState.showDesktopLyrics.value && AndroidSettings.canDrawOverlays(context)) {
-            DesktopLyricService.start(context)
         }
     }
 

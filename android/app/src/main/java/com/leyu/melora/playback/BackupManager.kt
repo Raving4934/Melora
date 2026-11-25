@@ -3,7 +3,6 @@ package com.leyu.melora.playback
 import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
-import android.provider.Settings as AndroidSettings
 import com.leyu.melora.playback.lx.LxScriptStore
 import com.leyu.melora.playback.sdk.LxScriptPool
 import com.leyu.melora.playback.sdk.SourceResolver
@@ -133,12 +132,7 @@ object BackupManager {
         PlaybackController.applyMusicPlayMode()
         AudioCacheStore.cancelPrefetch()
         AudioCacheStore.trimNow()
-        if (MeloraSettings.showDesktopLyrics.value && AndroidSettings.canDrawOverlays(context)) {
-            DesktopLyricService.start(context)
-        } else {
-            DesktopLyricService.stop(context)
-            if (!AndroidSettings.canDrawOverlays(context)) MeloraSettings.updateShowDesktopLyrics(false)
-        }
+        DesktopLyricService.setEnabled(context)
     }
 
     /** 任意SAF不保证rename原子性：先保留目标原文，写入/关闭失败回写；新建空文档失败则尽力删除。 */
