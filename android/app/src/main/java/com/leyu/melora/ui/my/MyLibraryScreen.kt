@@ -25,6 +25,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.offset
 import androidx.compose.material.icons.outlined.Delete
 import kotlin.math.roundToInt
@@ -2301,11 +2303,13 @@ internal fun PlaylistEditSheet(
             if (!isRename) {
                 Spacer(Modifier.height(14.dp))
                 val suggestions = listOf("我的私藏", "单曲循环", "夜晚微醺", "车载流行", "工作伴听", "宝藏旋律")
-                LazyRow(
+                @OptIn(ExperimentalLayoutApi::class)
+                FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    items(suggestions) { tag ->
+                    suggestions.forEach { tag ->
                         Surface(
                             onClick = {
                                 name.setTextAndPlaceCursorAtEnd(tag)

@@ -197,7 +197,7 @@ internal fun AudioInfoCard(
                 overflow = TextOverflow.Ellipsis,
                 fontSize = 12.sp,
                 color = FullPlayerTextMuted,
-                modifier = Modifier.padding(top = 4.dp),
+                modifier = Modifier.padding(top = 6.dp),
             )
         }
     }
@@ -469,7 +469,7 @@ internal fun FullPlayerSecondaryControls(
             Icon(
                 imageVector = AudioEffectsIcon,
                 contentDescription = if (effectActive) "音效已开启" else "音效设置",
-                tint = FullPlayerTextMuted,
+                tint = if (effectActive) FullPlayerTextPrimary else FullPlayerTextMuted,
                 modifier = Modifier.size(22.dp),
             )
         }

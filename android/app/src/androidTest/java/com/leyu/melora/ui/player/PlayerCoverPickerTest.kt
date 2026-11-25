@@ -5,8 +5,11 @@ import java.io.File
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.test.captureToImage
@@ -14,11 +17,14 @@ import androidx.compose.ui.test.captureToImage
 import com.leyu.melora.ui.awaitStable
 import com.leyu.melora.ui.boundsInSameFrame
 
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PixelMap
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
@@ -34,6 +40,8 @@ import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.swipeRight
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.leyu.melora.playback.PlayerCoverStyle
@@ -44,6 +52,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import kotlin.math.abs
 
 @RunWith(AndroidJUnit4::class)
 class PlayerCoverPickerTest {
@@ -221,6 +230,7 @@ class PlayerCoverPickerTest {
             }
         }
 
+        compose.awaitStable("player-cover-cards")
         val tokenCases = listOf(
             false to Color(0xFF3679D2),
             true to Color(0xFF3679D2),
@@ -344,6 +354,102 @@ class PlayerCoverPickerTest {
         verifyArtworkMorph(motionEnabled = false)
     }
 
+    @Test fun smallVinylTonearmStaysInsideTheCoverAtBothAnglesAndWhileFading() {
+        val visible = mutableStateOf(false)
+        val playing = mutableStateOf(false)
+        val alpha = mutableFloatStateOf(1f)
+        val density = Density(2f)
+        compose.setContent {
+            CompositionLocalProvider(LocalDensity provides density) {
+                val angle = rememberVinylTonearmAngle(playing.value, motionEnabled = false)
+                Box(
+                    Modifier.size(56.dp).background(Color(0xFF8A7972)).testTag("small-vinyl"),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    NowPlayingArtwork(null, "test-vinyl", PlayerCoverStyle.Vinyl, Modifier.size(46.dp),
+                        tonearmAngle = angle.takeIf { visible.value }, tonearmAlpha = { alpha.floatValue },
+                        frameCornerRadius = { 10.dp })
+                }
+            }
+        }
+        fun image() = compose.onNodeWithTag("small-vinyl").captureToImage().toPixelMap()
+        val bareDisc = image()
+        compose.runOnIdle { visible.value = true }
+        val parked = changedPixels(bareDisc, image())
+        compose.runOnIdle { alpha.floatValue = 0.6f }
+        val fadedParked = changedPixels(bareDisc, image(), threshold = 0.03f)
+
+        val inset = with(density) { 5.dp.roundToPx() }
+        val side = with(density) { 46.dp.roundToPx() }
+        fun inCover(point: IntOffset) = point.x in inset until inset + side && point.y in inset until inset + side
+        fun x(point: IntOffset) = (point.x + 0.5f - inset) / side
+        fun y(point: IntOffset) = (point.y + 0.5f - inset) / side
+        fun inParkedHead(point: IntOffset) =
+            x(point) in 0.95f..0.99f && y(point) in 0.21f..0.25f
+        assertTrue("the fixed pivot remains outside the disc during the cover morph", parked.any { point ->
+            x(point) in 0.78f..0.82f && y(point) in 0.048f..0.08f
+        })
+        assertTrue("parked needle shows outside the grooves", parked.any(::inParkedHead))
+        assertTrue("parked arm and shadow fit within the small cover", parked.all(::inCover))
+        assertTrue("fading preserves the arm silhouette", fadedParked.containsAll(parked))
+
+        compose.runOnIdle { playing.value = true; alpha.floatValue = 1f }
+        val lowered = changedPixels(bareDisc, image())
+        assertTrue("playing needle reaches the middle of the groove band", lowered.any { point ->
+            x(point) in 0.77f..0.81f && y(point) in 0.28f..0.32f
+        })
+        assertTrue("the parked end clears when playing", lowered.none(::inParkedHead))
+        assertTrue("lowered arm and shadow fit within the small cover", lowered.all(::inCover))
+    }
+
+    @Test fun vinylTonearmHandoffKeepsTheCurrentFrameWhenPlaybackChangesMidDrag() {
+        val playing = mutableStateOf(true)
+        val expanded = mutableStateOf(false)
+        compose.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(2f)) {
+                val angle = rememberVinylTonearmAngle(playing.value, motionEnabled = true)
+                Row {
+                    NowPlayingArtwork(null, "test-vinyl", PlayerCoverStyle.Vinyl,
+                        Modifier.size(88.dp).testTag("shared-vinyl"), tonearmAngle = angle)
+                    NowPlayingArtwork(null, "test-vinyl", PlayerCoverStyle.Vinyl,
+                        Modifier.size(88.dp).testTag("full-vinyl"), motionEnabled = expanded.value, tonearmAngle = angle)
+                }
+            }
+        }
+        fun image(tag: String) = compose.onNodeWithTag(tag).captureToImage().toPixelMap()
+        val lowered = image("shared-vinyl")
+        compose.mainClock.autoAdvance = false
+        try {
+            compose.runOnIdle { playing.value = false }
+            compose.mainClock.advanceTimeBy(176)
+            val midSwing = image("shared-vinyl")
+            assertTrue("the media pause starts the swing before handoff", changedPixels(lowered, midSwing).isNotEmpty())
+            assertTrue("both layers read the same in-flight frame even before expansion",
+                changedPixels(midSwing, image("full-vinyl")).isEmpty())
+
+            compose.runOnIdle { expanded.value = true }
+            compose.mainClock.advanceTimeByFrame()
+            assertTrue("expanding during the swing keeps the two layers in sync",
+                changedPixels(image("shared-vinyl"), image("full-vinyl")).isEmpty())
+
+            compose.mainClock.advanceTimeBy(600)
+            assertTrue("handoff takes place before the needle finishes parking",
+                changedPixels(midSwing, image("full-vinyl")).isNotEmpty())
+        } finally {
+            compose.mainClock.autoAdvance = true
+        }
+    }
+
+    private fun changedPixels(base: PixelMap, compared: PixelMap, threshold: Float = 0.08f): Set<IntOffset> =
+        buildSet {
+            for (y in 0 until base.height) for (x in 0 until base.width) {
+                val first = base[x, y]
+                val second = compared[x, y]
+                if (maxOf(abs(first.red - second.red), abs(first.green - second.green),
+                        abs(first.blue - second.blue)) >= threshold) add(IntOffset(x, y))
+            }
+        }
+
     private fun verifyArtworkMorph(motionEnabled: Boolean) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val file = File(context.cacheDir, "cover-morph-red.png")
@@ -397,10 +503,12 @@ class PlayerCoverPickerTest {
     private fun redSpan(): Float {
         val pixels = compose.onNodeWithTag("cover-morph").captureToImage().toPixelMap()
         val y = pixels.height / 2
-        return (0 until pixels.width).count { x ->
+        val red = (0 until pixels.width).filter { x ->
             val color = pixels[x, y]
             color.red > 0.9f && color.green < 0.1f && color.blue < 0.1f
-        }.toFloat() / pixels.width
+        }
+        // 中心轴盖遮住部分像素，尺寸应按纸标两端的间距测量。
+        return if (red.isEmpty()) 0f else (red.last() - red.first() + 1f) / pixels.width
     }
 
     private fun redCoverage(): Float {

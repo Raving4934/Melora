@@ -93,9 +93,7 @@ fun SearchScreen(
     var recommendPlaylists by remember(playlistRecommendKey) {
         mutableStateOf(OnlineCache.peek<List<OnlinePlaylist>>(playlistRecommendKey).orEmpty())
     }
-    var recommendPlaylistsLoading by remember(playlistRecommendKey) { mutableStateOf(recommendPlaylists.isEmpty()) }
     var recommendBooks by remember { mutableStateOf(OnlineCache.peek<List<OnlinePlaylist>>("searchRecommend.books").orEmpty()) }
-    var recommendBooksLoading by remember { mutableStateOf(recommendBooks.isEmpty()) }
     var hotPlaylists by remember(hotPlaylistKey) {
         mutableStateOf(OnlineCache.peek<List<OnlinePlaylist>>(hotPlaylistKey).orEmpty())
     }
@@ -185,10 +183,8 @@ fun SearchScreen(
         val ttl = 15 * 60 * 1000L
         OnlineCache.get<List<OnlinePlaylist>>(playlistRecommendKey, ttl)?.let {
             recommendPlaylists = it
-            recommendPlaylistsLoading = false
             return@LaunchedEffect
         }
-        recommendPlaylistsLoading = recommendPlaylists.isEmpty()
         runCatchingCancellable { Recommender.searchPlaylists(context, recommendationSources) }
             .onSuccess {
                 if (it.isNotEmpty()) {
@@ -196,7 +192,6 @@ fun SearchScreen(
                     OnlineCache.put(playlistRecommendKey, it)
                 }
             }
-        recommendPlaylistsLoading = false
     }
 
     // 听书分类猜你喜欢：最近收听专辑相似项，专区目录负责冷启动。
@@ -206,10 +201,8 @@ fun SearchScreen(
         val ttl = 15 * 60 * 1000L
         OnlineCache.get<List<OnlinePlaylist>>(key, ttl)?.let {
             recommendBooks = it
-            recommendBooksLoading = false
             return@LaunchedEffect
         }
-        recommendBooksLoading = recommendBooks.isEmpty()
         runCatchingCancellable { Recommender.searchAudiobooks() }
             .onSuccess {
                 if (it.isNotEmpty()) {
@@ -217,7 +210,6 @@ fun SearchScreen(
                     OnlineCache.put(key, it)
                 }
             }
-        recommendBooksLoading = false
     }
 
     // 歌单分类空闲态：拉平台真实热门歌单，替代"热词换标题"的伪热门
@@ -327,10 +319,7 @@ fun SearchScreen(
                             hotPlaylistsLoading = hotPlaylistsLoading,
                             recommendSongs = recommendSongs,
                             recommendLoading = recommendLoading,
-                            recommendPlaylists = recommendPlaylists,
-                            recommendPlaylistsLoading = recommendPlaylistsLoading,
-                            recommendBooks = recommendBooks,
-                            recommendBooksLoading = recommendBooksLoading,
+                            recommendedCollections = if (category == SearchCategory.Audiobook) recommendBooks else recommendPlaylists,
                             favoriteUids = favoriteUids,
                             onSubmit = { submit(it) },
                             onOpenPlaylist = { openedPlaylist = it },

@@ -347,11 +347,11 @@ internal fun DailyRecommendCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(84.dp)
+                    .height(104.dp)
                     .align(Alignment.BottomCenter)
                     .background(
                         Brush.verticalGradient(
-                            listOf(Color.Transparent, Color(0xDD111827)),
+                            listOf(Color.Transparent, Color(0x66111827), Color(0xE8111827)),
                         ),
                     ),
             )
@@ -466,11 +466,11 @@ internal fun GuessYouLikeCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(84.dp)
+                    .height(104.dp)
                     .align(Alignment.BottomCenter)
                     .background(
                         Brush.verticalGradient(
-                            listOf(Color.Transparent, Color(0xDD111827)),
+                            listOf(Color.Transparent, Color(0x66111827), Color(0xE8111827)),
                         ),
                     ),
             )

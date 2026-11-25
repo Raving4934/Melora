@@ -409,7 +409,7 @@ internal fun PlaylistImportSheet(
 @Composable
 internal fun PlaylistSheetHandle() {
     Box(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 14.dp), contentAlignment = Alignment.Center) {
-        Box(Modifier.size(32.dp, 4.dp).clip(RoundedCornerShape(2.dp)).background(MeloraAppearance.divider))
+        Box(Modifier.size(36.dp, 4.dp).clip(RoundedCornerShape(2.dp)).background(MeloraAppearance.textSub.copy(alpha = 0.25f)))
     }
 }
 

@@ -22,11 +22,11 @@ internal object AudioEffects {
             31f to 1.5f, 62f to 2f, 125f to 2.4f, 250f to 0.7f, 500f to -1.2f,
             1000f to -1f, 2000f to 0.5f, 4000f to 2.4f, 8000f to 3f, 16000f to 1f,
         )),
-        Preset("vocal", "清澈人声", "减轻低频遮蔽，突出演唱细节", listOf(
+        Preset("vocal", "清澈人声", "减轻低频遮蔽，突出人声细节", listOf(
             31f to -3.5f, 62f to -3f, 125f to -2.5f, 250f to -1f, 500f to 1f,
             1000f to 2.8f, 2000f to 3.8f, 4000f to 2.6f, 8000f to -0.8f, 16000f to -2f,
         )),
-        Preset("speech", "听书增强", "削减低频轰鸣，突出对白与咬字", listOf(
+        Preset("speech", "听书增强", "削减低频轰鸣，突出清晰对白", listOf(
             31f to -12f, 62f to -11f, 125f to -8f, 250f to -3f, 500f to 1f,
             1000f to 4.5f, 2000f to 3f, 4000f to -2.5f, 8000f to -8f, 16000f to -10f,
         )),
@@ -34,7 +34,7 @@ internal object AudioEffects {
             31f to 1f, 62f to 2f, 125f to 3.5f, 250f to 1f, 500f to 2.5f,
             1000f to 5.5f, 2000f to 1f, 4000f to 5f, 8000f to 1f, 16000f to -2f,
         )),
-        Preset("concert", "现场大厅", "保留清晰原声，加入大厅空间与尾音", listOf(
+        Preset("concert", "现场大厅", "保留清晰原声，增添大厅空间感", listOf(
             31f to -2f, 62f to -1.5f, 125f to -1f, 250f to -0.5f, 500f to 0f,
             1000f to 0.5f, 2000f to 0.5f, 4000f to 0f, 8000f to -0.5f, 16000f to -1.5f,
         ), concert = true),

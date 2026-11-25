@@ -2,8 +2,6 @@ package com.leyu.melora.ui.player
 
 import com.leyu.melora.ui.common.PageBackHandler as BackHandler
 import androidx.compose.animation.core.animate
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.rememberSplineBasedDecay
@@ -21,7 +19,6 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Pause
@@ -64,6 +61,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlaybackController
+import com.leyu.melora.playback.PlayerCoverStyle
 import com.leyu.melora.playback.PlayerUiState
 import com.leyu.melora.ui.common.LocalPageActive
 import com.leyu.melora.ui.theme.SystemBarsAppearance
@@ -107,10 +105,6 @@ internal fun ContinuousPlayerSheet(
     val density = LocalDensity.current
     val haptics = LocalHapticFeedback.current
     val playerMotionEnabled = rememberPlayerMotionEnabled(isVisible = true)
-    val artworkRoundness = animateFloatAsState(
-        if (nowPlayingArtworkShape(playerCoverStyle) == NowPlayingArtworkShape.Circle) 1f else 0f,
-        if (playerMotionEnabled) PlayerCoverMorphSpec else snap(), label = "sharedCoverRoundness",
-    )
     val playerLyric by PlaybackController.lyric.collectAsStateWithLifecycle()
     val lyricLines = playerLyricLines(track.uid, playerLyric)
     val lyricPosition = rememberLyricPosition(state, visible = lyricLines.isNotEmpty())
@@ -204,6 +198,11 @@ internal fun ContinuousPlayerSheet(
             }
         }
         val artworkAlpha = remember(morphing) { { if (morphing()) 0f else 1f } }
+        val tonearmAngle = rememberVinylTonearmAngle(
+            playing = state.playing,
+            motionEnabled = playerMotionEnabled && !collapsed && (pageShowsCover || immersive) &&
+                playerCoverStyle == PlayerCoverStyle.Vinyl,
+        )
 
         val nestedScroll = remember(sheetState, travel, velocityThreshold, decay, canCollapse, offset) {
             object : NestedScrollConnection {
@@ -371,6 +370,7 @@ internal fun ContinuousPlayerSheet(
                                 artworkAlpha = artworkAlpha,
                                 coverStyle = playerCoverStyle,
                                 artworkRotation = vinylRotation,
+                                tonearmAngle = tonearmAngle,
                                 onPageVisualChanged = { cover, light, blocksCollapse -> pageShowsCover = cover; pageIsLight = light; pageBlocksCollapse = blocksCollapse },
                                 onSeek = onSeek,
                                 onPrevious = onPrevious,
@@ -562,24 +562,26 @@ internal fun ContinuousPlayerSheet(
                     val mini = miniBounds
                     if (full != null && mini != null) {
                         val fullSide = with(density) { full.width.toDp() }
+                        val sharedBounds by remember(mini, full, swipeOffset, progress) {
+                            derivedStateOf { playerArtworkBounds(mini.translate(Offset(swipeOffset.floatValue, 0f)), full, progress()) }
+                        }
+                        fun scaleFor(rect: Rect) = (rect.width / full.width).coerceAtLeast(0.001f)
                         NowPlayingArtwork(
                             url = track.artwork,
                             seed = track.uid,
                             style = playerCoverStyle,
                             rotationDegrees = vinylRotation, motionEnabled = playerMotionEnabled,
+                            tonearmAngle = tonearmAngle,
+                            tonearmAlpha = progress,
+                            frameCornerRadius = { (10.dp + 8.dp * progress()) / scaleFor(sharedBounds) },
                             modifier = Modifier.size(fullSide).zIndex(2f).graphicsLayer {
-                                val p = progress()
-                                val rect = playerArtworkBounds(mini.translate(Offset(swipeOffset.floatValue, 0f)), full, p)
-                                val scale = (rect.width / full.width).coerceAtLeast(0.001f)
+                                val rect = sharedBounds
+                                val scale = scaleFor(rect)
                                 transformOrigin = TransformOrigin(0f, 0f)
                                 translationX = rect.left
                                 translationY = rect.top
                                 scaleX = scale
                                 scaleY = scale
-                                val rounded = (10.dp + 8.dp * p) / scale
-                                shape = RoundedCornerShape(rounded * (1f - artworkRoundness.value) +
-                                    (size.minDimension / (2f * this.density)).dp * artworkRoundness.value)
-                                clip = true
                                 alpha = if (morphing()) 1f else 0f
                             },
                             cornerRadius = 0,

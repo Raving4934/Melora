@@ -218,15 +218,16 @@ private const val IMMERSIVE_LYRICS_SPACING_MULTIPLIER = 0.44f
  * 统一歌词视口上下缓冲，主歌词页和沉浸页共用同一离屏 alpha mask。
  * 调用方只需把它放在视口尺寸 modifier 之后；不要再叠加另一层 DstIn mask。
  */
-internal fun Modifier.lyricViewportFade(): Modifier =
+internal fun Modifier.lyricViewportFade(edgeFraction: Float = 0.12f): Modifier =
     graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
         .drawWithContent {
             drawContent()
+            val fade = edgeFraction.coerceIn(0f, 0.45f)
             drawRect(
                 brush = Brush.verticalGradient(
                     0f to Color.Transparent,
-                    0.12f to Color.Black,
-                    0.88f to Color.Black,
+                    fade to Color.Black,
+                    (1f - fade) to Color.Black,
                     1f to Color.Transparent,
                 ),
                 blendMode = BlendMode.DstIn,

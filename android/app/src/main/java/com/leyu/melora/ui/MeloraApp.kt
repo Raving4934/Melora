@@ -485,7 +485,7 @@ fun MeloraApp(initialTab: Int = 5) {
                     top = if (isCompactLandscape) WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 8.dp else 36.dp,
                 )
                 .navigationBarsPadding()
-                .padding(bottom = MiniPlayerHeight + 16.dp),
+                .padding(bottom = MiniPlayerHeight + 24.dp),
             verticalArrangement = Arrangement.spacedBy(if (isCompactLandscape) 8.dp else 12.dp),
         ) {
             // Bento Card 1: 顶部项目品牌卡片

@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -136,22 +137,32 @@ internal fun SearchResultsContent(
                     val first = row.first()
                     "playlist:${first.source}:${first.id}"
                 }) { row ->
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        row.forEach { playlist ->
-                            if (category == SearchCategory.Audiobook) {
-                                OnlineAudiobookCard(playlist, { onOpenPlaylist(playlist) }, Modifier.weight(1f))
-                            } else {
-                                OnlinePlaylistCard(playlist, { onOpenPlaylist(playlist) }, Modifier.weight(1f))
-                            }
-                        }
-                        repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
-                    }
+                    SearchPlaylistRow(row, columns, category, onOpenPlaylist)
                 }
             }
             if (results.hasMore || loading || error != null) {
                 item("more") { LoadMoreFooter(loading, error != null, onLoadPage) }
             }
         }
+    }
+}
+
+@Composable
+internal fun SearchPlaylistRow(
+    playlists: List<OnlinePlaylist>,
+    columns: Int,
+    category: SearchCategory,
+    onOpenPlaylist: (OnlinePlaylist) -> Unit,
+) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        playlists.forEach { playlist ->
+            if (category == SearchCategory.Audiobook) {
+                OnlineAudiobookCard(playlist, { onOpenPlaylist(playlist) }, Modifier.weight(1f))
+            } else {
+                OnlinePlaylistCard(playlist, { onOpenPlaylist(playlist) }, Modifier.weight(1f))
+            }
+        }
+        repeat(columns - playlists.size) { Spacer(Modifier.weight(1f)) }
     }
 }
 
@@ -253,7 +264,7 @@ internal fun HotSearchRowItem(
             color = TextMain,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f, fill = false),
         )
         if (tag.isNotEmpty()) {
             // 正方形小徽标（固定 16×16，文字居中）
@@ -286,7 +297,9 @@ internal fun HotSearchRowItem(
     }
 }
 
-// 歌单分类猜你喜欢：长条横滑卡（封面 + 标题 + 作者/曲数/播放量）
+internal val PlaylistStripMinHeight = 74.dp
+
+// 热门歌单横滑卡
 @Composable
 internal fun PlaylistStripCard(
     playlist: OnlinePlaylist,
@@ -298,10 +311,14 @@ internal fun PlaylistStripCard(
         color = CardWhite,
         shadowElevation = 0.dp,
         border = MeloraAppearance.cardBorder,
-        modifier = Modifier.width(236.dp),
+        modifier = Modifier
+            .width(236.dp)
+            .heightIn(min = PlaylistStripMinHeight),
     ) {
         Row(
-            modifier = Modifier.padding(8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             SongArtwork(playlist.img, "${playlist.source}_${playlist.id}", Modifier.size(56.dp), cornerRadius = 12)
@@ -318,9 +335,9 @@ internal fun PlaylistStripCard(
                 )
                 Text(
                     text = listOfNotNull(
-                        playlist.author.takeIf { it.isNotBlank() },
                         playlist.total.takeIf { it > 0 }?.let { "$it 首" },
                         playlist.playCountLabel.takeIf { it.isNotBlank() },
+                        playlist.author.takeIf { it.isNotBlank() },
                     ).joinToString(" · ").ifBlank { "歌单" },
                     fontSize = 11.sp,
                     color = TextSub,

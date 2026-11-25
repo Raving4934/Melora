@@ -33,8 +33,12 @@ import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.isActive
+import kotlin.math.PI
+import kotlin.math.cos
 import kotlin.math.roundToInt
+import kotlin.math.sin
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.graphicsLayer
@@ -44,7 +48,10 @@ import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material3.Icon
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.leyu.melora.playback.PlayerCoverStyle
 import com.leyu.melora.ui.common.SongArtwork
@@ -52,31 +59,70 @@ import com.leyu.melora.ui.common.SongArtwork
 // 沟槽与环境反光固定，中心标签随唱片转动，避免整层亮斑像贴纸一样旋转。
 @Composable
 fun VinylDisc(modifier: Modifier = Modifier) {
-    Canvas(modifier.clip(CircleShape)) {
-        val radius = size.minDimension / 2f
-        if (radius <= 0f) return@Canvas
-        drawCircle(Brush.radialGradient(
-            0f to Color(0xFF191B20), 0.52f to Color(0xFF111216),
-            0.88f to Color(0xFF24262B), 1f to Color(0xFF101114),
-            center = center, radius = radius,
-        ), radius)
-        for (step in 27..47) {
+    Canvas(modifier) {
+        val outerRadius = size.minDimension / 2f
+        if (outerRadius <= 0f) return@Canvas
+        val discRadius = outerRadius * 0.96f
+        // 柔和环境投影，避免黑胶在浅色/深色背景上像平面贴纸
+        drawCircle(
+            Brush.radialGradient(
+                0.84f to Color.Black.copy(alpha = 0.34f),
+                0.95f to Color.Black.copy(alpha = 0.14f),
+                1f to Color.Transparent,
+                center = center,
+                radius = outerRadius,
+            ),
+            outerRadius,
+        )
+        // 黑胶本体
+        drawCircle(
+            Brush.radialGradient(
+                0f to Color(0xFF181A1F),
+                0.55f to Color(0xFF111216),
+                0.86f to Color(0xFF191B20),
+                0.97f to Color(0xFF0E0F13),
+                1f to Color(0xFF23252B),
+                center = center,
+                radius = discRadius,
+            ),
+            discRadius,
+        )
+        // 细密微沟槽：压低透明度并微调疏密，模拟真实音轨
+        for (step in 46..93) {
+            val alpha = when {
+                step % 7 == 0 -> 0.042f
+                step % 3 == 0 -> 0.028f
+                else -> 0.015f
+            }
             drawCircle(
-                Color.White.copy(alpha = if (step % 3 == 0) 0.09f else 0.045f),
-                radius * step / 50f,
-                style = Stroke(width = 0.6.dp.toPx()),
+                Color.White.copy(alpha = alpha),
+                discRadius * step / 100f,
+                style = Stroke(width = 0.45.dp.toPx()),
             )
         }
-        drawCircle(Brush.sweepGradient(
-            0f to Color.Transparent, 0.12f to Color.White.copy(alpha = 0.12f),
-            0.24f to Color.Transparent, 0.50f to Color.Transparent,
-            0.64f to Color.White.copy(alpha = 0.10f), 0.76f to Color.Transparent,
-            1f to Color.Transparent,
-        ), radius * 0.98f)
-        drawCircle(Color.White.copy(alpha = 0.10f), radius * 0.98f, style = Stroke(0.8.dp.toPx()))
-        drawCircle(Color(0xFF111216), radius * 0.52f)
-        drawCircle(Color(0xFF33363C), radius * 0.50f)
-        drawCircle(Color(0xFF0C0D10), radius * 0.04f)
+        // 只落在音轨环带上的柔和镜面反光（不盖住外缘与中心纸标）
+        val grooveMidRadius = discRadius * 0.695f
+        val grooveBandWidth = discRadius * 0.50f
+        drawCircle(
+            Brush.sweepGradient(
+                0f to Color.Transparent,
+                0.08f to Color.White.copy(alpha = 0.07f),
+                0.18f to Color.Transparent,
+                0.50f to Color.Transparent,
+                0.58f to Color.White.copy(alpha = 0.055f),
+                0.68f to Color.Transparent,
+                1f to Color.Transparent,
+            ),
+            grooveMidRadius,
+            style = Stroke(width = grooveBandWidth),
+        )
+        // 外圈微弱高光描边
+        drawCircle(Color.White.copy(alpha = 0.12f), discRadius * 0.992f, style = Stroke(0.7.dp.toPx()))
+        // 中心纸标卡口与内凹阴影（匹配 42% 中心封面比例）
+        drawCircle(Color(0xFF0A0B0E), discRadius * 0.445f)
+        drawCircle(Color.White.copy(alpha = 0.09f), discRadius * 0.432f, style = Stroke(0.8.dp.toPx()))
+        drawCircle(Color(0xFF26282E), discRadius * 0.422f)
+        drawCircle(Color(0xFF0C0D10), discRadius * 0.036f)
     }
 }
 
@@ -103,6 +149,20 @@ internal fun rememberVinylRotation(playing: Boolean, style: PlayerCoverStyle): (
                 }
             }
         }
+    }
+    return remember(angle) { { angle.value } }
+}
+
+private val VinylTonearmSwingSpec = tween<Float>(520, easing = FastOutSlowInEasing)
+
+/** 封面交接时两层从同一角度绘制。收起或关闭动画后直接同步停靠位置。 */
+@Composable
+internal fun rememberVinylTonearmAngle(playing: Boolean, motionEnabled: Boolean): () -> Float {
+    val target = if (playing) 4f else -45f
+    val angle = remember { Animatable(target) }
+    LaunchedEffect(target, motionEnabled) {
+        if (angle.value == target) return@LaunchedEffect
+        if (motionEnabled) angle.animateTo(target, VinylTonearmSwingSpec) else angle.snapTo(target)
     }
     return remember(angle) { { angle.value } }
 }
@@ -208,6 +268,9 @@ internal fun NowPlayingArtwork(
     smoothChanges: Boolean = false,
     rotationDegrees: () -> Float = { 0f },
     motionEnabled: Boolean = true,
+    tonearmAngle: (() -> Float)? = null,
+    tonearmAlpha: () -> Float = { 1f },
+    frameCornerRadius: (() -> Dp)? = null,
 ) {
     val roundness = animateFloatAsState(
         if (nowPlayingArtworkShape(style) == NowPlayingArtworkShape.Circle) 1f else 0f,
@@ -223,9 +286,15 @@ internal fun NowPlayingArtwork(
         if (style == PlayerCoverStyle.Vinyl || vinyl.value > 0f) {
             VinylDisc(Modifier.fillMaxSize().graphicsLayer { alpha = vinyl.value })
         }
+        // 共享封面的外轮廓裁切只包住图片，独立的唱臂仍可画在盘缘外。
+        val frameClip = if (frameCornerRadius == null) Modifier else Modifier.graphicsLayer {
+            shape = RoundedCornerShape(frameCornerRadius() * (1f - roundness.value) +
+                (size.minDimension / (2f * density)).dp * roundness.value)
+            clip = true
+        }
         // 同一张已加载图片只改变裁切和变换，不把整张专辑替换成另一棵黑胶图片树。
-        val artworkModifier = Modifier.fillMaxSize().graphicsLayer {
-            val scale = 1f - vinyl.value * 0.5f
+        val artworkModifier = Modifier.fillMaxSize().then(frameClip).graphicsLayer {
+            val scale = 1f - vinyl.value * 0.595f
             scaleX = scale; scaleY = scale
             rotationZ = rotationDegrees() + rotationAlignment.value
             shape = RoundedCornerShape((cornerRadius * (1f - roundness.value) +
@@ -242,12 +311,53 @@ internal fun NowPlayingArtwork(
         if (style == PlayerCoverStyle.Vinyl || vinyl.value > 0f) {
             Canvas(Modifier.fillMaxSize().graphicsLayer { alpha = vinyl.value }) {
                 val radius = size.minDimension / 2f
-                drawCircle(Color.Black.copy(alpha = 0.35f), radius * 0.052f)
-                drawCircle(Color(0xFF111216), radius * 0.035f)
-                drawCircle(Color.White.copy(alpha = 0.28f), radius * 0.035f, style = Stroke(0.6.dp.toPx()))
+                drawCircle(Color.Black.copy(alpha = 0.42f), radius * 0.052f)
+                drawCircle(Color(0xFFD6D8DD).copy(alpha = 0.82f), radius * 0.036f, style = Stroke(1.1.dp.toPx()))
+                drawCircle(Color(0xFF121317), radius * 0.031f)
+            }
+            if (tonearmAngle != null) {
+                Canvas(Modifier.fillMaxSize().graphicsLayer { alpha = vinyl.value * tonearmAlpha() }) {
+                    drawVinylTonearm(tonearmAngle())
+                }
             }
         }
     }
+}
+
+private fun DrawScope.drawVinylTonearm(angle: Float) {
+    val side = size.minDimension
+    if (side <= 0f) return
+
+    // 盘片、臂杆、描边与阴影均按同一边长缩放。停靠针尖越过唱片边缘，整条摆动仍留在封面范围内。
+    val pivot = center + Offset(0.30f, -0.436f) * side
+    val armRadians = angle * PI / 180.0
+    val sine = sin(armRadians).toFloat()
+    val cosine = cos(armRadians).toFloat()
+    fun point(x: Float, y: Float) = pivot + Offset(x * cosine - y * sine, x * sine + y * cosine) * side
+
+    val elbow = point(0.02f, 0.176f)
+    val tip = point(0.006f, 0.235f)
+    val shadowOffset = Offset(0.003f, 0.009f) * side
+    val shadow = Color.Black.copy(alpha = 0.22f)
+    drawLine(shadow, pivot + shadowOffset, elbow + shadowOffset, 0.013f * side, StrokeCap.Round)
+    drawLine(shadow, elbow + shadowOffset, tip + shadowOffset, 0.017f * side, StrokeCap.Round)
+    drawLine(Color(0xFFE2E4E9), pivot, elbow, 0.0105f * side, StrokeCap.Round)
+    drawLine(Color(0xFF9EA4AE), pivot, elbow, 0.004f * side, StrokeCap.Round)
+    drawLine(Color(0xFF2B2E35), elbow, tip, 0.020f * side, StrokeCap.Round)
+    drawLine(
+        color = Color(0xFFD5D8DF),
+        start = (elbow + tip) / 2f,
+        end = tip,
+        strokeWidth = 0.006f * side,
+        cap = StrokeCap.Round,
+    )
+
+    // 固定轴座
+    val baseRadius = side * 0.044f
+    drawCircle(Color.Black.copy(alpha = 0.24f), baseRadius * 1.12f, center = pivot)
+    drawCircle(Color(0xFFD8DBE2), baseRadius, center = pivot)
+    drawCircle(Color(0xFF2A2D34), baseRadius * 0.62f, center = pivot)
+    drawCircle(Color(0xFFAEB4BE), baseRadius * 0.24f, center = pivot)
 }
 
 /** 新图完全不透明之前都保留实心底图，避免Crossfade两层同时半透明而透出彩色背景。 */

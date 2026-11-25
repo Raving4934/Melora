@@ -315,7 +315,7 @@ internal fun BookChapterPicker(
     }
 
     MeloraBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = MeloraAppearance.card) {
-        BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+        BoxWithConstraints(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 16.dp)) {
             val density = LocalDensity.current
             val textMeasurer = rememberTextMeasurer()
             val itemSpacing = 8.dp

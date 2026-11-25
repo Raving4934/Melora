@@ -10,9 +10,11 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -25,6 +27,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Whatshot
@@ -33,8 +36,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -48,11 +49,9 @@ import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.ui.common.BrandBlue
 import com.leyu.melora.ui.common.CardWhite
 import com.leyu.melora.ui.common.DividerSoft
-import com.leyu.melora.ui.common.OnlineAudiobookCard
 import com.leyu.melora.ui.common.OnlineSongRow
 import com.leyu.melora.ui.common.ShimmerBox
 import com.leyu.melora.ui.common.SkeletonCrossfade
-import com.leyu.melora.ui.common.SkeletonGrid
 import com.leyu.melora.ui.common.SkeletonSongList
 import com.leyu.melora.ui.common.TextMain
 import com.leyu.melora.ui.common.TextMuted
@@ -75,10 +74,7 @@ internal fun SearchIdleContent(
     hotPlaylistsLoading: Boolean,
     recommendSongs: List<OnlineSong>,
     recommendLoading: Boolean,
-    recommendPlaylists: List<OnlinePlaylist>,
-    recommendPlaylistsLoading: Boolean,
-    recommendBooks: List<OnlinePlaylist>,
-    recommendBooksLoading: Boolean,
+    recommendedCollections: List<OnlinePlaylist>,
     favoriteUids: Set<String>,
     onSubmit: (String) -> Unit,
     onOpenPlaylist: (OnlinePlaylist) -> Unit,
@@ -136,9 +132,8 @@ internal fun SearchIdleContent(
                             Surface(
                                 onClick = { onSubmit(tag) },
                                 shape = RoundedCornerShape(14.dp),
-                                color = CardWhite,
+                                color = MeloraAppearance.softFill,
                                 shadowElevation = 0.dp,
-                                border = MeloraAppearance.chipBorder,
                             ) {
                                 Text(
                                     text = tag,
@@ -260,6 +255,7 @@ internal fun SearchIdleContent(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .height(IntrinsicSize.Min)
                                     .padding(vertical = 8.dp),
                             ) {
                             Column(modifier = Modifier.weight(1f)) {
@@ -272,6 +268,13 @@ internal fun SearchIdleContent(
                                     )
                                 }
                             }
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .padding(vertical = 8.dp)
+                                    .width(0.6.dp)
+                                    .background(DividerSoft),
+                            )
                             Column(modifier = Modifier.weight(1f)) {
                                 hotWords.drop(3).take(3).forEachIndexed { index, word ->
                                     HotSearchRowItem(
@@ -290,18 +293,12 @@ internal fun SearchIdleContent(
             }
         }
 
-        // 猜你喜欢：歌曲分类推歌、歌单分类推长条歌单、听书分类推有声专辑
+        // 网格推荐位于列表末尾，等有缓存或真实结果后追加，避免空卡行先撑高滚动范围。
         when (category) {
             SearchCategory.Song -> if (recommendSongs.isNotEmpty() || recommendLoading) {
                 item {
                     Column {
-                        Text(
-                            text = "猜你喜欢",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = TextMain,
-                            modifier = Modifier.padding(bottom = 8.dp),
-                        )
+                        GuessYouLikeHeader(trailing = if (recommendSongs.isNotEmpty()) "${recommendSongs.size} 首" else null)
 
                         Surface(
                             shape = RoundedCornerShape(20.dp),
@@ -341,72 +338,15 @@ internal fun SearchIdleContent(
                 }
             }
 
-            SearchCategory.Playlist -> if (recommendPlaylists.isNotEmpty() || recommendPlaylistsLoading) {
+            SearchCategory.Playlist, SearchCategory.Audiobook -> if (recommendedCollections.isNotEmpty()) {
                 item {
                     Column {
-                        Text(
-                            text = "猜你喜欢",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = TextMain,
-                            modifier = Modifier.padding(bottom = 8.dp),
-                        )
-                        SkeletonCrossfade(
-                            visible = recommendPlaylists.isEmpty() && recommendPlaylistsLoading,
-                            skeleton = { PlaylistStripSkeletonRow() },
-                        ) {
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                items(recommendPlaylists, key = { "${it.source}_${it.id}" }) { playlist ->
-                                    PlaylistStripCard(
-                                        playlist = playlist,
-                                        onClick = { onOpenPlaylist(playlist) },
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            SearchCategory.Audiobook -> if (recommendBooks.isNotEmpty() || recommendBooksLoading) {
-                item {
-                    Column {
-                        Text(
-                            text = "猜你喜欢",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = TextMain,
-                            modifier = Modifier.padding(bottom = 8.dp),
-                        )
-                        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                        GuessYouLikeHeader(trailing = if (category == SearchCategory.Playlist) "${recommendedCollections.size} 个" else null)
+                        BoxWithConstraints(Modifier.fillMaxWidth()) {
                             val columns = responsiveGridColumns(maxWidth, horizontalSpacing = 10.dp)
-                            SkeletonCrossfade(
-                                visible = recommendBooks.isEmpty() && recommendBooksLoading,
-                                skeleton = {
-                                    SkeletonGrid(
-                                        columns = columns,
-                                        cards = columns * 2,
-                                        spacing = 10.dp,
-                                        modifier = Modifier.fillMaxWidth(),
-                                    )
-                                },
-                            ) {
-                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    recommendBooks.chunked(columns).forEach { rowItems ->
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                        ) {
-                                            rowItems.forEach { book ->
-                                                OnlineAudiobookCard(
-                                                    playlist = book,
-                                                    onClick = { onOpenPlaylist(book) },
-                                                    modifier = Modifier.weight(1f),
-                                                )
-                                            }
-                                            repeat(columns - rowItems.size) { Spacer(Modifier.weight(1f)) }
-                                        }
-                                    }
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                recommendedCollections.chunked(columns).forEach { row ->
+                                    SearchPlaylistRow(row, columns, category, onOpenPlaylist)
                                 }
                             }
                         }
@@ -418,13 +358,48 @@ internal fun SearchIdleContent(
 }
 
 @Composable
+private fun GuessYouLikeHeader(trailing: String? = null) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Outlined.AutoAwesome,
+                contentDescription = null,
+                tint = BrandBlue,
+                modifier = Modifier.size(15.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = "猜你喜欢",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = TextMain,
+            )
+        }
+        if (!trailing.isNullOrBlank()) {
+            Text(
+                text = trailing,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                color = TextMuted,
+            )
+        }
+    }
+}
+
+@Composable
 private fun PlaylistStripSkeletonRow() {
     LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         items(6) {
             ShimmerBox(
                 modifier = Modifier
                     .width(236.dp)
-                    .height(72.dp),
+                    .height(PlaylistStripMinHeight),
                 cornerRadius = 16.dp,
             )
         }

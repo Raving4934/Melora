@@ -595,7 +595,7 @@ fun SongMoreSheet(
                     modifier = Modifier
                         .size(width = 36.dp, height = 4.dp)
                         .clip(RoundedCornerShape(2.dp))
-                        .background(MeloraAppearance.divider),
+                        .background(MeloraAppearance.textSub.copy(alpha = 0.25f)),
                 )
             }
         },
@@ -683,6 +683,7 @@ fun SongMoreSheet(
                         tint = if (isFavorite) AccentRed else BrandBlue,
                         label = if (isFavorite) "取消收藏" else "收藏到我的列表",
                         subtitle = if (isFavorite) "从「我的列表」收藏夹中移除" else "保存到「我的列表」收藏夹",
+                        showArrow = false,
                     ) {
                         closeSheet {
                             UserLibrary.toggleFavorite(song)
@@ -694,6 +695,7 @@ fun SongMoreSheet(
                         tint = Color(0xFF0284C7),
                         label = "下一首播放",
                         subtitle = "加入当前播放队列的下一顺位",
+                        showArrow = false,
                     ) {
                         closeSheet {
                             PlaybackController.addToQueueNext(context, UiTrack.fromOnline(song))
@@ -728,6 +730,7 @@ fun SongMoreSheet(
                         tint = Color(0xFF1E88E5),
                         label = if (isBook) "下载本集" else if (matchedLocal != null) "下载更高音质" else "下载音频",
                         subtitle = if (isBook) null else if (matchedLocal != null) "先检查音质提升，无更优版本不新增记录" else "按下载设置保存",
+                        showArrow = false,
                     ) {
                         val needsStorage = Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
                             ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
@@ -778,6 +781,7 @@ internal fun SheetAction(
     label: String,
     subtitle: String? = null,
     iconBg: Color? = null,
+    showArrow: Boolean = true,
     onClick: () -> Unit,
 ) {
     val effectiveBg = iconBg ?: if (tint == AccentRed) Color(0xFFFFECEF) else tint.copy(alpha = 0.10f)
@@ -824,12 +828,14 @@ internal fun SheetAction(
                     )
                 }
             }
-            Icon(
-                Icons.AutoMirrored.Outlined.KeyboardArrowRight,
-                contentDescription = null,
-                tint = TextSub.copy(alpha = 0.40f),
-                modifier = Modifier.size(18.dp),
-            )
+            if (showArrow) {
+                Icon(
+                    Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = TextSub.copy(alpha = 0.40f),
+                    modifier = Modifier.size(18.dp),
+                )
+            }
         }
     }
 }
@@ -901,7 +907,7 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
                     modifier = Modifier
                         .size(width = 36.dp, height = 4.dp)
                         .clip(RoundedCornerShape(2.dp))
-                        .background(MeloraAppearance.divider),
+                        .background(MeloraAppearance.textSub.copy(alpha = 0.25f)),
                 )
             }
         },

@@ -969,16 +969,16 @@ private fun GenreBoardCard(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .fillMaxWidth()
-                    .padding(start = 8.dp, end = 34.dp, bottom = 8.dp),
+                    .padding(start = 8.dp, end = 36.dp, bottom = 8.dp),
             ) {
                 Text(
                     text = board.name,
-                    fontSize = 12.sp,
+                    fontSize = 11.5.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                    lineHeight = 15.sp,
+                    lineHeight = 14.sp,
                 )
             }
         }

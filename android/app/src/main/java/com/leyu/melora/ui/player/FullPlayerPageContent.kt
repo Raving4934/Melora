@@ -247,6 +247,7 @@ internal fun FullPlayerPageContent(
     artworkRotation: () -> Float,
     onPageVisualChanged: (showsCover: Boolean, isLight: Boolean, blocksCollapse: Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    tonearmAngle: (() -> Float)? = null,
     isVisible: Boolean = true,
     isCollapsed: Boolean = false,
     onCollapse: () -> Unit = {},
@@ -443,6 +444,7 @@ internal fun FullPlayerPageContent(
                 largePortrait = !twoPanes && maxWidth >= 600.dp,
                 miniLyricsEnabled = miniLyricsEnabled, coverStyle = coverStyle,
                 artworkAlpha = artworkAlpha, artworkRotation = artworkRotation,
+                tonearmAngle = tonearmAngle,
                 onArtworkPositioned = onArtworkPositioned, position = lyricPosition, frame = lyricFrame,
                 motionEnabled = motionEnabled,
                 onNavigateToLyrics = { scope.launch { coverPagerState.animateScrollToPage(pages.indexOf(2), animationSpec = PlayerPageSnapSpec) } },
@@ -1399,6 +1401,7 @@ private fun PlayerCoverPage(
     coverStyle: PlayerCoverStyle,
     artworkAlpha: () -> Float,
     artworkRotation: () -> Float,
+    tonearmAngle: (() -> Float)?,
     onArtworkPositioned: (LayoutCoordinates) -> Unit,
     position: androidx.compose.runtime.State<Long>,
     motionEnabled: Boolean,
@@ -1473,6 +1476,7 @@ private fun PlayerCoverPage(
                             ),
                         cornerRadius = 18, retryOnError = retryArtwork, smoothChanges = true,
                         rotationDegrees = artworkRotation, motionEnabled = motionEnabled,
+                        tonearmAngle = tonearmAngle,
                     )
                     ImmersiveCoverProgress(position, state.durationMs, immersion, roundness = roundness,
                         modifier = Modifier.matchParentSize())
@@ -1502,7 +1506,13 @@ private fun PlayerCoverPage(
                     frameState = frame, motionEnabled = motionEnabled, centered = (centered && (!phoneLandscape || immersive)) || largePortrait,
                     modifier = Modifier.width(lyricWidth)
                         .height(lyricHeight).testTag("player-mini-lyrics")
-                        .then(if (immersive || roomyLyrics) Modifier.lyricViewportFade() else Modifier)
+                        .then(
+                            when {
+                                immersive || roomyLyrics -> Modifier.lyricViewportFade()
+                                !compact -> Modifier.lyricViewportFade(0.14f)
+                                else -> Modifier
+                            },
+                        )
                         .graphicsLayer { alpha = if (miniLyricsEnabled) 1f else immersion.value },
                     onLineClick = { onNavigateToLyrics() },
                 )
@@ -1732,7 +1742,7 @@ private fun TimerSettingsBottomSheet(
                     modifier = Modifier
                         .size(width = 36.dp, height = 4.dp)
                         .clip(RoundedCornerShape(2.dp))
-                        .background(MeloraAppearance.divider),
+                        .background(MeloraAppearance.textSub.copy(alpha = 0.25f)),
                 )
             }
         },
@@ -1825,7 +1835,7 @@ private fun TimerSettingsBottomSheet(
                                         fontSize = 12.sp,
                                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                         color = if (isSelected) MeloraAppearance.textMain else MeloraAppearance.textSub,
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
                                     )
                                 }
                             }
@@ -1917,7 +1927,7 @@ private fun TimerSettingsBottomSheet(
                     Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                         Text("播完当前歌曲后再停止", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MeloraAppearance.textMain)
                         Spacer(Modifier.height(2.dp))
-                        Text("倒计时结束后，等待正在播放的音频播放结束再暂停", fontSize = 12.sp, color = MeloraAppearance.textSub)
+                        Text("倒计时结束后，等当前歌曲播完再暂停", fontSize = 12.sp, color = MeloraAppearance.textSub)
                     }
                     Switch(
                         checked = extendToFinishTrack,
@@ -1975,7 +1985,7 @@ private fun AudioEffectsBottomSheet(
                     modifier = Modifier
                         .size(width = 36.dp, height = 4.dp)
                         .clip(RoundedCornerShape(2.dp))
-                        .background(MeloraAppearance.divider),
+                        .background(MeloraAppearance.textSub.copy(alpha = 0.25f)),
                 )
             }
         },
@@ -2017,7 +2027,7 @@ private fun AudioEffectsBottomSheet(
                         )
                     }
                 }
-                AudioVisualizerBars(active = playerState.playing && effectState.active)
+                AudioVisualizerBars(active = playerState.playing && effectState.active, enabled = effectState.active)
             }
 
             Text(
@@ -2034,7 +2044,7 @@ private fun AudioEffectsBottomSheet(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
+                    .padding(horizontal = 20.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 AudioEffects.effectPresets.chunked(2).forEach { rowItems ->
@@ -2134,7 +2144,7 @@ private fun AudioEffectsBottomSheet(
 }
 
 @Composable
-private fun AudioVisualizerBars(active: Boolean) {
+private fun AudioVisualizerBars(active: Boolean, enabled: Boolean = true) {
     val transition = rememberInfiniteTransition(label = "audio-visualizer")
     val animatedHeights = List(6) { index ->
         transition.animateFloat(
@@ -2164,7 +2174,7 @@ private fun AudioVisualizerBars(active: Boolean) {
                     .width(4.dp)
                     .height((if (active) height.value else 6f + (index % 3) * 2f).dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(MeloraAppearance.brand),
+                    .background(if (enabled) MeloraAppearance.brand else MeloraAppearance.textSub.copy(alpha = 0.30f)),
             )
         }
     }
