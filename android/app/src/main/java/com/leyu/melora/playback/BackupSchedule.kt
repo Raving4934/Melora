@@ -127,10 +127,11 @@ internal object BackupSchedule {
             }
             val run = pending ?: if (due.isEmpty()) null else prepare(context, prefs, due)
             if (run != null) {
-                // 新的手动备份也满足该目的地的周期，旧快照的重试只补齐其它目的地。
-                val remaining = pendingBackupTargets(run.scopes.keys, due.keys) {
-                    prefs.getString("done.${it.name}", null) == run.id.uuid.toString()
-                }
+                // 复用本次快照，独立核对每个当前到期的目的地。手动备份也满足该目的地周期。
+                val remaining = due.filterNot { (target, scope) ->
+                    prefs.lastSuccessScope(target) == scope &&
+                        prefs.getString("done.${target.name}", null) == run.id.uuid.toString()
+                }.keys
                 if (remaining.isNotEmpty()) {
                     val text = attempt {
                         snapshotFile(context).inputStream().use { it.readBackupText() }.also(::parseBackupDocument)
@@ -139,7 +140,7 @@ internal object BackupSchedule {
                         throw it
                     }
                     val outcomes = writeDestinations(context, remaining, settings, remote, BackupSnapshot(run.id, text)) { target ->
-                        prefs.recordSuccess(target, run.scopes.getValue(target), run.id)
+                        prefs.recordSuccess(target, scopes.getValue(target), run.id)
                     }
                     publishResult(prefs, outcomes.joinToString(" · ") { it.message })
                     if (outcomes.any { it.failed }) return@locked true
@@ -272,7 +273,9 @@ internal object BackupSchedule {
     }
 
     private fun SharedPreferences.delayFor(target: BackupDestination, scope: String, now: Long): Long =
-        if (getString("scope.${target.name}", null) != scope) 0L else backupDelay(getLong("success.${target.name}", 0L), now)
+        if (lastSuccessScope(target) != scope) 0L else backupDelay(getLong("success.${target.name}", 0L), now)
+
+    private fun SharedPreferences.lastSuccessScope(target: BackupDestination) = getString("scope.${target.name}", null)
 
     private fun SharedPreferences.recordSuccess(target: BackupDestination, scope: String, id: BackupFileId) = save {
         putString("done.${target.name}", id.uuid.toString())
@@ -288,12 +291,6 @@ private fun BackupDestination.includes(target: BackupDestination) = if (target =
 
 internal fun backupDelay(lastCompleted: Long, now: Long): Long =
     if (lastCompleted <= 0L || lastCompleted > now) 0L else (DAY_MS - (now - lastCompleted)).coerceAtLeast(0L)
-
-internal fun pendingBackupTargets(
-    targets: Set<BackupDestination>,
-    due: Set<BackupDestination>,
-    alreadyWritten: (BackupDestination) -> Boolean,
-): List<BackupDestination> = targets.filter { it in due && !alreadyWritten(it) }
 
 private inline fun <T> attempt(action: () -> T): Result<T> = try {
     Result.success(action())

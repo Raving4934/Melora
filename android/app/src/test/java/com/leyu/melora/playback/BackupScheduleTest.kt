@@ -16,15 +16,6 @@ class BackupScheduleTest {
     }
 
     @Test
-    fun partialBackupDoesNotRepeatCompletedOrSupersededDestination() {
-        val selected = setOf(BackupDestination.LOCAL, BackupDestination.NETWORK)
-        assertEquals(listOf(BackupDestination.NETWORK), pendingBackupTargets(selected, selected) { it == BackupDestination.LOCAL })
-        val stillDue = setOf(BackupDestination.NETWORK)
-        assertEquals(listOf(BackupDestination.NETWORK), pendingBackupTargets(selected, stillDue) { false })
-        assertEquals(emptyList<BackupDestination>(), pendingBackupTargets(selected, stillDue) { it == BackupDestination.NETWORK })
-    }
-
-    @Test
     fun localPruningRecognizesOnlyManagedNames() {
         val id = BackupFileId(1_000L, "deadbeef", UUID.randomUUID())
         assertEquals(id, BackupFileId.parseLocalName(id.localName))
