@@ -50,9 +50,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leyu.melora.playback.BackupDestination
+import com.leyu.melora.playback.BackupFileId
 import com.leyu.melora.playback.BackupOrigin
 import com.leyu.melora.playback.WebDavBackup
-import com.leyu.melora.playback.WebDavBackupEntry
 import com.leyu.melora.playback.WebDavConfig
 import com.leyu.melora.ui.common.MeloraBottomSheet
 import com.leyu.melora.ui.common.rememberMeloraBottomSheetState
@@ -68,22 +68,22 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
-internal class NetworkBackupListing(val config: WebDavConfig, val entries: List<WebDavBackupEntry>) {
-    var selected: WebDavBackupEntry? = null
+internal class NetworkBackupListing(val config: WebDavConfig, val entries: List<BackupFileId>) {
+    var selected: BackupFileId? = null
     private val origins = mutableStateMapOf<String, BackupOrigin?>()
     private val readSlots = Semaphore(3)
 
-    fun deviceLabel(entry: WebDavBackupEntry): String =
-        origins[entry.name]?.let { "${it.model} · 乐屿 v${it.appVersion}" } ?: "设备 ${entry.device}"
+    fun deviceLabel(entry: BackupFileId): String =
+        origins[entry.networkName]?.let { "${it.model} · 乐屿 v${it.appVersion}" } ?: "设备 ${entry.device}"
 
-    suspend fun loadOrigin(entry: WebDavBackupEntry) = readSlots.withPermit {
-        if (entry.name !in origins) {
-            origins[entry.name] = runCatchingCancellable { WebDavBackup.readOrigin(config, entry) }.getOrNull()
+    suspend fun loadOrigin(entry: BackupFileId) = readSlots.withPermit {
+        if (entry.networkName !in origins) {
+            origins[entry.networkName] = runCatchingCancellable { WebDavBackup.readOrigin(config, entry) }.getOrNull()
         }
     }
 }
 
-internal fun WebDavBackupEntry.timestamp() =
+internal fun BackupFileId.timestamp() =
     DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM).format(Date(createdAt))
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -270,13 +270,13 @@ private fun DestinationOptions(
 private fun NetworkBackupOptions(
     listing: NetworkBackupListing,
     canChoose: Boolean,
-    onSelect: (WebDavBackupEntry) -> Unit,
+    onSelect: (BackupFileId) -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
         contentPadding = PaddingValues(horizontal = 2.dp),
     ) {
-        items(listing.entries, key = { it.name }) { entry ->
+        items(listing.entries, key = BackupFileId::networkName) { entry ->
             LaunchedEffect(listing, entry) { listing.loadOrigin(entry) }
             Column(
                 Modifier.fillMaxWidth().clickable(enabled = canChoose) { onSelect(entry) }.heightIn(min = 48.dp)

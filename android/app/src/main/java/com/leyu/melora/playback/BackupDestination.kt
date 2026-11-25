@@ -2,6 +2,7 @@ package com.leyu.melora.playback
 
 import android.net.Uri
 import java.util.UUID
+import okio.ByteString.Companion.encodeUtf8
 
 internal enum class BackupDestination(val local: Boolean, val network: Boolean) {
     OFF(false, false),
@@ -22,10 +23,14 @@ internal data class BackupFileId(val createdAt: Long, val device: String, val uu
     val localName get() = "melora-local-backup-$createdAt-$device-$uuid.json"
 
     companion object {
-        private val localNamePattern = Regex("melora-local-backup-(\\d{1,19})-([0-9a-f]{8})-([0-9a-f-]{36})\\.json")
+        private val namePattern = Regex("(\\d{1,19})-([0-9a-f]{8})-([0-9a-f-]{36})\\.json")
 
-        fun parseLocalName(name: String): BackupFileId? {
-            val match = localNamePattern.matchEntire(name) ?: return null
+        fun parseLocalName(name: String) = parse(name, "melora-local-backup-")
+        fun parseNetworkName(name: String) = parse(name, "melora-backup-")
+
+        private fun parse(name: String, prefix: String): BackupFileId? {
+            if (!name.startsWith(prefix)) return null
+            val match = namePattern.matchEntire(name.removePrefix(prefix)) ?: return null
             val createdAt = match.groupValues[1].toLongOrNull() ?: return null
             val rawId = match.groupValues[3]
             val id = runCatching { UUID.fromString(rawId) }.getOrNull()?.takeIf { it.toString() == rawId } ?: return null
@@ -34,4 +39,6 @@ internal data class BackupFileId(val createdAt: Long, val device: String, val uu
     }
 }
 
-internal class BackupSnapshot(val id: BackupFileId, val text: String)
+internal class BackupSnapshot(val id: BackupFileId, val text: String) {
+    val bytes by lazy { text.encodeUtf8() }
+}

@@ -4,8 +4,9 @@ import com.leyu.melora.playback.lx.backupScriptId
 import com.leyu.melora.playback.lx.LxSourceUrlPolicy
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
-import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
+import okio.Buffer
+import okio.ByteString
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -24,19 +25,22 @@ internal data class BackupScript(
 internal data class ParsedBackup(val settings: JSONObject?, val library: String?, val scripts: List<BackupScript>?)
 
 /** 不信任provider报告的长度：实际读取计数有上限，取消检查覆盖每个块。 */
-internal fun InputStream.readBackupText(limit: Int = MAX_BACKUP_BYTES, checkCancelled: () -> Unit = {}): String {
-    val output = ByteArrayOutputStream(minOf(limit, 64 * 1024))
+internal fun InputStream.readBackupBytes(limit: Int = MAX_BACKUP_BYTES, checkCancelled: () -> Unit = {}): ByteString {
+    val output = Buffer()
     val buffer = ByteArray(16 * 1024)
     while (true) {
         checkCancelled()
-        val count = read(buffer, 0, minOf(buffer.size, limit - output.size() + 1))
-        if (count < 0) break
-        require(count <= limit - output.size()) { "备份超过大小限制（${limit / 1024 / 1024} MiB）" }
+        val remaining = (limit - output.size).toInt()
+        val count = read(buffer, 0, minOf(buffer.size, remaining + 1))
+        if (count < 0) return output.readByteString()
+        require(count <= remaining) { "备份超过大小限制（${limit / 1024 / 1024} MiB）" }
         output.write(buffer, 0, count)
     }
-    return Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
-        .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(output.toByteArray())).toString()
 }
+
+internal fun InputStream.readBackupText(limit: Int = MAX_BACKUP_BYTES, checkCancelled: () -> Unit = {}): String =
+    Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT)
+        .decode(readBackupBytes(limit, checkCancelled).asByteBuffer()).toString()
 
 internal fun backupObject(text: String): JSONObject {
     require(text.length <= MAX_BACKUP_BYTES && text.toByteArray(Charsets.UTF_8).size <= MAX_BACKUP_BYTES) { "备份超过16 MiB限制" }

@@ -180,7 +180,7 @@ class WebDavClientTest {
                 assertEquals(setOf("手机收藏", "平板收藏"), trackIds(library.getJSONArray("favorites")))
             }
             assertTrue(client.listNames().count { it.startsWith("melora-records-v2-") } >= 3)
-            assertEquals(backup.id.networkName, WebDavBackup.list(dav.config).single().name)
+            assertEquals(backup.id, WebDavBackup.list(dav.config).single())
             assertEquals(backup.text, client.read(backup.id.networkName, 128))
         }
     }
@@ -205,6 +205,23 @@ class WebDavClientTest {
     }
 
     @Test
+    fun truncatedBackupCannotReportSuccessAndCanRetryItsOwnBytePrefix() = runBlocking {
+        DavFixture(chunkedReads = true).use { dav ->
+            val id = BackupFileId(1680049900000, "0123abcd", UUID.randomUUID())
+            val backup = BackupSnapshot(id, """{"version":1,"settings":{"theme":"中文"}}""")
+            // 截断落在首个汉字内部，读回不能先做 UTF-8 解码。
+            dav.truncateNextPutAt = backup.text.indexOf('中') + 1
+            val failure = runCatching { WebDavBackup.upload(dav.config, backup) }.exceptionOrNull()
+            assertTrue(failure?.message.orEmpty().contains("校验"))
+
+            WebDavBackup.upload(dav.config, backup)
+            WebDavBackup.upload(dav.config, backup)
+            assertEquals(2, dav.methods.count { it == "PUT" })
+            assertEquals(backup.text, WebDavClient(dav.config).read(id.networkName, 128))
+        }
+    }
+
+    @Test
     fun backupListUsesSameOriginChildrenAndRecognizedNamesOnly() = runBlocking {
         DavFixture().use { dav ->
             val client = WebDavClient(dav.config)
@@ -221,7 +238,7 @@ class WebDavClientTest {
                 davResource("/dav/Melora/$unrelated", collection = true) +
                 davResource("/dav/Melora/$unrelated", status = 404)
             val entries = WebDavBackup.list(dav.config)
-            assertEquals(listOf(latest, first), entries.map { it.name })
+            assertEquals(listOf(latest, first), entries.map(BackupFileId::networkName))
             assertEquals(listOf("bcde1234", "0123abcd"), entries.map { it.device })
         }
     }
@@ -318,11 +335,12 @@ class WebDavClientTest {
         private val deleteStatus: Int? = null,
         private val hideProbeFiles: Boolean = false,
     ) : AutoCloseable {
-        private val files = mutableMapOf<String, String>()
+        private val files = mutableMapOf<String, ByteArray>()
         private var folderExists = false
         val methods = CopyOnWriteArrayList<String>()
         @Volatile var additionalResponses = ""
         @Volatile var dropResponseAfterNextPut = false
+        @Volatile var truncateNextPutAt: Int? = null
         private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
             createContext("/") { exchange -> exchange.use(::respond) }
             start()
@@ -367,7 +385,7 @@ class WebDavClientTest {
                     val file = files[name]
                     if (file == null) exchange.reply(404) else {
                         etag?.let { exchange.responseHeaders.add("ETag", it) }
-                        exchange.reply(200, file, chunkedReads)
+                        exchange.replyBytes(200, file, chunkedReads)
                     }
                 }
                 "PUT" -> {
@@ -378,8 +396,9 @@ class WebDavClientTest {
                         !folderExists -> exchange.reply(409)
                         ifNoneMatch != null || ifMatch != null -> exchange.reply(400)
                         else -> {
-                            val text = exchange.requestBody.bufferedReader(Charsets.UTF_8).readText()
-                            files[name] = text
+                            val bytes = exchange.requestBody.readBytes()
+                            files[name] = truncateNextPutAt?.let { bytes.copyOf(it) } ?: bytes
+                            truncateNextPutAt = null
                             if (dropResponseAfterNextPut) {
                                 dropResponseAfterNextPut = false
                                 return
@@ -397,8 +416,10 @@ class WebDavClientTest {
     }
 }
 
-private fun HttpExchange.reply(code: Int, text: String? = null, chunked: Boolean = false) {
-    val bytes = text?.toByteArray(Charsets.UTF_8)
+private fun HttpExchange.reply(code: Int, text: String? = null, chunked: Boolean = false) =
+    replyBytes(code, text?.toByteArray(Charsets.UTF_8), chunked)
+
+private fun HttpExchange.replyBytes(code: Int, bytes: ByteArray?, chunked: Boolean) {
     sendResponseHeaders(code, if (chunked) 0L else bytes?.size?.toLong() ?: -1L)
     if (bytes != null) responseBody.use { it.write(bytes) }
 }

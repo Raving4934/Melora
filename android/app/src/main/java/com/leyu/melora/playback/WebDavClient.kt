@@ -19,6 +19,8 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import okio.ByteString
+import okio.ByteString.Companion.encodeUtf8
 import org.w3c.dom.Element
 import org.xml.sax.InputSource
 import org.xml.sax.SAXException
@@ -69,14 +71,17 @@ internal class WebDavClient(config: WebDavConfig) : RecordFiles {
 
     suspend fun read(name: String, maxBytes: Int): String? {
         require(maxBytes in 1..MAX_BACKUP_BYTES)
-        return request("GET", fileUrl(name)).execute { response ->
+        return getFile(name) { it.readText(maxBytes) }
+    }
+
+    private suspend fun <T> getFile(name: String, read: (Response) -> T): T? =
+        request("GET", fileUrl(name)).execute { response ->
             when (response.code) {
                 404 -> null
-                200 -> response.readText(maxBytes)
+                200 -> read(response)
                 else -> response.fail()
             }
         }
-    }
 
     suspend fun readPrefix(name: String, maxBytes: Int): String? {
         require(maxBytes in 1..MAX_BACKUP_BYTES)
@@ -92,9 +97,19 @@ internal class WebDavClient(config: WebDavConfig) : RecordFiles {
     }
 
     /** 文件名由调用方分配。重试应核对已有内容并使用相同的文件名。 */
-    override suspend fun writeFile(name: String, text: String) {
-        require(text.length <= MAX_BACKUP_BYTES) { "WebDAV 文件超过大小限制" }
-        val bytes = text.toByteArray(Charsets.UTF_8)
+    override suspend fun writeFile(name: String, text: String) = putFile(name, text.encodeUtf8())
+
+    suspend fun saveBackup(name: String, bytes: ByteString) {
+        // 残缺文件可能在 UTF-8 字符中间截断，续写前核对原始字节。
+        suspend fun stored() = getFile(name) { response -> response.body.byteStream().use { it.readBackupBytes() } }
+        val existing = stored()
+        if (existing == bytes) return
+        check(existing == null || bytes.startsWith(existing)) { "网络同名备份已存在" }
+        putFile(name, bytes)
+        check(stored() == bytes) { "网络备份读回校验失败" }
+    }
+
+    private suspend fun putFile(name: String, bytes: ByteString) {
         require(bytes.size <= MAX_BACKUP_BYTES) { "WebDAV 文件超过大小限制" }
         request("PUT", fileUrl(name), bytes.toRequestBody(jsonType)).execute { response ->
             if (response.code != 200 && response.code != 201 && response.code != 204) response.fail()
@@ -139,14 +154,13 @@ internal class WebDavClient(config: WebDavConfig) : RecordFiles {
         val request = build()
         return try {
             httpClient.newCall(request).readResponse(read)
-        } catch (error: WebDavException) {
-            throw error
-        } catch (error: SSLException) {
-            throw webDavTlsError(error)
-        } catch (_: SocketTimeoutException) {
-            throw WebDavException("WebDAV ${request.method} 请求超时，请检查网络和服务器地址")
-        } catch (_: IOException) {
-            throw WebDavException("WebDAV ${request.method} 请求中断，请检查网络和服务器地址")
+        } catch (error: IOException) {
+            throw when (error) {
+                is WebDavException -> error
+                is SSLException -> webDavTlsError(error)
+                is SocketTimeoutException -> WebDavException("WebDAV ${request.method} 请求超时，请检查网络和服务器地址")
+                else -> WebDavException("WebDAV ${request.method} 请求中断，请检查网络和服务器地址")
+            }
         }
     }
 

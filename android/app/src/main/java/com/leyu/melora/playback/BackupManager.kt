@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import okio.ByteString.Companion.encodeUtf8
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -150,15 +151,7 @@ object BackupManager {
             } ?: error("无法读取备份目标以保护原文件，请新建备份文档")
             checkCancelled()
             try {
-                context.contentResolver.openOutputStream(uri, "wt")?.bufferedWriter(Charsets.UTF_8)?.use { output ->
-                    var offset = 0
-                    while (offset < text.length) {
-                        checkCancelled()
-                        val count = minOf(16 * 1024, text.length - offset)
-                        output.write(text, offset, count)
-                        offset += count
-                    }
-                } ?: error("无法写入备份文件")
+                context.contentResolver.writeVerifiedBackup(uri, text.encodeUtf8(), checkCancelled)
                 checkCancelled()
             } catch (failure: Throwable) {
                 try {

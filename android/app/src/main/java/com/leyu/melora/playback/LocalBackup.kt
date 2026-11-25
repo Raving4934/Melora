@@ -8,6 +8,7 @@ import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import okio.ByteString
 
 internal object LocalBackup {
     private const val GRANT_FLAGS = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
@@ -41,25 +42,18 @@ internal object LocalBackup {
         val root = directory(resolver, tree)
         val previous = managedDocuments(resolver, tree, snapshot.id.device)
         val existing = previous.firstOrNull { it.first == snapshot.id }?.second
-        val saved = if (existing != null) {
-            val original = resolver.openInputStream(existing)?.use { it.readBackupText { job.ensureActive() } }
+        val prior = existing?.let {
+            resolver.openInputStream(it)?.use { input -> input.readBackupBytes { job.ensureActive() } }
                 ?: error("无法核对之前写入的备份")
-            // 相同 ID 的写入可能已完成但回调丢失。残缺文件由同一备份任务续写。
-            if (original != snapshot.text) {
-                require(runCatching { parseBackupDocument(original) }.isFailure) { "同名备份已存在" }
-                writeAndVerify(resolver, existing, snapshot.text) { job.ensureActive() }
-            }
-            existing
-        } else {
-            val created = DocumentsContract.createDocument(resolver, root, "application/json", snapshot.id.localName)
-                ?: error("无法在所选目录创建备份文件")
-            try {
-                writeAndVerify(resolver, created, snapshot.text) { job.ensureActive() }
-            } catch (failure: Exception) {
-                runCatching { DocumentsContract.deleteDocument(resolver, created) }
-                throw failure
-            }
-            created
+        }
+        check(prior == null || snapshot.bytes.startsWith(prior)) { "同名备份已存在" }
+        val saved = existing ?: DocumentsContract.createDocument(resolver, root, "application/json", snapshot.id.localName)
+            ?: error("无法在所选目录创建备份文件")
+        try {
+            if (prior != snapshot.bytes) resolver.writeVerifiedBackup(saved, snapshot.bytes) { job.ensureActive() }
+        } catch (failure: Exception) {
+            if (existing == null) runCatching { DocumentsContract.deleteDocument(resolver, saved) }
+            throw failure
         }
         job.ensureActive()
         val old = if (keepLatest) previous.filter { (_, uri) -> uri != saved } else emptyList()
@@ -96,14 +90,14 @@ internal object LocalBackup {
         } ?: error("无法读取所选备份目录")
     }
 
-    private fun writeAndVerify(resolver: ContentResolver, uri: Uri, text: String, checkCancelled: () -> Unit) {
-        resolver.openOutputStream(uri, "wt")?.bufferedWriter(Charsets.UTF_8)?.use { writer ->
-            for (offset in text.indices step 16_384) {
-                checkCancelled()
-                writer.write(text, offset, minOf(16_384, text.length - offset))
-            }
-        } ?: error("无法写入本地备份")
-        val readBack = resolver.openInputStream(uri)?.use { it.readBackupText(checkCancelled = checkCancelled) }
-        check(readBack == text) { "本地备份读回校验失败" }
-    }
+}
+
+internal fun ContentResolver.writeVerifiedBackup(uri: Uri, bytes: ByteString, checkCancelled: () -> Unit) {
+    openOutputStream(uri, "wt")?.use { output ->
+        for (offset in 0 until bytes.size step 16_384) {
+            checkCancelled()
+            bytes.substring(offset, minOf(bytes.size, offset + 16_384)).write(output)
+        }
+    } ?: error("无法写入本地备份")
+    check(openInputStream(uri)?.use { it.readBackupBytes(checkCancelled = checkCancelled) } == bytes) { "本地备份读回校验失败" }
 }

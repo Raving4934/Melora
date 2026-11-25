@@ -6,11 +6,8 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
-internal data class WebDavBackupEntry(val name: String, val createdAt: Long, val device: String)
-
 internal object WebDavBackup {
     private const val PROBE_LIMIT = 1024
-    private val backupName = Regex("melora-backup-([0-9]{1,19})-([0-9a-f]{8})-[0-9a-f-]{36}\\.json")
 
     /** 返回清理提示。写入、回读或列举失败会抛出对应的错误。 */
     suspend fun test(config: WebDavConfig): String? {
@@ -43,38 +40,25 @@ internal object WebDavBackup {
         return cleanupWarning
     }
 
-    suspend fun list(config: WebDavConfig): List<WebDavBackupEntry> = try {
-        WebDavClient(config).listNames().mapNotNull(::parseEntry).sortedByDescending(WebDavBackupEntry::createdAt)
+    suspend fun list(config: WebDavConfig): List<BackupFileId> = try {
+        WebDavClient(config).listNames().mapNotNull(BackupFileId::parseNetworkName).sortedByDescending(BackupFileId::createdAt)
     } catch (error: WebDavException) {
         if (error.status != 404) throw error
         emptyList()
     }
 
-    suspend fun readOrigin(config: WebDavConfig, entry: WebDavBackupEntry): BackupOrigin? {
-        require(parseEntry(entry.name) == entry) { "WebDAV 备份文件名称无效" }
-        return WebDavClient(config).readPrefix(entry.name, 4096)?.let(::readBackupOrigin)
+    suspend fun readOrigin(config: WebDavConfig, entry: BackupFileId): BackupOrigin? =
+        WebDavClient(config).readPrefix(entry.networkName, 4096)?.let(::readBackupOrigin)
+
+    suspend fun upload(config: WebDavConfig, snapshot: BackupSnapshot) = WebDavClient(config).run {
+        ensureFolder()
+        saveBackup(snapshot.id.networkName, snapshot.bytes)
     }
 
-    suspend fun upload(config: WebDavConfig, snapshot: BackupSnapshot) {
-        val client = WebDavClient(config)
-        val name = snapshot.id.networkName
-        client.ensureFolder()
-        // 文件名包含备份 UUID。写入响应丢失后按相同 ID 重试，保护已有内容。
-        val existing = client.read(name, MAX_BACKUP_BYTES)
-        if (existing == null) client.writeFile(name, snapshot.text)
-        else check(existing == snapshot.text) { "网络同名备份已存在" }
-    }
-
-    suspend fun restore(context: Context, config: WebDavConfig, entry: WebDavBackupEntry): String {
-        require(parseEntry(entry.name) == entry) { "WebDAV 备份文件名称无效" }
-        val backup = WebDavClient(config).read(entry.name, MAX_BACKUP_BYTES)
+    suspend fun restore(context: Context, config: WebDavConfig, entry: BackupFileId): String {
+        val backup = WebDavClient(config).read(entry.networkName, MAX_BACKUP_BYTES)
             ?: throw WebDavException("WebDAV 备份文件已不存在")
         return BackupManager.restoreText(context, backup)
     }
 
-    private fun parseEntry(name: String): WebDavBackupEntry? {
-        val match = backupName.matchEntire(name) ?: return null
-        val time = match.groupValues[1].toLongOrNull() ?: return null
-        return WebDavBackupEntry(name, time, match.groupValues[2])
-    }
 }
