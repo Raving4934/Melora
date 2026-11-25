@@ -9419,6 +9419,7 @@ ${lrcs}`;
           total: 1e3,
           page,
           limit: 1e3,
+          hasMore: false,
           source: "kw"
         };
       });
@@ -15210,6 +15211,7 @@ ${result.lyric}`;
           total: 99999,
           page,
           limit: this.limit_list,
+          hasMore: list.length >= this.limit_list,
           source: "mg"
         };
       });
@@ -15889,6 +15891,8 @@ ${result.lyric}`;
           source,
           list: normalizePlaylists(result.list, source),
           total: result.total ?? 0,
+          limit: result.limit ?? 0,
+          hasMore: result.hasMore,
           page: params.page || 1
         };
       }

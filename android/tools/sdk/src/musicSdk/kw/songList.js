@@ -111,6 +111,7 @@ export default {
         total: 1000,
         page,
         limit: 1000,
+        hasMore: false,
         source: 'kw',
       }
     })

@@ -1,5 +1,6 @@
 package com.leyu.melora.playback.sdk
 
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -113,6 +114,55 @@ class OnlineContentBoundaryTest {
         val duplicate = merged.append(nextPage, requestedPage = 3)
         assertFalse(duplicate.hasMore())
     }
+
+    @Test fun repeatedPlaylistCatalogPageKeepsExistingCardsAndStopsLoadingMore() {
+        val cards = List(30) { playlist(it) }
+        val firstPage = PlaylistPage(cards, total = 0, page = 1).toCatalogSnapshot(1, previous = null)
+        assertTrue(firstPage.hasMore)
+
+        val repeated = PlaylistPage(cards, total = 0, page = 1).toCatalogSnapshot(2, previous = firstPage)
+        assertEquals(cards, repeated.list)
+        assertEquals(2, repeated.page)
+        assertFalse(repeated.hasMore)
+    }
+
+    @Test fun catalogUsesProviderPageBoundariesAndTheRawItemCount() {
+        val cards = List(12) { playlist(it) }
+        val first = PlaylistPage(cards, total = 45, page = 1, pageSize = 36, rawCount = 36)
+        assertTrue(first.toCatalogSnapshot(1, previous = null).hasMore)
+        assertTrue(first.copy(total = 0).toCatalogSnapshot(1, previous = null).hasMore)
+        assertFalse(first.copy(hasMore = false).toCatalogSnapshot(1, previous = null).hasMore)
+        val next = first.copy(list = List(9) { playlist(36 + it) }, page = 2, rawCount = 9)
+        assertFalse(next.toCatalogSnapshot(2, previous = first.toCatalogSnapshot(1, previous = null)).hasMore)
+    }
+
+    @Test fun catalogWireFieldsReachTheRepositoryAndPagingDecision() {
+        val parse = OnlineRepository::class.java.getDeclaredMethod("playlistPage", JSONObject::class.java)
+            .apply { isAccessible = true }
+        val returnedCards = JSONArray().put(playlist(1).raw.put("source", "mg")).put(JSONObject())
+        val response = JSONObject()
+            .put("kind", "playlists")
+            .put("source", "mg")
+            .put("list", returnedCards)
+            .put("page", 2)
+            .put("total", 99_999)
+            .put("limit", 30)
+        for (hasMore in listOf(true, false)) {
+            response.put("hasMore", hasMore)
+            val result = parse.invoke(OnlineRepository, response) as PlaylistPage
+
+            assertEquals(2, result.page)
+            assertEquals(99_999, result.total)
+            assertEquals(30, result.pageSize)
+            assertEquals(2, result.rawCount)
+            assertEquals("mg", result.list.single().source)
+            assertEquals(hasMore, result.hasMore)
+            assertEquals(hasMore, result.toCatalogSnapshot(result.page, previous = null).hasMore)
+        }
+    }
+
+    private fun playlist(id: Int) =
+        OnlinePlaylist(JSONObject().put("source", "kw").put("id", "list-$id").put("name", "歌单 $id"))
 
     private fun song(id: String, isBookChapter: Boolean = false): OnlineSong = OnlineSong(
         JSONObject()

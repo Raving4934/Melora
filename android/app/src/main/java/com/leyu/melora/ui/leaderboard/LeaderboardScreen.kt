@@ -266,12 +266,8 @@ fun LeaderboardScreen(
             ensureActive()
             if (request !== current) return@LaunchedEffect
             result.onSuccess { items ->
-                val writtenAtMs = if (items.isNotEmpty()) {
-                    OnlineCache.putPageIfCurrent(requestToken, boardsKey, items)
-                } else {
-                    if (OnlineCache.isPageSnapshotCurrent(requestToken, boardsKey)) 0L else null
-                }
-                if (writtenAtMs == null) return@onSuccess
+                val writtenAtMs = OnlineCache.putPageIfCurrent(requestToken, boardsKey, items.takeIf { it.isNotEmpty() })
+                    ?: return@onSuccess
                 boards = items
                 loading = false
                 error = null

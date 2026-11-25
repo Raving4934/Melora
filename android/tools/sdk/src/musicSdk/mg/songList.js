@@ -251,6 +251,7 @@ export default {
         total: 99999,
         page,
         limit: this.limit_list,
+        hasMore: list.length >= this.limit_list,
         source: 'mg',
       }
     })

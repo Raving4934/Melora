@@ -190,9 +190,11 @@ object OnlineRepository {
     }
 
     private fun playlistPage(data: JSONObject): PlaylistPage {
-        val list = data.optJSONArray("list")?.let { array ->
+        val raw = data.optJSONArray("list")
+        val list = raw?.let { array ->
             (0 until array.length()).mapNotNull { index -> OnlinePlaylist.from(array.optJSONObject(index)) }
         }.orEmpty()
-        return PlaylistPage(list, data.optInt("total"), data.optInt("page", 1))
+        return PlaylistPage(list, data.optInt("total"), data.optInt("page", 1),
+            pageSize = data.optInt("limit"), rawCount = raw?.length() ?: 0, hasMore = data.opt("hasMore") as? Boolean)
     }
 }

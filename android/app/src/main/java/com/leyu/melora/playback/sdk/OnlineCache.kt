@@ -85,14 +85,11 @@ object OnlineCache {
     internal fun isPageSnapshotCurrent(token: PageSnapshotToken, key: String): Boolean =
         synchronized(lock) { isPageSnapshotCurrentLocked(token, key) }
 
-    /** 代次检查与内存写入在同一临界区，避免 clear 与旧网络回包交错回填。 */
-    internal fun putPageIfCurrent(token: PageSnapshotToken, key: String, value: Any): Long? =
+    /** 同锁检查代次。空快照不参与缓存，返回 0 表示页面仍可接收当前结果。 */
+    internal fun putPageIfCurrent(token: PageSnapshotToken, key: String, value: Any?): Long? =
         synchronized(lock) {
             if (!isPageSnapshotCurrentLocked(token, key)) return@synchronized null
-            val writtenAtMs = System.currentTimeMillis()
-            store[key] = Entry(value, writtenAtMs)
-            trimMemoryLocked()
-            writtenAtMs
+            if (value == null) 0L else put(key, value)
         }
 
     /** 仅从磁盘恢复榜单目录；按 key 懒读，不扫描整个快照目录。 */

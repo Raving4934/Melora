@@ -274,6 +274,9 @@ data class PlaylistPage(
     val list: List<OnlinePlaylist>,
     val total: Int,
     val page: Int,
+    val pageSize: Int = 0,
+    val rawCount: Int = list.size,
+    val hasMore: Boolean? = null,
 )
 
 data class BoardItem(

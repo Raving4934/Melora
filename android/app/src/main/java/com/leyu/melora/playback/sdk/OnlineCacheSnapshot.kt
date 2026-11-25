@@ -19,6 +19,17 @@ data class CachedPlaylistPage(
     val total: Int = 0,
 )
 
+internal fun PlaylistPage.toCatalogSnapshot(requestedPage: Int, previous: CachedPlaylistPage?): CachedPlaylistPage {
+    val old = previous?.list.orEmpty()
+    val merged = (old + list).distinctBy { it.source to it.id }
+    val more = hasMore ?: when {
+        pageSize <= 0 -> rawCount > 0
+        total > 0 -> requestedPage.toLong() * pageSize < total
+        else -> rawCount >= pageSize
+    }
+    return CachedPlaylistPage(merged, requestedPage, more && merged.size > old.size, total)
+}
+
 internal data class OnlineCacheSnapshotMetadata(
     val key: String,
     val kind: String,

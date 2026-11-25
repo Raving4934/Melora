@@ -197,6 +197,8 @@ async function dispatch(action, source, params = {}) {
         source,
         list: normalizePlaylists(result.list, source),
         total: result.total ?? 0,
+        limit: result.limit ?? 0,
+        hasMore: result.hasMore,
         page: params.page || 1,
       }
     }

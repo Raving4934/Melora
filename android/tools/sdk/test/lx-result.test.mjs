@@ -102,3 +102,69 @@ test('retired SDK promises cannot overwrite the next invocation, including inval
     }
   }
 })
+
+const sdkBundle = await readFile(new URL('../../../app/src/main/assets/sdk/music-sdk.js', import.meta.url), 'utf8')
+
+function catalogFixture(respond) {
+  const context = vm.createContext({
+    __lxNative: {
+      http(payload) {
+        const request = JSON.parse(payload)
+        const body = respond(new URL(request.url))
+        return JSON.stringify({ statusCode: 200, raw: Buffer.from(JSON.stringify(body)).toString('base64') })
+      },
+    },
+  })
+  vm.runInContext(sdkBundle, context, { filename: 'music-sdk.js' })
+  return async (source, params) => {
+    context.__meloraInvoke(JSON.stringify({ action: 'playlists', source, params }))
+    await tick()
+    const response = JSON.parse(context.__meloraTake())
+    assert.equal(response.ok, true, response.error)
+    return response.data
+  }
+}
+
+test('shipped SDK reports Kuwo digest-43 categories as a fixed catalog even with a full grid', async () => {
+  const list = Array.from({ length: 36 }, (_, index) => ({
+    type: 'songlist', digest: 8, id: index + 1, name: `歌单 ${index + 1}`,
+  }))
+  const catalog = catalogFixture(url => {
+    assert.equal(url.hostname, 'mobileinterfaces.kuwo.cn')
+    assert.equal(url.searchParams.get('id'), '140')
+    assert.equal(url.searchParams.has('pn'), false)
+    return [{ list }]
+  })
+  const { list: cards, ...page } = await catalog('kw', { tagId: '140-43', page: 1 })
+
+  assert.deepEqual(page, {
+    kind: 'playlists', source: 'kw', total: 1000, page: 1, limit: 1000, hasMore: false,
+  })
+  assert.equal(cards.length, 36)
+  assert.deepEqual(cards.map(card => [card.source, card.id]), list.map(card => ['kw', `digest-8__${card.id}`]))
+})
+
+test('shipped SDK reports Migu full and short catalogs with the same limit and actual requested page', async () => {
+  const requests = []
+  const catalog = catalogFixture(url => {
+    assert.equal(url.hostname, 'app.c.nf.migu.cn')
+    const page = Number(url.searchParams.get('pageNo'))
+    requests.push(page)
+    const count = page === 1 ? 30 : 29
+    const items = Array.from({ length: count }, (_, index) => ({
+      resType: '2021', resId: (page - 1) * 30 + index + 1, txt: `歌单 ${index + 1}`,
+    }))
+    return {
+      code: '000000',
+      // 额外条目不属于歌单，即使原始响应看似满页，过滤后的短页仍是末页。
+      data: { contents: [{ contents: [...items, { resType: '9999', resId: 'other' }] }] },
+    }
+  })
+  for (const [page, count, hasMore] of [[1, 30, true], [2, 29, false]]) {
+    const { list: cards, ...result } = await catalog('mg', { page })
+    assert.deepEqual(result, { kind: 'playlists', source: 'mg', total: 99999, page, limit: 30, hasMore })
+    assert.equal(cards.length, count)
+    assert.equal(cards[0].id, String((page - 1) * 30 + 1))
+  }
+  assert.deepEqual(requests, [1, 2])
+})

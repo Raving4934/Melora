@@ -52,6 +52,19 @@ class OnlineCacheTest {
         assertEquals(mapOf(3 to chapters), OnlineCache.cachedBookChapterPages(book))
     }
 
+    @Test fun emptyCatalogResponseKeepsThePreviousCacheAndObservesItsGeneration() {
+        val key = "playlists.kw.hot."
+        val previous = CachedPlaylistPage(listOf(playlist("1")), page = 1, hasMore = false)
+        OnlineCache.put(key, previous)
+        val token = snapshotToken(key)
+
+        assertEquals(0L, OnlineCache.putPageIfCurrent(token, key, null))
+        assertEquals(previous, OnlineCache.peek<CachedPlaylistPage>(key))
+        OnlineCache.clear(key)
+        assertNull(OnlineCache.putPageIfCurrent(token, key, null))
+        assertNull(OnlineCache.peek<CachedPlaylistPage>(key))
+    }
+
     @Test fun leastRecentlyUsedEntryEvictedAndReplacementDoesNotGrowCache() {
         repeat(OnlineCache.MAX_ENTRIES) { OnlineCache.put("$it", it) }
         assertEquals(0, OnlineCache.peek<Int>("0"))
