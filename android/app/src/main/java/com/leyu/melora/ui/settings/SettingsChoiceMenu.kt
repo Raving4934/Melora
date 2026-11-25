@@ -61,7 +61,7 @@ import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import com.leyu.melora.ui.common.LocalPageActive
 import com.leyu.melora.ui.common.glassBackdropSource
-import com.leyu.melora.ui.common.glassPanelModifier
+import com.leyu.melora.ui.common.glassPanel
 import com.leyu.melora.ui.common.glassScrimAlpha
 
 @Composable
@@ -228,7 +228,7 @@ private fun AnchoredChoicePopup(
                     .heightIn(max = with(density) { maxHeight.toDp() })
                     .widthIn(min = 132.dp).width(IntrinsicSize.Max)
                     .shadow(8.dp, shape, clip = false)
-                    .then(glassPanelModifier(SettingsCardBg, shape, backdropScrim = Color.Black.copy(alpha = scrimAlpha)))
+                    .glassPanel(SettingsCardBg, shape, backdropScrim = Color.Black.copy(alpha = scrimAlpha))
                     .semantics { paneTitle = title },
                 shape = shape,
                 color = Color.Transparent,

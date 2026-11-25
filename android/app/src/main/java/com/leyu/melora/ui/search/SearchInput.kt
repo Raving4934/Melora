@@ -68,7 +68,7 @@ import com.leyu.melora.ui.common.BrandBlue
 import com.leyu.melora.ui.common.CardWhite
 import com.leyu.melora.ui.common.chromeHeaderBlurred
 import com.leyu.melora.ui.common.chromePillBlur
-import com.leyu.melora.ui.common.glassPanelModifier
+import com.leyu.melora.ui.common.glassPanel
 import com.leyu.melora.ui.common.DividerSoft
 import com.leyu.melora.ui.common.TextMain
 import com.leyu.melora.ui.common.TextMuted
@@ -324,11 +324,11 @@ private fun SearchPlatformMenu(
             val width = constraints.constrainWidth(anchorWidthPx)
             val menu = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
             layout(menu.width, menu.height) { menu.placeRelative(0, 0) }
-        }.then(glassPanelModifier(
+        }.glassPanel(
             baseColor = if (light) LightSheetFrost.base else CardWhite,
             shape = shape,
             frostTint = if (light) LightSheetFrost.tint else Color.Unspecified,
-        )),
+        ),
     ) {
         CompositionLocalProvider(LocalDensity provides contentDensity) {
             BoxWithConstraints(

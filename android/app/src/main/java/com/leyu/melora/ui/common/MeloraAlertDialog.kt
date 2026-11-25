@@ -52,11 +52,9 @@ internal fun MeloraAlertDialog(
             SideEffect { window?.setDimAmount(glassScrim.alpha) }
         }
         CompositionLocalProvider(LocalDensity provides density) {
-            val material = if (useGlass) glassPanelModifier(containerColor, shape, backdropScrim = glassScrim) else Modifier
+            val pane = Modifier.widthIn(min = 280.dp, max = 560.dp).semantics { paneTitle = dialogPaneTitle }
             Surface(
-                modifier = Modifier.widthIn(min = 280.dp, max = 560.dp)
-                    .semantics { paneTitle = dialogPaneTitle }
-                    .then(material),
+                modifier = if (useGlass) pane.glassPanel(containerColor, shape, backdropScrim = glassScrim) else pane,
                 shape = shape,
                 color = if (useGlass) Color.Transparent else containerColor,
                 contentColor = contentColorFor(containerColor),

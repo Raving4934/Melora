@@ -59,13 +59,13 @@ internal fun glassScrimAlpha(baseColor: Color): Float = if (baseColor.luminance(
 
 /** 按屏幕位置采样页面，跨窗口或画面未就绪时保留面板底色。 */
 @Composable
-internal fun glassPanelModifier(
+internal fun Modifier.glassPanel(
     baseColor: Color,
     shape: Shape,
     backdropScrim: Color = Color.Transparent,
     frostTint: Color = Color.Unspecified,
 ): Modifier {
-    val clipped = Modifier.clip(shape)
+    val clipped = clip(shape)
     val source = glassBackdropSource(baseColor) ?: return clipped.background(baseColor)
     val dark = baseColor.luminance() <= 0.5f
     val lightFrost = frostTint.isSpecified

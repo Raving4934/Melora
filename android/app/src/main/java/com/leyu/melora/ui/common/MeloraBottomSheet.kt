@@ -268,8 +268,8 @@ internal fun MeloraBottomSheet(
                                     val panel = measurable.measure(constraints.copy(minHeight = height, maxHeight = height))
                                     layout(panel.width, constraints.maxHeight) { panel.place(0, -handleHeight) }
                                 }
-                                .then(glassPanelModifier(containerColor, windowShape, backdropScrim = panelScrim,
-                                    frostTint = if (lightFrost) lightFrostTint else Color.Unspecified)),
+                                .glassPanel(containerColor, windowShape, backdropScrim = panelScrim,
+                                    frostTint = if (lightFrost) lightFrostTint else Color.Unspecified),
                         )
                     }
                     val insetsModifier = if (glassSource == null) Modifier

@@ -320,7 +320,7 @@ private fun Modifier.drawerSwipeable(
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun MeloraApp(initialTab: Int = 5, modifier: Modifier = Modifier) {
+fun MeloraApp(modifier: Modifier = Modifier, initialTab: Int = 5) {
     val localSongsContent = rememberLocalSongsContent(
         songs = LocalSongListState.current.localSongs.value,
         sortField = MeloraSettings.localSortField.collectAsStateWithLifecycle().value,
