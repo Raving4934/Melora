@@ -25,23 +25,28 @@ import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.runtime.mutableStateOf
+import androidx.activity.viewModels
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.core.net.toUri
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import com.leyu.melora.playback.ApkUpdatePhase
+import com.leyu.melora.playback.ApkUpdater
 import com.leyu.melora.playback.BackupRestoreTransaction
 import com.leyu.melora.playback.DesktopLyricService
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.PlaylistAutoUpdate
 import com.leyu.melora.playback.UpdateChecker
-import com.leyu.melora.playback.UpdateResult
 import com.leyu.melora.playback.WebDavSync
+import com.leyu.melora.playback.updateInstallIntent
+import com.leyu.melora.playback.updatePermissionIntent
 import com.leyu.melora.playback.local.LocalTagFiller
 import com.leyu.melora.playback.lx.LxInspector
 import com.leyu.melora.playback.lx.LxScriptStore
@@ -66,7 +71,7 @@ private const val DESKTOP_LYRIC_PERMISSION_PENDING = "desktopLyricPermissionPend
 
 class MainActivity : ComponentActivity() {
     private var backHint: Toast? = null
-    private val automaticAppUpdate = mutableStateOf<UpdateResult?>(null)
+    private val appUpdater by viewModels<ApkUpdater> { ApkUpdater.factory }
     private val rootBackCallback = RootBackCallback(
         nowMillis = SystemClock::elapsedRealtime,
         showHint = {
@@ -94,6 +99,9 @@ class MainActivity : ComponentActivity() {
             result.resultCode == Activity.RESULT_OK,
         )
     }
+    private val apkPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { appUpdater.permissionReturned() }
 
     private var desktopLyricPermissionPending = false
     private val desktopLyricPermissionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
@@ -181,12 +189,9 @@ class MainActivity : ComponentActivity() {
                                     initialTab = initialTab,
                                     modifier = if (glassBackdrop == null) Modifier else Modifier.hazeSource(glassBackdrop),
                                 )
-                                automaticAppUpdate.value?.let { release ->
-                                    AboutModalSheet(
-                                        modal = AboutModal.Update,
-                                        initialRelease = release,
-                                        onDismiss = { automaticAppUpdate.value = null },
-                                    )
+                                val update by appUpdater.state.collectAsStateWithLifecycle()
+                                if (update.phase != ApkUpdatePhase.Idle) {
+                                    AboutModalSheet(AboutModal.Update) { appUpdater.dismiss() }
                                 }
                             }
                         }
@@ -196,11 +201,24 @@ class MainActivity : ComponentActivity() {
             runDebugActions()
             repeatOnLifecycle(Lifecycle.State.RESUMED) {
                 if (MeloraSettings.showDesktopLyrics.value) DesktopLyricService.setEnabled(this@MainActivity)
+                launch {
+                    appUpdater.state.collect { state ->
+                        when (state.phase) {
+                            ApkUpdatePhase.PermissionRequired -> appUpdater.launchPermission {
+                                apkPermissionLauncher.launch(updatePermissionIntent(this@MainActivity))
+                            }
+                            ApkUpdatePhase.InstallRequested -> appUpdater.launchInstaller {
+                                startActivity(updateInstallIntent(this@MainActivity, it))
+                            }
+                            else -> Unit
+                        }
+                    }
+                }
                 MeloraSettings.autoCheckAppUpdates.collectLatest { enabled ->
-                    automaticAppUpdate.value = if (enabled) {
-                        automaticAppUpdate.value ?: UpdateChecker.checkAutomatically(this@MainActivity)
+                    if (enabled) {
+                        UpdateChecker.checkAutomatically(this@MainActivity)?.let(appUpdater::offerAutomaticUpdate)
                     } else {
-                        null
+                        appUpdater.dismiss(onlyAutomatic = true)
                     }
                 }
             }

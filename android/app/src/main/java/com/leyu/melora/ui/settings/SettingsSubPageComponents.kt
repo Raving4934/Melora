@@ -55,6 +55,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.leyu.melora.playback.ApkUpdater
 import com.leyu.melora.ui.common.ChromeScaffold
 import com.leyu.melora.ui.common.chromeContentPadding
 import com.leyu.melora.BuildConfig
@@ -733,6 +735,7 @@ internal fun OtherSettingsSubPage(onBack: () -> Unit) {
 // 6. 二级菜单：关于乐屿
 @Composable
 internal fun AboutSubPage(onBack: () -> Unit) {
+    val updater: ApkUpdater = viewModel(factory = ApkUpdater.factory)
     var modal by remember { mutableStateOf<AboutModal?>(null) }
 
     ChromeScaffold(expectedTopBarHeight = 64.dp, topBar = { SubPageTopBar(title = "关于乐屿", onBack = onBack) }) {
@@ -772,7 +775,7 @@ internal fun AboutSubPage(onBack: () -> Unit) {
                         icon = Icons.Outlined.SystemUpdate,
                         iconTint = Color(0xFF2563EB),
                         title = "检测更新",
-                        onClick = { modal = AboutModal.Update },
+                        onClick = updater::checkForUpdates,
                     )
                     SettingsDivider(Modifier.padding(start = 56.dp))
                     SettingsEntryItem(

@@ -1,5 +1,7 @@
 package com.leyu.melora.playback
 
+import androidx.lifecycle.SavedStateHandle
+
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicInteger
@@ -140,14 +142,15 @@ class ApkUpdaterTest {
             updater.launchPermission { settingsOpened = true }
             assertTrue(settingsOpened)
             updater.permissionReturned()
-            assertEquals(ApkUpdatePhase.Ready, updater.state.value.phase)
+            updater.await(ApkUpdatePhase.Ready)
             assertTrue(file.exists())
             updater.install()
             updater.await(ApkUpdatePhase.PermissionRequired)
+            updater.launchPermission { }
             allowed = true
             updater.permissionReturned()
             updater.await(ApkUpdatePhase.InstallRequested)
-            assertEquals(4, validations.get())
+            assertEquals(5, validations.get())
             var handedFile: File? = null
             updater.launchInstaller { handedFile = it }
             assertEquals(file, handedFile)
@@ -174,6 +177,109 @@ class ApkUpdaterTest {
             assertTrue(updater.state.value.message!!.contains("无法打开"))
         } finally { updater.close() }
         assertFalse(file.exists())
+    }
+
+    @Test fun replayingThePermissionEffectDoesNotLaunchTheSameSettingsRequestAgain() = runBlocking {
+        var allowed = false
+        val validations = AtomicInteger()
+        val updater = updater(
+            temporary.newFolder(),
+            validate = { check(it.readText() == "complete"); validations.incrementAndGet() },
+            canInstall = { allowed },
+            initialRelease = release,
+        )
+        try {
+            updater.download()
+            val apk = updater.await(ApkUpdatePhase.Ready).apk!!
+            updater.install()
+            updater.install()
+            updater.await(ApkUpdatePhase.PermissionRequired)
+            var permissionLaunches = 0
+            updater.launchPermission { permissionLaunches++ }
+            updater.launchPermission { permissionLaunches++ }
+            assertEquals(1, permissionLaunches)
+            allowed = true
+            updater.permissionReturned()
+            updater.permissionReturned()
+            updater.await(ApkUpdatePhase.InstallRequested)
+            val installed = mutableListOf<File>()
+            updater.launchInstaller { installed += it }
+            updater.launchInstaller { installed += it }
+            assertEquals(listOf(apk), installed)
+            assertEquals(3, validations.get())
+        } finally { updater.close() }
+    }
+
+    @Test fun restoredAuthorizationValidatesOnlyTheRequestedFileAndConsumesTheResultOnce() = runBlocking {
+        val directory = temporary.newFolder()
+        val originalState = SavedStateHandle()
+        val original = updater(directory, canInstall = { false }, initialRelease = release, savedState = originalState)
+        try {
+            val file = original.beginAuthorization()
+            val untouched = File(directory, "update-neighbor.apk").apply { writeText("other update") }
+            val validated = mutableListOf<File>()
+            val recoveredState = snapshot(originalState)
+            val recovered = updater(directory, validate = { validated += it }, savedState = recoveredState)
+            try {
+                assertEquals(ApkUpdatePhase.AwaitingPermission, recovered.state.value.phase)
+                recovered.launchPermission { error("不得重放已发起的授权") }
+                recovered.permissionReturned()
+                recovered.permissionReturned()
+                recovered.await(ApkUpdatePhase.InstallRequested)
+                val handedOff = mutableListOf<File>()
+                recovered.launchInstaller { handedOff += it }
+                recovered.launchInstaller { handedOff += it }
+                assertEquals(listOf(file), validated)
+                assertEquals(listOf(file), handedOff)
+                assertTrue(recoveredState.keys().isEmpty())
+                assertEquals("other update", untouched.readText())
+            } finally { recovered.close() }
+        } finally { original.close() }
+    }
+
+    @Test fun restoredAuthorizationWithExpiredOrMissingFileCanDownloadAgain() = runBlocking {
+        for (missing in listOf(false, true)) {
+            val directory = temporary.newFolder()
+            val originalState = SavedStateHandle()
+            val original = updater(directory, canInstall = { false }, initialRelease = release, savedState = originalState)
+            try {
+                val file = original.beginAuthorization()
+                assertTrue(if (missing) file.delete() else file.setLastModified(1))
+                val recovered = updater(directory, savedState = snapshot(originalState))
+                try {
+                    recovered.permissionReturned()
+                    assertNull(recovered.await(ApkUpdatePhase.Failed).apk)
+                    recovered.launchInstaller { error("不得交接已过期或缺失的安装包") }
+                    recovered.download()
+                    val newFile = recovered.await(ApkUpdatePhase.Ready).apk!!
+                    assertTrue(newFile != file && newFile.isFile)
+                } finally { recovered.close() }
+            } finally { original.close() }
+        }
+    }
+
+    @Test fun aDismissedRequestCannotResumeAnotherDownloadAfterItsLateReturn() = runBlocking {
+        val directory = temporary.newFolder()
+        val originalState = SavedStateHandle()
+        val original = updater(directory, canInstall = { false }, initialRelease = release, savedState = originalState)
+        try {
+            val dropped = original.beginAuthorization()
+            original.dismiss()
+            assertFalse(dropped.exists())
+            val recovered = updater(directory, initialRelease = release, savedState = snapshot(originalState))
+            try {
+                recovered.download()
+                val another = recovered.await(ApkUpdatePhase.Ready).apk!!
+                recovered.install()
+                assertEquals(ApkUpdatePhase.Ready, recovered.state.value.phase)
+                recovered.permissionReturned()
+                assertEquals(another, recovered.state.value.apk)
+                assertEquals(ApkUpdatePhase.Ready, recovered.state.value.phase)
+                recovered.install()
+                recovered.await(ApkUpdatePhase.InstallRequested)
+                recovered.launchInstaller { assertEquals(another, it) }
+            } finally { recovered.close() }
+        } finally { original.close() }
     }
 
     @Test fun removedPackageBeforeInstallationBecomesDownloadRetryNotInstallRequest() = runBlocking {
@@ -221,6 +327,31 @@ class ApkUpdaterTest {
         } finally { updater.close() }
     }
 
+    @Test fun manualAndAutomaticChecksShareOneSheetWithoutTakingOverItsState() = runBlocking {
+        val finishCheck = CompletableDeferred<Unit>()
+        val updater = updater(temporary.newFolder(), checkRelease = {
+            finishCheck.await()
+            release
+        })
+        val automatic = release.copy(latestVersion = "android-v0.1.8")
+        try {
+            updater.checkForUpdates()
+            updater.await(ApkUpdatePhase.Checking)
+            updater.offerAutomaticUpdate(automatic)
+            updater.dismiss(onlyAutomatic = true)
+            assertEquals(ApkUpdatePhase.Checking, updater.state.value.phase)
+            finishCheck.complete(Unit)
+            assertEquals(release, updater.await(ApkUpdatePhase.Available).release)
+
+            updater.dismiss()
+            updater.offerAutomaticUpdate(automatic)
+            updater.checkForUpdates()
+            assertEquals(automatic, updater.state.value.release)
+            updater.dismiss(onlyAutomatic = true)
+            assertEquals(ApkUpdatePhase.Idle, updater.state.value.phase)
+        } finally { updater.close() }
+    }
+
     private fun updater(
         directory: File,
         download: suspend (String, File, (Long, Long?) -> Unit) -> Unit = { _, file, _ -> file.writeText("complete") },
@@ -228,7 +359,22 @@ class ApkUpdaterTest {
         canInstall: () -> Boolean = { true },
         checkRelease: suspend () -> UpdateResult = { release },
         initialRelease: UpdateResult? = null,
-    ) = ApkUpdater(directory, checkRelease, download, validate, canInstall, Dispatchers.Unconfined, initialRelease)
+        savedState: SavedStateHandle? = null,
+    ) = ApkUpdater(directory, checkRelease, download, validate, canInstall, Dispatchers.Unconfined, savedState)
+        .also { updater -> initialRelease?.let(updater::offerAutomaticUpdate) }
+
+    private fun snapshot(handle: SavedStateHandle) =
+        SavedStateHandle(handle.keys().associateWith { handle.get<ArrayList<String>>(it) })
+
+    private suspend fun ApkUpdater.beginAuthorization(): File {
+        download()
+        val file = await(ApkUpdatePhase.Ready).apk!!
+        install()
+        await(ApkUpdatePhase.PermissionRequired)
+        launchPermission { }
+        assertEquals(ApkUpdatePhase.AwaitingPermission, state.value.phase)
+        return file
+    }
 
     private suspend fun ApkUpdater.await(phase: ApkUpdatePhase) = withTimeout(5_000) { state.first { it.phase == phase } }
     private suspend fun eventually(condition: () -> Boolean) = withTimeout(5_000) { while (!condition()) delay(10) }

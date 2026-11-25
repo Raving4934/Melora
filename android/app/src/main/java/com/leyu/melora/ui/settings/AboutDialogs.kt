@@ -70,17 +70,12 @@ import androidx.core.net.toUri
 import com.leyu.melora.BuildConfig
 import com.leyu.melora.playback.CrashLogger
 import com.leyu.melora.playback.PlaybackController
-import com.leyu.melora.playback.UpdateResult
 import com.leyu.melora.playback.ApkUpdater
 import com.leyu.melora.playback.ApkUpdatePhase
 import com.leyu.melora.playback.ApkUpdateState
 import com.leyu.melora.playback.formatCacheBytes
-import com.leyu.melora.playback.updateInstallIntent
-import com.leyu.melora.playback.updatePermissionIntent
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.ui.text.style.TextOverflow
@@ -101,7 +96,6 @@ internal enum class AboutModal(val title: String) {
 @Composable
 internal fun AboutModalSheet(
     modal: AboutModal,
-    initialRelease: UpdateResult? = null,
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true)
@@ -155,7 +149,7 @@ internal fun AboutModalSheet(
 
             // 内容区
             when (modal) {
-                AboutModal.Update -> UpdateContent(initialRelease)
+                AboutModal.Update -> UpdateContent()
                 AboutModal.Privacy -> PrivacyPolicyContent()
                 AboutModal.Licenses -> OpenSourceLicensesContent()
                 AboutModal.Disclaimer -> DisclaimerContent()
@@ -168,30 +162,10 @@ internal fun AboutModalSheet(
 
 // ---------------- 1. 检测更新 ----------------
 @Composable
-private fun UpdateContent(initialRelease: UpdateResult?) {
+private fun UpdateContent() {
     val context = LocalContext.current
-    val updater = remember(context.applicationContext, initialRelease) { ApkUpdater.create(context, initialRelease) }
+    val updater: ApkUpdater = viewModel(factory = ApkUpdater.factory)
     val state by updater.state.collectAsStateWithLifecycle()
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        updater.permissionReturned()
-    }
-    // 不能把 Activity 返回或启动成功误报为安装成功；是否安装由系统负责。
-    val installerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { }
-    DisposableEffect(updater) {
-        if (initialRelease == null) updater.checkForUpdates()
-        onDispose { updater.close() }
-    }
-    LaunchedEffect(updater, state.phase) {
-        when (state.phase) {
-            ApkUpdatePhase.PermissionRequired -> updater.launchPermission {
-                permissionLauncher.launch(updatePermissionIntent(context))
-            }
-            ApkUpdatePhase.InstallRequested -> updater.launchInstaller {
-                installerLauncher.launch(updateInstallIntent(context, it))
-            }
-            else -> Unit
-        }
-    }
     ApkUpdatePanel(
         state = state,
         onDownload = updater::download,
@@ -217,7 +191,18 @@ internal fun ApkUpdatePanel(
     val release = state.release
     val hasUpdate = release?.hasUpdate == true
     val transferring = phase == ApkUpdatePhase.Downloading || phase == ApkUpdatePhase.Verifying
-    val busy = transferring || phase == ApkUpdatePhase.Checking || phase == ApkUpdatePhase.PermissionRequired || phase == ApkUpdatePhase.InstallRequested
+    val transferTotal = state.totalBytes?.takeIf { it > 0 }
+    val (actionLabel, action) = when (phase) {
+        ApkUpdatePhase.Idle, ApkUpdatePhase.Latest -> "重新检查" to onCheck
+        ApkUpdatePhase.Checking -> "正在检查…" to null
+        ApkUpdatePhase.Downloading -> "正在下载…" to null
+        ApkUpdatePhase.Verifying -> "正在校验…" to null
+        ApkUpdatePhase.Ready -> "安装更新" to onInstall
+        ApkUpdatePhase.PermissionRequired, ApkUpdatePhase.AwaitingPermission -> "等待安装授权…" to null
+        ApkUpdatePhase.InstallRequested -> "正在打开安装器…" to null
+        ApkUpdatePhase.Failed -> if (hasUpdate) "重新下载" to onDownload else "重试检查" to onCheck
+        ApkUpdatePhase.Available -> "下载 Android APK" to onDownload
+    }
     val title = when {
         hasUpdate -> "发现新版本 ${release.latestVersion.removePrefix("android-")}"
         phase == ApkUpdatePhase.Checking -> "正在检查更新"
@@ -269,52 +254,33 @@ internal fun ApkUpdatePanel(
         }
         Column(modifier = Modifier.fillMaxWidth().height(76.dp), verticalArrangement = Arrangement.Center) {
             val status = state.message ?: when (phase) {
-                ApkUpdatePhase.Downloading -> (state.totalBytes?.takeIf { it > 0 }?.let {
+                ApkUpdatePhase.Downloading -> (transferTotal?.let {
                     "${formatCacheBytes(state.bytes)} / ${formatCacheBytes(it)}"
                 } ?: "已下载 ${formatCacheBytes(state.bytes)}（总大小未知）") + "\n关闭弹层即取消，不在后台下载。"
                 ApkUpdatePhase.Verifying -> "正在校验完整安装包、版本码与签名…"
                 ApkUpdatePhase.Ready -> "安装包校验通过，安装需由系统确认。"
-                ApkUpdatePhase.PermissionRequired -> "请允许本应用安装未知应用，返回后继续安装。"
+                ApkUpdatePhase.PermissionRequired, ApkUpdatePhase.AwaitingPermission -> "请允许本应用安装未知应用，返回后继续安装。"
                 ApkUpdatePhase.InstallRequested -> "正在打开系统安装器…"
                 else -> ""
             }
             Text(status, fontSize = 12.sp, lineHeight = 18.sp, color = SettingsTextSub, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(8.dp))
             if (phase == ApkUpdatePhase.Downloading) {
-                val total = state.totalBytes?.takeIf { it > 0 }
-                if (total == null) {
+                if (transferTotal == null) {
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(4.dp), color = SettingsBrandBlue)
                 } else {
-                    LinearProgressIndicator(progress = { (state.bytes.toFloat() / total).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(4.dp), color = SettingsBrandBlue)
+                    LinearProgressIndicator(progress = { (state.bytes.toFloat() / transferTotal).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(4.dp), color = SettingsBrandBlue)
                 }
             } else Spacer(Modifier.height(4.dp))
         }
         Button(
-            onClick = {
-                when {
-                    phase == ApkUpdatePhase.Ready -> onInstall()
-                    hasUpdate -> onDownload()
-                    else -> onCheck()
-                }
-            },
-            enabled = !busy,
+            onClick = action ?: {},
+            enabled = action != null,
             shape = RoundedCornerShape(14.dp),
             colors = ButtonDefaults.buttonColors(containerColor = SettingsBrandBlue),
             modifier = Modifier.fillMaxWidth().height(46.dp),
         ) {
-            Text(
-                when (phase) {
-                    ApkUpdatePhase.Checking -> "正在检查…"
-                    ApkUpdatePhase.Downloading -> "正在下载…"
-                    ApkUpdatePhase.Verifying -> "正在校验…"
-                    ApkUpdatePhase.Ready -> "安装更新"
-                    ApkUpdatePhase.PermissionRequired -> "等待安装授权…"
-                    ApkUpdatePhase.InstallRequested -> "正在打开安装器…"
-                    ApkUpdatePhase.Failed -> if (hasUpdate) "重新下载" else "重试检查"
-                    ApkUpdatePhase.Latest -> "重新检查"
-                    ApkUpdatePhase.Available -> "下载 Android APK"
-                }, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-            )
+            Text(actionLabel, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
         }
         Box(Modifier.fillMaxWidth().height(44.dp), contentAlignment = Alignment.Center) {
             when {
