@@ -14,7 +14,6 @@ import java.nio.file.Files
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.concurrent.thread
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import okio.buffer
 import okio.source
@@ -86,23 +85,13 @@ class WebDavSyncInstrumentedTest {
     ))
 
     private fun bindFixtureLibrary(path: File): () -> Unit = BackupStateLock.write {
-        val fields = UserLibrary::class.java.declaredFields.associateBy { it.name }
-        val file = fields.getValue("file").apply { isAccessible = true }
-        val clearTime = fields.getValue("historyClearedAt").apply { isAccessible = true }
+        val file = UserLibrary::class.java.getDeclaredField("file").apply { isAccessible = true }
         val previousFile = file.get(UserLibrary)
-        val previousClearTime = clearTime.getLong(UserLibrary)
-        val previousFlows = fields.values.filter { MutableStateFlow::class.java.isAssignableFrom(it.type) }.map {
-            it.isAccessible = true
-            @Suppress("UNCHECKED_CAST")
-            val flow = it.get(UserLibrary) as MutableStateFlow<Any?>
-            flow to flow.value
-        }
+        val snapshot = UserLibrary.exportSnapshot()
         file.set(UserLibrary, path)
         return@write {
             BackupStateLock.write {
-                file.set(UserLibrary, previousFile)
-                clearTime.setLong(UserLibrary, previousClearTime)
-                previousFlows.forEach { (flow, value) -> flow.value = value }
+                try { UserLibrary.replaceFromBackup(snapshot) } finally { file.set(UserLibrary, previousFile) }
             }
         }
     }

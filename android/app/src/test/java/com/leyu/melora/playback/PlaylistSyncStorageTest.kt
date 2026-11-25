@@ -14,6 +14,50 @@ class PlaylistSyncStorageTest {
     private val link = PlaylistImportLink.parse("https://music.163.com/#/playlist?id=123")
     private fun song(id: String) = OnlineSong(JSONObject().put("source", "wy").put("songmid", id).put("name", id))
 
+    @Test fun localPlaybackAtCapacityDoesNotPublishDeletionOfOnlineHistory() = isolated {
+        val shared = RecordSyncMerge.project(JSONObject().put("recents", JSONArray(
+            (UserLibrary.MAX_RECENTS downTo 1).map { song("online-$it").raw.put("playedAt", it) },
+        )).put("recentContainers", JSONArray(
+            (UserLibrary.MAX_RECENT_CONTAINERS downTo 1).map { id ->
+                JSONObject().put("source", "wy").put("kind", "playlist").put("id", "remote-$id")
+                    .put("name", "远程 $id").put("updatedAt", id)
+                    .put("queueId", "").put("artist", "").put("img", "")
+            },
+        )), JSONArray())
+        val phone = RecordHeads(emptyList()).edit(RecordReplica("phone"), recordDocument(), shared)
+        UserLibrary.replaceFromBackup(RecordSyncMerge.applyLibrary(JSONObject(), shared).toString())
+
+        UserLibrary.markPlayed(OnlineSong(song("local-song").raw.put("source", "local")))
+        UserLibrary.markContainerPlayed(UserLibrary.PlayContainer("playlist", "local-list", "本地歌单", null, "local", "local-queue"))
+        assertEquals(UserLibrary.MAX_RECENTS, UserLibrary.recents.value.size)
+        assertEquals(UserLibrary.MAX_RECENT_CONTAINERS, UserLibrary.recentContainers.value.size)
+        assertEquals("local", UserLibrary.recents.value.first().source)
+        assertEquals("local", UserLibrary.recentContainers.value.first().source)
+        UserLibrary.reloadAfterRestore()
+
+        val tablet = RecordReplica("tablet")
+        val current = RecordSyncMerge.project(JSONObject(UserLibrary.exportSnapshot()), JSONArray())
+        assertSame("本地播放不能生成在线历史变更", tablet, RecordHeads(listOf(phone)).edit(tablet, shared, current))
+    }
+
+    @Test fun explicitClearStillClearsSharedHistoryWhilePreservingPeerLocalHistory() = isolated {
+        val shared = RecordSyncMerge.project(JSONObject().put("recents", JSONArray()
+            .put(song("remote").raw.put("playedAt", 1))), JSONArray())
+        val phone = RecordHeads(emptyList()).edit(RecordReplica("phone"), recordDocument(), shared)
+        val heads = RecordHeads(listOf(phone))
+        UserLibrary.replaceFromBackup(RecordSyncMerge.applyLibrary(JSONObject(), shared).toString())
+        UserLibrary.clearRecents()
+
+        val snapshot = RecordSyncMerge.project(JSONObject(UserLibrary.exportSnapshot()), JSONArray())
+        val tablet = heads.edit(RecordReplica("tablet"), shared, snapshot)
+        assertTrue(tablet.clearedAt > 1)
+        val merged = RecordHeads(listOf(phone, tablet)).view(tablet, emptyMap()).records
+        val local = JSONObject().put("recents", JSONArray().put(song("peer-local").raw.put("source", "local")))
+        val retained = RecordSyncMerge.applyLibrary(local, merged).getJSONArray("recents")
+        assertEquals(1, retained.length())
+        assertEquals("peer-local", retained.getJSONObject(0).getString("songmid"))
+    }
+
     @Test fun sourceAndBaselineSurviveLibraryAndBackupRoundTripWhileLegacyStaysUnbound() = isolated {
         val linked = JSONObject().put("id", "linked").put("name", "手改名")
             .put("songs", JSONArray().put(song("a").raw))

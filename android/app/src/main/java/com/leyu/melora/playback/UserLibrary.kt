@@ -87,6 +87,9 @@ object UserLibrary {
     private val lock = BackupStateLock.monitor
     private val mutableRevisions = MutableStateFlow(0L)
     private var historyClearedAt = 0L
+    // 显示窗口和入库窗口分开。设备本地播放不挤出云端最近记录。
+    private var recordedRecents = emptyList<OnlineSong>()
+    private var recordedContainers = emptyList<RecentContainer>()
     internal val revisions = mutableRevisions.asStateFlow()
 
     val favorites = MutableStateFlow<List<OnlineSong>>(emptyList())
@@ -108,12 +111,12 @@ object UserLibrary {
                 field = value
                 favoriteUids = value.mapTo(linkedSetOf()) { it.uid }
             }
-        var recents: List<OnlineSong> = UserLibrary.recents.value
+        var recents: List<OnlineSong> = recordedRecents
         var playlists: List<UserPlaylist> = UserLibrary.playlists.value
         var favoritePlaylists: List<OnlinePlaylist> = UserLibrary.favoritePlaylists.value
         var favoriteAlbums: List<FavoriteAlbum> = UserLibrary.favoriteAlbums.value
         var favoriteArtists: List<FavoriteArtist> = UserLibrary.favoriteArtists.value
-        var recentContainers: List<RecentContainer> = UserLibrary.recentContainers.value
+        var recentContainers: List<RecentContainer> = recordedContainers
         var searchHistory: List<String> = UserLibrary.searchHistory.value
         var historyClearedAt: Long = UserLibrary.historyClearedAt
 
@@ -124,12 +127,14 @@ object UserLibrary {
     private fun publish(snapshot: Snapshot) {
         historyClearedAt = snapshot.historyClearedAt
         favorites.value = snapshot.favorites
-        recents.value = snapshot.recents
+        recordedRecents = snapshot.recents
+        recents.value = snapshot.recents.take(MAX_RECENTS)
         favoriteUids.value = snapshot.favoriteUids
         favoritePlaylists.value = snapshot.favoritePlaylists
         favoriteAlbums.value = snapshot.favoriteAlbums
         favoriteArtists.value = snapshot.favoriteArtists
-        recentContainers.value = snapshot.recentContainers
+        recordedContainers = snapshot.recentContainers
+        recentContainers.value = snapshot.recentContainers.take(MAX_RECENT_CONTAINERS)
         searchHistory.value = snapshot.searchHistory
         playlists.value = snapshot.playlists
         mutableRevisions.value++
@@ -146,7 +151,7 @@ object UserLibrary {
     fun exportSnapshot(): String = synchronized(lock) { buildRoot().toString() }
 
     internal fun localMediaReferences(): List<LocalMediaReference> = synchronized(lock) {
-        sequenceOf(favorites.value, recents.value).plus(playlists.value.asSequence().map(UserPlaylist::songs))
+        sequenceOf(favorites.value, recordedRecents).plus(playlists.value.asSequence().map(UserPlaylist::songs))
             .flatten().filter { it.source == LocalSong.SOURCE }
             .mapNotNull { song ->
                 song.raw.optString("localUri").takeIf(String::isNotBlank)?.let {
@@ -157,8 +162,8 @@ object UserLibrary {
     }
 
     internal fun backupSnapshot(): String = synchronized(lock) {
-        val entries = favorites.value.size.toLong() + recents.value.size + favoritePlaylists.value.size +
-            favoriteAlbums.value.size + favoriteArtists.value.size + recentContainers.value.size + searchHistory.value.size +
+        val entries = favorites.value.size.toLong() + recordedRecents.size + favoritePlaylists.value.size +
+            favoriteAlbums.value.size + favoriteArtists.value.size + recordedContainers.size + searchHistory.value.size +
             playlists.value.sumOf {
                 it.songs.size.toLong() + 1 + it.lastSyncedUids.orEmpty().size +
                     it.excludedImportedUids.size + it.locallyAddedUids.size
@@ -334,7 +339,7 @@ object UserLibrary {
 
     fun markPlayed(song: OnlineSong) = record {
         val recent = OnlineSong(JSONObject(song.raw.toString()).put("playedAt", playbackTimestamp()))
-        recents = (listOf(recent) + recents.filterNot { it.uid == song.uid }).take(MAX_RECENTS)
+        recents = (listOf(recent) + recents.filterNot { it.uid == song.uid }).retainHistory(MAX_RECENTS, OnlineSong::source)
     }
 
     /** 移除“最近播放”中指定的章节记录。 */
@@ -429,7 +434,8 @@ object UserLibrary {
             updatedAt = playbackTimestamp(),
             artist = container.artist,
         )
-        recentContainers = (listOf(entry) + recentContainers.filterNot { it.key == entry.key }).take(MAX_RECENT_CONTAINERS)
+        recentContainers = (listOf(entry) + recentContainers.filterNot { it.key == entry.key })
+            .retainHistory(MAX_RECENT_CONTAINERS, RecentContainer::source)
     }
 
     /** 容器封面缺失/不满意时补齐（不改变排序）。 */
@@ -584,6 +590,12 @@ object UserLibrary {
             true
         }
     }
+}
+
+private fun <T> List<T>.retainHistory(limit: Int, source: (T) -> String): List<T> {
+    var localLeft = limit
+    var sharedLeft = limit
+    return filter { if (source(it) == LocalSong.SOURCE) localLeft-- > 0 else sharedLeft-- > 0 }
 }
 
 internal fun writeTextAtomically(target: File, text: String) {

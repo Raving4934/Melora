@@ -134,7 +134,7 @@ internal fun recordDocument(rows: Map<RecordKey, JSONObject> = emptyMap(), clear
 
 private data class RowReview(val value: JSONObject?, val conflicts: List<RecordConflict>, val chosen: Set<String>)
 
-private data class HistoryField(val timestamp: String, val limit: Int) {
+internal data class HistoryField(val timestamp: String, val limit: Int) {
     fun time(row: JSONObject?): Long = row?.optLong(timestamp) ?: 0L
     fun time(edit: RecordEdit): Long = edit.value?.let(::time) ?: edit.deletedPlaybackTime
 
@@ -142,7 +142,7 @@ private data class HistoryField(val timestamp: String, val limit: Int) {
         List(rows.length()) { time(rows.getJSONObject(it)) }.sortedDescending()[limit - 1]
 }
 
-private val historyFields = mapOf(
+internal val historyFields = mapOf(
     "recents" to HistoryField("playedAt", UserLibrary.MAX_RECENTS),
     "recentContainers" to HistoryField("updatedAt", UserLibrary.MAX_RECENT_CONTAINERS),
 )

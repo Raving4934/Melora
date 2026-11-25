@@ -85,10 +85,10 @@ internal object RecordSyncMerge {
         val merged = JSONObject()
         if (clearedAt > 0L) merged.put(HISTORY_CLEARED_AT, clearedAt)
         for (field in libraryFields) {
-            val timeKey = historyTimeKey(field)
+            val history = historyFields[field]
             fun survivingEntries(library: JSONObject): List<JSONObject> =
                 library.entries(field).filter { row ->
-                    timeKey == null || clearedAt == 0L || row.optLong(timeKey) > clearedAt
+                    history == null || clearedAt == 0L || history.time(row) > clearedAt
                 }
             val rows = mergeRows(
                 survivingEntries(before), survivingEntries(ours), survivingEntries(theirs),
@@ -96,11 +96,7 @@ internal object RecordSyncMerge {
             ) { key, original, left, right ->
                 mergeRow(field, key, original, left, right, base != null, choices)
             }
-            val ordered = when (field) {
-                "recents" -> rows.sortedByDescending { it.optLong("playedAt") }.take(UserLibrary.MAX_RECENTS)
-                "recentContainers" -> rows.sortedByDescending { it.optLong("updatedAt") }.take(UserLibrary.MAX_RECENT_CONTAINERS)
-                else -> rows
-            }
+            val ordered = history?.let { rows.sortedByDescending(it::time).take(it.limit) } ?: rows
             merged.put(field, JSONArray(ordered))
         }
         val books = mergeRows(
@@ -208,7 +204,7 @@ internal object RecordSyncMerge {
         based: Boolean,
         choices: MergeChoices,
     ): JSONObject? {
-        val timeKey = historyTimeKey(field)
+        val timeKey = historyFields[field]?.timestamp
         if (left == null || right == null) {
             val remaining = requireNotNull(left ?: right)
             if (!based) return choices.row(field, id, null, left, right)
@@ -415,11 +411,7 @@ internal object RecordSyncMerge {
             }
             online.forEachRemaining { add(it) }
         }
-        return when (field) {
-            "recents" -> result.sortedByDescending { it.optLong("playedAt") }
-            "recentContainers" -> result.sortedByDescending { it.optLong("updatedAt") }
-            else -> result
-        }
+        return historyFields[field]?.let { result.sortedByDescending(it::time) } ?: result
     }
 
     private fun mergeRows(
@@ -468,12 +460,6 @@ internal object RecordSyncMerge {
             "playlists" -> id
             else -> error("无法识别的同步记录")
         }
-    }
-
-    private fun historyTimeKey(field: String): String? = when (field) {
-        "recents" -> "playedAt"
-        "recentContainers" -> "updatedAt"
-        else -> null
     }
 
     private fun sameVersion(field: String, left: JSONObject, right: JSONObject) = when (field) {
