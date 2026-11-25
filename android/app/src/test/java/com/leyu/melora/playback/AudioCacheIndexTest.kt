@@ -236,6 +236,25 @@ class AudioCacheIndexTest {
     }
 
     @Test
+    fun equalRankChecksCacheKeysInOrderAndStopsAtTheFirstUsableAlias() {
+        val cache = CacheFixture()
+        val index = AudioCacheIndex(cache.cache)
+        val target = song("kw", "target")
+        val stored = song("kg", "first")
+        val late = registerComplete(index, cache, song("wy", "last"))
+        val first = registerComplete(index, cache, stored)
+        cache.complete(first.key, 100, 0L to 25L)
+        val mirrored = index.register(song("tx", "alias").uid, "320k", resolved(stored))
+        cache.complete(mirrored.key, 100, 0L to 100L)
+
+        assertNull(SourceResolver.observedQuality(resourceId(first)))
+        // 第一份虽然有洞，仍提供同一物理资源的实测音质。缺少单独实测标记的旧别名随即可以命中。
+        assertSameResource(mirrored, index.find(target, "320k", online = true))
+        assertEquals(listOf(first.key, mirrored.key), cache.spanChecks)
+        assertFalse(late.key in cache.spanChecks)
+    }
+
+    @Test
     fun unverifiedQualityCannotBeSharedAndLiveObservationWinsOverStaleDiskValue() {
         val cache = CacheFixture()
         val index = AudioCacheIndex(cache.cache)
@@ -346,6 +365,7 @@ class AudioCacheIndexTest {
     private class CacheFixture {
         private val metadata = linkedMapOf<String, DefaultContentMetadata>()
         private val spans = mutableMapOf<String, MutableList<Pair<Long, Long>>>()
+        val spanChecks = mutableListOf<String>()
         var metadataWriteCount = 0
             private set
 
@@ -360,6 +380,7 @@ class AudioCacheIndexTest {
                 }
                 "isCached" -> {
                     val key = values[0] as String
+                    spanChecks += key
                     var cursor = values[1] as Long
                     val end = cursor + (values[2] as Long)
                     for ((position, length) in spans[key].orEmpty().sortedBy { it.first }) {

@@ -26,6 +26,7 @@ import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.net.URLEncoder
+import java.util.PriorityQueue
 import java.util.concurrent.TimeUnit
 import okhttp3.Call
 import okhttp3.OkHttpClient
@@ -537,14 +538,10 @@ internal class AudioCacheIndex(private val cache: Cache) {
         online: Boolean,
         excludedResources: Set<String> = emptySet(),
     ): AudioCacheResource? {
-        val keys = cache.keys.filter { it.startsWith("melora://audio/") }
-        val ownKeys = keys.filterTo(linkedSetOf()) { it.startsWith("melora://audio/${song.uid}?") }
+        val (ownKeys, otherKeys) = cache.keys.asSequence().filter { it.startsWith("melora://audio/") }
+            .partition { it.startsWith("melora://audio/${song.uid}?") }
         // 原 UID 的不完整资源也要恢复实测音质，避免后续网络解析重新相信源的错标。
-        ownKeys.forEach { key ->
-            val id = audioResourceId(key)
-            val verified = cache.getContentMetadata(key).string(META_VERIFIED_QUALITY)
-            if (id != null && verified != null && SourceResolver.observedQuality(id) == null) SourceResolver.confirmQuality(id, verified)
-        }
+        ownKeys.forEach { key -> restoreVerifiedQuality(audioResourceId(key), cache.getContentMetadata(key)) }
         val alias = cache.getContentMetadata(audioCacheKey(song.uid, preferredQuality)).string(META_ALIAS_RESOURCE)
         fun resource(key: String, crossSource: Boolean): AudioCacheResource? {
             val metadata = cache.getContentMetadata(key)
@@ -552,10 +549,9 @@ internal class AudioCacheIndex(private val cache: Cache) {
             if (id in excludedResources || SourceResolver.isRejected(id)) return null
             val source = metadata.string(META_SOURCE_IDENTITY) ?: return null
             if (crossSource && id == null) return null
-            val verified = SourceResolver.observedQuality(id) ?: metadata.string(META_VERIFIED_QUALITY)
+            val verified = restoreVerifiedQuality(id, metadata)
             // 不把源声明的“无损/320k”扩散给其它曲目；须有解码器或文件探测的实测证据。
             if (crossSource && verified == null) return null
-            if (id != null && verified != null && SourceResolver.observedQuality(id) == null) SourceResolver.confirmQuality(id, verified)
             val quality = verified ?: metadata.string(META_ACTUAL_QUALITY) ?: return null
             // 原 UID 保留离线降级行为；跨曲目复用即使离线也不能把低音质当成请求音质。
             if ((online || crossSource) && !SourceResolver.sameQualityTier(preferredQuality, quality)) return null
@@ -567,17 +563,33 @@ internal class AudioCacheIndex(private val cache: Cache) {
             resource(key, crossSource = false)?.let { return it }
         }
         if (song.isBookChapter || song.intervalSeconds <= 0) return null
-        // 只查内存元数据，不扫描音频文件/解析标签。优先同专辑，其次更接近的时长。
-        return keys.asSequence().filterNot { it in ownKeys }.mapNotNull { key ->
+        // 线性建堆，依次探测最高优先级的完整资源，保持跨别名的音质回填顺序。
+        val candidates = PriorityQueue(otherKeys.mapNotNull { key ->
             val raw = cache.getContentMetadata(key).string(META_RECORDING) ?: return@mapNotNull null
             val candidate = runCatching { OnlineSong.from(JSONObject(raw)) }.getOrNull() ?: return@mapNotNull null
             val delta = kotlin.math.abs(song.intervalSeconds.toLong() - candidate.intervalSeconds.toLong())
             if (candidate.intervalSeconds <= 0 || delta > 2) return@mapNotNull null
             val score = SourceResolver.alternativeScore(song, candidate) ?: return@mapNotNull null
-            Triple(key, score, delta)
-        }.sortedWith(compareByDescending<Triple<String, Int, Long>> { it.second }.thenBy { it.third }.thenBy { it.first })
-            .firstNotNullOfOrNull { resource(it.first, crossSource = true) }
+            Candidate(key, score, delta)
+        })
+        while (candidates.isNotEmpty()) {
+            resource(candidates.remove().key, crossSource = true)?.let { return it }
+        }
+        return null
     }
+
+    private data class Candidate(val key: String, val score: Int, val durationDelta: Long) : Comparable<Candidate> {
+        override fun compareTo(other: Candidate): Int = byRank.compare(this, other)
+
+        companion object {
+            private val byRank = compareByDescending(Candidate::score).thenBy(Candidate::durationDelta).thenBy(Candidate::key)
+        }
+    }
+
+    private fun restoreVerifiedQuality(id: String?, metadata: ContentMetadata): String? =
+        SourceResolver.observedQuality(id) ?: metadata.string(META_VERIFIED_QUALITY)?.also { quality ->
+            if (id != null && SourceResolver.observedQuality(id) == null) SourceResolver.confirmQuality(id, quality)
+        }
 
     /** 复用后请求 UID 已不同；实测音质属于资源本身，须同步所有指向它的物理条目。 */
     fun recordObservedQuality(resourceId: String, quality: String) {
