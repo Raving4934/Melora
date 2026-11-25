@@ -558,24 +558,19 @@ fun PlaylistDetailContent(
                     onSelect = selection::start,
                     loading = loading && songs.isEmpty(),
                     modifier = if (isBook) Modifier.testTag("book-chapter-toolbar") else Modifier,
-                    middleActions = if (isBook) {
-                        {
-                            BookChapterActions(
-                                page = activePage,
-                                total = bookTotal ?: playlist.total.takeIf { it > 0 },
-                                descending = bookDescending,
-                                loading = bookPageLoading,
-                                placeholder = loading && songs.isEmpty(),
-                                onPick = { bookPickerOpen = true },
-                                onToggleDirection = {
-                                    val descending = !bookDescending
-                                    BookCatalogPaging.pageForDirection(1, bookTotal, descending)?.let { page ->
-                                        requestBookPage(page, directionOnAccept = descending)
-                                    }
-                                },
-                            )
-                        }
-                    } else null,
+                    bookChapters = if (isBook) BookChapterControls(
+                        page = activePage,
+                        total = bookTotal ?: playlist.total.takeIf { it > 0 },
+                        descending = bookDescending,
+                        loading = bookPageLoading,
+                        onPick = { bookPickerOpen = true },
+                        onToggleDirection = {
+                            val descending = !bookDescending
+                            BookCatalogPaging.pageForDirection(1, bookTotal, descending)?.let { page ->
+                                requestBookPage(page, directionOnAccept = descending)
+                            }
+                        },
+                    ) else null,
                 )
             }
             // 同一个操作栏实现只显示在一个位置：原位或覆盖层；原位始终等高占位。

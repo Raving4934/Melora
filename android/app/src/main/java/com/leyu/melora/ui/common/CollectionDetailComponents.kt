@@ -11,14 +11,20 @@ import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -103,6 +109,45 @@ internal fun rememberQueuePlayback(queueId: String): Pair<Boolean, Boolean> {
     return flow.collectAsStateWithLifecycle(initialValue = initial).value
 }
 
+private val CollectionPlayLabelSize = 12.5.sp
+private val CollectionBatchButtonWidth = 34.dp
+
+internal enum class CollectionActionSpacing(
+    val start: Dp,
+    val end: Dp,
+    val playInset: Dp,
+    val playIcon: Dp,
+    val playGap: Dp,
+    val iconButton: Dp,
+    val selectionGap: Dp,
+    val chapterGap: Dp,
+    val chapterStart: Dp,
+    val chapterEnd: Dp,
+    val arrowGap: Dp,
+) {
+    Regular(
+        start = 16.dp, end = 11.5.dp,
+        playInset = 12.dp, playIcon = 16.dp, playGap = 4.dp,
+        iconButton = 34.dp, selectionGap = 8.dp,
+        chapterGap = 8.dp, chapterStart = 10.dp, chapterEnd = 6.dp, arrowGap = 2.dp,
+    ),
+    Compact(
+        start = 12.dp, end = 8.dp,
+        playInset = 9.dp, playIcon = 15.dp, playGap = 3.dp,
+        iconButton = 30.dp, selectionGap = 2.dp,
+        chapterGap = 4.dp, chapterStart = 7.dp, chapterEnd = 4.dp, arrowGap = 1.dp,
+    );
+
+    fun minimumBookRowWidth(density: Density, playLabelPx: Int, chapterLabelPx: Int): Int = with(density) {
+        val play = playInset.roundToPx() * 2 + playIcon.roundToPx() +
+            if (playLabelPx > 0) playGap.roundToPx() + playLabelPx else 0
+        val chapter = chapterStart.roundToPx() + chapterEnd.roundToPx() +
+            BookChapterArrowSize.roundToPx() + arrowGap.roundToPx() + chapterLabelPx
+        start.roundToPx() + end.roundToPx() + play + chapterGap.roundToPx() + chapter +
+            iconButton.roundToPx() * 2 + selectionGap.roundToPx() + CollectionBatchButtonWidth.roundToPx()
+    }
+}
+
 /** 只负责统一布局；收藏对象、队列与分页由调用页持有，不另建数据链路。 */
 @Composable
 internal fun CollectionActionsRow(
@@ -115,42 +160,89 @@ internal fun CollectionActionsRow(
     loading: Boolean = false,
     playLabel: String = "播放全部",
     playPause: Boolean = false,
-    middleActions: (@Composable RowScope.() -> Unit)? = null,
+    bookChapters: BookChapterControls? = null,
 ) {
+    val blurred = chromeHeaderBlurred()
     val playColor = if (canPlay) MeloraAppearance.brand else MeloraAppearance.textMuted
-    Row(modifier.fillMaxWidth().padding(start = 16.dp, end = 11.5.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        ChromeActionSurface(onClick = onPlay, enabled = canPlay && !loading, shape = RoundedCornerShape(17.dp), modifier = Modifier.height(34.dp)) {
-            Row(Modifier.padding(end = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (loading) ShimmerBox(Modifier.size(16.dp), cornerRadius = 4.dp)
-                else Icon(if (playPause) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, null,
-                    tint = playColor, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(4.dp))
-                if (loading) ShimmerTextLine(playLabel, fontSize = 12.5.sp,
-                    modifier = Modifier.width(IntrinsicSize.Max), fontWeight = FontWeight.SemiBold)
-                else Text(playLabel, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, color = playColor)
+    val playBg = when {
+        blurred && canPlay && !loading -> MeloraAppearance.brand.copy(alpha = if (MeloraAppearance.isDark) 0.22f else 0.14f)
+        blurred -> MeloraAppearance.textMain.copy(alpha = 0.08f)
+        canPlay && !loading -> MeloraAppearance.tintBlue
+        else -> MeloraAppearance.softFill
+    }
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+        val regular = CollectionActionSpacing.Regular
+        val compact = CollectionActionSpacing.Compact
+        var spacing = if (maxWidth < 355.dp) compact else regular
+        var showPlayLabel = true
+        var chapterLabel = bookChapters?.label.orEmpty()
+        if (bookChapters != null) {
+            val density = LocalDensity.current
+            val textStyle = LocalTextStyle.current
+            val measurer = rememberTextMeasurer()
+            val playWidth = measurer.measure(playLabel, textStyle.copy(
+                fontSize = CollectionPlayLabelSize, fontWeight = FontWeight.SemiBold,
+            ), softWrap = false, maxLines = 1).size.width
+            val chapterStyle = textStyle.copy(fontSize = BookChapterLabelSize, fontWeight = FontWeight.Medium)
+            val fullWidth = measurer.measure(bookChapters.label, chapterStyle, softWrap = false, maxLines = 1).size.width
+            val rangeWidth = measurer.measure(bookChapters.range, chapterStyle, softWrap = false, maxLines = 1).size.width
+            val available = constraints.maxWidth
+            if (available < regular.minimumBookRowWidth(density, playWidth, fullWidth)) spacing = compact
+            showPlayLabel = available >= spacing.minimumBookRowWidth(density, playWidth, rangeWidth)
+            val visiblePlayWidth = if (showPlayLabel) playWidth else 0
+            if (available < spacing.minimumBookRowWidth(density, visiblePlayWidth, fullWidth)) {
+                chapterLabel = bookChapters.range
             }
         }
-        if (middleActions != null) middleActions() else Spacer(Modifier.weight(1f))
-        ChromeActionSurface(
-            onClick = { onFavorite?.invoke() }, enabled = onFavorite != null && !loading,
-            shape = RoundedCornerShape(17.dp), modifier = Modifier.size(34.dp),
+        Row(
+            Modifier.fillMaxWidth().padding(start = spacing.start, end = spacing.end, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(contentAlignment = Alignment.Center) {
-                if (loading) ShimmerBox(Modifier.size(18.dp), cornerRadius = 9.dp)
-                else Icon(
-                    if (favorite) Icons.Rounded.Favorite else Icons.Outlined.FavoriteBorder,
-                    if (favorite) "取消收藏" else "收藏",
-                    tint = if (favorite) MeloraAppearance.accent else MeloraAppearance.textSub,
-                    modifier = Modifier.size(18.dp),
-                )
+            Surface(
+                onClick = onPlay,
+                enabled = canPlay && !loading,
+                shape = RoundedCornerShape(17.dp),
+                color = playBg,
+                modifier = Modifier.height(34.dp).then(
+                    if (showPlayLabel) Modifier else Modifier.width(spacing.playIcon + spacing.playInset * 2),
+                ),
+            ) {
+                Row(Modifier.padding(horizontal = spacing.playInset), verticalAlignment = Alignment.CenterVertically) {
+                    if (loading) ShimmerBox(Modifier.size(spacing.playIcon), cornerRadius = 4.dp)
+                    else Icon(if (playPause) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                        contentDescription = if (showPlayLabel) null else playLabel,
+                        tint = playColor, modifier = Modifier.size(spacing.playIcon))
+                    if (showPlayLabel) {
+                        Spacer(Modifier.width(spacing.playGap))
+                        if (loading) ShimmerTextLine(playLabel, fontSize = CollectionPlayLabelSize,
+                            modifier = Modifier.width(IntrinsicSize.Max), fontWeight = FontWeight.SemiBold)
+                        else Text(playLabel, fontSize = CollectionPlayLabelSize, fontWeight = FontWeight.SemiBold, color = playColor)
+                    }
+                }
             }
+            if (bookChapters != null) BookChapterActions(bookChapters, chapterLabel, spacing, placeholder = loading)
+            else Spacer(Modifier.weight(1f))
+            ChromeActionSurface(
+                onClick = { onFavorite?.invoke() }, enabled = onFavorite != null && !loading,
+                shape = RoundedCornerShape(17.dp), modifier = Modifier.size(spacing.iconButton),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    if (loading) ShimmerBox(Modifier.size(18.dp), cornerRadius = 9.dp)
+                    else Icon(
+                        if (favorite) Icons.Rounded.Favorite else Icons.Outlined.FavoriteBorder,
+                        if (favorite) "取消收藏" else "收藏",
+                        tint = if (favorite) MeloraAppearance.accent else MeloraAppearance.textSub,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+            Spacer(Modifier.width(spacing.selectionGap))
+            if (loading) {
+                Box(Modifier.size(CollectionBatchButtonWidth), contentAlignment = Alignment.Center) {
+                    ShimmerBox(Modifier.size(18.dp), cornerRadius = 5.dp)
+                }
+            } else SongSelectionButton(onClick = onSelect, enabled = canPlay)
         }
-        Spacer(Modifier.width(8.dp))
-        if (loading) {
-            Box(Modifier.size(34.dp), contentAlignment = Alignment.Center) {
-                ShimmerBox(Modifier.size(18.dp), cornerRadius = 5.dp)
-            }
-        } else SongSelectionButton(onClick = onSelect, enabled = canPlay)
     }
 }
 

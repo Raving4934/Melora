@@ -36,6 +36,7 @@ import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -194,42 +195,82 @@ internal fun bookEpisodeNumber(title: String): Int? {
     return (result + section + number).takeIf { it > 0 }
 }
 
-/** 听书目录在共用播放操作行中插入选集与排序，不再另起一行。 */
-@Composable
-internal fun RowScope.BookChapterActions(
+internal val BookChapterLabelSize = 11.5.sp
+internal val BookChapterArrowSize = 14.dp
+
+internal class BookChapterControls(
     page: Int,
     total: Int?,
-    descending: Boolean,
+    val descending: Boolean,
     loading: Boolean,
-    onPick: () -> Unit,
-    onToggleDirection: () -> Unit,
-    placeholder: Boolean = false,
+    val onPick: () -> Unit,
+    val onToggleDirection: () -> Unit,
 ) {
-    val start = BookCatalogPaging.rangeStart(page)
-    val end = BookCatalogPaging.rangeEnd(page, total)
-    val rangeLabel = if (end != null) "目录 $start–$end" else "目录 $start 起"
+    private val start = BookCatalogPaging.rangeStart(page)
+    private val end = BookCatalogPaging.rangeEnd(page, total)
+    val range = if (end != null) "$start–$end" else "$start 起"
+    val label = "目录 $range"
     val canReverse = (descending || BookCatalogPaging.pageCount(total) != null) && !loading
+}
+
+/** 听书目录与排序共用播放操作行。 */
+@Composable
+internal fun RowScope.BookChapterActions(
+    controls: BookChapterControls,
+    label: String,
+    spacing: CollectionActionSpacing,
+    placeholder: Boolean,
+) {
+    val blurred = chromeHeaderBlurred()
+    val pillBg = if (blurred) {
+        if (MeloraAppearance.isDark) Color.White.copy(alpha = 0.10f) else Color.Black.copy(alpha = 0.06f)
+    } else MeloraAppearance.softFill
+    val pillText = if (blurred) TextMain.copy(alpha = 0.82f) else TextSub
+    val pillIcon = if (blurred) TextMain.copy(alpha = 0.56f) else TextMuted
     // 弹性空白留在按钮外，按压反馈只覆盖文字，不铺满到排序图标。
+    Spacer(Modifier.width(spacing.chapterGap))
     Box(Modifier.weight(1f)) {
-        ChromeActionSurface(onClick = onPick, enabled = !placeholder, shape = RoundedCornerShape(17.dp),
-            modifier = Modifier.height(34.dp).testTag("book-chapter-picker-trigger")) {
-            Box(Modifier.padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
-                if (placeholder) ShimmerTextLine(rangeLabel, fontSize = 11.5.sp,
-                    modifier = Modifier.width(IntrinsicSize.Max), fontWeight = FontWeight.Medium)
-                else Text(rangeLabel, fontSize = 11.5.sp,
-                    fontWeight = FontWeight.Medium, color = BrandBlue,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Surface(
+            onClick = controls.onPick,
+            enabled = !placeholder,
+            shape = RoundedCornerShape(17.dp),
+            color = pillBg,
+            border = if (blurred) null else MeloraAppearance.chipBorder,
+            modifier = Modifier.height(32.dp)
+                .testTag("book-chapter-picker-trigger")
+                .semantics { contentDescription = controls.label },
+        ) {
+            Row(
+                Modifier.padding(start = spacing.chapterStart, end = spacing.chapterEnd),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // 先量未加权的箭头，将剩余空间留给目录文字。
+                val labelModifier = Modifier.weight(1f, fill = false)
+                if (placeholder) ShimmerTextLine(label, fontSize = BookChapterLabelSize,
+                    modifier = labelModifier.width(IntrinsicSize.Max), fontWeight = FontWeight.Medium)
+                else Text(label, fontSize = BookChapterLabelSize,
+                    fontWeight = FontWeight.Medium, color = pillText,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = labelModifier)
+                Spacer(Modifier.width(spacing.arrowGap))
+                val arrowModifier = Modifier.size(BookChapterArrowSize).testTag("book-chapter-picker-arrow")
+                if (placeholder) ShimmerBox(arrowModifier, cornerRadius = 4.dp)
+                else Icon(
+                    Icons.Rounded.KeyboardArrowDown,
+                    contentDescription = null,
+                    tint = pillIcon,
+                    modifier = arrowModifier,
+                )
             }
         }
     }
-    ChromeActionSurface(onClick = onToggleDirection, enabled = canReverse && !placeholder,
-        shape = RoundedCornerShape(17.dp), modifier = Modifier.size(34.dp)
-            .semantics { stateDescription = if (descending) "倒序" else "正序" }) {
+    ChromeActionSurface(onClick = controls.onToggleDirection, enabled = controls.canReverse && !placeholder,
+        shape = RoundedCornerShape(17.dp), modifier = Modifier.size(spacing.iconButton)
+            .semantics { stateDescription = if (controls.descending) "倒序" else "正序" }) {
         Box(contentAlignment = Alignment.Center) {
             if (placeholder) ShimmerBox(Modifier.size(18.dp), cornerRadius = 5.dp)
-            else Icon(if (descending) ChapterDescendingIcon else ChapterAscendingIcon,
-                contentDescription = if (descending) "切换为正序" else "切换为倒序",
-                tint = if (!canReverse) TextMuted else TextSub,
+            else Icon(if (controls.descending) ChapterDescendingIcon else ChapterAscendingIcon,
+                contentDescription = if (controls.descending) "切换为正序" else "切换为倒序",
+                tint = if (!controls.canReverse) TextMuted else TextSub,
                 modifier = Modifier.size(18.dp))
         }
     }

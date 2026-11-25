@@ -1,5 +1,14 @@
 package com.leyu.melora.ui.common
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.requiredWidth
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -22,6 +31,7 @@ import com.leyu.melora.playback.sdk.OnlineCache
 import com.leyu.melora.playback.sdk.OnlinePlaylist
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.ui.awaitStable
+import com.leyu.melora.ui.boundsInSameFrame
 import com.leyu.melora.ui.theme.MeloraTheme
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.CompletableDeferred
@@ -39,13 +49,24 @@ class BookCatalogNavigationTest {
     private val id = "catalog-${System.nanoTime()}"
     private val requests = CopyOnWriteArrayList<Int>()
 
-    private fun show(total: Int = 1500, load: suspend (Int) -> KwBookApi.BookChapters = ::page) {
+    private fun show(
+        total: Int = 1500,
+        viewport: @Composable (@Composable () -> Unit) -> Unit = { it() },
+        load: suspend (Int) -> KwBookApi.BookChapters = ::page,
+    ) {
         val album = OnlinePlaylist(JSONObject().put("source", "kw").put("id", "book_album_$id")
             .put("name", "目录测试专辑").put("total", total).put("img", "file:///catalog-fixture.jpg"))
         compose.setContent {
-            MeloraTheme { SongListStateProvider {
-                PlaylistDetailContent(album, {}, modifier = Modifier.testTag("catalog-fixture"), loadBookPage = { _, number -> requests += number; load(number) })
-            } }
+            viewport {
+                MeloraTheme {
+                    SongListStateProvider {
+                        PlaylistDetailContent(
+                            album, {}, modifier = Modifier.testTag("catalog-fixture"),
+                            loadBookPage = { _, number -> requests += number; load(number) },
+                        )
+                    }
+                }
+            }
         }
         compose.waitUntil(5_000) { requests.contains(1) }
         compose.awaitStable(compose.onNodeWithTag("book-chapter-picker-trigger"))
@@ -235,10 +256,15 @@ class BookCatalogNavigationTest {
             assertEquals("骨架和内容行的顶部应一致", loadingRow.top, readyRow.top, 1f)
             assertEquals("骨架和内容行的高度应一致", loadingRow.height, readyRow.height, 1f)
             assertEquals("章节占位应按真实文字度量", loadingPicker.width, readyPicker.width, 1f)
-            val label = compose.onNodeWithText("目录 1–100", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-            val density = InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.density
-            assertTrue("点击背景只覆盖章节文字及两侧8dp，不得延伸至排序按钮",
-                readyPicker.width - label.width <= 16f * density + 1f)
+            val (label, arrow, sort) = compose.boundsInSameFrame(
+                compose.onNodeWithText("1–100", substring = true, useUnmergedTree = true),
+                compose.onNodeWithTag("book-chapter-picker-arrow", useUnmergedTree = true),
+                compose.onNodeWithContentDescription("切换为倒序"),
+            )
+            assertTrue(readyPicker.left <= label.left && label.right <= arrow.left)
+            assertTrue("箭头应位于目录按钮内", arrow.right <= readyPicker.right)
+            assertTrue("排序有独立点击区", readyPicker.right <= sort.left)
+            assertTrue("目录背景应止于箭头后的内边距", readyPicker.right - arrow.right <= with(compose.density) { 8.dp.toPx() } + 1f)
             if (Build.VERSION.SDK_INT >= 28) {
                 val bitmap = compose.onNodeWithTag("catalog-fixture").captureToImage().asAndroidBitmap()
                 File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir, "book-actions-ready.png")
@@ -246,6 +272,45 @@ class BookCatalogNavigationTest {
                 bitmap.recycle()
             }
         } finally { delayed.complete(page(1)) }
+    }
+
+    @Test fun fourDigitChapterRangesFitWithTheirArrowAcrossWidthsAndFontScales() {
+        val width = mutableStateOf(390.dp)
+        val scale = mutableStateOf(1f)
+        show(viewport = { content ->
+            val density = LocalDensity.current.density
+            CompositionLocalProvider(LocalDensity provides Density(density, scale.value)) {
+                Box(Modifier.requiredWidth(width.value)) { content() }
+            }
+        })
+        jump(1150)
+        awaitChapter(1150)
+        val label = compose.onNodeWithText("1101–1200", substring = true, useUnmergedTree = true)
+        val arrow = compose.onNodeWithTag("book-chapter-picker-arrow", useUnmergedTree = true)
+        val picker = compose.onNodeWithTag("book-chapter-picker-trigger")
+        val sort = compose.onNodeWithContentDescription("切换为倒序")
+        val clipped = mutableListOf<String>()
+        for (font in listOf(1f, 1.3f, 2f)) {
+            for (pane in listOf(320, 354, 355, 360, 390)) {
+                compose.runOnIdle { width.value = pane.dp; scale.value = font }
+                compose.awaitStable(picker)
+                val layouts = mutableListOf<TextLayoutResult>()
+                label.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+                val layout = layouts.single()
+                val scenario = "${pane}dp，字号 $font"
+                assertEquals(scenario, 1, layout.lineCount)
+                if (layout.isLineEllipsized(0) || layout.getLineEnd(0, visibleEnd = true) != layout.layoutInput.text.length ||
+                    layout.getLineRight(0) > layout.size.width + 1f) {
+                    clipped += "$scenario «${layout.layoutInput.text.text}» 分配 ${layout.size.width}px，行末 ${layout.getLineRight(0)}px，省略 ${layout.isLineEllipsized(0)}"
+                }
+                val (textRect, arrowRect, pill, sortRect) = compose.boundsInSameFrame(label, arrow, picker, sort)
+                assertEquals("箭头宽度：$scenario", with(compose.density) { 14.dp.toPx() }, arrowRect.width, 1f)
+                assertTrue(scenario, textRect.right <= arrowRect.left && arrowRect.right <= pill.right && pill.right <= sortRect.left)
+                picker.assertContentDescriptionEquals("目录 1101–1200")
+                compose.onNode(hasClickAction() and (hasText("播放全部") or hasContentDescription("播放全部"))).assertIsDisplayed()
+            }
+        }
+        assertTrue("章节范围被截断：${clipped.joinToString()}", clipped.isEmpty())
     }
 
     @Test fun singleRowActionsAndSortingKeepTheToolbarAtItsUnpinnedOrPinnedPosition() {
