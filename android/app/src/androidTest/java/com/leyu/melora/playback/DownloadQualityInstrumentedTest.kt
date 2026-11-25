@@ -477,6 +477,22 @@ class DownloadQualityInstrumentedTest {
         assertEquals(com.leyu.melora.playback.local.LocalFilePresence.Unknown,
             com.leyu.melora.playback.local.localFilePresence(context, uri))
         assertEquals(uri, DownloadCenter.saved(song.uid)?.savedUri)
+        assertEquals(DownloadCenter.Status.Failed, DownloadCenter.saved(song.uid)?.status)
+    }
+
+    @Test fun unavailableOldDownloadDoesNotOverwriteActiveOrPausedReplacement() {
+        val uri = "content://fixture.unavailable/tree/root/document/audio.mp3"
+        DownloadCenter.start(song, "fixture")
+        DownloadCenter.done(song.uid, "fixture", "unavailable.mp3", uri)
+
+        DownloadCenter.start(song, "retry")
+        assertFailedDownloadResolution(uri)
+        assertEquals(DownloadCenter.Status.Downloading, DownloadCenter.saved(song.uid)?.status)
+
+        DownloadCenter.paused(song.uid)
+        assertFailedDownloadResolution(uri)
+        assertEquals(DownloadCenter.Status.Paused, DownloadCenter.saved(song.uid)?.status)
+        assertEquals(uri, DownloadCenter.saved(song.uid)?.savedUri)
     }
 
     private fun assertFailedDownloadResolution(expectedUri: String) {

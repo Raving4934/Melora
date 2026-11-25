@@ -132,16 +132,9 @@ class MeloraDataSourceFactory(context: Context, base: DataSource.Factory) : Data
 
         val savedDownload = DownloadCenter.saved(uid)
         val localMatch = LocalMediaStore.matchTrack(track)
-        // 没有已保存下载时保持原有本地优先；查询只读内存索引，不扫描文件、不读取标签。
-        if (savedDownload == null) {
-            localMatch?.let { local ->
-                TrackRegistry.notifyResolved(uid, local.playbackQuality, "localmedia", localFile = local)
-                return dataSpec.buildUpon().setUri(local.uri.toUri()).setKey(null).build()
-            }
-        }
-        // 下载记录不再无条件压过本地文件：只有下载规格已知且本地规格明确更高才切本地。
-        if (savedDownload != null && localMatch != null &&
-            savedDownload.audioSpec?.let { LocalMediaStore.isHigherQuality(localMatch, it) } == true
+        // 本地文件优先；已有下载则需要实测规格证明本地版本更好。
+        if (localMatch != null &&
+            (savedDownload == null || savedDownload.audioSpec?.let { LocalMediaStore.isHigherQuality(localMatch, it) } == true)
         ) {
             TrackRegistry.notifyResolved(uid, localMatch.playbackQuality, "localmedia", localFile = localMatch)
             return dataSpec.buildUpon().setUri(localMatch.uri.toUri()).setKey(null).build()
@@ -150,9 +143,10 @@ class MeloraDataSourceFactory(context: Context, base: DataSource.Factory) : Data
             // 读取失败也必须保留原地址，播放错误处理才能区分永久删除与目录暂时失权。
             TrackRegistry.notifyResolved(uid, "local", "local", downloadUri = savedDownload.savedUri)
             // 不在加载线程清除记录或直接换源，由统一错误处理在确认文件状态后接管。
-            val local = Downloader.downloadedUri(appContext, uid) ?: run {
-                DownloadCenter.failed(uid, "本地文件不存在或目录权限已失效")
-                throw FileNotFoundException("本地文件不存在或目录权限已失效，请检查下载目录")
+            val local = Downloader.downloadedUri(appContext, savedDownload) ?: run {
+                val message = "本地文件不存在或目录权限已失效"
+                DownloadCenter.failed(uid, message, expectedSaved = savedDownload)
+                throw FileNotFoundException("$message，请检查下载目录")
             }
             TrackRegistry.notifyResolved(uid, "local", "local", localFile = LocalMediaStore.findByUri(local.toString()), downloadUri = local.toString())
             return dataSpec.buildUpon().setUri(local).setKey(null).build()

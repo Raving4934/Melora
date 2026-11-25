@@ -127,11 +127,12 @@ object DownloadCenter {
         }
     }
 
-    /** 下载失败只改变任务状态，不能抹掉仍可用的旧资源。 */
-    fun failed(id: String, message: String) = update(persist = true) { list ->
-        list.map {
-            if (it.id == id) it.copy(status = Status.Failed, percent = 0, detail = message, updatedAt = System.currentTimeMillis())
-            else it
+    /** 下载任务可以标记自身失败；播放只可标记仍指向原资源的已完成记录。 */
+    fun failed(id: String, message: String, expectedSaved: Record? = null) = update(persist = true) { list ->
+        list.map { record ->
+            if (record.id != id) return@map record
+            if (expectedSaved != null && (record != expectedSaved || record.status != Status.Done)) return@map record
+            record.copy(status = Status.Failed, percent = 0, detail = message, updatedAt = System.currentTimeMillis())
         }
     }
 

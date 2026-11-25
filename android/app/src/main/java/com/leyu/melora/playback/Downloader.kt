@@ -634,8 +634,7 @@ object Downloader {
     }
 
     /** 真实下载文件优先于缓存/网络；旧记录只在定位成功后补齐URI。必须在IO线程调用。 */
-    internal fun downloadedUri(context: Context, uid: String): Uri? {
-        val record = DownloadCenter.saved(uid) ?: return null
+    internal fun downloadedUri(context: Context, record: DownloadCenter.Record): Uri? {
         val saved = record.savedUri?.toUri()
         if (saved != null && isReadable(context, saved)) return saved
 

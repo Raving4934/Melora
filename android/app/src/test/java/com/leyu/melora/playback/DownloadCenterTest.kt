@@ -446,6 +446,31 @@ class DownloadCenterTest {
     }
 
     @Test
+    fun lateReadFailureCannotChangeAnActiveTaskOrAReplacementFile() {
+        val song = OnlineSong(songJson(null).put("songmid", "old-resource-open"))
+        val oldUri = "content://fixture/old"
+        val newUri = "content://fixture/new"
+        try {
+            DownloadCenter.start(song, "fixture")
+            DownloadCenter.done(song.uid, "fixture", "old.mp3", oldUri)
+            val old = requireNotNull(DownloadCenter.saved(song.uid))
+
+            DownloadCenter.start(song, "retry")
+            val active = requireNotNull(DownloadCenter.saved(song.uid))
+            DownloadCenter.failed(song.uid, "旧文件不可读", expectedSaved = old)
+            assertEquals(active, DownloadCenter.saved(song.uid))
+
+            DownloadCenter.done(song.uid, "replacement", "new.mp3", newUri)
+            val replacement = requireNotNull(DownloadCenter.saved(song.uid))
+            DownloadCenter.failed(song.uid, "旧文件不可读", expectedSaved = old)
+            assertEquals(replacement, DownloadCenter.saved(song.uid))
+            assertEquals(newUri, replacement.savedUri)
+        } finally {
+            DownloadCenter.remove(song.uid)
+        }
+    }
+
+    @Test
     fun staleResourceBackfillCannotOverwriteAnUpgradeOrReplacement() {
         val song = OnlineSong(songJson(null).put("songmid", "stale-backfill"))
         val high = AudioSpecification("audio/flac", 96000, -1, 24)
