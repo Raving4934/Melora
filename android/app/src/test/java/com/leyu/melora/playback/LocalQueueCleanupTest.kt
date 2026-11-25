@@ -52,6 +52,7 @@ class LocalQueueCleanupTest {
         assertEquals(listOf("local_b", "local_c"), prefs.uids())
         assertEquals(1, prefs.values["index"])
         assertEquals("kept-origin", prefs.values["queueId"])
+        assertEquals(95_000L, prefs.values["positionMs"])
     }
 
     @Test fun savedCurrentDeletionSelectsFollowingSurvivorNotAnotherDeletedTrack() {
@@ -59,12 +60,14 @@ class LocalQueueCleanupTest {
         pruneSavedLocalQueue(prefs.prefs, DeletedLocalFiles(setOf("1", "2"), emptySet()))
         assertEquals(listOf("local_0", "local_3", "local_4"), prefs.uids())
         assertEquals(1, prefs.values["index"])
+        assertNull("已删除曲目的断点不能传给下一首", prefs.values["positionMs"])
     }
 
     @Test fun savedLastDeletionFallsBackToFirstSurvivor() {
         val prefs = saved((0..2).map { local("$it") }, index = 2)
         pruneSavedLocalQueue(prefs.prefs, DeletedLocalFiles(setOf("2"), emptySet()))
         assertEquals(0, prefs.values["index"])
+        assertNull("回到队首时也不能沿用已删除的断点", prefs.values["positionMs"])
     }
 
     @Test fun savedQueueUsesUriEvenWhenLocalIdChanged() {
@@ -131,7 +134,7 @@ class LocalQueueCleanupTest {
 
     private fun saved(tracks: List<UiTrack>, index: Int) = Preferences(mutableMapOf(
         "queue" to JSONArray().apply { tracks.forEach { put(JSONObject().put("uid", it.uid).put("source", it.source).put("raw", it.raw)) } }.toString(),
-        "index" to index, "queueId" to "kept-origin",
+        "index" to index, "positionMs" to 95_000L, "queueId" to "kept-origin",
     ))
 
     private class Queue(list: List<UiTrack>, val repeatMode: Int = Player.REPEAT_MODE_ALL) {
@@ -160,6 +163,7 @@ class LocalQueueCleanupTest {
             SharedPreferences.Editor::class.java.classLoader, arrayOf(SharedPreferences.Editor::class.java),
         ) { proxy, method, args -> when (method.name) {
             "clear" -> { values.clear(); proxy }
+            "remove" -> { values.remove(args!![0]); proxy }
             "putString", "putInt" -> { values[args!![0] as String] = args[1]!!; proxy }
             "apply" -> null
             else -> error(method.name)

@@ -1335,7 +1335,7 @@ object PlaybackController {
     private const val PREFS_QUEUE = "melora-queue"
     private const val KEY_QUEUE = "queue"
     private const val KEY_QUEUE_INDEX = "index"
-    private const val KEY_QUEUE_POSITION = "positionMs"
+    internal const val KEY_QUEUE_POSITION = "positionMs"
     private const val MAX_SAVED_QUEUE = 200
 
     private fun queuePrefs(): android.content.SharedPreferences? =

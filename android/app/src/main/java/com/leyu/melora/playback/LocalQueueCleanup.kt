@@ -45,15 +45,19 @@ internal fun pruneSavedLocalQueue(prefs: SharedPreferences, deleted: DeletedLoca
         !deleted.matches(item.optString("source"), item.optString("uid"), item.optJSONObject("raw")?.optString("localUri"))
     }
     if (kept.size == array.length()) return false
-    val newIndex = kept.indexOfFirst { it >= oldIndex }.takeIf { it >= 0 } ?: 0
+    val newIndex = kept.replacementIndex(oldIndex)
     prefs.edit {
         if (kept.isEmpty()) clear() else {
             putString("queue", JSONArray().apply { kept.forEach { put(array.get(it)) } }.toString())
             putInt("index", newIndex)
+            if (kept[newIndex] != oldIndex) remove(PlaybackController.KEY_QUEUE_POSITION)
         }
     }
     return true
 }
+
+private fun List<Int>.replacementIndex(selectedIndex: Int): Int =
+    indexOfFirst { it >= selectedIndex }.coerceAtLeast(0)
 
 /** 未连接服务的播放意图保存为数据，删除可直接剪掉其中的条目，不能留不可检查的闭包。 */
 internal data class PendingPlaybackSelection(
@@ -65,7 +69,8 @@ internal data class PendingPlaybackSelection(
 ) {
     fun without(deleted: DeletedLocalFiles): PendingPlaybackSelection {
         val kept = tracks.indices.filterNot { deleted.matches(tracks[it]) }
-        return copy(tracks = kept.map(tracks::get), index = kept.indexOfFirst { it >= index }.takeIf { it >= 0 } ?: 0,
-            startPositionMs = startPositionMs.takeIf { index in kept })
+        val replacement = kept.replacementIndex(index)
+        return copy(tracks = kept.map(tracks::get), index = replacement,
+            startPositionMs = startPositionMs.takeIf { kept.getOrNull(replacement) == index })
     }
 }
