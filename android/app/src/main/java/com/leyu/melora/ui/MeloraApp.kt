@@ -136,7 +136,6 @@ import com.leyu.melora.ui.playlist.PlaylistTopBarFilter
 import com.leyu.melora.ui.playlist.PlaylistsScreen
 import com.leyu.melora.ui.playlist.playlistPlatforms
 import com.leyu.melora.ui.settings.SettingsMasterScreen
-import com.leyu.melora.ui.settings.SettingsSubPage
 import com.leyu.melora.ui.common.ChromeActionSurface
 import com.leyu.melora.ui.common.ChromeScaffold
 import com.leyu.melora.ui.common.LocalChromeStartBleed
@@ -347,7 +346,6 @@ fun MeloraApp(initialTab: Int = 5, modifier: Modifier = Modifier) {
     var searchCategory by rememberSaveable { mutableStateOf(SearchCategory.Song) }
 
     // 侧栏跳转设置主菜单；设置页的“关于乐屿”仍从设置内部进入。
-    var settingsNavTarget by remember { mutableStateOf<SettingsSubPage?>(null) }
     var settingsNavSeq by remember { mutableIntStateOf(0) }
     var primaryScrollToTopRequest by remember { mutableIntStateOf(0) }
     fun navigateToTab(target: Int) {
@@ -394,7 +392,6 @@ fun MeloraApp(initialTab: Int = 5, modifier: Modifier = Modifier) {
     }
     fun prepareTabNavigation(index: Int) {
         if (index == 7) {
-            settingsNavTarget = null
             settingsNavSeq++
         }
     }
@@ -698,7 +695,6 @@ fun MeloraApp(initialTab: Int = 5, modifier: Modifier = Modifier) {
                                 )
                                 7 -> SettingsMasterScreen(
                                     onOpenDrawer = openDrawer,
-                                    requestedSubPage = settingsNavTarget,
                                     requestSeq = settingsNavSeq,
                                 )
                             }

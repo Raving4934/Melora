@@ -76,6 +76,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -130,7 +131,7 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
     var sourceStatuses by remember { mutableStateOf<Map<String, SourceActionStatus>>(emptyMap()) }
     var busy by remember { mutableStateOf(false) }
     var sourceOperationId by remember { mutableIntStateOf(0) }
-    var pendingExport by remember { mutableStateOf<LxScript?>(null) }
+    var pendingExportId by rememberSaveable { mutableStateOf<String?>(null) }
     var importChooserOpen by remember { mutableStateOf(false) }
     var onlineImportOpen by remember { mutableStateOf(false) }
     val sourceImporter = remember(context, store) { LxSourceImporter(store) }
@@ -223,57 +224,45 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
         })
     }
 
+    fun writeExport(uri: Uri, success: String, failure: String, payload: () -> String) {
+        val operationId = ++sourceOperationId
+        busy = true
+        scope.launch(Dispatchers.IO) {
+            val result = runCatchingCancellable {
+                val bytes = payload().toByteArray()
+                context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) } ?: error("无法写入文件")
+            }
+            withContext(Dispatchers.Main) {
+                if (operationId != sourceOperationId) return@withContext
+                notify(if (result.isSuccess) success else failure)
+                busy = false
+            }
+        }
+    }
+
     val singleExporter = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/javascript"),
-    ) { uri: Uri? ->
-        val target = pendingExport
-        if (uri != null && target != null) {
-            val operationId = ++sourceOperationId
-            busy = true
-            scope.launch(Dispatchers.IO) {
-                val ok = runCatchingCancellable {
-                    context.contentResolver.openOutputStream(uri)?.use { out ->
-                        out.write((store.code(target.id) ?: error("脚本不存在")).toByteArray())
-                    } ?: error("无法写入文件")
-                }.isSuccess
-                withContext(Dispatchers.Main) {
-                    if (operationId != sourceOperationId) return@withContext
-                    notify(if (ok) "已导出「${target.name}」" else "导出「${target.name}」失败")
-                    pendingExport = null
-                    busy = false
-                }
-            }
-        } else {
-            pendingExport = null
+    ) { uri ->
+        val id = pendingExportId
+        pendingExportId = null
+        if (uri != null && id != null) {
+            val name = scripts.firstOrNull { it.id == id }?.name ?: id
+            writeExport(uri, "已导出「$name」", "导出「$name」失败") { store.code(id) ?: error("脚本不存在") }
         }
     }
 
     val bundleExporter = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json"),
-    ) { uri: Uri? ->
+    ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        val exportedScripts = scripts
-        val operationId = ++sourceOperationId
-        busy = true
-        scope.launch(Dispatchers.IO) {
-            val ok = runCatchingCancellable {
-                val array = JSONArray()
-                exportedScripts.forEach { script ->
-                    array.put(JSONObject().put("name", script.id).put("code", store.code(script.id) ?: error("脚本不存在：${script.name}")))
-                }
-                val payload = JSONObject()
-                    .put("app", "melora")
-                    .put("type", "lx-sources")
-                    .put("scripts", array)
-                    .toString(2)
-                context.contentResolver.openOutputStream(uri)?.use { it.write(payload.toByteArray()) }
-                    ?: error("无法写入文件")
-            }.isSuccess
-            withContext(Dispatchers.Main) {
-                if (operationId != sourceOperationId) return@withContext
-                notify(if (ok) "已导出 ${exportedScripts.size} 个音源脚本" else "导出失败")
-                busy = false
+        val selected = scripts
+        writeExport(uri, "已导出 ${selected.size} 个音源脚本", "导出失败") {
+            val entries = JSONArray()
+            selected.forEach { script ->
+                val code = store.code(script.id) ?: error("脚本不存在：${script.name}")
+                entries.put(JSONObject().put("name", script.id).put("code", code))
             }
+            JSONObject().put("app", "melora").put("type", "lx-sources").put("scripts", entries).toString(2)
         }
     }
 
@@ -429,7 +418,7 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
                                 onInspect = { inspectScript(script) },
                                 onUpdate = if (script.originUrl != null) ({ updateLinkedSource(script) }) else null,
                                 onExport = {
-                                    pendingExport = script
+                                    pendingExportId = script.id
                                     singleExporter.launch(script.id)
                                 },
                                 onDelete = {
