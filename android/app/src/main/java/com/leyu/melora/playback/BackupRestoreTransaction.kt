@@ -141,6 +141,7 @@ internal object BackupRestoreTransaction {
             if (saved.isFile) copyFile(saved, target) else check(!target.exists() || target.delete()) { "无法回滚用户库" }
         }
         val sourceDir = File(context.filesDir, LxScriptStore.DIRECTORY)
+        LxScriptStore.invalidateDirectoryRevisions(sourceDir)
         check(!sourceDir.exists() || sourceDir.deleteRecursively()) { "无法回滚音源目录" }
         val sources = File(journal, "sources")
         if (sources.exists()) copyTree(sources, sourceDir)

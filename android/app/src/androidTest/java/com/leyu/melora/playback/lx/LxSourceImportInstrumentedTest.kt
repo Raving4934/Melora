@@ -269,6 +269,29 @@ class LxSourceImportInstrumentedTest {
     }
 
     @Test
+    fun sourceMetadataFollowsContentRevisionAndReadsCurrentPreferences() {
+        val original = store.import("metadata-revision.js", "// @name 原音源\n// @version 1")
+        val other = LxScriptStore(fixtureContext)
+        assertEquals(original, other.list().single())
+        val originalRevision = store.revision(original.id)
+
+        store.setEnabled(original.id, true)
+        assertTrue(other.list().single().enabled)
+        assertEquals(originalRevision, other.revision(original.id))
+
+        val replacement = other.import(original.id, "// @name 新音源\n// @version 2")
+        assertEquals(replacement, store.list().single())
+        assertEquals("新音源", replacement.name)
+        assertEquals("2", replacement.version)
+        assertFalse(originalRevision == store.revision(original.id))
+
+        store.remove(original.id)
+        val addedAgain = store.import(original.id, "// @name 重新导入")
+        assertEquals(addedAgain, other.list().single())
+        assertFalse(addedAgain.enabled)
+    }
+
+    @Test
     fun enableChangeDoesNotInvalidateUnchangedOriginAndNoUpdateDoesNotWrite() = runBlocking<Unit> {
         val code = "const unchanged = true;"
         ScriptServer(code, holdResponse = true).use { server ->

@@ -24,23 +24,28 @@ class LxScriptStore(context: Context) {
     private val dir = File(context.filesDir, DIRECTORY).apply { mkdirs() }
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
+    private class ScriptRevision(val number: Long, var metadata: Map<String, String>? = null)
+
     internal companion object {
         const val DIRECTORY = "lx-sources"
         const val PREFS = "lx-sources"
         private const val ORIGIN_PREFIX = "origin:"
         private val enabledStateLock = BackupStateLock.monitor
-        // revision只用于本进程常驻引擎失效；随内容写入推进，不改变备份/偏好格式。
-        private val contentRevisions = mutableMapOf<File, Long>()
+        // 引擎与展示元数据共用文件版本，开关仍读取当前偏好。
+        private val contentRevisions = mutableMapOf<File, ScriptRevision>()
         private var nextRevision = 0L
 
         private fun originKey(id: String) = "$ORIGIN_PREFIX$id"
+
+        internal fun invalidateDirectoryRevisions(directory: File) = synchronized(enabledStateLock) {
+            contentRevisions.keys.removeAll { it.parentFile == directory.absoluteFile }
+        }
     }
 
-    fun list(): List<LxScript> = synchronized(enabledStateLock) { dir
-        .listFiles { file -> file.isFile && file.name.endsWith(".js") }
-        ?.map { file -> script(file.name, file.readText()) }
-        ?.sortedBy { it.name }
-        ?: emptyList()
+    private fun scriptFiles() = dir.listFiles { it.isFile && it.name.endsWith(".js") }
+
+    fun list(): List<LxScript> = synchronized(enabledStateLock) {
+        scriptFiles().orEmpty().map(::script).sortedBy(LxScript::name)
     }
 
     fun hasEnabledScripts(): Boolean = synchronized(enabledStateLock) {
@@ -51,19 +56,19 @@ class LxScriptStore(context: Context) {
 
     /** 查询不读脚本正文；删除后重导入也不能复用旧revision。 */
     internal fun revision(id: String): Long? = synchronized(enabledStateLock) {
-        dir.resolve(id).takeIf { it.isFile }?.let(::revisionOf)
+        dir.resolve(id).takeIf { it.isFile }?.let { revisionOf(it).number }
     }
 
     /** 加载代码与其revision必须取自同一次存储快照。 */
     internal fun content(id: String): Pair<String, Long>? = synchronized(enabledStateLock) {
-        dir.resolve(id).takeIf { it.isFile }?.let { it.readText() to revisionOf(it) }
+        dir.resolve(id).takeIf { it.isFile }?.let { it.readText() to revisionOf(it).number }
     }
 
-    private fun revisionOf(file: File): Long =
-        contentRevisions.getOrPut(file.absoluteFile) { ++nextRevision }
+    private fun revisionOf(file: File): ScriptRevision =
+        contentRevisions.getOrPut(file.absoluteFile) { ScriptRevision(++nextRevision) }
 
-    private fun contentChanged(file: File) {
-        contentRevisions[file.absoluteFile] = ++nextRevision
+    private fun contentChanged(file: File, code: String? = null) {
+        contentRevisions[file.absoluteFile] = ScriptRevision(++nextRevision, code?.let(::parseLxScriptMetadata))
     }
 
     fun import(name: String, code: String, originUrl: String? = null, expectedCode: String? = null): LxScript =
@@ -78,17 +83,19 @@ class LxScriptStore(context: Context) {
             }
             if (currentCode != code) {
                 writeTextAtomically(file, code)
-                contentChanged(file)
+                contentChanged(file, code)
             }
             prefs.edit {
                 if (!prefs.contains(file.name)) putBoolean(file.name, false)
                 if (normalizedOriginUrl == null) remove(originKey(file.name)) else putString(originKey(file.name), normalizedOriginUrl)
             }
-            script(file.name, code)
+            script(file)
         }
 
-    private fun script(id: String, code: String): LxScript {
-        val meta = parseLxScriptMetadata(code)
+    private fun script(file: File): LxScript {
+        val id = file.name
+        val revision = revisionOf(file)
+        val meta = revision.metadata ?: parseLxScriptMetadata(file.readText()).also { revision.metadata = it }
         return LxScript(
             id = id,
             name = meta["name"].orEmpty().ifEmpty { "未命名脚本" },
@@ -117,11 +124,7 @@ class LxScriptStore(context: Context) {
      * apply 会先更新进程内状态，不需要为开关操作重建脚本池。
      */
     fun setEnabled(id: String, enabled: Boolean): Set<String> = BackupStateLock.write {
-        val installedIds = dir
-            .listFiles { file -> file.isFile && file.name.endsWith(".js") }
-            ?.map { it.name }
-            ?.toSet()
-            ?: emptySet()
+        val installedIds = scriptFiles().orEmpty().mapTo(linkedSetOf()) { it.name }
         val currentEnabledIds = installedIds.filter { prefs.getBoolean(it, false) }
         if (id !in installedIds) return@write currentEnabledIds.toSet()
 
@@ -140,7 +143,7 @@ class LxScriptStore(context: Context) {
     }
 
     internal fun backupSnapshot(checkCancelled: () -> Unit): List<BackupScript> = synchronized(enabledStateLock) {
-        val files = dir.listFiles { file -> file.isFile && file.name.endsWith(".js") } ?: error("无法读取音源目录")
+        val files = scriptFiles() ?: error("无法读取音源目录")
         require(files.size <= 128 && files.sumOf { it.length() } <= MAX_BACKUP_BYTES) { "音源总量超过备份限制" }
         files.map { file ->
             checkCancelled()
@@ -156,8 +159,7 @@ class LxScriptStore(context: Context) {
 
     /** 保持历史合并语义：同名覆盖、其它已装源保留；单选启用状态最后统一commit。 */
     internal fun restoreBackup(scripts: List<BackupScript>, checkCancelled: () -> Unit) = BackupStateLock.write {
-        val installed = dir.listFiles { file -> file.isFile && file.name.endsWith(".js") }?.map { it.name }?.toMutableSet()
-            ?: error("无法读取音源目录")
+        val installed = (scriptFiles() ?: error("无法读取音源目录")).mapTo(linkedSetOf()) { it.name }
         var enabled = installed.filter { prefs.getBoolean(it, false) }.toSet()
         val originUrls = linkedMapOf<String, String>()
         installed.forEach { id -> prefs.getString(originKey(id), null)?.let { originUrls[id] = it } }

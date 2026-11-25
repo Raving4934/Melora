@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.leyu.melora.playback.BackupRestoreTransaction
 import com.leyu.melora.playback.BackupScript
 import com.leyu.melora.playback.lx.LxScriptEngine
 import com.leyu.melora.playback.lx.LxScriptStore
@@ -97,6 +98,27 @@ class LxScriptPoolLifecycleInstrumentedTest {
     @Test(timeout = 10_000) fun directResolveReconcilesSameVersionOverwrite() = runBlocking {
         store.import("a.js", script("new"))
         assertEquals("https://example.test/new.mp3", LxScriptPool.resolve(context, "a.js", "kw", "musicUrl", JSONObject()))
+    }
+
+    @Test(timeout = 10_000) fun recoveringTheBackupJournalInvalidatesScriptMetadataAndTheLoadedEngine() = runBlocking {
+        val original = store.list().first { it.id == "a.js" }
+        BackupRestoreTransaction.prepare(context)
+        try {
+            val candidate = store.import("a.js", script("provisional").replace(original.name, "待回滚的脚本"))
+            assertEquals(candidate, store.list().first { it.id == "a.js" })
+            assertEquals("https://example.test/provisional.mp3",
+                LxScriptPool.resolve(context, "a.js", "kw", "musicUrl", JSONObject()))
+            val candidateRevision = store.revision("a.js")
+
+            BackupRestoreTransaction.recover(context)
+
+            assertEquals(original, store.list().first { it.id == "a.js" })
+            assertNotEquals(candidateRevision, store.revision("a.js"))
+            assertEquals("https://example.test/old.mp3",
+                LxScriptPool.resolve(context, "a.js", "kw", "musicUrl", JSONObject()))
+        } finally {
+            BackupRestoreTransaction.recover(context)
+        }
     }
 
     @Test(timeout = 10_000) fun backupOverwriteAndDeleteReimportInvalidateLoadedContent() = runBlocking {
