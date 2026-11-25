@@ -42,6 +42,7 @@ import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.ui.common.CardWhite
 import com.leyu.melora.ui.common.EmptyState
 import com.leyu.melora.ui.common.ErrorState
+import com.leyu.melora.ui.common.LoadMoreOnScroll
 import com.leyu.melora.ui.common.OnlineAudiobookCard
 import com.leyu.melora.ui.common.OnlinePlaylistCard
 import com.leyu.melora.ui.common.OnlineSongRow
@@ -74,23 +75,19 @@ internal fun SearchResultsContent(
     onPlaySong: (OnlineSong) -> Unit,
 ) {
     val viewport = Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current)
-    if (results.isEmpty) {
+    if (results.isEmpty && (!results.hasMore || error != null)) {
         when {
-            loading && results.page == 0 -> BoxWithConstraints(viewport) {
+            error != null -> ErrorState(error, modifier = viewport, onRetry = onLoadPage)
+            loading -> BoxWithConstraints(viewport) {
                 SearchResultsSkeleton(category, maxWidth, Modifier.fillMaxSize())
             }
-            error != null -> ErrorState(error, modifier = viewport, onRetry = onLoadPage)
-            else -> Column(viewport) {
+            else -> {
                 val emptyMessage = when (category) {
                     SearchCategory.Song -> "没有找到「$submitted」相关内容"
                     SearchCategory.Playlist -> "没有找到「$submitted」相关歌单"
                     SearchCategory.Audiobook -> "没有找到「$submitted」相关有声专辑"
                 }
-                EmptyState(
-                    if (results.hasMore) "当前页暂无匹配内容，可继续加载" else emptyMessage,
-                    Modifier.weight(1f),
-                )
-                if (results.hasMore) LoadMoreFooter(loading, false, onLoadPage)
+                EmptyState(emptyMessage, viewport)
             }
         }
         return
@@ -98,6 +95,11 @@ internal fun SearchResultsContent(
 
     val songResults = category == SearchCategory.Song
     val source = sourceAliasDisplay(selectedPlatform.id, selectedPlatform.label)
+    val footerKey = if (songResults) results.songs.size else results.playlists.size
+    LoadMoreOnScroll(
+        listState, enabled = results.hasMore && error == null, loading = loading,
+        fillViewportFooterKey = footerKey, onLoadMore = onLoadPage,
+    )
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val columns = if (songResults) 1 else responsiveGridColumns(maxWidth, horizontalSpacing = 10.dp)
         LazyColumn(
@@ -106,7 +108,7 @@ internal fun SearchResultsContent(
             verticalArrangement = if (songResults) Arrangement.Top else Arrangement.spacedBy(10.dp),
             contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
         ) {
-            item("count") {
+            if (!results.isEmpty) item("count") {
                 Text(
                     text = when (category) {
                         SearchCategory.Song -> "歌曲结果 · 来自【$source】 · ${results.songs.size} 首"
@@ -141,7 +143,21 @@ internal fun SearchResultsContent(
                 }
             }
             if (results.hasMore || loading || error != null) {
-                item("more") { LoadMoreFooter(loading, error != null, onLoadPage) }
+                item(footerKey) {
+                    Box(
+                        Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                            .then(if (error != null) Modifier.clickable(onClick = onLoadPage) else Modifier),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        val status = when {
+                            error != null -> "加载失败，点击重试"
+                            loading -> "正在加载…"
+                            results.isEmpty -> "当前页暂无匹配内容，上滑继续查找"
+                            else -> null
+                        }
+                        if (status != null) Text(status, fontSize = 13.sp, color = TextSub)
+                    }
+                }
             }
         }
     }
@@ -207,28 +223,6 @@ private fun SearchResultHeaderSkeleton(verticalPadding: Dp) {
         )
     }
 }
-
-@Composable
-private fun LoadMoreFooter(loading: Boolean, failed: Boolean, onLoadMore: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(enabled = !loading, onClick = onLoadMore)
-            .padding(vertical = 16.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = when {
-                loading -> "正在加载…"
-                failed -> "加载失败，点击重试"
-                else -> "加载更多"
-            },
-            fontSize = 13.sp,
-            color = TextSub,
-        )
-    }
-}
-
 
 // 双列热搜单行条目
 @Composable

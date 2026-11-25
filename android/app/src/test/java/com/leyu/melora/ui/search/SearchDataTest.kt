@@ -2,7 +2,9 @@ package com.leyu.melora.ui.search
 
 import android.content.ContextWrapper
 import com.leyu.melora.playback.sdk.OnlineCache
+import com.leyu.melora.playback.sdk.OnlinePlaylist
 import com.leyu.melora.playback.sdk.OnlineSong
+import com.leyu.melora.playback.sdk.PlaylistPage
 import com.leyu.melora.playback.sdk.SongPage
 import java.io.IOException
 import kotlinx.coroutines.CompletableDeferred
@@ -24,6 +26,16 @@ class SearchDataTest {
     private val keyword = "search-pagination-regression"
 
     @After fun cleanup() = OnlineCache.clear("search:songs:")
+
+    @Test fun playlistSearchStopsAtTheReportedTotalAndSupportsSourcesWithoutTotals() {
+        val list = listOf(OnlinePlaylist(JSONObject().put("source", "tx").put("id", "42").put("name", "测试")))
+        val response = PlaylistPage(list, total = 21, page = 1)
+        assertTrue(response.hasMoreSearchResults(1))
+        assertFalse(response.hasMoreSearchResults(2))
+        assertFalse(response.copy(total = 20).hasMoreSearchResults(1))
+        assertTrue(response.copy(total = 0).hasMoreSearchResults(2))
+        assertFalse(response.copy(list = emptyList(), total = 0).hasMoreSearchResults(2))
+    }
 
     @Test fun filteredPageStillLoadsMoreWhenCatalogHasAnotherPage() = runBlocking {
         cache("kw", page = 1, count = 2, total = 60, allPage = 2)

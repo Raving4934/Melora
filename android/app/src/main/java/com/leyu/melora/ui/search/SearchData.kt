@@ -7,6 +7,8 @@ import com.leyu.melora.playback.sdk.OnlineCache
 import com.leyu.melora.playback.sdk.OnlinePlaylist
 import com.leyu.melora.playback.sdk.OnlineRepository
 import com.leyu.melora.playback.sdk.OnlineSong
+import com.leyu.melora.playback.sdk.PLAYLIST_SEARCH_PAGE_SIZE
+import com.leyu.melora.playback.sdk.PlaylistPage
 import com.leyu.melora.playback.sdk.SongPage
 import com.leyu.melora.ui.common.runCatchingCancellable
 import kotlinx.coroutines.async
@@ -159,6 +161,9 @@ private suspend fun searchPlaylists(
     SearchResults(
         page = page,
         playlists = pages.flatMap { it.list }.distinctBy { it.source to it.id },
-        hasMore = pages.any { it.list.isNotEmpty() },
+        hasMore = pages.any { it.hasMoreSearchResults(page) },
     )
 }
+
+internal fun PlaylistPage.hasMoreSearchResults(requestedPage: Int): Boolean =
+    list.isNotEmpty() && (total <= 0 || requestedPage.toLong() * PLAYLIST_SEARCH_PAGE_SIZE < total)

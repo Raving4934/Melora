@@ -4,6 +4,8 @@ import android.content.Context
 import kotlinx.coroutines.CancellationException
 import org.json.JSONObject
 
+internal const val PLAYLIST_SEARCH_PAGE_SIZE = 20
+
 /** 在线目录仓库：把 MusicSdkEngine 的 JSON 结果转为强类型模型。 */
 object OnlineRepository {
     suspend fun search(
@@ -34,7 +36,7 @@ object OnlineRepository {
         background: Boolean = false,
     ): PlaylistPage {
         val data = MusicSdkEngine.call(context, "songlistSearch", source, JSONObject()
-            .put("text", text).put("page", page), background = background)
+            .put("text", text).put("page", page).put("limit", PLAYLIST_SEARCH_PAGE_SIZE), background = background)
         return playlistPage(data)
     }
 
