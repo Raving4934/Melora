@@ -170,6 +170,8 @@ fun SongArtwork(
             failed = false
             attempt++
         }
+    } else if (failed && onResult != null) {
+        LaunchedEffect(url, attempt) { onResult(null) }
     }
     // 全屏封面自管解码后的交接动画，关闭该请求的二次淡入；默认调用完全沿用原模型。
     val context = LocalContext.current
@@ -182,10 +184,7 @@ fun SongArtwork(
             model = model,
             contentDescription = null,
             contentScale = ContentScale.Crop,
-            onError = {
-                failed = true
-                onResult?.invoke(null)
-            },
+            onError = { failed = true },
             onSuccess = {
                 failed = false
                 onResult?.invoke(it.painter)

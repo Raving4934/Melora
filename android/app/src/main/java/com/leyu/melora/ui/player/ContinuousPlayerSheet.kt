@@ -198,10 +198,15 @@ internal fun ContinuousPlayerSheet(
             }
         }
         val artworkAlpha = remember(morphing) { { if (morphing()) 0f else 1f } }
+        val vinylMotionEnabled = playerCoverStyle == PlayerCoverStyle.Vinyl && playerMotionEnabled &&
+            !collapsed && (pageShowsCover || immersive) && (twoPanes || verticalPagerState.currentPage == 0)
+        val recordChange = if (playerCoverStyle == PlayerCoverStyle.Vinyl) {
+            rememberVinylRecordChange(track.uid, track.artwork, enabled = vinylMotionEnabled)
+        } else null
         val tonearmAngle = rememberVinylTonearmAngle(
             playing = state.playing,
-            motionEnabled = playerMotionEnabled && !collapsed && (pageShowsCover || immersive) &&
-                playerCoverStyle == PlayerCoverStyle.Vinyl,
+            motionEnabled = vinylMotionEnabled,
+            recordChange = recordChange,
         )
 
         val nestedScroll = remember(sheetState, travel, velocityThreshold, decay, canCollapse, offset) {
@@ -371,6 +376,7 @@ internal fun ContinuousPlayerSheet(
                                 coverStyle = playerCoverStyle,
                                 artworkRotation = vinylRotation,
                                 tonearmAngle = tonearmAngle,
+                                recordChange = recordChange,
                                 onPageVisualChanged = { cover, light, blocksCollapse -> pageShowsCover = cover; pageIsLight = light; pageBlocksCollapse = blocksCollapse },
                                 onSeek = onSeek,
                                 onPrevious = onPrevious,
@@ -573,6 +579,7 @@ internal fun ContinuousPlayerSheet(
                             rotationDegrees = vinylRotation, motionEnabled = playerMotionEnabled,
                             tonearmAngle = tonearmAngle,
                             tonearmAlpha = progress,
+                            recordChange = recordChange,
                             frameCornerRadius = { (10.dp + 8.dp * progress()) / scaleFor(sharedBounds) },
                             modifier = Modifier.size(fullSide).zIndex(2f).graphicsLayer {
                                 val rect = sharedBounds

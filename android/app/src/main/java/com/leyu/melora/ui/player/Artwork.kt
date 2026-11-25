@@ -32,12 +32,14 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.isActive
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.painter.Painter
@@ -55,6 +57,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.leyu.melora.playback.PlayerCoverStyle
 import com.leyu.melora.ui.common.SongArtwork
+import com.leyu.melora.ui.common.isLoadableArtworkUri
 
 // 沟槽与环境反光固定，中心标签随唱片转动，避免整层亮斑像贴纸一样旋转。
 @Composable
@@ -153,18 +156,28 @@ internal fun rememberVinylRotation(playing: Boolean, style: PlayerCoverStyle): (
     return remember(angle) { { angle.value } }
 }
 
+private const val VinylTonearmParkedAngle = -45f
 private val VinylTonearmSwingSpec = tween<Float>(520, easing = FastOutSlowInEasing)
 
 /** 封面交接时两层从同一角度绘制。收起或关闭动画后直接同步停靠位置。 */
 @Composable
-internal fun rememberVinylTonearmAngle(playing: Boolean, motionEnabled: Boolean): () -> Float {
-    val target = if (playing) 4f else -45f
+internal fun rememberVinylTonearmAngle(
+    playing: Boolean,
+    motionEnabled: Boolean,
+    recordChange: VinylRecordChange? = null,
+): () -> Float {
+    val target = if (playing) 4f else VinylTonearmParkedAngle
     val angle = remember { Animatable(target) }
     LaunchedEffect(target, motionEnabled) {
         if (angle.value == target) return@LaunchedEffect
         if (motionEnabled) angle.animateTo(target, VinylTonearmSwingSpec) else angle.snapTo(target)
     }
-    return remember(angle) { { angle.value } }
+    return remember(angle, recordChange) {
+        {
+            val playbackAngle = angle.value
+            playbackAngle + (VinylTonearmParkedAngle - playbackAngle) * (recordChange?.armLift ?: 0f)
+        }
+    }
 }
 
 /**
@@ -271,6 +284,7 @@ internal fun NowPlayingArtwork(
     tonearmAngle: (() -> Float)? = null,
     tonearmAlpha: () -> Float = { 1f },
     frameCornerRadius: (() -> Dp)? = null,
+    recordChange: VinylRecordChange? = null,
 ) {
     val roundness = animateFloatAsState(
         if (nowPlayingArtworkShape(style) == NowPlayingArtworkShape.Circle) 1f else 0f,
@@ -282,43 +296,57 @@ internal fun NowPlayingArtwork(
         if (style == PlayerCoverStyle.Vinyl) 0f else artworkRestingRotation(rotationDegrees()),
         if (motionEnabled) PlayerCoverMorphSpec else snap(), label = "coverRotationAlignment",
     )
-    Box(modifier, contentAlignment = Alignment.Center) {
-        if (style == PlayerCoverStyle.Vinyl || vinyl.value > 0f) {
-            VinylDisc(Modifier.fillMaxSize().graphicsLayer { alpha = vinyl.value })
-        }
-        // 共享封面的外轮廓裁切只包住图片，独立的唱臂仍可画在盘缘外。
-        val frameClip = if (frameCornerRadius == null) Modifier else Modifier.graphicsLayer {
-            shape = RoundedCornerShape(frameCornerRadius() * (1f - roundness.value) +
-                (size.minDimension / (2f * density)).dp * roundness.value)
-            clip = true
-        }
-        // 同一张已加载图片只改变裁切和变换，不把整张专辑替换成另一棵黑胶图片树。
-        val artworkModifier = Modifier.fillMaxSize().then(frameClip).graphicsLayer {
-            val scale = 1f - vinyl.value * 0.595f
-            scaleX = scale; scaleY = scale
-            rotationZ = rotationDegrees() + rotationAlignment.value
-            shape = RoundedCornerShape((cornerRadius * (1f - roundness.value) +
-                size.minDimension / (2f * density) * roundness.value).dp)
-            clip = true
-        }
-        // 方形/圆形占位使用同一内容，圆形裁切也由外层连续控制，不能由占位先硬切。
-        val imageStyle = if (style == PlayerCoverStyle.Circle) PlayerCoverStyle.Default else style
-        if (smoothChanges && url?.startsWith("http") == true) {
-            SmoothPlayerArtwork(url, seed, artworkModifier, 0, retryOnError, style = imageStyle)
-        } else {
-            SongArtwork(url, seed, artworkModifier, 0, retryOnError, style = imageStyle)
-        }
-        if (style == PlayerCoverStyle.Vinyl || vinyl.value > 0f) {
-            Canvas(Modifier.fillMaxSize().graphicsLayer { alpha = vinyl.value }) {
-                val radius = size.minDimension / 2f
-                drawCircle(Color.Black.copy(alpha = 0.42f), radius * 0.052f)
-                drawCircle(Color(0xFFD6D8DD).copy(alpha = 0.82f), radius * 0.036f, style = Stroke(1.1.dp.toPx()))
-                drawCircle(Color(0xFF121317), radius * 0.031f)
+    val record = recordChange?.takeIf { style == PlayerCoverStyle.Vinyl }
+    val artworkUrl = if (record != null) record.displayedArtwork else url
+    val artworkSeed = record?.displayedUid ?: seed
+    val discMotion = if (record == null) Modifier else Modifier.graphicsLayer {
+        val scale = record.scale
+        scaleX = scale
+        scaleY = scale
+    }
+    Box(modifier) {
+        val showVinyl = style == PlayerCoverStyle.Vinyl || vinyl.value > 0f
+        Box(Modifier.fillMaxSize().then(discMotion), contentAlignment = Alignment.Center) {
+            if (showVinyl) {
+                VinylDisc(Modifier.fillMaxSize().graphicsLayer { alpha = vinyl.value })
             }
-            if (tonearmAngle != null) {
-                Canvas(Modifier.fillMaxSize().graphicsLayer { alpha = vinyl.value * tonearmAlpha() }) {
-                    drawVinylTonearm(tonearmAngle())
+            // 封面的外轮廓裁切只作用于图片；盘面和唱臂各有自己的绘制范围。
+            val frameClip = if (frameCornerRadius == null) Modifier else Modifier.graphicsLayer {
+                shape = RoundedCornerShape(frameCornerRadius() * (1f - roundness.value) +
+                    (size.minDimension / (2f * density)).dp * roundness.value)
+                clip = true
+            }
+            // 同一张已加载图片只改变裁切和变换，切换封面样式时继续使用原图。
+            val artworkModifier = Modifier.fillMaxSize().then(frameClip).graphicsLayer {
+                val scale = 1f - vinyl.value * 0.595f
+                scaleX = scale
+                scaleY = scale
+                rotationZ = rotationDegrees() + rotationAlignment.value
+                shape = RoundedCornerShape((cornerRadius * (1f - roundness.value) +
+                    size.minDimension / (2f * density) * roundness.value).dp)
+                clip = true
+            }
+            // 方形和圆形共用占位，由外层连续控制裁切。
+            val imageStyle = if (style == PlayerCoverStyle.Circle) PlayerCoverStyle.Default else style
+            if ((smoothChanges || record != null) && artworkUrl != null && isLoadableArtworkUri(artworkUrl)) {
+                SmoothPlayerArtwork(
+                    artworkUrl, artworkSeed, artworkModifier, retryOnError, imageStyle, motionEnabled,
+                )
+            } else {
+                SongArtwork(artworkUrl, artworkSeed, artworkModifier, 0, retryOnError, style = imageStyle)
+            }
+            if (showVinyl) {
+                Canvas(Modifier.fillMaxSize().graphicsLayer { alpha = vinyl.value }) {
+                    val radius = size.minDimension / 2f
+                    drawCircle(Color.Black.copy(alpha = 0.42f), radius * 0.052f)
+                    drawCircle(Color(0xFFD6D8DD).copy(alpha = 0.82f), radius * 0.036f, style = Stroke(1.1.dp.toPx()))
+                    drawCircle(Color(0xFF121317), radius * 0.031f)
                 }
+            }
+        }
+        if (showVinyl && tonearmAngle != null) {
+            Canvas(Modifier.matchParentSize().graphicsLayer { alpha = vinyl.value * tonearmAlpha() }) {
+                drawVinylTonearm(tonearmAngle())
             }
         }
     }
@@ -360,64 +388,65 @@ private fun DrawScope.drawVinylTonearm(angle: Float) {
     drawCircle(Color(0xFFAEB4BE), baseRadius * 0.24f, center = pivot)
 }
 
-/** 新图完全不透明之前都保留实心底图，避免Crossfade两层同时半透明而透出彩色背景。 */
-internal fun artworkNeedsOpaqueBase(incomingReady: Boolean, incomingAlpha: Float): Boolean =
-    !incomingReady || incomingAlpha < 1f
+private class ArtworkResult(val painter: Painter?) {
+    // 每张图独立淡入，下一张从零开始时，已经上屏的图层仍然完全不透明。
+    val opacity = Animatable(0f)
+}
 
 @Composable
 private fun SmoothPlayerArtwork(
     url: String,
     seed: String,
     modifier: Modifier,
-    cornerRadius: Int,
     retryOnError: Boolean,
-    style: PlayerCoverStyle = PlayerCoverStyle.Default,
+    style: PlayerCoverStyle,
+    motionEnabled: Boolean,
 ) {
-    var settledPainter by remember { mutableStateOf<Painter?>(null) }
-    var incomingPainter by remember(url) { mutableStateOf<Painter?>(null) }
-    val incomingAlpha = remember(url) { Animatable(0f) }
-    val latestUrl by rememberUpdatedState(url)
+    val request = remember(url) { mutableStateOf<ArtworkResult?>(null) }
+    val activeRequest by rememberUpdatedState(request)
+    var displayed by remember { mutableStateOf<Painter?>(null) }
+    var incoming by remember { mutableStateOf<ArtworkResult?>(null) }
 
-    LaunchedEffect(url, incomingPainter) {
-        val incoming = incomingPainter ?: return@LaunchedEffect
-        incomingAlpha.snapTo(0f)
-        incomingAlpha.animateTo(1f, tween(220, easing = FastOutSlowInEasing))
-        // 换歌会取消此协程；不会在第三首之后补交接前两首。
-        settledPainter = incoming
+    LaunchedEffect(motionEnabled) {
+        if (!motionEnabled) {
+            incoming?.let { displayed = it.painter }
+            incoming = null
+        }
+        // 当前淡入可以完成；随后只读取最新请求的结果。等待新图时继续显示已解码的图。
+        snapshotFlow { activeRequest.value }.filterNotNull().collect { result ->
+            val next = result.painter
+            if (next === displayed) return@collect
+            if (motionEnabled && next != null) {
+                incoming = result
+                result.opacity.animateTo(1f, tween(220, easing = FastOutSlowInEasing))
+            }
+            displayed = next
+            incoming = null
+        }
     }
 
-    Box(modifier.clip(RoundedCornerShape(cornerRadius.dp))) {
-        if (artworkNeedsOpaqueBase(incomingPainter != null, incomingAlpha.value)) {
-            val previous = settledPainter
-            if (previous != null) {
-                Image(
-                    painter = previous,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                    alpha = 1f,
-                )
-            } else {
-                ArtworkPlaceholder(seed, Modifier.fillMaxSize(), cornerRadius = cornerRadius, style = style)
-            }
+    Box(modifier) {
+        val base = displayed
+        if (base == null) {
+            ArtworkPlaceholder(seed, Modifier.fillMaxSize(), cornerRadius = 0, style = style)
+        } else {
+            Image(base, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         }
-        // 仍只有这一份Coil请求：旧图只是已解码Painter，没有第二次联网或重试链路。
+        val layer = incoming
+        if (layer?.painter != null) {
+            Image(layer.painter, null, Modifier.fillMaxSize().graphicsLayer { alpha = layer.opacity.value },
+                contentScale = ContentScale.Crop)
+        }
+        // 保留 SongArtwork 的尺寸采样和重试，由上面的图层接管绘制。
         SongArtwork(
             url = url,
             seed = seed,
-            modifier = Modifier.fillMaxSize().graphicsLayer {
-                alpha = if (incomingPainter != null) incomingAlpha.value else 0f
-            },
+            modifier = Modifier.matchParentSize().drawWithContent {},
             cornerRadius = 0,
             retryOnError = retryOnError,
             crossfade = false,
             style = style,
-            onResult = { painter ->
-                if (url == latestUrl) {
-                    incomingPainter = painter
-                    if (painter == null) settledPainter = null
-                }
-            },
+            onResult = { request.value = ArtworkResult(it) },
         )
     }
 }

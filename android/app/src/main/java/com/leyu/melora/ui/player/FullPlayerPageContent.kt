@@ -248,6 +248,7 @@ internal fun FullPlayerPageContent(
     onPageVisualChanged: (showsCover: Boolean, isLight: Boolean, blocksCollapse: Boolean) -> Unit,
     modifier: Modifier = Modifier,
     tonearmAngle: (() -> Float)? = null,
+    recordChange: VinylRecordChange? = null,
     isVisible: Boolean = true,
     isCollapsed: Boolean = false,
     onCollapse: () -> Unit = {},
@@ -445,6 +446,7 @@ internal fun FullPlayerPageContent(
                 miniLyricsEnabled = miniLyricsEnabled, coverStyle = coverStyle,
                 artworkAlpha = artworkAlpha, artworkRotation = artworkRotation,
                 tonearmAngle = tonearmAngle,
+                recordChange = recordChange,
                 onArtworkPositioned = onArtworkPositioned, position = lyricPosition, frame = lyricFrame,
                 motionEnabled = motionEnabled,
                 onNavigateToLyrics = { scope.launch { coverPagerState.animateScrollToPage(pages.indexOf(2), animationSpec = PlayerPageSnapSpec) } },
@@ -1402,6 +1404,7 @@ private fun PlayerCoverPage(
     artworkAlpha: () -> Float,
     artworkRotation: () -> Float,
     tonearmAngle: (() -> Float)?,
+    recordChange: VinylRecordChange?,
     onArtworkPositioned: (LayoutCoordinates) -> Unit,
     position: androidx.compose.runtime.State<Long>,
     motionEnabled: Boolean,
@@ -1477,6 +1480,7 @@ private fun PlayerCoverPage(
                         cornerRadius = 18, retryOnError = retryArtwork, smoothChanges = true,
                         rotationDegrees = artworkRotation, motionEnabled = motionEnabled,
                         tonearmAngle = tonearmAngle,
+                        recordChange = recordChange,
                     )
                     ImmersiveCoverProgress(position, state.durationMs, immersion, roundness = roundness,
                         modifier = Modifier.matchParentSize())
