@@ -213,7 +213,7 @@ class LocalEmptyAndInputLayoutTest {
         restoration.setContent {
             MeloraTheme {
                 CompositionLocalProvider(LocalSongListState provides shared) {
-                    LocalSongsPage(content = LocalSongsContent(), onOpenDrawer = {})
+                    LocalSongsPage(content = LocalSongsContent(), deletion = rememberLocalSongDeletion(), onOpenDrawer = {})
                 }
             }
         }
@@ -234,7 +234,7 @@ class LocalEmptyAndInputLayoutTest {
         compose.setContent {
             MeloraTheme {
                 CompositionLocalProvider(LocalSongListState provides shared) {
-                    LocalSongsPage(content = content.value, onOpenDrawer = {})
+                    LocalSongsPage(content = content.value, deletion = rememberLocalSongDeletion(), onOpenDrawer = {})
                 }
             }
         }

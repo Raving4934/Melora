@@ -1,11 +1,9 @@
 package com.leyu.melora.ui.local
 
 import com.leyu.melora.ui.common.MeloraAlertDialog
-import android.app.Activity
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
-import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.core.content.ContextCompat
@@ -160,6 +158,7 @@ private val LocalSearchQuerySaver = Saver<TextFieldState?, String>(
 @Composable
 internal fun LocalSongsPage(
     content: LocalSongsContent?,
+    deletion: LocalSongDeletionViewModel,
     onOpenDrawer: (() -> Unit)?,
     onBack: (() -> Unit)? = null,
 ) {
@@ -174,60 +173,19 @@ internal fun LocalSongsPage(
     var showSortSheet by remember { mutableStateOf(false) }
     var moreSong by remember { mutableStateOf<LocalSong?>(null) }
     var pendingDelete by remember { mutableStateOf<List<LocalDeletionTarget>?>(null) }
-    var pendingDeleteRequest by remember { mutableStateOf<IntentSenderRequest?>(null) }
-    var deleting by remember { mutableStateOf(false) }
     var addToPlaylist by remember { mutableStateOf<List<OnlineSong>?>(null) }
     val selection = remember { SongSelectionState() }
     val listState = rememberLazyListState()
     val pullEnabled by MeloraSettings.pullToRefresh.collectAsStateWithLifecycle()
     var refreshing by remember { mutableStateOf(false) }
-    val deletion = remember(context) { LocalSongDeletion(AndroidLocalDeletionOperations(context)) }
-
-    suspend fun finishDeletion(result: LocalDeletionResult) {
-        if (result.deletedIds.isNotEmpty()) {
-            PlaybackController.onLocalFilesDeleted(
-                context, result.deletedIds, result.deleted.mapTo(hashSetOf()) { it.uri },
-            ).join()
-        }
-        deleting = false
-        if (!result.cancelled) selection.finish()
-        val message = when {
-            result.cancelled && result.deleted.isEmpty() -> "已取消删除"
-            result.cancelled -> "已删除 ${result.deleted.size} 个，其余已取消"
-            result.failed.isEmpty() -> "已删除本地文件 ${result.deleted.size} 个"
-            result.deleted.isEmpty() -> "删除失败，请检查文件权限"
-            else -> "已删除 ${result.deleted.size} 个，${result.failed.size} 个失败"
-        }
-        PlaybackController.postMessage(context, message)
-    }
-
-    suspend fun handleDeletionStep(step: LocalDeletionStep<IntentSenderRequest>) {
-        when (step) {
-            is LocalDeletionStep.Awaiting -> pendingDeleteRequest = step.request.request
-            is LocalDeletionStep.Finished -> finishDeletion(step.result)
-            LocalDeletionStep.Busy -> Unit
-            LocalDeletionStep.Ignored -> Unit
-        }
-    }
-
-    val deleteConsentLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartIntentSenderForResult(),
-    ) { result ->
-        scope.launch {
-            val step = withContext(Dispatchers.IO) {
-                deletion.onAuthorizationResult(result.resultCode == Activity.RESULT_OK)
-            }
-            handleDeletionStep(step)
-        }
-    }
-    LaunchedEffect(pendingDeleteRequest) {
-        val request = pendingDeleteRequest ?: return@LaunchedEffect
-        pendingDeleteRequest = null
-        deleteConsentLauncher.launch(request)
+    val deletionStep by deletion.step.collectAsStateWithLifecycle()
+    LaunchedEffect(deletionStep) {
+        val result = (deletionStep as? LocalDeletionStep.Finished)?.result
+        if (result?.cancelled == false) selection.finish()
     }
 
     fun requestDeleteConfirmation(songsToDelete: List<LocalSong>) {
-        if (deleting || pendingDelete != null) return
+        if (deletionStep.inProgress || pendingDelete != null) return
         val uniqueTargets = distinctLocalDeletionTargets(songsToDelete.map(LocalSong::toLocalDeletionTarget))
         if (uniqueTargets.isNotEmpty()) pendingDelete = uniqueTargets
     }
@@ -355,25 +313,19 @@ internal fun LocalSongsPage(
 
     pendingDelete?.let { targets ->
         MeloraAlertDialog(
-            onDismissRequest = { if (!deleting) pendingDelete = null },
+            onDismissRequest = { pendingDelete = null },
             title = { Text("永久删除", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = TextMain) },
             text = { Text("将从设备中删除 ${targets.size} 个音频文件，且无法恢复。", fontSize = 13.sp, color = TextSub) },
             confirmButton = {
                 TextButton(onClick = {
-                    if (!deleting) {
-                        deleting = true
-                        pendingDelete = null
-                        scope.launch {
-                            val step = withContext(Dispatchers.IO) { deletion.start(targets) }
-                            handleDeletionStep(step)
-                        }
-                    }
+                    pendingDelete = null
+                    deletion.start(targets)
                 }) {
                     Text("删除", color = Color(0xFFDC2626), fontWeight = FontWeight.SemiBold)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { if (!deleting) pendingDelete = null }) { Text("取消", color = TextSub) }
+                TextButton(onClick = { pendingDelete = null }) { Text("取消", color = TextSub) }
             },
             containerColor = MeloraAppearance.card,
         )

@@ -170,7 +170,7 @@ class LocalSongsNavigationInstrumentedTest {
                     key(tab.value) {
                         if (tab.value == 5) {
                             SideEffect { entries += content }
-                            LocalSongsPage(content = content, onOpenDrawer = {})
+                            LocalSongsPage(content = content, deletion = rememberLocalSongDeletion(), onOpenDrawer = {})
                         }
                     }
                 }

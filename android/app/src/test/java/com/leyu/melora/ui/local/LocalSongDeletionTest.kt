@@ -2,6 +2,7 @@ package com.leyu.melora.ui.local
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlinx.coroutines.runBlocking
@@ -9,8 +10,37 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.yield
 
 class LocalSongDeletionTest {
+    @Test
+    fun repeatedIdenticalFailuresStayDistinctWhenTheBusyFrameIsSkipped() = runBlocking<Unit> {
+        val target = target("same-file")
+        val deletion = LocalSongDeletion(FakeOperations(outcomes = mapOf(target to LocalDeletionAttempt.Failed)))
+        val first = deletion.start(listOf(target)) as LocalDeletionStep.Finished
+        val second = deletion.start(listOf(target)) as LocalDeletionStep.Finished
+        assertEquals(first.result, second.result)
+
+        val steps = MutableStateFlow<LocalDeletionStep<String>>(first)
+        val observed = mutableListOf<LocalDeletionStep.Finished>()
+        val observer = launch(start = CoroutineStart.UNDISPATCHED) {
+            steps.collect { if (it is LocalDeletionStep.Finished) observed += it }
+        }
+        try {
+            // 两次发布之间没有挂起，模拟界面尚未收到底层的 Busy 状态时操作已经结束。
+            steps.value = LocalDeletionStep.Busy
+            steps.value = second
+            yield()
+            assertEquals(2, observed.size)
+            assertSame(first, observed[0])
+            assertSame(second, observed[1])
+        } finally {
+            observer.cancelAndJoin()
+        }
+    }
+
     @Test
     fun android10AuthorizationRetriesTheSameUriBeforeMarkingItDeleted() = runBlocking<Unit> {
         val first = target("1")
@@ -26,13 +56,12 @@ class LocalSongDeletionTest {
             LocalDeletionRequest.Recoverable(first, "recoverable-1"),
             (awaiting as LocalDeletionStep.Awaiting).request,
         )
-        assertTrue(deletion.isBusy)
+        assertEquals(LocalDeletionStep.Busy, deletion.start(listOf(second)))
 
         val finished = deletion.onAuthorizationResult(approved = true) as LocalDeletionStep.Finished
         assertEquals(listOf(first, second), finished.result.deleted)
         assertTrue(finished.result.failed.isEmpty())
         assertEquals(listOf(first, first, second), operations.deleteCalls)
-        assertFalse(deletion.isBusy)
     }
 
     @Test
@@ -223,7 +252,6 @@ class LocalSongDeletionTest {
         assertEquals(targets, finished.result.deleted)
         assertTrue(finished.result.failed.isEmpty())
         assertEquals(listOf(2_000, 2_000, 1), operations.systemRequests.map { it.size })
-        assertFalse(deletion.isBusy)
     }
 
     @Test
@@ -255,14 +283,11 @@ class LocalSongDeletionTest {
         val deletion = LocalSongDeletion(operations)
         val pending = async(start = CoroutineStart.UNDISPATCHED) { deletion.start(listOf(file)) }
         started.await()
-        assertTrue(deletion.isBusy)
         assertEquals(LocalDeletionStep.Busy, deletion.start(listOf(file)))
         pending.cancelAndJoin()
-        assertFalse(deletion.isBusy)
         release.complete(Unit)
         val result = deletion.start(listOf(file)) as LocalDeletionStep.Finished
         assertEquals(listOf(file), result.result.deleted)
-        assertFalse(deletion.isBusy)
     }
 
     private class FakeOperations(

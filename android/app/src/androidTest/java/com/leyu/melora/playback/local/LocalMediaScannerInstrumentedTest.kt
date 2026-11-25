@@ -1,14 +1,19 @@
 package com.leyu.melora.playback.local
 
+import android.app.PendingIntent
 import android.content.ContentResolver
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.content.pm.ProviderInfo
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.os.Environment
+import androidx.activity.ComponentActivity
+import androidx.activity.result.IntentSenderRequest
+import androidx.lifecycle.SavedStateHandle
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
@@ -17,13 +22,21 @@ import com.leyu.melora.playback.DeletedLocalFiles
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.UserLibrary
+import com.leyu.melora.ui.local.LocalDeletionAttempt
+import com.leyu.melora.ui.local.LocalDeletionOperations
+import com.leyu.melora.ui.local.LocalDeletionStep
+import com.leyu.melora.ui.local.LocalDeletionTarget
+import com.leyu.melora.ui.local.LocalSongDeletionViewModel
+import com.leyu.melora.ui.local.toLocalDeletionTarget
 import java.io.File
 import java.lang.reflect.Field
 import java.nio.file.Files
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -384,6 +397,48 @@ class LocalMediaScannerInstrumentedTest {
         provider.setChildren("loading", partial, false)
         assertEquals(0, LocalMediaScanner.scan(context).failedSources)
         assertMediaReferences(setOf(present.id))
+    }
+
+    @Test
+    fun restoredSystemAuthorizationReconcilesTheLibraryOnceWithoutRepeatingADelete() = runBlocking {
+        val removed = song("loading", "loading/removed")
+        val retained = song("loading", "loading/retained")
+        seed(listOf(removed, retained))
+        MeloraSettings.localFolders.value = listOf(treeUri("loading").toString())
+        listOf(removed, retained).forEach { UserLibrary.markPlayed(it.toOnlineSong()) }
+        provider.setChildren("loading", listOf(LoadingDocumentsProvider.Document("loading/retained", "retained.mp3")), false)
+        val consent = PendingIntent.getActivity(
+            context, 42, Intent(context, ComponentActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
+        )
+        val savedState = SavedStateHandle()
+        val operations = object : LocalDeletionOperations<IntentSenderRequest> {
+            override val supportsSystemDeleteRequest = true
+            override fun isMediaStore(target: LocalDeletionTarget) = true
+            override suspend fun delete(target: LocalDeletionTarget): LocalDeletionAttempt<IntentSenderRequest> =
+                error("不应在对账时再次请求删除")
+            override fun createSystemDeleteRequest(targets: List<LocalDeletionTarget>) =
+                IntentSenderRequest.Builder(consent.intentSender).build()
+        }
+        try {
+            val original = LocalSongDeletionViewModel(context, savedState, operations)
+            val instrumentation = InstrumentationRegistry.getInstrumentation()
+            instrumentation.runOnMainSync { original.start(listOf(removed.toLocalDeletionTarget())) }
+            withTimeout(5_000) { original.step.first { it is LocalDeletionStep.Awaiting } }
+            instrumentation.runOnMainSync { checkNotNull(original.takeAuthorizationRequest()) }
+
+            val restored = LocalSongDeletionViewModel(context, savedState, operations)
+            assertEquals(LocalDeletionStep.RestoredAuthorization, restored.step.value)
+            instrumentation.runOnMainSync {
+                restored.onAuthorizationResult(approved = true)
+                restored.onAuthorizationResult(approved = true)
+            }
+            withTimeout(5_000) { restored.step.first { it == LocalDeletionStep.Ignored } }
+            assertMediaReferences(setOf(retained.id))
+            assertEquals(listOf("loading"), provider.childQueries)
+        } finally {
+            consent.cancel()
+            PlaybackController.consumeMessage()
+        }
     }
 
     @Test
