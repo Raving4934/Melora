@@ -13,11 +13,14 @@ import androidx.compose.ui.test.onNodeWithTag
 /** 原生窗口与 Compose 动画使用不同的空闲信号；等待真实几何稳定，不关闭生产动效。 */
 internal fun ComposeTestRule.awaitStable(tag: String) = awaitStable(onNodeWithTag(tag))
 
-internal fun ComposeTestRule.awaitStable(node: SemanticsNodeInteraction) {
+internal fun ComposeTestRule.awaitStable(node: SemanticsNodeInteraction): Rect {
     var previous: Rect? = null
     var stableSince = 0L
     waitUntil(5_000) {
-        val bounds = runCatching { node.assertIsDisplayed().fetchSemanticsNode().boundsInRoot }.getOrNull()
+        val bounds = runCatching {
+            val semantics = node.assertIsDisplayed().fetchSemanticsNode()
+            runOnUiThread { semantics.boundsInRoot.takeUnless { it.isEmpty } }
+        }.getOrNull()
         val now = SystemClock.uptimeMillis()
         if (bounds == null || bounds != previous) {
             previous = bounds
@@ -25,6 +28,7 @@ internal fun ComposeTestRule.awaitStable(node: SemanticsNodeInteraction) {
             false
         } else now - stableSince >= 128L
     }
+    return checkNotNull(previous)
 }
 
 /** 节点查找会各自推进测试时钟；坐标必须最后在同一次主线程任务中读取。 */

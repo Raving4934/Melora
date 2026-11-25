@@ -9,7 +9,6 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -18,6 +17,7 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.leyu.melora.ui.awaitStable
 import com.leyu.melora.ui.theme.MeloraTheme
 import org.junit.Assert.*
 import org.junit.Rule
@@ -39,8 +39,10 @@ class SourceImportPickerTest {
                 )
             }
         }
-        compose.onNodeWithText(label).performClick()
-        compose.waitForIdle()
+        val option = compose.onNodeWithText(label)
+        compose.awaitStable(option)
+        option.performClick()
+        compose.waitUntil(5_000) { compose.runOnIdle { selected.isNotEmpty() } }
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val intent = ActivityResultContracts.OpenDocument().createIntent(context, selected)
         assertEquals(Intent.ACTION_OPEN_DOCUMENT, intent.action)
@@ -72,7 +74,7 @@ class SourceImportPickerTest {
         compose.onNodeWithText("导入音源脚本").performClick()
         compose.onNodeWithText("从链接导入").performClick()
         val submit = compose.onNodeWithText("立即导入")
-        compose.waitUntil(5_000) { submit.isDisplayed() }
+        compose.awaitStable(submit)
         submit.assertIsNotEnabled()
 
         val url = compose.onNode(hasSetTextAction())
@@ -80,12 +82,12 @@ class SourceImportPickerTest {
         val invalidFragment = compose.onNodeWithText("音源链接不能包含 fragment")
         url.performTextReplacement("file:///source.js")
         submit.assertIsEnabled().performClick()
-        compose.waitUntil(5_000) { invalidUrl.isDisplayed() }
+        compose.awaitStable(invalidUrl)
 
         url.performTextReplacement("https://example.invalid/source.js#tag")
         invalidUrl.assertDoesNotExist()
         submit.performClick()
-        compose.waitUntil(5_000) { invalidFragment.isDisplayed() }
+        compose.awaitStable(invalidFragment)
 
         compose.onNodeWithContentDescription("清空").performClick()
         invalidFragment.assertDoesNotExist()

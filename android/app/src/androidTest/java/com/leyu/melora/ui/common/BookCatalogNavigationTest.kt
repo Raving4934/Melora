@@ -318,12 +318,10 @@ class BookCatalogNavigationTest {
         show()
         fun switchAndCheck(action: String, range: String) {
             val toolbar = compose.onNodeWithTag("book-chapter-toolbar")
-            compose.awaitStable(toolbar)
-            val before = toolbar.fetchSemanticsNode().boundsInRoot
+            val before = compose.awaitStable(toolbar)
             compose.onNodeWithContentDescription(action).performClick()
             compose.waitUntil(5_000) { compose.onAllNodesWithText(range).fetchSemanticsNodes().isNotEmpty() }
-            compose.awaitStable(toolbar)
-            val after = toolbar.fetchSemanticsNode().boundsInRoot
+            val after = compose.awaitStable(toolbar)
             assertEquals("排序不能把工具栏顶上去：$action", before.top, after.top, 1f)
             assertEquals(before.bottom, after.bottom, 1f)
         }

@@ -12,7 +12,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.onAllNodesWithContentDescription
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -73,7 +73,7 @@ class LocalSongsNavigationInstrumentedTest {
                 }
             }
         }
-        compose.waitUntil(5_000) { published != null }
+        compose.awaitStable("local-song-index")
     }
 
     @Test
@@ -83,7 +83,6 @@ class LocalSongsNavigationInstrumentedTest {
         showPage()
         val sorted = sortLocalSongs(songs.value, field.value, true)
         val starts = localSongSectionStarts(sorted, field.value)
-        compose.awaitStable("local-song-index")
         for (label in listOf("M", "A", "T", "0", "#")) {
             val expected = starts.getValue(label)
             compose.onNodeWithContentDescription("跳转到 $label").performClick()
@@ -114,10 +113,8 @@ class LocalSongsNavigationInstrumentedTest {
     @Test
     fun moreButtonKeepsItsPositionAndReceivesTouchesBesideTheRail() {
         showPage()
-        compose.awaitStable("local-song-index")
         val more = compose.onAllNodesWithContentDescription("更多")[3]
-        compose.awaitStable(more)
-        val originalCenter = more.fetchSemanticsNode().boundsInRoot.center.x
+        val originalCenter = compose.awaitStable(more).center.x
         val rail = compose.onNodeWithTag("local-song-index").fetchSemanticsNode().boundsInRoot
         assertTrue("更多图标中心不能落入字母触摸区: center=$originalCenter rail=$rail", originalCenter < rail.left)
         more.performTouchInput { click(center) }
@@ -133,7 +130,6 @@ class LocalSongsNavigationInstrumentedTest {
     @Test
     fun nonAlphabeticalSortAndEmptyLibraryHaveNoMisleadingRail() {
         showPage()
-        compose.onNodeWithTag("local-song-index").assertIsDisplayed()
 
         val sizeContent = LocalSongsContent(
             sortLocalSongs(songs.value, LocalSortField.Size, true),
@@ -151,12 +147,12 @@ class LocalSongsNavigationInstrumentedTest {
         compose.runOnIdle { field.value = LocalSortField.Artist }
         // Size 的空索引快照先确认提交，因此旧的文件名快照不能提前满足此条件。
         compose.waitUntil(5_000) { published == artistContent }
-        compose.onNodeWithTag("local-song-index").assertIsDisplayed()
+        compose.awaitStable("local-song-index")
 
         compose.runOnIdle { songs.value = emptyList() }
         compose.waitUntil(5_000) { published == LocalSongsContent() }
         compose.onNodeWithTag("local-song-index").assertDoesNotExist()
-        compose.onNodeWithText("还没有本地歌曲").assertIsDisplayed()
+        compose.awaitStable(compose.onNodeWithText("还没有本地歌曲"))
     }
     @Test
     fun firstCompositionAfterEveryNavigationKeepsTheSameCompleteSnapshot() {

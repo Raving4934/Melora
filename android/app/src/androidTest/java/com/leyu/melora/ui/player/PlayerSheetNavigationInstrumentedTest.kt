@@ -20,7 +20,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.*
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -762,8 +762,10 @@ class PlayerSheetNavigationInstrumentedTest {
         compose.mainClock.autoAdvance = false
         try {
             button.performClick()
-            compose.mainClock.advanceTimeBy(96)
-            compose.runOnIdle { assertTrue("sheet must still be between anchors", back.sheet.offset > 1f) }
+            val collapsed = back.sheet.anchors.positionOf(PlayerSheetAnchor.Collapsed)
+            compose.mainClock.advanceTimeUntil(2_500) {
+                back.transition == PlayerSheetTransition.OpenQueue && back.sheet.offset in 1f..(collapsed - 1f)
+            }
             compose.onNodeWithTag("player-test-host").performTouchInput {
                 swipe(Offset(width * 0.4f, height * 0.55f), Offset(width * 0.4f, height * 0.9f), 240)
             }
@@ -771,7 +773,7 @@ class PlayerSheetNavigationInstrumentedTest {
         } finally {
             compose.mainClock.autoAdvance = true
         }
-        compose.onNodeWithText("收起播放队列").assertIsDisplayed()
+        compose.awaitStable(compose.onNodeWithText("收起播放队列"))
         compose.runOnIdle { assertEquals(0f, back.sheet.offset, 1f) }
         Espresso.pressBack()
         assertCollapsed()

@@ -21,6 +21,8 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.leyu.melora.ui.awaitStable
+import com.leyu.melora.ui.boundsInSameFrame
 import com.leyu.melora.ui.theme.MeloraTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -35,19 +37,6 @@ class SettingsContentWidthInstrumentedTest {
     private val page = mutableStateOf<SettingsSubPage>(SettingsSubPage.None)
     private val widthDp = mutableStateOf(1280)
     private var density = 1f
-    private val pages = listOf(
-        SettingsSubPage.None,
-        SettingsSubPage.Basic,
-        SettingsSubPage.CustomSource,
-        SettingsSubPage.Playback,
-        SettingsSubPage.Download,
-        SettingsSubPage.DesktopLyrics,
-        SettingsSubPage.Sync,
-        SettingsSubPage.Others,
-        SettingsSubPage.About,
-        SettingsSubPage.LocalMusic,
-    )
-
     private fun showSettings() {
         compose.setContent {
             BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -80,8 +69,11 @@ class SettingsContentWidthInstrumentedTest {
     }
 
     private fun assertGeometry(subPage: SettingsSubPage) {
-        val viewport = compose.onNodeWithTag("settings-test-viewport").fetchSemanticsNode().boundsInRoot
-        val body = compose.onNode(hasScrollAction()).fetchSemanticsNode().boundsInRoot
+        val scroll = compose.onNode(hasScrollAction())
+        val nav = compose.onNodeWithContentDescription(if (subPage == SettingsSubPage.None) "打开侧栏" else "返回")
+        compose.awaitStable(scroll)
+        compose.awaitStable(nav)
+        val (viewport, body, navigation) = compose.boundsInSameFrame(compose.onNodeWithTag("settings-test-viewport"), scroll, nav)
         // 自定义源和关于页将 16dp 留白放在 contentPadding，其余页面放在列表 Modifier。
         val outerGutters = when (subPage) {
             SettingsSubPage.CustomSource, SettingsSubPage.About -> 0
@@ -106,35 +98,24 @@ class SettingsContentWidthInstrumentedTest {
             assertEquals("${subPage.title}卡片右侧16dp边距", viewport.right - 16f * density, card.right, 1f)
         }
 
-        val navigation = compose.onNodeWithContentDescription(
-            if (subPage == SettingsSubPage.None) "打开侧栏" else "返回",
-        ).fetchSemanticsNode().boundsInRoot
         assertTrue(
             "${subPage.title}顶栏导航应留在全宽外壳左侧",
             navigation.center.x - viewport.left < 64f * density,
         )
     }
 
-    @Test
-    fun allSettingsPagesFillTheContentPaneWithConsistentGutters() {
+    private fun checkAllPages(width: Int) {
+        widthDp.value = width
         showSettings()
-        pages.forEach { subPage ->
+        SettingsSubPage.entries.forEach { subPage ->
             compose.runOnIdle { page.value = subPage }
-            compose.waitForIdle()
             assertGeometry(subPage)
         }
     }
 
-    @Test
-    fun allSettingsPagesKeepTheirPhoneWidthAndExistingGutters() {
-        widthDp.value = 390
-        showSettings()
-        pages.forEach { subPage ->
-            compose.runOnIdle { page.value = subPage }
-            compose.waitForIdle()
-            assertGeometry(subPage)
-        }
-    }
+    @Test fun allSettingsPagesFillTheContentPaneWithConsistentGutters() = checkAllPages(1280)
+
+    @Test fun allSettingsPagesKeepTheirPhoneWidthAndExistingGutters() = checkAllPages(390)
 
     @Test
     fun resizingKeepsSettingsNavigationWorking() {

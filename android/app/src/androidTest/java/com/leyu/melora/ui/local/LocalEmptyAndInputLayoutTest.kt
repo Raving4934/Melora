@@ -39,6 +39,7 @@ import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Button
+import com.leyu.melora.ui.awaitStable
 import com.leyu.melora.ui.theme.MeloraTheme
 import com.leyu.melora.ui.theme.componentBlurSupported
 import com.leyu.melora.playback.ThemeMode
@@ -52,7 +53,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasSetTextAction
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.text.TextLayoutResult
@@ -217,16 +218,19 @@ class LocalEmptyAndInputLayoutTest {
                 }
             }
         }
-        compose.onNodeWithContentDescription("搜索本地歌曲").performClick()
+        val open = compose.onNodeWithContentDescription("搜索本地歌曲")
+        compose.awaitStable(open)
+        open.performClick()
+        compose.awaitStable(compose.onNode(hasSetTextAction()))
         compose.onNode(hasSetTextAction()).performTextInput("恢复关键词")
         restoration.emulateSavedInstanceStateRestore()
         compose.onNode(hasSetTextAction()).assertTextContains("恢复关键词")
-        compose.onNodeWithText("取消").performClick()
-        compose.waitForIdle()
-        compose.onNodeWithContentDescription("搜索本地歌曲").performClick()
-        compose.waitUntil(5_000) {
-            runCatching { compose.onNodeWithText("在 0 首歌曲中搜索").assertIsDisplayed() }.isSuccess
-        }
+        val cancel = compose.onNodeWithText("取消")
+        compose.awaitStable(cancel)
+        cancel.performClick()
+        compose.awaitStable(open)
+        open.performClick()
+        compose.awaitStable(compose.onNodeWithText("在 0 首歌曲中搜索"))
     }
 
     @Test fun openingSearchBeforeSortFinishesNeverReportsAnEmptyLibrary() {
