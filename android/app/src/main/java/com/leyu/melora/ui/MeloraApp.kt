@@ -1,9 +1,5 @@
 package com.leyu.melora.ui
 
-import android.content.pm.PackageManager
-import android.os.Build
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationSpec
@@ -107,7 +103,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.provider.Settings as AndroidSettings
 import com.leyu.melora.playback.DesktopLyricService
@@ -442,18 +437,6 @@ fun MeloraApp(modifier: Modifier = Modifier, initialTab: Int = 5) {
     // 侧栏打开时的系统返回拦截
     if (drawerOpen && !isPersistentDrawer) {
         PageBackHandler(enabled = !playerOwnsBack) { closeDrawer() }
-    }
-
-    val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { }
-    val ensurePermission = {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            permissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-        }
     }
 
     SourceAliasProvider {
