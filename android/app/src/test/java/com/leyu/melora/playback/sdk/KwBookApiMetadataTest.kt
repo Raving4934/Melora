@@ -123,45 +123,9 @@ class KwBookApiMetadataTest {
         assertFalse(KwBookApi.bookPageHasMore(page = 2, total = 0, itemCount = 0))
     }
 
-    @Test
-    fun bookChapterSnapshotKeepsCursorTotalAndStopsDuplicatePages() {
-        val metadata = KwBookApi.BookMetadata(total = 200, author = "演播者")
-        val firstPage = KwBookApi.BookChapters(
-            items = List(100) { chapter("first-$it") },
-            hasMore = true,
-            metadata = metadata,
-            page = 1,
-        )
-        val secondPage = KwBookApi.BookChapters(
-            items = List(100) { chapter("second-$it") },
-            hasMore = false,
-            metadata = metadata,
-            page = 2,
-        )
-
-        val merged = firstPage.append(secondPage, requestedPage = 2)
-        assertEquals(2, merged.page)
-        assertEquals(200, merged.total)
-        assertEquals(200, merged.items.size)
-        assertFalse(merged.hasMore)
-
-        val duplicate = merged.append(secondPage, requestedPage = 3)
-        assertEquals(3, duplicate.page)
-        assertEquals(200, duplicate.items.size)
-        assertFalse(duplicate.hasMore)
-    }
-
     private fun catalogResponse(page: Int): JSONObject {
         val stream = checkNotNull(javaClass.getResourceAsStream("/book-catalog-70703385.json"))
         val fixture = stream.bufferedReader().use { JSONObject(it.readText()) }
         return fixture.getJSONObject("pages").getJSONObject(page.toString())
     }
-
-    private fun chapter(id: String) = OnlineSong(
-        JSONObject()
-            .put("source", "kw")
-            .put("songmid", id)
-            .put("name", id)
-            .put("isBookChapter", true),
-    )
 }

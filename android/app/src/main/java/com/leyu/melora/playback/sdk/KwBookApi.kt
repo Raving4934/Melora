@@ -50,36 +50,11 @@ object KwBookApi {
         val items: List<OnlineSong>,
         val hasMore: Boolean,
         val metadata: BookMetadata = BookMetadata(),
-        /** 已请求并合并进 items 的最后一页游标。 */
+        /** items 所属的原始目录页。 */
         val page: Int = 1,
     ) {
         val total: Int get() = metadata.total
 
-        /** 生成完整合并快照，重复页或已知尾页不会继续触发分页。 */
-        internal fun append(next: BookChapters, requestedPage: Int): BookChapters {
-            val cursor = requestedPage.coerceAtLeast(1)
-            val merged = (items + next.items).distinctBy(OnlineSong::uid)
-            val resolvedMetadata = BookMetadata(
-                description = next.metadata.description.ifBlank { metadata.description },
-                playCount = next.metadata.playCount.takeIf { it > 0 } ?: metadata.playCount,
-                total = next.metadata.total.takeIf { it > 0 } ?: metadata.total,
-                author = next.metadata.author.ifBlank { metadata.author },
-                artwork = next.metadata.artwork ?: metadata.artwork,
-                releaseDate = next.metadata.releaseDate.ifBlank { metadata.releaseDate },
-                language = next.metadata.language.ifBlank { metadata.language },
-            )
-            val nextHasMore = if (resolvedMetadata.total > 0) {
-                bookPageHasMore(cursor, resolvedMetadata.total, next.items.size)
-            } else {
-                next.hasMore
-            }
-            return BookChapters(
-                items = merged,
-                hasMore = next.items.isNotEmpty() && merged.size > items.size && nextHasMore,
-                metadata = resolvedMetadata,
-                page = cursor,
-            )
-        }
     }
 
     /** 已知总数时按请求页判断，避免总数恰好为整页时把尾页误判为可继续。 */

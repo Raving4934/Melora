@@ -116,9 +116,6 @@ internal object BookCatalogPaging {
 
 }
 
-internal fun bookCatalogPageCacheKey(detailCacheKey: String, page: Int): String =
-    "$detailCacheKey.window.${page.coerceAtLeast(1)}"
-
 /** 保存连续的原始页；展示时按 UID 去重，单页缓存与播放续页契约不变。 */
 internal data class BookCatalogState(
     val pages: Map<Int, KwBookApi.BookChapters> = emptyMap(),
@@ -306,6 +303,7 @@ internal fun BookChapterPicker(
     loadSearchPage: suspend (Int) -> KwBookApi.BookChapters,
     onSelectChapter: (BookChapterMatch) -> Unit,
     onLocateCurrent: (() -> Unit)? = null,
+    detailCacheKey: String? = null,
 ) {
     val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true)
     val closeSheet = rememberSheetDismiss(sheetState)
@@ -326,7 +324,7 @@ internal fun BookChapterPicker(
         progress = progress.copy(complete = false)
         try {
             delay(300)
-            searchBookChapters(input.keyword, searchPages(), loadSearchPage) { progress = it }
+            searchBookChapters(input.keyword, searchPages(), loadSearchPage, detailCacheKey) { progress = it }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {

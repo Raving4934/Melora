@@ -1,7 +1,9 @@
 package com.leyu.melora.ui.common
 
 import com.leyu.melora.playback.sdk.KwBookApi
+import com.leyu.melora.playback.sdk.OnlineCache
 import com.leyu.melora.playback.sdk.OnlineSong
+import com.leyu.melora.playback.sdk.bookCatalogPageCacheKey
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.yield
@@ -20,6 +22,7 @@ internal suspend fun searchBookChapters(
     query: String,
     pages: MutableMap<Int, KwBookApi.BookChapters>,
     load: suspend (Int) -> KwBookApi.BookChapters,
+    detailCacheKey: String? = null,
     onUpdate: (BookChapterSearchProgress) -> Unit,
 ) {
     val keyword = query.trim()
@@ -40,7 +43,7 @@ internal suspend fun searchBookChapters(
     pages.toSortedMap().forEach { (page, data) -> collect(page, data) }
     currentCoroutineContext().ensureActive()
     publish()
-    scanBookChapterPages(load, pages) {
+    scanBookChapterPages(load, pages, detailCacheKey) {
         collect(it.page, it)
         publish(complete = !it.hasMore)
         false
@@ -64,22 +67,33 @@ internal suspend fun findBookChapterPage(
 private suspend fun scanBookChapterPages(
     load: suspend (Int) -> KwBookApi.BookChapters,
     pages: MutableMap<Int, KwBookApi.BookChapters>? = null,
+    detailCacheKey: String? = null,
     stopAt: (KwBookApi.BookChapters) -> Boolean,
 ): KwBookApi.BookChapters? {
     val seen = hashSetOf<String>()
     var page = 1
+    fun containsNewChapter(data: KwBookApi.BookChapters) = data.items.any { it.uid !in seen }
+    fun validate(data: KwBookApi.BookChapters) {
+        check(data.items.isNotEmpty()) { "目录读取不完整，请重试" }
+        check(containsNewChapter(data)) { "目录返回了重复内容，请重试" }
+    }
     while (true) {
         currentCoroutineContext().ensureActive()
-        val data = pages?.get(page) ?: load(page)
-        currentCoroutineContext().ensureActive()
         // 章节接口的失败响应也是空页，不允许据此宣布“整本没找到”。
-        check(data.items.isNotEmpty()) { "目录读取不完整，请重试" }
-        if (data.items.all { it.uid in seen }) {
+        val data = pages?.get(page)?.takeIf(::containsNewChapter) ?: run {
             pages?.remove(page)
-            error("目录返回了重复内容，请重试")
+            detailCacheKey?.let { key ->
+                OnlineCache.refresh<KwBookApi.BookChapters>(
+                    bookCatalogPageCacheKey(key, page), OnlineCache.CATALOG_TTL_MS,
+                    cancelWhenUnobserved = true,
+                    acceptCached = { it.page == page && containsNewChapter(it) },
+                ) { load(page).copy(page = page).also(::validate) }
+            } ?: load(page)
         }
-        seen.addAll(data.items.map { it.uid })
-        val accepted = data.copy(page = page)
+        currentCoroutineContext().ensureActive()
+        validate(data)
+        data.items.forEach { seen.add(it.uid) }
+        val accepted = data.takeIf { it.page == page } ?: data.copy(page = page)
         pages?.set(page, accepted)
         if (stopAt(accepted)) return accepted
         if (!data.hasMore) return null

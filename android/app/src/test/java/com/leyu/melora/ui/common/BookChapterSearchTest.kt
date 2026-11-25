@@ -1,15 +1,23 @@
 package com.leyu.melora.ui.common
 
 import com.leyu.melora.playback.sdk.KwBookApi
+import com.leyu.melora.playback.sdk.OnlineCache
 import com.leyu.melora.playback.sdk.OnlineSong
+import com.leyu.melora.playback.sdk.bookCatalogPageCacheKey
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -354,6 +362,81 @@ class BookChapterSearchTest {
         assertEquals(firstPage, pages[1])
         assertFalse(pages.containsKey(2))
         assertTrue(updates.none { it.complete })
+    }
+
+    @Test
+    fun repeatedCachedPageIsFetchedAgainAndReplacedWithTheValidatedPage() = runBlocking {
+        val old = song("first", "目标章节一")
+        val recovered = song("second", "目标章节二")
+        val pages = mutableMapOf(
+            1 to bookPage(1, listOf(old), hasMore = true),
+            2 to bookPage(2, listOf(old), hasMore = true),
+        )
+        val cacheKey = "playlistDetail.book.repeat-recovery"
+        val repeatedKey = bookCatalogPageCacheKey(cacheKey, 2)
+        OnlineCache.put(repeatedKey, pages.getValue(2))
+        val requested = mutableListOf<Int>()
+        val updates = mutableListOf<BookChapterSearchProgress>()
+
+        try {
+            searchBookChapters(
+                query = "目标",
+                pages = pages,
+                load = { page ->
+                    requested += page
+                    bookPage(2, listOf(recovered), hasMore = false)
+                },
+                detailCacheKey = cacheKey,
+                onUpdate = updates::add,
+            )
+
+            assertEquals(listOf(2), requested)
+            assertEquals(listOf(recovered), pages[2]?.items)
+            assertEquals(pages[2], OnlineCache.peek<KwBookApi.BookChapters>(repeatedKey))
+            assertEquals(listOf(old.uid, recovered.uid), updates.last().matches.map { it.song.uid })
+            assertTrue(updates.last().complete)
+        } finally {
+            OnlineCache.clear(cacheKey)
+        }
+    }
+
+    @Test
+    fun validatedLateChapterPageDoesNotReviveClearedOrReplaceNewerCache() = runBlocking {
+        for (clear in listOf(true, false)) {
+            val cacheKey = "playlistDetail.book.concurrent-check-$clear"
+            val pageKey = bookCatalogPageCacheKey(cacheKey, 1)
+            val started = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            val latest = bookPage(1, listOf(song("latest", "新的目标")), hasMore = false)
+            val search = async {
+                runCatching {
+                    searchBookChapters("目标", mutableMapOf(), load = {
+                        started.complete(Unit)
+                        withContext(NonCancellable) { release.await() }
+                        bookPage(1, listOf(song("outdated", "原来的目标")), hasMore = false)
+                    }, detailCacheKey = cacheKey, onUpdate = {})
+                }
+            }
+            try {
+                withTimeout(5_000) { started.await() }
+                val flight = checkNotNull(OnlineCache.pendingRefresh<KwBookApi.BookChapters>(pageKey))
+                if (clear) OnlineCache.clear(cacheKey) else OnlineCache.put(pageKey, latest)
+                release.complete(Unit)
+                withTimeout(5_000) { flight.join() }
+                val result = withTimeout(5_000) { search.await() }
+                if (clear) {
+                    assertTrue(result.exceptionOrNull() is CancellationException)
+                    assertNull(OnlineCache.peek<KwBookApi.BookChapters>(pageKey))
+                } else {
+                    result.getOrThrow()
+                    assertEquals(latest, OnlineCache.peek<KwBookApi.BookChapters>(pageKey))
+                }
+            } finally {
+                release.complete(Unit)
+                search.cancelAndJoin()
+                OnlineCache.clear(cacheKey)
+            }
+        }
     }
 
     @Test

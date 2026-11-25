@@ -67,6 +67,7 @@ import com.leyu.melora.playback.canonicalBookId
 import com.leyu.melora.playback.sdk.OnlineCache
 import com.leyu.melora.playback.sdk.OnlinePlaylist
 import com.leyu.melora.playback.sdk.KwBookApi
+import com.leyu.melora.playback.sdk.bookCatalogPageCacheKey
 import com.leyu.melora.playback.sdk.OnlineRepository
 import com.leyu.melora.playback.sdk.formatPlayCountLabel
 import com.leyu.melora.playback.sdk.OnlineSong
@@ -138,7 +139,6 @@ fun PlaylistDetailContent(
         var activeBookPage by rememberSaveable(detailCacheKey) { mutableIntStateOf(1) }
         var bookDescending by rememberSaveable(detailCacheKey) { mutableStateOf(false) }
         var bookPickerOpen by remember { mutableStateOf(false) }
-        val bookSearchPageNumbers = remember(detailCacheKey) { mutableSetOf<Int>() }
         var pendingBookUid by remember { mutableStateOf<String?>(null) }
         var highlightedBookChapter by remember { mutableStateOf<BookChapterHighlight?>(null) }
         var bookPageLoading by remember { mutableStateOf(false) }
@@ -771,24 +771,9 @@ fun PlaylistDetailContent(
                     requestBookPage(BookCatalogPaging.pageForOrdinal(episode) ?: 1, targetEpisode = episode)
                 },
                 onSelectPage = { page -> requestBookPage(page) },
-                searchPages = {
-                    (bookSearchPageNumbers + bookCatalog.pages.keys).mapNotNull { page ->
-                        OnlineCache.get<KwBookApi.BookChapters>(
-                            bookCatalogPageCacheKey(detailCacheKey, page), OnlineCache.CATALOG_TTL_MS,
-                        )?.let { page to it }
-                    }.toMap(linkedMapOf())
-                },
-                loadSearchPage = { page ->
-                    val cacheKey = bookCatalogPageCacheKey(detailCacheKey, page)
-                    OnlineCache.refresh(cacheKey, OnlineCache.CATALOG_TTL_MS, cancelWhenUnobserved = true) {
-                        loadBookPage(playlist.id, page).also {
-                            check(it.items.isNotEmpty()) { "目录读取不完整，请重试" }
-                        }
-                    }.also { chapters ->
-                        check(chapters.items.isNotEmpty()) { "目录读取不完整，请重试" }
-                        bookSearchPageNumbers += page
-                    }
-                },
+                searchPages = { OnlineCache.cachedBookChapterPages(detailCacheKey) },
+                loadSearchPage = { page -> loadBookPage(playlist.id, page) },
+                detailCacheKey = detailCacheKey,
                 onSelectChapter = { match ->
                     val generation = beginBookRequest()
                     bookRequestJob = null

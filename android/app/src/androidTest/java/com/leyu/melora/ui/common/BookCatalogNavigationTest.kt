@@ -27,6 +27,7 @@ import com.leyu.melora.playback.UiTrack
 import kotlinx.coroutines.flow.MutableStateFlow
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.sdk.KwBookApi
+import com.leyu.melora.playback.sdk.bookCatalogPageCacheKey
 import com.leyu.melora.playback.sdk.OnlineCache
 import com.leyu.melora.playback.sdk.OnlinePlaylist
 import com.leyu.melora.playback.sdk.OnlineSong
@@ -666,6 +667,28 @@ class BookCatalogNavigationTest {
         }
             awaitChapter(1000)
         } finally { delayed.complete(page(3)) }
+    }
+
+    @Test fun titleSearchRetriesARepeatedPageAndKeepsValidatedPages() {
+        show(total = 200) { number ->
+            when (number) {
+                1 -> page(1)
+                2 -> if (requests.count { it == 2 } == 1) page(1).copy(page = 2) else page(2).copy(hasMore = false)
+                else -> error("unexpected page $number")
+            }.let { it.copy(metadata = it.metadata.copy(total = 200)) }
+        }
+        queryField().performTextReplacement("目录第150集")
+        compose.awaitStable(compose.onNodeWithText("目录返回了重复内容，请重试"))
+        assertEquals(listOf(1, 2), requests.toList())
+        assertNull(OnlineCache.peek<KwBookApi.BookChapters>(
+            bookCatalogPageCacheKey("playlistDetail.book.book_album_$id", 2),
+        ))
+
+        compose.onNodeWithText("继续查找").performClick()
+        compose.awaitStable(compose.onNodeWithText("找到 1 条"))
+        val match = compose.onNode(hasText("目录第150集") and hasAnyAncestor(hasTestTag("book-chapter-search-results")))
+        match.assertIsDisplayed()
+        assertEquals(listOf(1, 2, 2), requests.toList())
     }
 
     @Test fun mixedTextContainingEpisodeMarkerSearchesTitleInsteadOfGuessingOrdinal() {

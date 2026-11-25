@@ -78,6 +78,7 @@ class BookChapterPagingTest {
         assertEquals(200, state.items.size)
         assertEquals(8, state.nextPage(true))
         assertNull(state.nextPage(false))
+        assertEquals(1_000, state.pages.getValue(10).total)
         assertEquals("chapter-801", state.items.first().songmid)
         assertEquals("chapter-1000", state.items.last().songmid)
         val first = BookCatalogState(mapOf(1 to chapters(1, 1..100)))

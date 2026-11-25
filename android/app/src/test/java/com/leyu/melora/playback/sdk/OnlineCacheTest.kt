@@ -42,6 +42,16 @@ class OnlineCacheTest {
         assertSame(queue, OnlineCache.peek<List<String>>("songs"))
     }
 
+    @Test fun chapterSearchFindsPagesCachedByOtherWindowsWithoutMixingBooks() {
+        val book = "playlistDetail.book.book_album_123"
+        val chapters = KwBookApi.BookChapters(emptyList(), true, page = 3)
+        OnlineCache.put(bookCatalogPageCacheKey(book, 3), chapters)
+        OnlineCache.put(bookCatalogPageCacheKey("${book}4", 4), chapters.copy(page = 4))
+        OnlineCache.put(book, chapters.copy(page = 1))
+
+        assertEquals(mapOf(3 to chapters), OnlineCache.cachedBookChapterPages(book))
+    }
+
     @Test fun leastRecentlyUsedEntryEvictedAndReplacementDoesNotGrowCache() {
         repeat(OnlineCache.MAX_ENTRIES) { OnlineCache.put("$it", it) }
         assertEquals(0, OnlineCache.peek<Int>("0"))

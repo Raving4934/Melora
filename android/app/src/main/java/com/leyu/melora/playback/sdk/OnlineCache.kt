@@ -23,6 +23,11 @@ import kotlinx.coroutines.withContext
 /** 有界进程缓存；过期数据只作即时展示/播放快照，刷新结果供下次读取。 */
 internal const val SNAPSHOT_DIRECTORY = "online-cache-v1"
 
+private fun bookCatalogPagePrefix(detailCacheKey: String) = "$detailCacheKey.window."
+
+internal fun bookCatalogPageCacheKey(detailCacheKey: String, page: Int): String =
+    bookCatalogPagePrefix(detailCacheKey) + page.coerceAtLeast(1)
+
 object OnlineCache {
     const val CATALOG_TTL_MS = 15 * 60 * 1000L
     internal const val MAX_ENTRIES = 256
@@ -52,6 +57,15 @@ object OnlineCache {
     /** 仅取旧快照，不代表仍然新鲜；使用方须通过 get / refresh 检查有效期。 */
     @Suppress("UNCHECKED_CAST")
     fun <T : Any> peek(key: String): T? = synchronized(lock) { store[key]?.value as? T }
+
+    internal fun cachedBookChapterPages(detailCacheKey: String): MutableMap<Int, KwBookApi.BookChapters> = synchronized(lock) {
+        val prefix = bookCatalogPagePrefix(detailCacheKey)
+        val now = System.currentTimeMillis()
+        store.asSequence()
+            .filter { (key, entry) -> key.startsWith(prefix) && now - entry.time <= CATALOG_TTL_MS }
+            .mapNotNull { (_, entry) -> entry.value as? KwBookApi.BookChapters }
+            .associateByTo(linkedMapOf(), KwBookApi.BookChapters::page)
+    }
 
     /** 写入进程缓存并返回本次写入时间，供对应磁盘快照沿用网络结果时间。 */
     fun put(key: String, value: Any): Long = synchronized(lock) {
@@ -154,6 +168,7 @@ object OnlineCache {
         ttlMs: Long,
         force: Boolean = false,
         cancelWhenUnobserved: Boolean = false,
+        acceptCached: (T) -> Boolean = { true },
         load: suspend () -> T,
     ): T {
         var previous: Entry? = null
@@ -162,7 +177,10 @@ object OnlineCache {
             restart = force,
             cancelReplaced = false,
             cancelWhenUnobserved = cancelWhenUnobserved,
-            cacheHit = { previous = store[key]; if (force) null else get<T>(key, ttlMs) },
+            cacheHit = {
+                previous = store[key]
+                if (force) null else get<T>(key, ttlMs)?.takeIf(acceptCached)
+            },
         ) {
             val value = load()
             val task = currentCoroutineContext()[Job]

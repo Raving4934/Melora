@@ -6,6 +6,7 @@ import androidx.media3.common.util.UnstableApi
 import com.leyu.melora.playback.sdk.KwBookApi
 import com.leyu.melora.playback.sdk.OnlineCache
 import com.leyu.melora.playback.sdk.OnlineSong
+import com.leyu.melora.playback.sdk.bookCatalogPageCacheKey
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -47,7 +48,7 @@ internal suspend fun followingBookChapters(
         }
         val result = if (refreshTail && page == knownPage) {
             val key = "playlistDetail.book.book_album_$id"
-            OnlineCache.refresh("$key.window.$page", OnlineCache.CATALOG_TTL_MS,
+            OnlineCache.refresh(bookCatalogPageCacheKey(key, page), OnlineCache.CATALOG_TTL_MS,
                 force = true, cancelWhenUnobserved = true) {
                 // 第一页有两个既有缓存入口；同时强刷，不能让任一旧终态充当网络结果。
                 if (page == 1) OnlineCache.refresh(key, OnlineCache.CATALOG_TTL_MS,
