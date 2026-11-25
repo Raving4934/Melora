@@ -34,10 +34,12 @@ public final class LoadingDocumentsProvider extends DocumentsProvider {
     private static final class Listing {
         final List<Document> children;
         final Boolean loading;
+        final String error;
 
-        Listing(List<Document> children, Boolean loading) {
+        Listing(List<Document> children, Boolean loading, String error) {
             this.children = new ArrayList<>(children);
             this.loading = loading;
+            this.error = error;
         }
     }
 
@@ -46,7 +48,11 @@ public final class LoadingDocumentsProvider extends DocumentsProvider {
     public final List<MatrixCursor> cursors = new ArrayList<>();
 
     public void setChildren(String id, List<Document> children, Boolean loading) {
-        listings.put(id, new Listing(children, loading));
+        setChildren(id, children, loading, null);
+    }
+
+    public void setChildren(String id, List<Document> children, Boolean loading, String error) {
+        listings.put(id, new Listing(children, loading, error));
     }
 
     @Override public boolean onCreate() { return true; }
@@ -80,11 +86,12 @@ public final class LoadingDocumentsProvider extends DocumentsProvider {
         childQueries.add(parentDocumentId);
         MatrixCursor result = cursor(projection);
         for (Document document : listing.children) addDocument(result, document);
+        Bundle extras = new Bundle();
         if (listing.loading != null) {
-            Bundle extras = new Bundle();
             extras.putBoolean(DocumentsContract.EXTRA_LOADING, listing.loading);
-            result.setExtras(extras);
         }
+        if (listing.error != null) extras.putString(DocumentsContract.EXTRA_ERROR, listing.error);
+        result.setExtras(extras);
         return result;
     }
 

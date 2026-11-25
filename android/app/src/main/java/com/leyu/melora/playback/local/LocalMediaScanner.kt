@@ -305,7 +305,7 @@ object LocalMediaScanner {
         require(root.exists() && root.isDirectory && root.canRead()) { "自定义目录权限已失效" }
         val result = mutableListOf<LocalSong>()
         val observed = hashSetOf<String>()
-        val queue = ArrayDeque<Pair<android.net.Uri, String>>().apply { add(root.uri to root.name.orEmpty()) }
+        val queue = ArrayDeque(listOf(DocumentsContract.getDocumentId(root.uri) to root.name.orEmpty()))
         val visited = hashSetOf<String>()
         val projection = arrayOf(
             DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
@@ -314,30 +314,29 @@ object LocalMediaScanner {
         )
         while (queue.isNotEmpty()) {
             currentCoroutineContext().ensureActive()
-            val (directory, folderName) = queue.removeFirst()
-            val directoryId = DocumentsContract.getDocumentId(directory)
+            val (directoryId, folderName) = queue.removeFirst()
             if (!visited.add(directoryId)) continue
-            val children = DocumentsContract.buildChildDocumentsUriUsingTree(directory, directoryId)
+            val children = DocumentsContract.buildChildDocumentsUriUsingTree(root.uri, directoryId)
             // DocumentFile.listFiles会吞查询异常并返回空数组；直接查询才能区别“空目录”和“扫描失败”。
-            val cursor = query(context, children, projection)
-            cursor.use {
-                // SAF 可先返回空/部分结果；任一子目录未加载完时，整棵树沿用扫描前的索引。
-                check(!it.extras.getBoolean(DocumentsContract.EXTRA_LOADING, false)) { "自定义目录仍在加载" }
+            query(context, children, projection).use {
+                val status = it.extras
+                // 任一目录返回部分结果或错误时，整棵树保留扫描前的索引。
+                check(!status.getBoolean(DocumentsContract.EXTRA_LOADING) &&
+                    !status.containsKey(DocumentsContract.EXTRA_ERROR)) { "自定义目录未完整读取" }
                 while (it.moveToNext()) {
                     currentCoroutineContext().ensureActive()
                     val id = it.getString(0) ?: error("目录条目缺少ID")
                     val name = it.getString(1).orEmpty()
                     val mime = it.getString(2).orEmpty()
-                    val uri = DocumentsContract.buildDocumentUriUsingTree(root.uri, id)
                     if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
-                        queue.add(uri to name)
+                        queue.add(id to name)
                         continue
                     }
                     val extension = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
-                    val address = uri.toString()
+                    val address = DocumentsContract.buildDocumentUriUsingTree(root.uri, id).toString()
                     observed += address
                     if (!mime.startsWith("audio") && extension !in AUDIO_EXTENSIONS) continue
-                    val tag = LocalTagReader.read(context, uri.toString())
+                    val tag = LocalTagReader.read(context, address)
                     currentCoroutineContext().ensureActive()
                     val stem = name.substringBeforeLast('.')
                     val (title, artist) = restoreFromFileName(tag?.title?.ifBlank { null } ?: stem, tag?.artist.orEmpty(), stem)

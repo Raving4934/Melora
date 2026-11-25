@@ -367,6 +367,26 @@ class LocalMediaScannerInstrumentedTest {
     }
 
     @Test
+    fun erroredDirectoryPreservesDiskAndLibraryUntilACompleteQueryConfirmsDeletion() = runBlocking {
+        val present = song("loading", "loading/present")
+        val missing = song("loading", "loading/missing")
+        val old = listOf(present, missing)
+        seed(old)
+        old.forEach { UserLibrary.markPlayed(it.toOnlineSong()) }
+        MeloraSettings.localFolders.value = listOf(treeUri("loading").toString())
+        val partial = listOf(LoadingDocumentsProvider.Document("loading/present", "present.mp3"))
+        provider.setChildren("loading", partial, false, "Network unavailable")
+
+        assertEquals(1, LocalMediaScanner.scan(context).failedSources)
+        assertMediaReferences(old.map(LocalSong::id).toSet())
+        assertEquals(old, LocalMediaStore.songs.value)
+
+        provider.setChildren("loading", partial, false)
+        assertEquals(0, LocalMediaScanner.scan(context).failedSources)
+        assertMediaReferences(setOf(present.id))
+    }
+
+    @Test
     fun completedEmptyDirectoryRemovesStaleSongsAndLibraryReferences() = runBlocking {
         assertCompletedEmptyDirectory(loading = false)
     }
