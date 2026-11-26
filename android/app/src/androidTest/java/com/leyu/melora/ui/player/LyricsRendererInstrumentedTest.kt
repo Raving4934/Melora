@@ -14,6 +14,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Canvas
 import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.text.TextLayoutResult
@@ -111,24 +112,26 @@ class LyricsRendererInstrumentedTest {
                 val runs = wordRuns(line, text)
                 for (color in listOf(Color.White, Color(0xFF39261A), Color(0x887CCCDD))) {
                     // 含精确词边界、部分填充、全部完成以及向后seek；不依赖运行设备字体的golden。
-                    for (time in listOf(-1L, 0L, 50L, 100L, 499L, 501L, 1_150L, 9_000L, 250L)) {
-                        val expected = renderWordFill(text, runs, time, color, reference = true)
-                        val actual = renderWordFill(text, runs, time, color, reference = false)
-                        val oldPixels = IntArray(expected.width * expected.height)
-                        val newPixels = IntArray(actual.width * actual.height)
-                        expected.asAndroidBitmap().getPixels(oldPixels, 0, expected.width, 0, 0, expected.width, expected.height)
-                        actual.asAndroidBitmap().getPixels(newPixels, 0, actual.width, 0, 0, actual.width, actual.height)
-                        var maxDelta = 0
-                        for (pixel in oldPixels.indices) for (channel in 0..3) {
-                            val shift = channel * 8
-                            maxDelta = maxOf(maxDelta, abs(((oldPixels[pixel] ushr shift) and 255) -
-                                ((newPixels[pixel] ushr shift) and 255)))
+                    for (liftPx in listOf(0f, 2.5f)) {
+                        for (time in listOf(-1L, 0L, 50L, 100L, 499L, 501L, 1_150L, 9_000L, 250L)) {
+                            val expected = renderWordFill(text, runs, time, color, liftPx, reference = true)
+                            val actual = renderWordFill(text, runs, time, color, liftPx, reference = false)
+                            val oldPixels = IntArray(expected.width * expected.height)
+                            val newPixels = IntArray(actual.width * actual.height)
+                            expected.asAndroidBitmap().getPixels(oldPixels, 0, expected.width, 0, 0, expected.width, expected.height)
+                            actual.asAndroidBitmap().getPixels(newPixels, 0, actual.width, 0, 0, actual.width, actual.height)
+                            var maxDelta = 0
+                            for (pixel in oldPixels.indices) for (channel in 0..3) {
+                                val shift = channel * 8
+                                maxDelta = maxOf(maxDelta, abs(((oldPixels[pixel] ushr shift) and 255) -
+                                    ((newPixels[pixel] ushr shift) and 255)))
+                            }
+                            // 同一设备、同一布局逐像素相等，不依赖设备字体或放宽色差阈值。
+                            assertTrue("逐词像素变化: ${line.text}, time=$time, color=$color, lift=$liftPx, delta=$maxDelta",
+                                maxDelta == 0)
+                            maximumDelta = maxOf(maximumDelta, maxDelta)
+                            compared++
                         }
-                        // 同一设备、同一布局逐像素相等，不依赖设备字体或放宽色差阈值。
-                        assertTrue("逐词像素变化: ${line.text}, time=$time, color=$color, delta=$maxDelta",
-                            maxDelta == 0)
-                        maximumDelta = maxOf(maximumDelta, maxDelta)
-                        compared++
                     }
                 }
             }
@@ -151,57 +154,68 @@ class LyricsRendererInstrumentedTest {
             val image = ImageBitmap(text.size.width, text.size.height)
             val canvas = Canvas(image)
             val scope = CanvasDrawScope()
-            fun sample(reference: Boolean, time: Long): Long {
+            fun sample(reference: Boolean, time: Long, liftPx: Float): Long {
                 val start = System.nanoTime()
                 repeat(30) { scope.draw(Density(1f), LayoutDirection.Ltr, canvas,
                     Size(image.width.toFloat(), image.height.toFloat())) {
                     drawRect(Color.Black)
-                    if (reference) drawWordFillReference(text, runs, time, Color.White)
-                    else drawTimedWords(text, runs, time, Color.White)
+                    if (reference) drawWordFillReference(text, runs, time, Color.White, liftPx)
+                    else drawTimedWords(text, runs, time, Color.White, Color.White.copy(alpha = 0.35f), liftPx)
                 } }
                 return (System.nanoTime() - start) / 30
             }
-            for (time in listOf(750L, 1_550L, 9_000L)) {
-                repeat(3) { sample(true, time); sample(false, time) }
-                val before = mutableListOf<Long>()
-                val after = mutableListOf<Long>()
-                repeat(9) { if (it % 2 == 0) { before += sample(true, time); after += sample(false, time) }
-                    else { after += sample(false, time); before += sample(true, time) } }
-                // 设备速度/调度不作通过阈值；像素等价是硬门禁，性能数据仅作同设备A/B证据。
-                android.util.Log.i("LyricDrawBenchmark", "words=${line.words.size} lines=${text.lineCount} time=$time " +
-                    "referenceMedianNs=${before.sorted()[4]} optimizedMedianNs=${after.sorted()[4]}")
+            for (liftPx in listOf(0f, 2.5f)) {
+                for (time in listOf(750L, 1_550L, 9_000L)) {
+                    repeat(3) { sample(true, time, liftPx); sample(false, time, liftPx) }
+                    val before = mutableListOf<Long>()
+                    val after = mutableListOf<Long>()
+                    repeat(9) { if (it % 2 == 0) { before += sample(true, time, liftPx); after += sample(false, time, liftPx) }
+                        else { after += sample(false, time, liftPx); before += sample(true, time, liftPx) } }
+                    // 设备速度/调度不作通过阈值；像素等价是硬门禁，性能数据仅作同设备A/B证据。
+                    android.util.Log.i("LyricDrawBenchmark", "words=${line.words.size} lines=${text.lineCount} time=$time lift=$liftPx " +
+                        "referenceMedianNs=${before.sorted()[4]} optimizedMedianNs=${after.sorted()[4]}")
+                }
             }
         }
     }
 
     private fun renderWordFill(text: TextLayoutResult, runs: List<Pair<LyricWord, List<GlyphRun>>>,
-        time: Long, color: Color, reference: Boolean): ImageBitmap {
+        time: Long, color: Color, liftPx: Float, reference: Boolean): ImageBitmap {
         val image = ImageBitmap(text.size.width, text.size.height)
         CanvasDrawScope().draw(Density(1f), LayoutDirection.Ltr, Canvas(image),
             Size(image.width.toFloat(), image.height.toFloat())) {
             if (color.alpha == 1f) drawRect(Color(0xFF61646A))
-            drawText(text, color = color.copy(alpha = 0.35f))
-            if (reference) drawWordFillReference(text, runs, time, color)
-            else drawTimedWords(text, runs, time, color)
+            val muted = color.copy(alpha = 0.35f)
+            if (liftPx == 0f) drawText(text, color = muted)
+            if (reference) drawWordFillReference(text, runs, time, color, liftPx)
+            else drawTimedWords(text, runs, time, color, muted, liftPx)
         }
         return image
     }
 
     /** 测试专用逐片绘制oracle：冻结合批前的像素语义，生产只保留一条渲染链路。 */
     private fun DrawScope.drawWordFillReference(text: TextLayoutResult,
-        runs: List<Pair<LyricWord, List<GlyphRun>>>, time: Long, color: Color) {
+        runs: List<Pair<LyricWord, List<GlyphRun>>>, time: Long, color: Color, liftPx: Float) {
         for ((word, segments) in runs) {
             var remaining = segments.sumOf { it.bounds.width.toDouble() }.toFloat() * lyricWordProgress(word, time)
             for (segment in segments) {
                 val rect = segment.bounds
                 val filled = remaining.coerceIn(0f, rect.width)
                 remaining -= rect.width
-                if (filled <= 0f) continue
-                val edge = if (segment.rtl) rect.right - filled else rect.left + filled
-                val feather = minOf(8.dp.toPx(), rect.width * 0.2f)
-                val brush = if (segment.rtl) Brush.horizontalGradient(listOf(color.copy(alpha = 0f), color), edge - feather, edge)
-                    else Brush.horizontalGradient(listOf(color, color.copy(alpha = 0f)), edge, edge + feather)
-                clipRect(rect.left, rect.top, rect.right, rect.bottom) { drawText(text, brush = brush, alpha = 1f) }
+                translate(top = if (liftPx > 0f) -liftPx * lyricWordLift(word, time) else 0f) {
+                    if (liftPx > 0f) {
+                        clipRect(rect.left, rect.top, rect.right, rect.bottom) {
+                            drawText(text, color = if (filled >= rect.width) color else color.copy(alpha = 0.35f))
+                        }
+                        if (filled >= rect.width) return@translate
+                    }
+                    if (filled <= 0f) return@translate
+                    val edge = if (segment.rtl) rect.right - filled else rect.left + filled
+                    val feather = minOf(8.dp.toPx(), rect.width * 0.2f)
+                    val brush = if (segment.rtl) Brush.horizontalGradient(listOf(color.copy(alpha = 0f), color), edge - feather, edge)
+                        else Brush.horizontalGradient(listOf(color, color.copy(alpha = 0f)), edge, edge + feather)
+                    clipRect(rect.left, rect.top, rect.right, rect.bottom) { drawText(text, brush = brush, alpha = 1f) }
+                }
             }
         }
     }
@@ -320,7 +334,7 @@ class LyricsRendererInstrumentedTest {
         val translationBounds = textBounds("translated lyric")
         val romanizationBounds = textBounds("zhǔ gē cí")
 
-        assertEquals("translated row must be centered as a whole", viewportBounds().center.y, (lyricBounds.top + romanizationBounds.bottom) / 2f, 2f)
+        assertEquals("translated row must be centered as a whole", ordinaryFocusY(), (lyricBounds.top + romanizationBounds.bottom) / 2f, 2f)
         assertIsDisplayed("主歌词")
         assertIsDisplayed("translated lyric")
         assertIsDisplayed("zhǔ gē cí")
@@ -643,7 +657,7 @@ class LyricsRendererInstrumentedTest {
         val browsedLine = requireNotNull(lines.drop(2).firstOrNull { isDisplayed(it.text) }).text
         val targetLine = requireNotNull(lines.drop(1).lastOrNull { !isDisplayed(it.text) })
         assertTrue("drag did not move away from the original focus", !isDisplayed("line-0") ||
-            abs(textBounds("line-0").center.y - viewportBounds().center.y) > 20f)
+            abs(textBounds("line-0").center.y - ordinaryFocusY()) > 20f)
         val beforeTimeAdvance = textBounds(browsedLine)
 
         composeRule.runOnIdle { position.longValue = targetLine.startMs }
@@ -669,7 +683,7 @@ class LyricsRendererInstrumentedTest {
         assertTrue("returned before the three-second grace period", !isDisplayed(targetLine.text))
         composeRule.mainClock.advanceTimeBy(1_100L)
         composeRule.waitForIdle()
-        assertEquals("did not return to the current line", viewportBounds().center.y, textBounds(targetLine.text).center.y, 2f)
+        assertEquals("did not return to the current line", ordinaryFocusY(), textBounds(targetLine.text).center.y, 2f)
     }
 
     @Test
@@ -877,7 +891,7 @@ class LyricsRendererInstrumentedTest {
                 abs(android.graphics.Color.blue(pixel) - android.graphics.Color.blue(ink)) <= 8) inkPixels++
         }
         assertTrue("焦点必须使用播放页封面墨水而非固定黑白", inkPixels > 30)
-        if (!mini) assertEquals("焦点只做约6%视觉放大，不重排字号", 1f / 0.94f,
+        if (!mini) assertEquals("焦点只做约12%视觉放大，不重排字号", 1f / 0.88f,
             focusBounds.width / nextBounds.width, 0.01f)
         composeRule.runOnIdle { config.value = config.value.copy(isBlurEnabled = true) }
         assertEquals("虚化不能影响焦点清晰度", 0, countDifferentPixels(focusBefore, image("当前焦点歌词")))
@@ -913,7 +927,7 @@ class LyricsRendererInstrumentedTest {
         setViewport(lines, position, height = 320.dp, motionEnabled = false)
         composeRule.runOnIdle { position.longValue = 18_000L }
         composeRule.waitForIdle()
-        assertEquals(viewportBounds().center.y, textBounds("reduced-18").center.y, 2f)
+        assertEquals(ordinaryFocusY(), textBounds("reduced-18").center.y, 2f)
     }
 
     private fun saveProof(name: String, image: ImageBitmap) {
@@ -968,16 +982,22 @@ class LyricsRendererInstrumentedTest {
 
     private fun viewportBounds(): Rect = composeRule.onNodeWithTag(VIEWPORT_TAG).fetchSemanticsNode().boundsInRoot
 
+    private fun ordinaryFocusY(viewport: Rect = viewportBounds()): Float =
+        viewport.top + viewport.height * ORDINARY_LYRICS_FOCUS_FRACTION
+
     private fun pointInViewport(text: String): Offset {
         val text = textBounds(text)
         val viewport = viewportBounds()
         return Offset(text.center.x - viewport.left, text.center.y - viewport.top)
     }
 
-    private fun nearestVisibleLine(lines: List<LyricLine>): LyricLine = requireNotNull(
-        lines.filter { isDisplayed(it.text) }
-            .minByOrNull { abs(textBounds(it.text).center.y - viewportBounds().center.y) },
-    )
+    private fun nearestVisibleLine(lines: List<LyricLine>): LyricLine {
+        val focusY = ordinaryFocusY()
+        return requireNotNull(
+            lines.filter { isDisplayed(it.text) }
+                .minByOrNull { abs(textBounds(it.text).center.y - focusY) },
+        )
+    }
 
     private fun verticalScrollValue(): Float = composeRule.onNode(hasScrollAction())
         .fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()

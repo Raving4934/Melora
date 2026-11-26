@@ -116,6 +116,7 @@ data class LyricsUiConfig(
     val isCentered: Boolean = false,
     val isBold: Boolean = false,
     val isBlurEnabled: Boolean = false,
+    val isWordLiftEnabled: Boolean = true,
 ) {
     fun resizeBy(steps: Int): LyricsUiConfig =
         copy(fontSizeSp = (fontSizeSp + steps * 2f).coerceIn(FONT_SIZE_MIN_SP, FONT_SIZE_MAX_SP))
@@ -129,6 +130,7 @@ data class LyricsUiConfig(
     internal fun toJson(): JSONObject = JSONObject()
         .put("fontSizeSp", fontSizeSp).put("isCentered", isCentered)
         .put("isBold", isBold).put("isBlurEnabled", isBlurEnabled)
+        .put("isWordLiftEnabled", isWordLiftEnabled)
 
     companion object {
         const val DEFAULT_FONT_SIZE_SP = 22f
@@ -140,6 +142,7 @@ data class LyricsUiConfig(
             isCentered = value.optBoolean("isCentered", false),
             isBold = value.optBoolean("isBold", false),
             isBlurEnabled = value.optBoolean("isBlurEnabled", false),
+            isWordLiftEnabled = value.optBoolean("isWordLiftEnabled", true),
         ).normalized()
     }
 }

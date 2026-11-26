@@ -14,6 +14,7 @@ class LyricsUiConfigTest {
         assertFalse(config.isCentered)
         assertFalse(config.isBold)
         assertFalse(config.isBlurEnabled)
+        assertTrue(config.isWordLiftEnabled)
     }
 
     @Test
@@ -29,7 +30,7 @@ class LyricsUiConfigTest {
 
     @Test
     fun resizingDoesNotChangeAlignmentBoldOrBlur() {
-        val config = LyricsUiConfig(isCentered = true, isBold = false, isBlurEnabled = true)
+        val config = LyricsUiConfig(isCentered = true, isBold = false, isBlurEnabled = true, isWordLiftEnabled = false)
         assertEquals(config.copy(fontSizeSp = 24f), config.resizeBy(1))
         assertEquals(config, config.resizeBy(1).resizeBy(-1))
     }
@@ -37,14 +38,20 @@ class LyricsUiConfigTest {
     @Test
     fun switchesRemainIndependentAndCanBeToggledBack() {
         val config = LyricsUiConfig()
-        val changed = config.copy(isCentered = true, isBold = true, isBlurEnabled = true)
+        val changed = config.copy(isCentered = true, isBold = true, isBlurEnabled = true, isWordLiftEnabled = false)
         assertEquals(config.fontSizeSp, changed.fontSizeSp, 0f)
-        assertEquals(config, changed.copy(isCentered = false, isBold = false, isBlurEnabled = false))
+        assertEquals(config, changed.copy(isCentered = false, isBold = false, isBlurEnabled = false, isWordLiftEnabled = true))
     }
     @Test
     fun allOptionsSurviveSerializedStorageRoundTrip() {
-        for (size in listOf(16f, 22f, 30f)) for (flags in 0..7) {
-            val config = LyricsUiConfig(size, flags and 1 != 0, flags and 2 != 0, flags and 4 != 0)
+        for (size in listOf(16f, 22f, 30f)) for (flags in 0..15) {
+            val config = LyricsUiConfig(
+                fontSizeSp = size,
+                isCentered = flags and 1 != 0,
+                isBold = flags and 2 != 0,
+                isBlurEnabled = flags and 4 != 0,
+                isWordLiftEnabled = flags and 8 != 0,
+            )
             assertEquals(config, LyricsUiConfig.fromJson(JSONObject(config.toJson().toString())))
         }
     }
@@ -61,8 +68,8 @@ class LyricsUiConfigTest {
 
     @Test
     fun resetOnlyChangesFontSizeAndTheResetValueCanBeRestored() {
-        val config = LyricsUiConfig(30f, true, true, true).resetFontSize()
-        assertEquals(LyricsUiConfig(22f, true, true, true), config)
+        val config = LyricsUiConfig(30f, true, true, true, isWordLiftEnabled = false).resetFontSize()
+        assertEquals(LyricsUiConfig(22f, true, true, true, isWordLiftEnabled = false), config)
         assertEquals(config, LyricsUiConfig.fromJson(JSONObject(config.toJson().toString())))
     }
 

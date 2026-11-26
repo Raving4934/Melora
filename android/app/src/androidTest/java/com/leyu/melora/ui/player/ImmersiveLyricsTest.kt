@@ -163,14 +163,14 @@ class ImmersiveLyricsTest {
         val second = textBounds("沉浸二")
         val translation = textBounds("译一")
         val romanization = textBounds("yi")
-        val expectedMainLineHeight = 34f * 1.22f
+        val expectedMainLineHeight = 30f * 1.22f
         val firstRow = composeRule.onNode(hasText("沉浸一") and hasClickAction()).fetchSemanticsNode().boundsInRoot
         val secondRow = composeRule.onNode(hasText("沉浸二") and hasClickAction()).fetchSemanticsNode().boundsInRoot
 
         val renderedStyle = textLayout("沉浸一").layoutInput.style
-        assertEquals(34f, renderedStyle.fontSize.value, 0.01f)
+        assertEquals(30f, renderedStyle.fontSize.value, 0.01f)
         assertEquals("沉浸行高规格必须应用到实际文字布局", expectedMainLineHeight, renderedStyle.lineHeight.value, 0.01f)
-        assertEquals("副文本算在上一行内部，行间距应单独保持0.44倍字号", 34f * 0.44f,
+        assertEquals("副文本算在上一行内部，行间距应单独保持0.44倍字号", 30f * 0.44f,
             secondRow.top - firstRow.bottom, 2f)
         assertEquals("translation/romanization stack must stay centered as one row", viewport.center.y,
             (first.top + romanization.bottom) / 2f, 3f)
