@@ -695,6 +695,7 @@ private fun MyHubPage(
                                     img = cover ?: first?.img,
                                     seed = playlist.id,
                                     fallback = Icons.AutoMirrored.Rounded.QueueMusic,
+                                    inCard = true,
                                     onClick = { onOpenUserPlaylist(playlist) },
                                 )
                                 if (index < minOf(userPlaylists.size, 3) - 1) {
@@ -739,6 +740,7 @@ private fun MyHubPage(
                                     img = playlist.img,
                                     seed = "${playlist.source}_${playlist.id}",
                                     fallback = if (playlist.isBookAlbum) Icons.Outlined.Headphones else Icons.AutoMirrored.Rounded.QueueMusic,
+                                    inCard = true,
                                     onClick = { onOpenPlaylist(playlist) },
                                 )
                                 if (index < previews.lastIndex) {
@@ -1001,10 +1003,12 @@ private fun PlaylistListRow(
     onClick: () -> Unit,
     titlePrefix: @Composable () -> Unit = {},
     trailing: (@Composable () -> Unit)? = null,
+    inCard: Boolean = false,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(if (inCard) Modifier else Modifier.clip(RoundedCornerShape(12.dp)))
             .clickable(onClick = onClick)
             .padding(start = 12.dp, end = 8.dp, top = 9.dp, bottom = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1152,7 +1156,7 @@ internal fun FavoritesPage(
         title = "我的收藏",
         onBack = { if (selection.active) selection.finish() else onBack() },
         onTitleClick = scrollToTop,
-        header = { normal -> SongSelectionTopBar(selection, singleSongs, normal) },
+        header = { normal -> SongSelectionTopBar(selection, singleSongs, normal = normal) },
         topBarContent = {
             TextTabs(
                 labels = listOf("单曲", "歌单", "专辑", "听书", "节目", "歌手"),

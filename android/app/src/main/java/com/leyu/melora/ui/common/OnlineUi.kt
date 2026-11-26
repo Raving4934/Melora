@@ -45,6 +45,7 @@ import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.TextFieldLineLimits
@@ -75,8 +76,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -118,6 +122,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.delay
 import com.leyu.melora.ui.theme.LightSheetFrost
 import com.leyu.melora.ui.theme.MeloraAppearance
+import com.leyu.melora.ui.theme.currentMeloraSheetPalette
 
 val CanvasBackground: Color get() = MeloraAppearance.canvas
 val CardWhite: Color get() = MeloraAppearance.card
@@ -259,6 +264,12 @@ internal fun SongListStateProvider(content: @Composable () -> Unit) {
     CompositionLocalProvider(LocalSongListState provides state, content = content)
 }
 
+@Composable
+internal fun isWideSongListWindow(): Boolean {
+    val window = LocalWindowInfo.current.containerSize
+    return with(LocalDensity.current) { window.width.toDp() >= 600.dp && window.height.toDp() >= 480.dp }
+}
+
 /** 通用在线歌曲行。 */
 @Composable
 fun OnlineSongRow(
@@ -274,6 +285,9 @@ fun OnlineSongRow(
     selectionMode: Boolean = false,
     selected: Boolean = false,
     platformDotColor: Color? = null,
+    leadingIndex: Int? = null,
+    highlightContainer: Boolean = false,
+    inCard: Boolean = false,
 ) {
     val shared = LocalSongListState.current
     val showCovers by shared.showCovers
@@ -288,13 +302,42 @@ fun OnlineSongRow(
     }
     val artwork = rememberOnlineSongCover(song, enabled = showCovers)
     val highlighted = isCurrent ?: isCurrentListSong(song.uid)
-    Row(
-        modifier = Modifier
+    val rowBg = if (highlightContainer && highlighted) {
+        BrandBlue.copy(alpha = if (com.leyu.melora.ui.theme.MeloraAppearance.isDark) 0.16f else 0.08f)
+    } else {
+        Color.Transparent
+    }
+    val roundedRow = !inCard && (highlightContainer || isWideSongListWindow())
+    val rowModifier = if (roundedRow) {
+        Modifier
             .fillMaxWidth()
+            .padding(horizontal = 8.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(rowBg)
             .clickable(onClick = onClick)
-            .padding(start = 16.dp, end = 10.5.dp, top = 8.dp, bottom = 8.dp),
+            .padding(start = 8.dp, end = 2.5.dp, top = 8.dp, bottom = 8.dp)
+    } else {
+        Modifier
+            .fillMaxWidth()
+            .background(rowBg)
+            .clickable(onClick = onClick)
+            .padding(start = 16.dp, end = 10.5.dp, top = 8.dp, bottom = 8.dp)
+    }
+    Row(
+        modifier = rowModifier,
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (leadingIndex != null) {
+            Text(
+                text = "%02d".format(leadingIndex),
+                fontSize = 12.5.sp,
+                fontWeight = if (highlighted) FontWeight.SemiBold else FontWeight.Normal,
+                color = if (highlighted) BrandBlue.copy(alpha = 0.85f) else TextMuted,
+                style = LocalTextStyle.current.copy(fontFeatureSettings = "tnum"),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.width(26.dp).padding(end = 8.dp),
+            )
+        }
         // 关闭单曲封面时整个封面位移除，文字左移，左边缘与表头严格对齐
         if (showCovers) {
             SongArtwork(artwork, song.uid, Modifier.size(42.dp), cornerRadius = 10)
@@ -383,8 +426,9 @@ fun LoadingState(modifier: Modifier = Modifier, text: String = "加载中…") {
 
 @Composable
 fun EmptyState(text: String, modifier: Modifier = Modifier) {
+    val mutedColor = currentMeloraSheetPalette().textMuted
     Box(modifier = modifier.fillMaxWidth().padding(vertical = 48.dp), contentAlignment = Alignment.Center) {
-        Text(text, fontSize = 13.sp, color = TextMuted)
+        Text(text, fontSize = 13.sp, color = mutedColor)
     }
 }
 
@@ -591,7 +635,12 @@ fun SongMoreSheet(
         return
     }
 
-    val dark = MeloraAppearance.isDark
+    val palette = currentMeloraSheetPalette()
+    val dark = palette.isDark
+    val sheetTextMain = palette.textMain
+    val sheetTextSub = palette.textSub
+    val sheetBrand = palette.brand
+    val sheetAccent = palette.accent
     MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
@@ -620,7 +669,7 @@ fun SongMoreSheet(
                             text = if (isBook) song.albumName.ifBlank { song.name } else song.name,
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Medium,
-                            color = TextMain,
+                            color = sheetTextMain,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false),
@@ -633,7 +682,7 @@ fun SongMoreSheet(
                             song.albumName.takeIf { it.isNotBlank() },
                         ).joinToString(" · ").ifBlank { "未知歌手" },
                         fontSize = 12.sp,
-                        color = TextSub,
+                        color = sheetTextSub,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -649,34 +698,34 @@ fun SongMoreSheet(
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 if (isBook) {
-                    SheetAction(Icons.Outlined.PlayArrow, BrandBlue, if (onResumeBook != null) "继续收听" else "播放本集") {
+                    SheetAction(Icons.Outlined.PlayArrow, sheetBrand, if (onResumeBook != null) "继续收听" else "播放本集") {
                         closeSheet {
                             onDismiss()
                             if (onResumeBook != null) onResumeBook() else PlaybackController.playTrack(context, UiTrack.fromOnline(song))
                         }
                     }
-                    SheetAction(Icons.Outlined.Replay, BrandBlue, "从头播放本集") {
+                    SheetAction(Icons.Outlined.Replay, sheetBrand, "从头播放本集") {
                         closeSheet { onDismiss(); PlaybackController.restartBookChapter(context, song) }
                     }
                     if (book != null && onOpenBookAlbum != null) {
-                        SheetAction(Icons.AutoMirrored.Outlined.MenuBook, BrandBlue, "查看专辑", showArrow = true) {
+                        SheetAction(Icons.AutoMirrored.Outlined.MenuBook, sheetBrand, "查看专辑", showArrow = true) {
                             closeSheet { onDismiss(); onOpenBookAlbum(book) }
                         }
                     }
                     if (book != null) SheetAction(if (isBookFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                        if (isBookFavorite) AccentRed else BrandBlue, if (isBookFavorite) "取消收藏专辑" else "收藏专辑") {
+                        if (isBookFavorite) sheetAccent else sheetBrand, if (isBookFavorite) "取消收藏专辑" else "收藏专辑") {
                         closeSheet { UserLibrary.toggleFavoritePlaylist(book); onDismiss() }
                     }
                     if (onResumeBook == null || isFavorite) {
                         SheetAction(if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                            if (isFavorite) AccentRed else BrandBlue, if (isFavorite) "取消收藏本集" else "收藏本集") {
+                            if (isFavorite) sheetAccent else sheetBrand, if (isFavorite) "取消收藏本集" else "收藏本集") {
                             closeSheet { UserLibrary.toggleFavorite(song); onDismiss() }
                         }
                     }
                 } else {
                     SheetAction(
                         icon = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                        tint = if (isFavorite) AccentRed else BrandBlue,
+                        tint = if (isFavorite) sheetAccent else sheetBrand,
                         label = if (isFavorite) "取消收藏" else "收藏到我的列表",
                         subtitle = if (isFavorite) "从「我的列表」收藏夹中移除" else "保存到「我的列表」收藏夹",
                     ) {
@@ -709,7 +758,7 @@ fun SongMoreSheet(
                 if (onRemoveFromPlaylist != null) {
                     SheetAction(
                         icon = Icons.Rounded.RemoveCircleOutline,
-                        tint = AccentRed,
+                        tint = sheetAccent,
                         label = "从歌单移除",
                         subtitle = "仅从此歌单列表中移除该歌曲",
                     ) {
@@ -746,14 +795,14 @@ fun SongMoreSheet(
                     }
                 }
                 if (isBook && onRemoveRecentProgram != null) {
-                    SheetAction(Icons.Rounded.RemoveCircleOutline, AccentRed, "移除播放记录") {
+                    SheetAction(Icons.Rounded.RemoveCircleOutline, sheetAccent, "移除播放记录") {
                         closeSheet { onRemoveRecentProgram(); onDismiss() }
                     }
                 }
                 if (onDeleteLocal != null) {
                     SheetAction(
                         icon = Icons.Outlined.DeleteOutline,
-                        tint = AccentRed,
+                        tint = sheetAccent,
                         label = "永久删除",
                         subtitle = "从设备中删除该音频文件，无法恢复",
                     ) {
@@ -778,15 +827,16 @@ internal fun SheetAction(
     showArrow: Boolean = false,
     onClick: () -> Unit,
 ) {
-    val dark = MeloraAppearance.isDark
-    val destructive = tint == AccentRed
+    val palette = currentMeloraSheetPalette()
+    val dark = palette.isDark
+    val destructive = tint == AccentRed || tint == palette.accent
     val iconBackground = when {
-        destructive -> MeloraAppearance.tintRed
+        destructive -> palette.tintRed
         dark -> Color(0xFF222226)
         else -> iconBg ?: tint.copy(alpha = 0.10f)
     }
-    val resolvedIconTint = if (dark && !destructive) MeloraAppearance.textMain.copy(alpha = 0.86f) else tint
-    val labelColor = if (destructive) MaterialTheme.colorScheme.error else TextMain
+    val resolvedIconTint = if (dark && !destructive) palette.textMain.copy(alpha = 0.86f) else tint
+    val labelColor = if (destructive) MaterialTheme.colorScheme.error else palette.textMain
 
     Surface(
         onClick = onClick,
@@ -822,7 +872,7 @@ internal fun SheetAction(
                     Text(
                         text = subtitle,
                         fontSize = 12.sp,
-                        color = if (destructive) TextMain else TextSub,
+                        color = if (destructive) palette.textMain else palette.textSub,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -832,7 +882,7 @@ internal fun SheetAction(
                 Icon(
                     Icons.AutoMirrored.Outlined.KeyboardArrowRight,
                     contentDescription = null,
-                    tint = TextSub.copy(alpha = 0.40f),
+                    tint = palette.textSub.copy(alpha = 0.40f),
                     modifier = Modifier.size(18.dp),
                 )
             }
@@ -892,9 +942,11 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
         }
     }
 
+    val palette = currentMeloraSheetPalette()
     MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
+        lightFrostTint = if (!palette.isDark) LightSheetFrost.tint else Color.Unspecified,
         dragHandle = { MeloraSheetHandle(topPadding = 8.dp, bottomPadding = 4.dp) },
     ) {
         Column(
@@ -906,15 +958,15 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
                 "添加到歌单",
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Medium,
-                color = TextMain,
+                color = palette.textMain,
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
             )
 
             // 精致新建栏：浅色圆角胶囊底 + 嵌入式 BasicTextField + 创建按钮
             Surface(
                 shape = RoundedCornerShape(22.dp),
-                color = MeloraAppearance.softFill,
-                border = MeloraAppearance.chipBorder,
+                color = palette.softFill,
+                border = palette.chipBorder,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 20.dp, vertical = 6.dp)
@@ -926,7 +978,7 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
                         .padding(start = 14.dp, end = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    val hintColor = if (adding) TextMuted else TextSub
+                    val hintColor = if (adding) palette.textMuted else palette.textSub
                     Icon(
                         Icons.Outlined.AddCircleOutline,
                         contentDescription = null,
@@ -940,11 +992,11 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
                         lineLimits = TextFieldLineLimits.SingleLine,
                         textStyle = TextStyle(
                             fontSize = 14.sp,
-                            color = TextMain,
+                            color = palette.textMain,
                             fontWeight = FontWeight.Medium,
                             lineHeight = 18.sp,
                         ),
-                        cursorBrush = SolidColor(BrandBlue),
+                        cursorBrush = SolidColor(palette.brand),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                         onKeyboardAction = { addSongs(null) },
                         modifier = Modifier.weight(1f),
@@ -986,7 +1038,7 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
                     text = "我的歌单 (${playlists.size})",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
-                    color = TextSub,
+                    color = palette.textSub,
                     modifier = Modifier.padding(start = 20.dp, top = 10.dp, bottom = 4.dp),
                 )
                 LazyColumn(
@@ -1010,7 +1062,7 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
                                 modifier = Modifier
                                     .size(42.dp)
                                     .clip(RoundedCornerShape(10.dp))
-                                    .background(MeloraAppearance.tintBlue),
+                                    .background(palette.tintBlue),
                                 contentAlignment = Alignment.Center,
                             ) {
                                 if (!cover.isNullOrBlank()) {
@@ -1024,7 +1076,7 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
                                     Icon(
                                         Icons.AutoMirrored.Rounded.QueueMusic,
                                         contentDescription = null,
-                                        tint = BrandBlue,
+                                        tint = palette.brand,
                                         modifier = Modifier.size(20.dp),
                                     )
                                 }
@@ -1035,21 +1087,21 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
                                     text = playlist.name,
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Medium,
-                                    color = TextMain,
+                                    color = palette.textMain,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
                                 Text(
                                     text = "${playlist.songs.size} 首歌曲",
                                     fontSize = 11.sp,
-                                    color = TextSub,
+                                    color = palette.textSub,
                                     modifier = Modifier.padding(top = 2.dp),
                                 )
                             }
                             Icon(
                                 Icons.Outlined.Add,
                                 contentDescription = "添加到歌单",
-                                tint = TextMuted,
+                                tint = palette.textMuted,
                                 modifier = Modifier.size(18.dp),
                             )
                         }

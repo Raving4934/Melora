@@ -98,6 +98,7 @@ import com.leyu.melora.ui.common.BadgePill
 import com.leyu.melora.ui.common.QualityBadgeHeight
 import com.leyu.melora.ui.common.BrandBlue
 import com.leyu.melora.ui.common.SongRowSelectionAction
+import com.leyu.melora.ui.common.isWideSongListWindow
 import com.leyu.melora.ui.common.ChromeScaffold
 import com.leyu.melora.ui.common.DetailPageHost
 import com.leyu.melora.ui.common.rememberFastScrollToTop
@@ -450,6 +451,7 @@ internal fun LocalSongsListContent(
                         selectionMode = selection.active,
                         selected = song.localUid() in selection.selectedUids,
                         isCurrent = song.id == playingLocalId,
+                        hasIndexBar = sections.isNotEmpty(),
                         onClick = {
                             if (selection.active) {
                                 selection.toggle(song.localUid())
@@ -621,6 +623,7 @@ internal fun LocalSongRow(
     selectionMode: Boolean,
     selected: Boolean,
     isCurrent: Boolean = false,
+    hasIndexBar: Boolean = false,
     onClick: () -> Unit,
     onMore: (() -> Unit)?,
 ) {
@@ -629,11 +632,21 @@ internal fun LocalSongRow(
     val playbackCover by remember(isCurrent, shared.currentTrack) {
         derivedStateOf { shared.currentTrack.value?.artwork?.takeIf { isCurrent } }
     }
-    Row(
-        modifier = Modifier
+    val rowModifier = if (isWideSongListWindow()) {
+        Modifier
+            .fillMaxWidth()
+            .padding(start = 8.dp, end = if (hasIndexBar) 18.dp else 8.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(start = 8.dp, end = if (hasIndexBar) 0.dp else 2.5.dp, top = 8.dp, bottom = 8.dp)
+    } else {
+        Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(start = 16.dp, end = 10.5.dp, top = 8.dp, bottom = 8.dp),
+            .padding(start = 16.dp, end = 10.5.dp, top = 8.dp, bottom = 8.dp)
+    }
+    Row(
+        modifier = rowModifier,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // 与在线列表一致：关闭「显示单曲封面」时整块封面移除，文字左移，左边缘与表头严格对齐

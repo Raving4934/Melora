@@ -120,6 +120,7 @@ internal class SongSelectionState {
 internal fun SongSelectionTopBar(
     selection: SongSelectionState,
     songs: List<OnlineSong>,
+    modifier: Modifier = Modifier,
     normal: @Composable () -> Unit,
 ) {
     Crossfade(targetState = selection.active, animationSpec = tween(180), label = "batchTopBar") { batch ->
@@ -127,47 +128,49 @@ internal fun SongSelectionTopBar(
             normal()
         } else {
             // 三槽位布局：左「全选」与列表内容左缘对齐，标题绝对居中，右关闭与列表内容右缘对齐
-            Box(Modifier.fillMaxWidth().height(64.dp)) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .padding(start = 16.dp)
-                        .sizeIn(minWidth = 88.dp, minHeight = 48.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .clickable(
-                            indication = null, interactionSource = remember { MutableInteractionSource() },
-                        ) { selection.toggleAll(songs) }
-                        .padding(end = 12.dp),
-                    contentAlignment = Alignment.CenterStart,
-                ) {
-                    Text(
-                        if (selection.allSelected(songs)) "取消全选" else "全选",
-                        fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = BrandBlue,
-                        maxLines = 1, softWrap = false,
-                    )
-                }
-                Text(
-                    "已选中 ${selection.selectedSongs(songs).size} 项",
-                    fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = TextMain,
-                    maxLines = 1,
-                    modifier = Modifier.align(Alignment.Center),
-                )
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .padding(end = 10.5.dp)
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .clickable(
-                            indication = null, interactionSource = remember { MutableInteractionSource() },
-                        ) { selection.finish() },
-                    contentAlignment = Alignment.Center,
-                ) {
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Box(modifier.fillMaxWidth().height(64.dp)) {
                     Box(
-                        Modifier.size(26.dp).clip(CircleShape).background(MeloraAppearance.softFill),
+                        modifier = Modifier
+                            .align(Alignment.CenterStart)
+                            .padding(start = 16.dp)
+                            .sizeIn(minWidth = 88.dp, minHeight = 48.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(
+                                indication = null, interactionSource = remember { MutableInteractionSource() },
+                            ) { selection.toggleAll(songs) }
+                            .padding(end = 12.dp),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        Text(
+                            if (selection.allSelected(songs)) "取消全选" else "全选",
+                            fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = BrandBlue,
+                            maxLines = 1, softWrap = false,
+                        )
+                    }
+                    Text(
+                        "已选中 ${selection.selectedSongs(songs).size} 项",
+                        fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = TextMain,
+                        maxLines = 1,
+                        modifier = Modifier.align(Alignment.Center),
+                    )
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .padding(end = 10.5.dp)
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .clickable(
+                                indication = null, interactionSource = remember { MutableInteractionSource() },
+                            ) { selection.finish() },
                         contentAlignment = Alignment.Center,
                     ) {
-                        Icon(Icons.Rounded.Close, "退出批量管理", tint = TextSub, modifier = Modifier.size(15.dp))
+                        Box(
+                            Modifier.size(26.dp).clip(CircleShape).background(MeloraAppearance.softFill),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(Icons.Rounded.Close, "退出批量管理", tint = TextSub, modifier = Modifier.size(15.dp))
+                        }
                     }
                 }
             }
@@ -202,30 +205,37 @@ internal fun SongBatchActionsBar(
     ) {
         val selected = selection.selectedSongs(songs)
         val enabled = selected.isNotEmpty()
-        Column(Modifier.fillMaxWidth().background(chromeHeaderColor())) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .background(chromeHeaderColor())
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal)),
+        ) {
             HorizontalDivider(color = DividerSoft, thickness = 0.6.dp)
-            Row(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-                BatchAction(
-                    if (removeFavorites) Icons.Rounded.Favorite else Icons.Outlined.FavoriteBorder,
-                    if (removeFavorites) "取消收藏" else "收藏", enabled,
-                ) {
-                    val changed = UserLibrary.setFavorites(selected, favorite = !removeFavorites)
-                    PlaybackController.postMessage(context, when {
-                        removeFavorites -> "已取消收藏 $changed 首"
-                        changed == 0 -> "所选歌曲已在收藏中"
-                        else -> "已收藏 $changed 首"
-                    })
-                    selection.finish()
-                }
-                BatchAction(Icons.AutoMirrored.Outlined.PlaylistAdd, "添加到歌单", enabled) { addToPlaylist = selected }
-                BatchAction(Icons.AutoMirrored.Rounded.QueueMusic, "加入播放队列", enabled) {
-                    PlaybackController.addToQueue(context, selected.map(UiTrack::fromOnline))
-                    selection.finish()
-                }
-                BatchAction(Icons.Outlined.Download, "下载", enabled) {
-                    val count = Downloader.enqueue(context, selected)
-                    PlaybackController.postMessage(context, "已提交 $count 首下载请求")
-                    selection.finish()
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Row(Modifier.widthIn(max = 560.dp).fillMaxWidth().padding(vertical = 6.dp)) {
+                    BatchAction(
+                        if (removeFavorites) Icons.Rounded.Favorite else Icons.Outlined.FavoriteBorder,
+                        if (removeFavorites) "取消收藏" else "收藏", enabled,
+                    ) {
+                        val changed = UserLibrary.setFavorites(selected, favorite = !removeFavorites)
+                        PlaybackController.postMessage(context, when {
+                            removeFavorites -> "已取消收藏 $changed 首"
+                            changed == 0 -> "所选歌曲已在收藏中"
+                            else -> "已收藏 $changed 首"
+                        })
+                        selection.finish()
+                    }
+                    BatchAction(Icons.AutoMirrored.Outlined.PlaylistAdd, "添加到歌单", enabled) { addToPlaylist = selected }
+                    BatchAction(Icons.AutoMirrored.Rounded.QueueMusic, "加入播放队列", enabled) {
+                        PlaybackController.addToQueue(context, selected.map(UiTrack::fromOnline))
+                        selection.finish()
+                    }
+                    BatchAction(Icons.Outlined.Download, "下载", enabled) {
+                        val count = Downloader.enqueue(context, selected)
+                        PlaybackController.postMessage(context, "已提交 $count 首下载请求")
+                        selection.finish()
+                    }
                 }
             }
         }

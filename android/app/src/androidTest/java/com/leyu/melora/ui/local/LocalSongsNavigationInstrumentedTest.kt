@@ -9,6 +9,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.onAllNodesWithContentDescription
@@ -99,13 +100,17 @@ class LocalSongsNavigationInstrumentedTest {
     @Test
     fun indexGestureDoesNotTriggerPullRefreshAndFinishesAtLastSection() {
         showPage()
+        val ready = requireNotNull(published)
+        val lastSection = ready.sections.getValue("Z")
         compose.onNodeWithTag("local-song-index").performTouchInput {
-            swipe(topCenter, bottomCenter, durationMillis = 650)
+            val halfCell = height / (2f * LocalSongIndexLabels.size)
+            swipe(Offset(centerX, halfCell), Offset(centerX, height - halfCell), durationMillis = 650)
         }
+        // requestScrollToItem 在测量时执行，触摸完成后等待目标首行真正出现。
+        compose.awaitStable(compose.onNodeWithText(ready.songs[lastSection].title))
         compose.runOnIdle {
             assertEquals(0, refreshes)
-            val start = localSongSectionStarts(sortLocalSongs(songs.value, field.value, true), field.value).getValue("Z")
-            assertTrue(list.layoutInfo.visibleItemsInfo.any { it.index == start })
+            assertTrue("Z 首项应可见", list.layoutInfo.visibleItemsInfo.any { it.index == lastSection })
         }
         compose.onNodeWithTag("local-song-index-preview").assertDoesNotExist()
     }
@@ -176,14 +181,18 @@ class LocalSongsNavigationInstrumentedTest {
         val ready = published!!
         assertEquals(sortLocalSongs(songs.value, field.value, true), ready.songs)
         assertEquals(localSongSectionStarts(ready.songs, field.value), ready.sections)
+        val firstSong = compose.onNodeWithText(ready.songs.first().title)
+        compose.awaitStable(firstSong)
         for (otherTab in listOf(6, 2, 1)) {
             compose.runOnIdle { tab.value = otherTab }
+            compose.waitUntil(5_000) { compose.onAllNodesWithContentDescription("搜索本地歌曲").fetchSemanticsNodes().isEmpty() }
             compose.runOnIdle { entries.clear(); tab.value = 5 }
+            // SideEffect 捕获首个快照，等待布局不会掩盖空快照或重新排序。
+            compose.awaitStable(firstSong)
             compose.runOnIdle {
                 assertTrue(entries.isNotEmpty())
                 entries.forEach { assertSame("重入第一帧不能重新发布空列表", ready, it) }
             }
-            compose.onNodeWithText(ready.songs.first().title).assertIsDisplayed()
         }
     }
 

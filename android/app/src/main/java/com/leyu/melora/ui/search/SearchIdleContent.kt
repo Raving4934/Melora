@@ -322,6 +322,7 @@ internal fun SearchIdleContent(
                                         },
                                         onMore = { onMoreSong(song) },
                                         isFavorite = song.uid in favoriteUids,
+                                        inCard = true,
                                     )
                                     if (index < recommendSongs.lastIndex) {
                                         HorizontalDivider(
