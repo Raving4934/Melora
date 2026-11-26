@@ -1,10 +1,15 @@
 package com.leyu.melora.ui.audiobook
 
 import com.leyu.melora.ui.awaitStable
+import com.leyu.melora.ui.boundsInSameFrame
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.asAndroidBitmap
@@ -81,12 +86,14 @@ class BookAuthorNavigationTest {
 
     @Test fun wideScreenShowsAtLeastFourCardsInOneRow() {
         show(wide = true)
-        val titles = listOf("测试长篇作品", "作品2", "作品3", "作品4")
-            .map { compose.onNodeWithText(it).assertIsDisplayed().fetchSemanticsNode().boundsInRoot }
+        val nodes = listOf("测试长篇作品", "作品2", "作品3", "作品4").map { compose.onNodeWithText(it) }
+        nodes.forEach { compose.awaitStable(it) }
+        val titles = compose.boundsInSameFrame(*nodes.toTypedArray())
         saveProof("author-wide")
-        assertTrue(titles.zipWithNext().all { (a, b) -> b.left > a.left })
+        assertTrue("四个标题必须从左向右依次排列：$titles",
+            titles.zipWithNext().all { (a, b) -> b.left > a.left })
         // 长书名允许两行：同一排卡片的标题底部共线，不能要求文字顶部也一致。
-        assertTrue(titles.all { kotlin.math.abs(it.bottom - titles.first().bottom) < 2f })
+        assertTrue("同排标题下缘必须对齐：$titles", titles.all { kotlin.math.abs(it.bottom - titles.first().bottom) < 2f })
     }
 
     private fun saveProof(name: String) {
@@ -106,13 +113,16 @@ class BookAuthorNavigationTest {
         OnlineCache.put("playlistDetail.book.book_album_fixture1", KwBookApi.BookChapters(listOf(chapter), false))
         val collection = artistCollection(UiTrack.fromOnline(chapter), author)
         compose.setContent {
-            CompositionLocalProvider(
-                LocalDensity provides if (wide) Density(1f) else LocalDensity.current,
-                LocalSongListState provides shared,
-            ) {
-                MeloraTheme {
-                    Box(if (wide) Modifier.requiredSize(840.dp, 600.dp) else Modifier.fillMaxSize()) {
-                        SongsCollectionPage(collection, {})
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                val density = if (wide) {
+                    // 测试自己的 840×600dp 视口，缩放宿主像素，避免其它用例旋转后裁到卡片。
+                    Density(minOf(1f, constraints.maxWidth / 840f, constraints.maxHeight / 600f).coerceAtLeast(0.1f))
+                } else LocalDensity.current
+                CompositionLocalProvider(LocalDensity provides density, LocalSongListState provides shared) {
+                    MeloraTheme {
+                        val viewport = if (wide) Modifier.requiredSize(840.dp, 600.dp)
+                            .consumeWindowInsets(WindowInsets.safeDrawing) else Modifier.fillMaxSize()
+                        Box(viewport) { SongsCollectionPage(collection, {}) }
                     }
                 }
             }

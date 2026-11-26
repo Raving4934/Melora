@@ -54,6 +54,7 @@ import com.leyu.melora.ui.common.*
 import com.leyu.melora.ui.discover.WatermarkGradientCard
 import com.leyu.melora.ui.search.SearchCategory
 import com.leyu.melora.ui.search.SearchScreen
+import com.leyu.melora.ui.theme.LightSheetFrost
 import com.leyu.melora.ui.theme.MeloraAppearance
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
@@ -280,7 +281,7 @@ private fun BookCatalogContent(
 
 /** 创作者先展示整部作品；选书后复用统一章节详情，返回保留原作品列表位置。 */
 @Composable
-internal fun BookAuthorPage(author: String, onBack: () -> Unit) = key(author) {
+internal fun BookAuthorPage(author: String, onBack: () -> Unit, standalone: Boolean = false) = key(author) {
     var openedAlbum by remember { mutableStateOf<OnlinePlaylist?>(null) }
     val pullEnabled by MeloraSettings.pullToRefresh.collectAsStateWithLifecycle()
     BackHandler(onBack = onBack)
@@ -288,7 +289,7 @@ internal fun BookAuthorPage(author: String, onBack: () -> Unit) = key(author) {
         target = openedAlbum,
         contentKey = { "${it.source}:${it.id}" },
         modifier = Modifier.fillMaxSize(),
-        detail = { PlaylistDetailContent(it, onBack = { openedAlbum = null }, emptyHint = "暂无可播放章节") },
+        detail = { PlaylistDetailContent(it, onBack = { openedAlbum = null }, emptyHint = "暂无可播放章节", standalone = standalone) },
     ) {
         BookCatalogContent(
             cacheKey = "book.author.${author.trim()}",
@@ -381,28 +382,33 @@ private fun RankPage(tab: KwBookApi.BookRankTab, onBack: () -> Unit, onOpen: (On
 private fun RankCategorySheet(tab: KwBookApi.BookRankTab, selectedTag: String, onSelect: (Int) -> Unit, onDismiss: () -> Unit) {
     val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true)
     val closeSheet = rememberSheetDismiss(sheetState)
-    val colors = MaterialTheme.colorScheme
-    MeloraBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, tonalElevation = 0.dp) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 20.dp, end = 20.dp, bottom = 28.dp)) {
-            Text(tab.name, fontSize = 19.sp, fontWeight = FontWeight.Medium, color = TextMain)
-            Text("选择${tab.name}分类", fontSize = 12.sp, color = TextSub, modifier = Modifier.padding(top = 3.dp, bottom = 18.dp))
+    MeloraBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        tonalElevation = 0.dp,
+        lightFrostTint = LightSheetFrost.categoryTint,
+    ) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 24.dp)) {
+            Text(
+                text = tab.name,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Medium,
+                color = MeloraAppearance.textMain,
+                modifier = Modifier.padding(top = 4.dp, bottom = 6.dp),
+            )
+            Text(
+                text = "选择${tab.name}分类",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = MeloraAppearance.textSub,
+                modifier = Modifier.padding(bottom = 12.dp),
+            )
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 tab.tags.forEachIndexed { tagIndex, item ->
-                    val selected = item.id == selectedTag
-                    Surface(
-                        onClick = { closeSheet { onSelect(tagIndex) } },
-                        shape = RoundedCornerShape(11.dp),
-                        color = if (selected) colors.primary else MeloraAppearance.card,
-                        contentColor = if (selected) colors.onPrimary else TextSub,
-                        border = if (selected) null else MeloraAppearance.chipBorder,
-                    ) {
-                        Text(
-                            item.name,
-                            fontSize = 12.sp,
-                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-                        )
-                    }
+                    SheetTagChip(
+                        label = item.name,
+                        isSelected = item.id == selectedTag,
+                    ) { closeSheet { onSelect(tagIndex) } }
                 }
             }
         }

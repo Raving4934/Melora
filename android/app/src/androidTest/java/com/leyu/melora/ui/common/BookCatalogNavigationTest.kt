@@ -1,7 +1,13 @@
 package com.leyu.melora.ui.common
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.requiredWidth
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
@@ -26,6 +32,7 @@ import com.leyu.melora.playback.PlayerUiState
 import com.leyu.melora.playback.UiTrack
 import kotlinx.coroutines.flow.MutableStateFlow
 import com.leyu.melora.playback.PlaybackController
+import com.leyu.melora.playback.UserLibrary
 import com.leyu.melora.playback.sdk.KwBookApi
 import com.leyu.melora.playback.sdk.bookCatalogPageCacheKey
 import com.leyu.melora.playback.sdk.OnlineCache
@@ -53,6 +60,8 @@ class BookCatalogNavigationTest {
     private fun show(
         total: Int = 1500,
         viewport: @Composable (@Composable () -> Unit) -> Unit = { it() },
+        standalone: Boolean = false,
+        waitForPicker: Boolean = true,
         load: suspend (Int) -> KwBookApi.BookChapters = ::page,
     ) {
         val album = OnlinePlaylist(JSONObject().put("source", "kw").put("id", "book_album_$id")
@@ -64,13 +73,26 @@ class BookCatalogNavigationTest {
                         PlaylistDetailContent(
                             album, {}, modifier = Modifier.testTag("catalog-fixture"),
                             loadBookPage = { _, number -> requests += number; load(number) },
+                            standalone = standalone,
                         )
                     }
                 }
             }
         }
         compose.waitUntil(5_000) { requests.contains(1) }
-        compose.awaitStable(compose.onNodeWithTag("book-chapter-picker-trigger"))
+        if (waitForPicker) compose.awaitStable(compose.onNodeWithTag("book-chapter-picker-trigger"))
+    }
+
+    @Composable
+    private fun TabletViewport(content: @Composable () -> Unit) {
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val scale = minOf(1f, constraints.maxWidth / 960f, constraints.maxHeight / 600f).coerceAtLeast(0.1f)
+            CompositionLocalProvider(LocalDensity provides Density(scale, fontScale = 1.65f)) {
+                Box(Modifier.requiredSize(960.dp, 600.dp).consumeWindowInsets(WindowInsets.safeDrawing)) {
+                    content()
+                }
+            }
+        }
     }
 
     private fun queryField(): SemanticsNodeInteraction {
@@ -147,6 +169,7 @@ class BookCatalogNavigationTest {
 
     @Test fun locatingAChapterHighlightsOnlyItsRowAndClearsAfterFadeOrPageChange() {
         val playing = PlaybackController.state.value.current?.uid
+        val library = UserLibrary.exportSnapshot()
         show()
         val located = SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "已定位章节")
         val highlighted = compose.onAllNodes(located, useUnmergedTree = true)
@@ -187,7 +210,17 @@ class BookCatalogNavigationTest {
 
             startJump()
             val segment = compose.onNodeWithContentDescription("目录 101–200")
-            compose.onNodeWithTag("book-chapter-picker-trigger").performClick()
+            val pickerTag = "book-chapter-picker-trigger"
+            val pinnedPicker = compose.onNode(hasTestTag(pickerTag) and hasAnyAncestor(hasTestTag("playlist-pinned-controls")))
+            // 高亮断言使用手动时钟。继续推进到旧窗口已离场、吸顶入口完成接管后，再注入真实点击。
+            compose.waitUntil(5_000) {
+                clock.advanceTimeByFrame()
+                compose.onAllNodesWithTag("book-chapter-picker").fetchSemanticsNodes().isEmpty() &&
+                    compose.onAllNodesWithTag(pickerTag).fetchSemanticsNodes().size == 1 &&
+                    pinnedPicker.isDisplayed()
+            }
+            compose.awaitStable(pinnedPicker)
+            pinnedPicker.performClick()
             compose.waitUntil(5_000) {
                 clock.advanceTimeByFrame()
                 segment.isDisplayed()
@@ -203,6 +236,7 @@ class BookCatalogNavigationTest {
             highlighted.assertCountEquals(0)
             assertEquals(listOf(1, 4, 2), requests.toList())
             assertEquals(playing, PlaybackController.state.value.current?.uid)
+            assertEquals("定位和选集不能改写最近播放", library, UserLibrary.exportSnapshot())
         } finally {
             clock.autoAdvance = true
         }
@@ -389,6 +423,74 @@ class BookCatalogNavigationTest {
             compose.waitUntil(5_000) { requests.contains(15) }
             compose.awaitStable(compose.onNodeWithContentDescription("切换为正序"))
             locateAndCheck()
+        } finally { state.value = original }
+    }
+
+    @Test fun standaloneTabletKeepsChapterControlsAndAnchorsTheHighlightedChapter() {
+        @Suppress("UNCHECKED_CAST")
+        val state = PlaybackController.javaClass.getDeclaredField("_state").apply { isAccessible = true }
+            .get(PlaybackController) as MutableStateFlow<PlayerUiState>
+        val original = state.value
+        val chapter = page(4).items[24]
+        val clock = compose.mainClock
+        try {
+            state.value = original.copy(current = UiTrack.fromOnline(chapter))
+            show(viewport = { TabletViewport(it) }, standalone = true)
+            compose.onNodeWithTag("playlist-two-pane").assertIsDisplayed()
+            val toolbar = compose.onNodeWithTag("book-chapter-toolbar")
+            val list = compose.onNodeWithTag("collection-song-list")
+            val initialToolbar = compose.awaitStable(toolbar)
+            list.performScrollToIndex(22)
+            awaitChapter(23)
+            assertEquals(initialToolbar, compose.awaitStable(toolbar))
+
+            val locate = compose.onNodeWithContentDescription("定位当前播放")
+            val located = SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "已定位章节")
+            val highlighted = compose.onAllNodes(located, useUnmergedTree = true)
+            val target = compose.onNode(
+                hasText("目录第325集") and hasAnyAncestor(located),
+                useUnmergedTree = true,
+            )
+            val row = compose.onNode(located, useUnmergedTree = true)
+            clock.autoAdvance = false
+            locate.performClick()
+            compose.waitUntil(5_000) {
+                clock.advanceTimeByFrame()
+                target.isDisplayed()
+            }
+            highlighted.assertCountEquals(1)
+            val (barBounds, listBounds, rowBounds) = compose.boundsInSameFrame(toolbar, list, row)
+            assertTrue("工具栏必须位于列表上方，工具栏=$barBounds，列表=$listBounds", barBounds.bottom <= listBounds.top)
+            assertEquals("定位章必须是列表的第一行", listBounds.top, rowBounds.top, 1f)
+            assertEquals(chapter.uid, state.value.current?.uid)
+            clock.autoAdvance = true
+
+            compose.onNodeWithContentDescription("切换为倒序").performClick()
+            awaitChapter(1500)
+            assertEquals(initialToolbar, compose.awaitStable(toolbar))
+            jump(1432)
+            awaitChapter(1432)
+            compose.onNodeWithTag("book-chapter-picker-trigger").assertIsDisplayed()
+            assertEquals(chapter.uid, state.value.current?.uid)
+        } finally {
+            clock.autoAdvance = true
+            state.value = original
+        }
+    }
+
+    @Test fun standaloneTabletAllowsPlaybackButDisablesBatchSelectionWithoutChapters() {
+        @Suppress("UNCHECKED_CAST")
+        val state = PlaybackController.javaClass.getDeclaredField("_state").apply { isAccessible = true }
+            .get(PlaybackController) as MutableStateFlow<PlayerUiState>
+        val original = state.value
+        try {
+            state.value = original.copy(queueId = collectionQueueId("kw", "book_album_$id", isBook = true), playing = true)
+            show(viewport = { TabletViewport(it) }, standalone = true, waitForPicker = false) {
+                KwBookApi.BookChapters(emptyList(), false, page = it)
+            }
+            compose.onNodeWithText("听书目录加载失败，请重试").assertIsDisplayed()
+            compose.onNodeWithText("暂停播放").performScrollTo().assertIsEnabled()
+            compose.onNodeWithContentDescription("批量管理").assertIsNotEnabled()
         } finally { state.value = original }
     }
 

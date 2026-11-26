@@ -10,20 +10,31 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material3.Surface
@@ -42,6 +53,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -120,674 +132,1016 @@ fun PlaylistDetailContent(
     modifier: Modifier = Modifier,
     emptyHint: String = "歌单暂无可播放歌曲",
     loadBookPage: suspend (String, Int) -> KwBookApi.BookChapters = KwBookApi::album,
+    standalone: Boolean = false,
 ) {
     // 同 ID 跨平台不是同一详情；同时重建状态并取消旧页面的分页协程。
     key(playlist.source, playlist.id, playlist.isBookAlbum) {
-        val context = LocalContext.current
-        val scope = rememberCoroutineScope()
-        val listState = rememberLazyListState()
-        val scrollToTop = rememberFastScrollToTop(listState)
-        val controlBarHazeState = rememberHazeState()
-        val blurEnabled = componentHeadersBlurred()
-        val bodyHazeModifier = if (blurEnabled) {
-            Modifier.hazeSource(controlBarHazeState)
-        } else {
-            Modifier
-        }
-        val isBook = playlist.isBookAlbum
-        val detailCacheKey = "playlistDetail.${if (isBook) "book" else playlist.source}.${playlist.id}"
-        var activeBookPage by rememberSaveable(detailCacheKey) { mutableIntStateOf(1) }
-        var bookDescending by rememberSaveable(detailCacheKey) { mutableStateOf(false) }
-        var bookPickerOpen by remember { mutableStateOf(false) }
-        var pendingBookUid by remember { mutableStateOf<String?>(null) }
-        var highlightedBookChapter by remember { mutableStateOf<BookChapterHighlight?>(null) }
-        var bookPageLoading by remember { mutableStateOf(false) }
-        var bookRequestJob by remember(detailCacheKey) { mutableStateOf<Job?>(null) }
-        // 目录连续展示，缓存仍按原始页保存；detailCacheKey 只存第1页供播放队列续页。
-        val initialBookWindow = remember(detailCacheKey) {
-            if (!isBook) null else OnlineCache.peek<KwBookApi.BookChapters>(
-                bookCatalogPageCacheKey(detailCacheKey, activeBookPage),
-            ) ?: if (activeBookPage == 1) {
-                OnlineCache.peek<KwBookApi.BookChapters>(detailCacheKey)?.takeIf { it.page == 1 }
-            } else null
-        }
-        var bookCatalog by remember(detailCacheKey) {
-            mutableStateOf(BookCatalogState(initialBookWindow?.let { mapOf(it.page to it) }.orEmpty()))
-        }
-        val bookSnapshot = bookCatalog.pages.values.lastOrNull()
-        var songSnapshot by remember(detailCacheKey) {
-            mutableStateOf(if (!isBook) OnlineCache.peek<SongPage>(detailCacheKey) else null)
-        }
-        val songs = remember(bookCatalog, songSnapshot) {
-            if (isBook) bookCatalog.items else songSnapshot?.list.orEmpty()
-        }
-        val displaySongs = if (isBook && bookDescending) songs.asReversed() else songs
-        val bookTotal = bookSnapshot?.total?.takeIf { isBook && it > 0 }
-        val totalCount = if (isBook) bookTotal ?: songs.size
-            else songSnapshot?.total?.takeIf { it > 0 } ?: songs.size
-        val chapterPages = remember(bookCatalog) {
-            bookCatalog.pages.toSortedMap().flatMap { (page, data) -> data.items.map { it.uid to page } }
-                .distinctBy { it.first }.toMap()
-        }
-        val visibleBookPage by remember(chapterPages, listState) {
-            derivedStateOf { listState.layoutInfo.visibleItemsInfo.firstNotNullOfOrNull { chapterPages[it.key] } }
-        }
-        val activePage = visibleBookPage ?: activeBookPage
-        val hasMore = if (isBook) bookCatalog.nextPage(bookDescending) != null else songSnapshot?.hasMore() ?: false
-        var loading by remember(detailCacheKey) { mutableStateOf(songs.isEmpty()) }
-        var error by remember(detailCacheKey) { mutableStateOf<String?>(null) }
-        var loadingMore by remember(detailCacheKey) { mutableStateOf(false) }
-        val controlBarHeight = PlaylistControlsHeight
-        val bookScrollInsetPx = with(LocalDensity.current) { (controlBarHeight + 8.dp).roundToPx() }
-        val bookIntro = bookSnapshot?.metadata?.description?.takeIf(String::isNotBlank) ?: playlist.description
-        val bookHeat = bookSnapshot?.metadata?.playCount?.takeIf { it > 0 }
-            ?.let { formatPlayCountLabel(it.toString()) } ?: playlist.playCountLabel
-        val favoriteUids by UserLibrary.favoriteUids.collectAsStateWithLifecycle()
-        val initialTrack = remember { PlaybackController.state.value.current }
-        val currentTrack by remember {
-            PlaybackController.state.map { it.current }
-                .distinctUntilChanged { old, new ->
-                    old?.uid == new?.uid && old?.source == new?.source &&
-                        old?.raw?.optString("albumId") == new?.raw?.optString("albumId")
-                }
-        }.collectAsStateWithLifecycle(initialValue = initialTrack)
-        val currentBookSong = remember(
-            currentTrack?.uid,
-            currentTrack?.source,
-            currentTrack?.raw?.optString("albumId"),
-            playlist.source,
-            playlist.id,
-        ) {
-            OnlineSong.from(currentTrack?.raw)?.takeIf { song ->
-                val currentAlbumId = canonicalBookId(song.source, song.albumId)
-                val detailAlbumId = canonicalBookId(playlist.source, playlist.id)
-                song.isBookChapter && song.source == playlist.source &&
-                    currentAlbumId != null && currentAlbumId == detailAlbumId
+        BoxWithConstraints(modifier.fillMaxSize()) {
+            val paneWidth = maxWidth
+            val paneHeight = maxHeight
+            val twoPane = standalone && paneWidth >= 840.dp && paneHeight >= 480.dp
+            val currentTwoPane by rememberUpdatedState(twoPane)
+            val largeSinglePane = standalone && !twoPane && paneWidth >= 600.dp && paneHeight >= 480.dp
+            val isLargeStandalone = twoPane || largeSinglePane
+            val selectionBarModifier = when {
+                twoPane -> Modifier.widthIn(max = 1160.dp).padding(horizontal = 16.dp)
+                largeSinglePane -> Modifier.widthIn(max = 720.dp)
+                else -> Modifier
             }
-        }
-        var moreSong by remember { mutableStateOf<OnlineSong?>(null) }
 
-        fun beginBookRequest(append: Boolean = false): Long {
-            val (requestState, generation) = bookCatalog.beginRequest()
-            bookCatalog = requestState
-            bookRequestJob?.cancel()
-            if (!append) {
-                pendingBookUid = null
-                highlightedBookChapter = null
+            val context = LocalContext.current
+            val scope = rememberCoroutineScope()
+            val listState = rememberLazyListState()
+            val scrollToTop = rememberFastScrollToTop(listState)
+            val controlBarHazeState = rememberHazeState()
+            val blurEnabled = componentHeadersBlurred()
+            val bodyHazeModifier = if (blurEnabled) {
+                Modifier.hazeSource(controlBarHazeState)
+            } else {
+                Modifier
             }
-            return generation
-        }
-
-        fun applyBookResponse(
-            generation: Long,
-            requestedPage: Int,
-            response: KwBookApi.BookChapters,
-            targetUid: String?,
-            preserveScroll: Boolean,
-            directionOnAccept: Boolean?,
-            append: Boolean,
-        ) {
-            if (!bookCatalog.isCurrentRequest(generation)) return
-            if (response.items.isEmpty()) {
-                if (bookSnapshot?.items.isNullOrEmpty()) error = "听书目录加载失败，请重试"
-                else PlaybackController.postMessage(context, "目录加载失败，已保留当前章节")
-                return
+            val isBook = playlist.isBookAlbum
+            val detailCacheKey = "playlistDetail.${if (isBook) "book" else playlist.source}.${playlist.id}"
+            var activeBookPage by rememberSaveable(detailCacheKey) { mutableIntStateOf(1) }
+            var bookDescending by rememberSaveable(detailCacheKey) { mutableStateOf(false) }
+            var bookPickerOpen by remember { mutableStateOf(false) }
+            var pendingBookUid by remember { mutableStateOf<String?>(null) }
+            var highlightedBookChapter by remember { mutableStateOf<BookChapterHighlight?>(null) }
+            var bookPageLoading by remember { mutableStateOf(false) }
+            var bookRequestJob by remember(detailCacheKey) { mutableStateOf<Job?>(null) }
+            // 目录连续展示，缓存仍按原始页保存；detailCacheKey 只存第1页供播放队列续页。
+            val initialBookWindow = remember(detailCacheKey) {
+                if (!isBook) null else OnlineCache.peek<KwBookApi.BookChapters>(
+                    bookCatalogPageCacheKey(detailCacheKey, activeBookPage),
+                ) ?: if (activeBookPage == 1) {
+                    OnlineCache.peek<KwBookApi.BookChapters>(detailCacheKey)?.takeIf { it.page == 1 }
+                } else null
             }
-            val previousMetadata = bookSnapshot?.metadata
-                ?: OnlineCache.peek<KwBookApi.BookChapters>(detailCacheKey)?.metadata
-            val advertisedTotal = playlist.total.takeIf { it > 0 }
-            val metadata = response.metadata.copy(
-                description = response.metadata.description.ifBlank { previousMetadata?.description.orEmpty() },
-                playCount = response.metadata.playCount.takeIf { it > 0 } ?: previousMetadata?.playCount ?: 0,
-                total = response.metadata.total.takeIf { it > 0 }
-                    ?: previousMetadata?.total?.takeIf { it > 0 }
-                    ?: advertisedTotal ?: 0,
-                author = response.metadata.author.ifBlank { previousMetadata?.author.orEmpty() },
-                artwork = response.metadata.artwork ?: previousMetadata?.artwork,
-                releaseDate = response.metadata.releaseDate.ifBlank { previousMetadata?.releaseDate.orEmpty() },
-                language = response.metadata.language.ifBlank { previousMetadata?.language.orEmpty() },
-            )
-            val enriched = response.copy(page = requestedPage, metadata = metadata)
-            val nextWindow = bookCatalog.accept(generation, requestedPage, enriched, append)
-            if (nextWindow === bookCatalog) {
-                PlaybackController.postMessage(context, "目录返回了重复内容，请稍后重试")
-                return
+            var bookCatalog by remember(detailCacheKey) {
+                mutableStateOf(BookCatalogState(initialBookWindow?.let { mapOf(it.page to it) }.orEmpty()))
             }
-            bookCatalog = nextWindow
-            val accepted = checkNotNull(nextWindow.pages[requestedPage])
-            if (!append) activeBookPage = requestedPage
-            directionOnAccept?.let { bookDescending = it }
-            OnlineCache.put(bookCatalogPageCacheKey(detailCacheKey, requestedPage), accepted)
-            if (requestedPage == 1) OnlineCache.put(detailCacheKey, accepted)
-            error = null
-            if (!preserveScroll && !append) {
-                pendingBookUid = targetUid
-                if (targetUid == null) {
-                    // 排序只替换目录。页头还可见时保留原位置；已吸顶时保持操作栏原位，
-                    // 从新窗口首章开始。与数据一起交给下一次布局，避免先跳页再纠正的闪动。
-                    val index = listState.firstVisibleItemIndex
-                    listState.requestScrollToItem(
-                        index = index.coerceAtMost(1),
-                        scrollOffset = if (index <= 1) listState.firstVisibleItemScrollOffset else 0,
-                    )
+            val bookSnapshot = bookCatalog.pages.values.lastOrNull()
+            var songSnapshot by remember(detailCacheKey) {
+                mutableStateOf(if (!isBook) OnlineCache.peek<SongPage>(detailCacheKey) else null)
+            }
+            val songs = remember(bookCatalog, songSnapshot) {
+                if (isBook) bookCatalog.items else songSnapshot?.list.orEmpty()
+            }
+            val displaySongs = if (isBook && bookDescending) songs.asReversed() else songs
+            val bookTotal = bookSnapshot?.total?.takeIf { isBook && it > 0 }
+            val totalCount = if (isBook) bookTotal ?: songs.size
+                else songSnapshot?.total?.takeIf { it > 0 } ?: songs.size
+            val chapterPages = remember(bookCatalog) {
+                bookCatalog.pages.toSortedMap().flatMap { (page, data) -> data.items.map { it.uid to page } }
+                    .distinctBy { it.first }.toMap()
+            }
+            val visibleBookPage by remember(chapterPages, listState) {
+                derivedStateOf { listState.layoutInfo.visibleItemsInfo.firstNotNullOfOrNull { chapterPages[it.key] } }
+            }
+            val activePage = visibleBookPage ?: activeBookPage
+            val hasMore = if (isBook) bookCatalog.nextPage(bookDescending) != null else songSnapshot?.hasMore() ?: false
+            var loading by remember(detailCacheKey) { mutableStateOf(songs.isEmpty()) }
+            var error by remember(detailCacheKey) { mutableStateOf<String?>(null) }
+            var loadingMore by remember(detailCacheKey) { mutableStateOf(false) }
+            val controlBarHeight = PlaylistControlsHeight
+            val bookScrollInsetPx = with(LocalDensity.current) { (controlBarHeight + 8.dp).roundToPx() }
+            val bookIntro = bookSnapshot?.metadata?.description?.takeIf(String::isNotBlank) ?: playlist.description
+            val bookHeat = bookSnapshot?.metadata?.playCount?.takeIf { it > 0 }
+                ?.let { formatPlayCountLabel(it.toString()) } ?: playlist.playCountLabel
+            val favoriteUids by UserLibrary.favoriteUids.collectAsStateWithLifecycle()
+            val initialTrack = remember { PlaybackController.state.value.current }
+            val currentTrack by remember {
+                PlaybackController.state.map { it.current }
+                    .distinctUntilChanged { old, new ->
+                        old?.uid == new?.uid && old?.source == new?.source &&
+                            old?.raw?.optString("albumId") == new?.raw?.optString("albumId")
+                    }
+            }.collectAsStateWithLifecycle(initialValue = initialTrack)
+            val currentBookSong = remember(
+                currentTrack?.uid,
+                currentTrack?.source,
+                currentTrack?.raw?.optString("albumId"),
+                playlist.source,
+                playlist.id,
+            ) {
+                OnlineSong.from(currentTrack?.raw)?.takeIf { song ->
+                    val currentAlbumId = canonicalBookId(song.source, song.albumId)
+                    val detailAlbumId = canonicalBookId(playlist.source, playlist.id)
+                    song.isBookChapter && song.source == playlist.source &&
+                        currentAlbumId != null && currentAlbumId == detailAlbumId
                 }
             }
-        }
+            var moreSong by remember { mutableStateOf<OnlineSong?>(null) }
 
-        fun requestBookPage(
-            requestedPage: Int,
-            targetEpisode: Int? = null,
-            targetUid: String? = null,
-            preserveScroll: Boolean = false,
-            directionOnAccept: Boolean? = null,
-            append: Boolean = false,
-        ) {
-            if (!isBook) return
-            val hasTarget = targetUid != null || targetEpisode != null
-            val matches: (OnlineSong) -> Boolean = { song ->
-                if (targetUid != null) song.uid == targetUid else bookEpisodeNumber(song.name) == targetEpisode
+            fun beginBookRequest(append: Boolean = false): Long {
+                val (requestState, generation) = bookCatalog.beginRequest()
+                bookCatalog = requestState
+                bookRequestJob?.cancel()
+                if (!append) {
+                    pendingBookUid = null
+                    highlightedBookChapter = null
+                }
+                return generation
             }
-            val generation = beginBookRequest(append)
-            if (hasTarget) {
-                val loaded = songs.firstOrNull(matches)
-                if (loaded != null) {
-                    pendingBookUid = loaded.uid
-                    bookRequestJob = null
-                    bookPageLoading = false
-                    loading = false
+
+            fun applyBookResponse(
+                generation: Long,
+                requestedPage: Int,
+                response: KwBookApi.BookChapters,
+                targetUid: String?,
+                preserveScroll: Boolean,
+                directionOnAccept: Boolean?,
+                append: Boolean,
+            ) {
+                if (!bookCatalog.isCurrentRequest(generation)) return
+                if (response.items.isEmpty()) {
+                    if (bookSnapshot?.items.isNullOrEmpty()) error = "听书目录加载失败，请重试"
+                    else PlaybackController.postMessage(context, "目录加载失败，已保留当前章节")
                     return
                 }
-            }
-            bookPageLoading = true
-            loading = bookSnapshot?.items.isNullOrEmpty()
-            error = null
-            bookRequestJob = scope.launch {
-                try {
-                    if (hasTarget) {
-                        val found = findBookChapterPage(requestedPage, matches) { page ->
-                            loadBookPage(playlist.id, page)
-                        }
-                        if (!bookCatalog.isCurrentRequest(generation)) return@launch
-                        if (found == null) {
-                            val target = targetEpisode?.let { "第 $it 集／章" } ?: "当前章节"
-                            PlaybackController.postMessage(context, "未找到$target，已保留原位置")
+                val previousMetadata = bookSnapshot?.metadata
+                    ?: OnlineCache.peek<KwBookApi.BookChapters>(detailCacheKey)?.metadata
+                val advertisedTotal = playlist.total.takeIf { it > 0 }
+                val metadata = response.metadata.copy(
+                    description = response.metadata.description.ifBlank { previousMetadata?.description.orEmpty() },
+                    playCount = response.metadata.playCount.takeIf { it > 0 } ?: previousMetadata?.playCount ?: 0,
+                    total = response.metadata.total.takeIf { it > 0 }
+                        ?: previousMetadata?.total?.takeIf { it > 0 }
+                        ?: advertisedTotal ?: 0,
+                    author = response.metadata.author.ifBlank { previousMetadata?.author.orEmpty() },
+                    artwork = response.metadata.artwork ?: previousMetadata?.artwork,
+                    releaseDate = response.metadata.releaseDate.ifBlank { previousMetadata?.releaseDate.orEmpty() },
+                    language = response.metadata.language.ifBlank { previousMetadata?.language.orEmpty() },
+                )
+                val enriched = response.copy(page = requestedPage, metadata = metadata)
+                val nextWindow = bookCatalog.accept(generation, requestedPage, enriched, append)
+                if (nextWindow === bookCatalog) {
+                    PlaybackController.postMessage(context, "目录返回了重复内容，请稍后重试")
+                    return
+                }
+                bookCatalog = nextWindow
+                val accepted = checkNotNull(nextWindow.pages[requestedPage])
+                if (!append) activeBookPage = requestedPage
+                directionOnAccept?.let { bookDescending = it }
+                OnlineCache.put(bookCatalogPageCacheKey(detailCacheKey, requestedPage), accepted)
+                if (requestedPage == 1) OnlineCache.put(detailCacheKey, accepted)
+                error = null
+                if (!preserveScroll && !append) {
+                    pendingBookUid = targetUid
+                    if (targetUid == null) {
+                        // 排序只替换目录。页头还可见时保留原位置；已吸顶时保持操作栏原位，
+                        // 从新窗口首章开始。与数据一起交给下一次布局，避免先跳页再纠正的闪动。
+                        if (currentTwoPane) {
+                            listState.requestScrollToItem(0)
                         } else {
-                            applyBookResponse(generation, found.page, found, found.items.first(matches).uid,
-                                false, directionOnAccept, false)
+                            val index = listState.firstVisibleItemIndex
+                            listState.requestScrollToItem(
+                                index = index.coerceAtMost(1),
+                                scrollOffset = if (index <= 1) listState.firstVisibleItemScrollOffset else 0,
+                            )
                         }
-                    } else {
-                        val windowKey = bookCatalogPageCacheKey(detailCacheKey, requestedPage)
-                        // 续载只在新页成功后一次性追加，旧末页缓存不能提前关闭重试入口。
-                        val cached = if (append) null else {
-                            OnlineCache.peek<KwBookApi.BookChapters>(windowKey)
-                                ?.takeIf { it.page == requestedPage && it.items.isNotEmpty() }
-                                ?: if (requestedPage == 1) OnlineCache.peek<KwBookApi.BookChapters>(detailCacheKey)
-                                    ?.takeIf { it.page == 1 && it.items.isNotEmpty() } else null
-                        }
-                        if (cached != null) {
-                            applyBookResponse(generation, requestedPage, cached, null,
-                                preserveScroll, directionOnAccept, append)
-                        }
-                        val fresh = loadBookPage(playlist.id, requestedPage)
-                        if (!bookCatalog.isCurrentRequest(generation)) return@launch
-                        applyBookResponse(generation, requestedPage, fresh, null,
-                            preserveScroll = preserveScroll || cached != null,
-                            directionOnAccept = directionOnAccept, append = append)
                     }
+                }
+            }
+
+            fun requestBookPage(
+                requestedPage: Int,
+                targetEpisode: Int? = null,
+                targetUid: String? = null,
+                preserveScroll: Boolean = false,
+                directionOnAccept: Boolean? = null,
+                append: Boolean = false,
+            ) {
+                if (!isBook) return
+                val hasTarget = targetUid != null || targetEpisode != null
+                val matches: (OnlineSong) -> Boolean = { song ->
+                    if (targetUid != null) song.uid == targetUid else bookEpisodeNumber(song.name) == targetEpisode
+                }
+                val generation = beginBookRequest(append)
+                if (hasTarget) {
+                    val loaded = songs.firstOrNull(matches)
+                    if (loaded != null) {
+                        pendingBookUid = loaded.uid
+                        bookRequestJob = null
+                        bookPageLoading = false
+                        loading = false
+                        return
+                    }
+                }
+                bookPageLoading = true
+                loading = bookSnapshot?.items.isNullOrEmpty()
+                error = null
+                bookRequestJob = scope.launch {
+                    try {
+                        if (hasTarget) {
+                            val found = findBookChapterPage(requestedPage, matches) { page ->
+                                loadBookPage(playlist.id, page)
+                            }
+                            if (!bookCatalog.isCurrentRequest(generation)) return@launch
+                            if (found == null) {
+                                val target = targetEpisode?.let { "第 $it 集／章" } ?: "当前章节"
+                                PlaybackController.postMessage(context, "未找到$target，已保留原位置")
+                            } else {
+                                applyBookResponse(generation, found.page, found, found.items.first(matches).uid,
+                                    false, directionOnAccept, false)
+                            }
+                        } else {
+                            val windowKey = bookCatalogPageCacheKey(detailCacheKey, requestedPage)
+                            // 续载只在新页成功后一次性追加，旧末页缓存不能提前关闭重试入口。
+                            val cached = if (append) null else {
+                                OnlineCache.peek<KwBookApi.BookChapters>(windowKey)
+                                    ?.takeIf { it.page == requestedPage && it.items.isNotEmpty() }
+                                    ?: if (requestedPage == 1) OnlineCache.peek<KwBookApi.BookChapters>(detailCacheKey)
+                                        ?.takeIf { it.page == 1 && it.items.isNotEmpty() } else null
+                            }
+                            if (cached != null) {
+                                applyBookResponse(generation, requestedPage, cached, null,
+                                    preserveScroll, directionOnAccept, append)
+                            }
+                            val fresh = loadBookPage(playlist.id, requestedPage)
+                            if (!bookCatalog.isCurrentRequest(generation)) return@launch
+                            applyBookResponse(generation, requestedPage, fresh, null,
+                                preserveScroll = preserveScroll || cached != null,
+                                directionOnAccept = directionOnAccept, append = append)
+                        }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Exception) {
+                        if (bookCatalog.isCurrentRequest(generation)) {
+                            if (bookSnapshot?.items.isNullOrEmpty()) error = failure.message ?: "听书目录加载失败"
+                            else PlaybackController.postMessage(context, failure.message ?: "目录加载失败，已保留当前章节")
+                        }
+                    } finally {
+                        if (bookCatalog.isCurrentRequest(generation)) {
+                            loading = false
+                            bookPageLoading = false
+                            bookRequestJob = null
+                        }
+                    }
+                }
+            }
+
+            suspend fun loadFirstPage() {
+                val previous = songSnapshot
+                try {
+                    val cached = OnlineCache.get<SongPage>(detailCacheKey, OnlineCache.CATALOG_TTL_MS)
+                    val first = cached ?: OnlineCache.refresh(
+                        OnlineRepository.playlistEntryPageKey(playlist), OnlineCache.CATALOG_TTL_MS,
+                    ) { OnlineRepository.playlistEntryPage(context, playlist) }
+                    if (songSnapshot === previous) {
+                        songSnapshot = first
+                        if (cached == null) OnlineCache.put(detailCacheKey, first)
+                    }
+                    error = null
                 } catch (cancelled: CancellationException) {
                     throw cancelled
+                } catch (empty: OnlineRepository.NoPlayablePlaylist) {
+                    if (songSnapshot?.list.isNullOrEmpty()) songSnapshot = empty.snapshot
+                    error = null
                 } catch (failure: Exception) {
-                    if (bookCatalog.isCurrentRequest(generation)) {
-                        if (bookSnapshot?.items.isNullOrEmpty()) error = failure.message ?: "听书目录加载失败"
-                        else PlaybackController.postMessage(context, failure.message ?: "目录加载失败，已保留当前章节")
-                    }
+                    if (songSnapshot?.list.isNullOrEmpty()) error = failure.message ?: "歌单加载失败"
                 } finally {
-                    if (bookCatalog.isCurrentRequest(generation)) {
-                        loading = false
-                        bookPageLoading = false
-                        bookRequestJob = null
+                    loading = false
+                }
+            }
+
+            LaunchedEffect(detailCacheKey) {
+                if (isBook) requestBookPage(activeBookPage, preserveScroll = true) else loadFirstPage()
+            }
+
+            fun loadMore() {
+                if (isBook) {
+                    if (!bookPageLoading && pendingBookUid == null) {
+                        bookCatalog.nextPage(bookDescending)?.let { requestBookPage(it, append = true) }
+                    }
+                    return
+                }
+                if (loadingMore) return
+                val previousSongs = songSnapshot ?: return
+                if (!previousSongs.hasMore()) return
+                loadingMore = true
+                scope.launch {
+                    try {
+                        val nextPage = previousSongs.page + 1
+                        runCatchingCancellable {
+                            OnlineRepository.playlistSongs(context, playlist.source, playlist.id, nextPage)
+                        }.onSuccess { result ->
+                            if (songSnapshot !== previousSongs) return@onSuccess
+                            songSnapshot = previousSongs.append(result, nextPage).also { OnlineCache.put(detailCacheKey, it) }
+                        }.onFailure { PlaybackController.postMessage(context, it.message ?: "加载更多失败") }
+                    } finally {
+                        loadingMore = false
                     }
                 }
             }
-        }
 
-        suspend fun loadFirstPage() {
-            val previous = songSnapshot
-            try {
-                val cached = OnlineCache.get<SongPage>(detailCacheKey, OnlineCache.CATALOG_TTL_MS)
-                val first = cached ?: OnlineCache.refresh(
-                    OnlineRepository.playlistEntryPageKey(playlist), OnlineCache.CATALOG_TTL_MS,
-                ) { OnlineRepository.playlistEntryPage(context, playlist) }
-                if (songSnapshot === previous) {
-                    songSnapshot = first
-                    if (cached == null) OnlineCache.put(detailCacheKey, first)
+            // 批量管理模式：收藏右侧"批量管理"进入，顶栏/列表行/底部工具条联动
+            val selection = remember { SongSelectionState() }
+            val locationUid = pendingBookUid
+            val locationGeneration = bookCatalog.requestGeneration
+            LaunchedEffect(
+                bookCatalog,
+                locationUid,
+                selection.active,
+                bookDescending,
+                twoPane,
+            ) {
+                if (locationUid == null || !bookCatalog.isCurrentRequest(locationGeneration)) return@LaunchedEffect
+                val itemIndex = displaySongs.indexOfFirst { it.uid == locationUid }
+                if (itemIndex !in displaySongs.indices) {
+                    PlaybackController.postMessage(context, "目录中未找到当前章节")
+                    pendingBookUid = null
+                    return@LaunchedEffect
                 }
-                error = null
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (empty: OnlineRepository.NoPlayablePlaylist) {
-                if (songSnapshot?.list.isNullOrEmpty()) songSnapshot = empty.snapshot
-                error = null
-            } catch (failure: Exception) {
-                if (songSnapshot?.list.isNullOrEmpty()) error = failure.message ?: "歌单加载失败"
-            } finally {
-                loading = false
-            }
-        }
-
-        LaunchedEffect(detailCacheKey) {
-            if (isBook) requestBookPage(activeBookPage, preserveScroll = true) else loadFirstPage()
-        }
-
-        fun loadMore() {
-            if (isBook) {
-                if (!bookPageLoading && pendingBookUid == null) {
-                    bookCatalog.nextPage(bookDescending)?.let { requestBookPage(it, append = true) }
-                }
-                return
-            }
-            if (loadingMore) return
-            val previousSongs = songSnapshot ?: return
-            if (!previousSongs.hasMore()) return
-            loadingMore = true
-            scope.launch {
-                try {
-                    val nextPage = previousSongs.page + 1
-                    runCatchingCancellable {
-                        OnlineRepository.playlistSongs(context, playlist.source, playlist.id, nextPage)
-                    }.onSuccess { result ->
-                        if (songSnapshot !== previousSongs) return@onSuccess
-                        songSnapshot = previousSongs.append(result, nextPage).also { OnlineCache.put(detailCacheKey, it) }
-                    }.onFailure { PlaybackController.postMessage(context, it.message ?: "加载更多失败") }
-                } finally {
-                    loadingMore = false
-                }
-            }
-        }
-
-        // 批量管理模式：收藏右侧"批量管理"进入，顶栏/列表行/底部工具条联动
-        val selection = remember { SongSelectionState() }
-        val locationUid = pendingBookUid
-        val locationGeneration = bookCatalog.requestGeneration
-        LaunchedEffect(
-            bookCatalog,
-            locationUid,
-            selection.active,
-            bookDescending,
-        ) {
-            if (locationUid == null || !bookCatalog.isCurrentRequest(locationGeneration)) return@LaunchedEffect
-            val itemIndex = displaySongs.indexOfFirst { it.uid == locationUid }
-            if (itemIndex !in displaySongs.indices) {
-                PlaybackController.postMessage(context, "目录中未找到当前章节")
+                // 单栏保留信息和操作栏两项，定位时让开覆盖式吸顶栏。双栏工具栏在列表外。
+                val hasInlineHeaders = !twoPane && !selection.active
+                listState.scrollToItem(
+                    index = itemIndex + if (hasInlineHeaders) 2 else 0,
+                    scrollOffset = if (hasInlineHeaders) -bookScrollInsetPx else 0,
+                )
+                // 滚动可能挂起，更新目录的后续请求不能继承已取消的定位。
+                if (!bookCatalog.isCurrentRequest(locationGeneration) || pendingBookUid != locationUid) return@LaunchedEffect
                 pendingBookUid = null
-                return@LaunchedEffect
+                if (listState.layoutInfo.visibleItemsInfo.any { it.key == locationUid }) {
+                    highlightedBookChapter = BookChapterHighlight(locationUid)
+                }
             }
-            val headerItems = if (selection.active) 0 else 2
-            // LazyColumn的顶部padding只包含标题栏；必须额外让开覆盖式吸顶操作栏。
-            listState.scrollToItem(itemIndex + headerItems,
-                scrollOffset = if (selection.active) 0 else -bookScrollInsetPx)
-            // 滚动可能挂起，更新目录的后续请求不能继承已取消的定位。
-            if (!bookCatalog.isCurrentRequest(locationGeneration) || pendingBookUid != locationUid) return@LaunchedEffect
-            pendingBookUid = null
-            if (listState.layoutInfo.visibleItemsInfo.any { it.key == locationUid }) {
-                highlightedBookChapter = BookChapterHighlight(locationUid)
+            LaunchedEffect(highlightedBookChapter) {
+                val highlight = highlightedBookChapter ?: return@LaunchedEffect
+                delay(1_050)
+                highlight.opacity.animateTo(0f, tween(400))
+                if (highlightedBookChapter === highlight) highlightedBookChapter = null
             }
-        }
-        LaunchedEffect(highlightedBookChapter) {
-            val highlight = highlightedBookChapter ?: return@LaunchedEffect
-            delay(1_050)
-            highlight.opacity.animateTo(0f, tween(400))
-            if (highlightedBookChapter === highlight) highlightedBookChapter = null
-        }
 
-        fun locateCurrentBookChapter() {
-            val chapter = currentBookSong ?: return
-            val ordinal = chapter.raw.optInt("bookOrdinal").takeIf { it > 0 }
-            val page = ordinal?.let { BookCatalogPaging.pageForOrdinal(it) }
-                ?: chapter.raw.optInt("bookPage").takeIf { it > 0 }
-            requestBookPage(page ?: 1, targetUid = chapter.uid)
-        }
+            fun locateCurrentBookChapter() {
+                val chapter = currentBookSong ?: return
+                val ordinal = chapter.raw.optInt("bookOrdinal").takeIf { it > 0 }
+                val page = ordinal?.let { BookCatalogPaging.pageForOrdinal(it) }
+                    ?: chapter.raw.optInt("bookPage").takeIf { it > 0 }
+                requestBookPage(page ?: 1, targetUid = chapter.uid)
+            }
 
-        BackHandler { if (selection.active) selection.finish() else onBack() }
-        val favoritePlaylists by UserLibrary.favoritePlaylists.collectAsStateWithLifecycle()
-        val detailPlaylist = remember(playlist, bookIntro, bookHeat) {
-            if (!isBook) playlist else OnlinePlaylist(JSONObject(playlist.raw.toString()).apply {
-                put("description", bookIntro)
-                put("play_count", bookHeat)
-            })
-        }
-        val isFav = favoritePlaylists.any { "${it.source}_${it.id}" == "${playlist.source}_${playlist.id}" }
-        // 与 playBook/卡片按钮同一队列身份；听书有断点时续听，不再跳回第一章。
-        val playQueueId = remember(playlist.source, playlist.id, isBook) {
-            collectionQueueId(playlist.source, playlist.id, isBook)
-        }
-        val playAll: () -> Unit = {
-            if (isBook) {
-                // 目录窗口可能在第1000章附近，播放全部仍从本书第一页开始，不能拿当前窗口冒充整本。
-                PlaybackController.playBook(context, detailPlaylist)
+            BackHandler { if (selection.active) selection.finish() else onBack() }
+            val favoritePlaylists by UserLibrary.favoritePlaylists.collectAsStateWithLifecycle()
+            val detailPlaylist = remember(playlist, bookIntro, bookHeat) {
+                if (!isBook) playlist else OnlinePlaylist(JSONObject(playlist.raw.toString()).apply {
+                    put("description", bookIntro)
+                    put("play_count", bookHeat)
+                })
+            }
+            val isFav = favoritePlaylists.any { "${it.source}_${it.id}" == "${playlist.source}_${playlist.id}" }
+            // 与 playBook/卡片按钮同一队列身份；听书有断点时续听，不再跳回第一章。
+            val playQueueId = remember(playlist.source, playlist.id, isBook) {
+                collectionQueueId(playlist.source, playlist.id, isBook)
+            }
+            val playAll: () -> Unit = {
+                if (isBook) {
+                    // 目录窗口可能在第1000章附近，播放全部仍从本书第一页开始，不能拿当前窗口冒充整本。
+                    PlaybackController.playBook(context, detailPlaylist)
+                } else {
+                    playlist.markCollectionPlayed(playQueueId)
+                    PlaybackController.playQueue(context, songs.toUiTracks(), 0, playQueueId)
+                }
+            }
+            val (queueActive, queuePlaying) = rememberQueuePlayback(playQueueId)
+            val resumePoint = if (isBook) rememberBookAlbumResumePoint(playlist.source, playlist.id).first else null
+            val playButton = collectionPlayButton(queueActive, queuePlaying, resumePoint != null,
+                resumeLabel = if (isBook) "继续收听" else "继续播放")
+            val onPlayButton: () -> Unit = {
+                when (playButton.intent) {
+                    CollectionPlayIntent.Toggle -> PlaybackController.toggle()
+                    CollectionPlayIntent.Resume -> resumePoint?.let { PlaybackController.resumeBook(context, it.song) }
+                    CollectionPlayIntent.PlayAll -> playAll()
+                }
+            }
+
+            val header = if (isBook) {
+                bookHeaderCopy(bookIntro, playlist.author, bookHeat)
             } else {
-                playlist.markCollectionPlayed(playQueueId)
-                PlaybackController.playQueue(context, songs.toUiTracks(), 0, playQueueId)
-            }
-        }
-        val (queueActive, queuePlaying) = rememberQueuePlayback(playQueueId)
-        val resumePoint = if (isBook) rememberBookAlbumResumePoint(playlist.source, playlist.id).first else null
-        val playButton = collectionPlayButton(queueActive, queuePlaying, resumePoint != null,
-            resumeLabel = if (isBook) "继续收听" else "继续播放")
-        val onPlayButton: () -> Unit = {
-            when (playButton.intent) {
-                CollectionPlayIntent.Toggle -> PlaybackController.toggle()
-                CollectionPlayIntent.Resume -> resumePoint?.let { PlaybackController.resumeBook(context, it.song) }
-                CollectionPlayIntent.PlayAll -> playAll()
-            }
-        }
-
-        ChromeScaffold(
-            modifier = modifier,
-            contentSource = controlBarHazeState,
-            expectedTopBarHeight = 64.dp,
-            topBar = {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(chromeHeaderColor()),
-                ) {
-                    // 顶栏：普通态（返回 + 标题）⇄ 编辑态（全选 / 已选中 X 项 / 关闭）平滑切换
-                    SongSelectionTopBar(selection, songs) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(64.dp)
-                                .padding(horizontal = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            IconButton(onClick = onBack) {
-                                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = TextMain)
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxHeight()
-                                    .titleScrollToTop(scrollToTop),
-                                contentAlignment = Alignment.CenterStart,
-                            ) {
-                                Text(
-                                    playlist.name,
-                                    fontSize = 17.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = TextMain,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
-                    }
-                }
-            },
-            bottomBar = { SongBatchActionsBar(selection, songs) },
-        ) {
-            // 必须读取本页 ChromeScaffold 提供的累计 inset；函数顶部只能看到父级 inset。
-            val chromeTopInset = LocalChromeTopInset.current
-            val density = LocalDensity.current
-            val chromeTopInsetPx = with(density) { chromeTopInset.roundToPx() }
-            val controlBarPinned by remember(listState, chromeTopInsetPx) {
-                derivedStateOf {
-                    !selection.active && shouldPinPlaylistControls(
-                        firstVisibleIndex = listState.firstVisibleItemIndex,
-                        controlBarTop = listState.layoutInfo.visibleItemsInfo
-                            .firstOrNull { it.key == "controlBar" }
-                            ?.let { it.offset - listState.layoutInfo.viewportStartOffset },
-                        headerBottom = chromeTopInsetPx,
-                    )
-                }
-            }
-            val dividerAlpha by animateFloatAsState(
-                targetValue = if (controlBarPinned && !blurEnabled) 1f else 0f,
-                animationSpec = tween(durationMillis = 200),
-                label = "stuckDivider",
-            )
-            // 初次加载与真实内容使用同一行布局，避免维护另一套失配的操作栏骨架。
-            val collectionActions: @Composable () -> Unit = {
-                CollectionActionsRow(
-                    canPlay = songs.isNotEmpty() || playButton.intent != CollectionPlayIntent.PlayAll,
-                    favorite = isFav,
-                    onPlay = onPlayButton,
-                    playLabel = playButton.label,
-                    playPause = playButton.pause,
-                    onFavorite = { UserLibrary.toggleFavoritePlaylist(detailPlaylist) },
-                    onSelect = selection::start,
-                    loading = loading && songs.isEmpty(),
-                    modifier = if (isBook) Modifier.testTag("book-chapter-toolbar") else Modifier,
-                    bookChapters = if (isBook) BookChapterControls(
-                        page = activePage,
-                        total = bookTotal ?: playlist.total.takeIf { it > 0 },
-                        descending = bookDescending,
-                        loading = bookPageLoading,
-                        onPick = { bookPickerOpen = true },
-                        onToggleDirection = {
-                            val descending = !bookDescending
-                            BookCatalogPaging.pageForDirection(1, bookTotal, descending)?.let { page ->
-                                requestBookPage(page, directionOnAccept = descending)
-                            }
-                        },
-                    ) else null,
+                CollectionHeaderCopy(
+                    primary = playlist.author.ifBlank { "乐屿精选" },
+                    secondary = "${maxOf(totalCount, songs.size)} 首歌曲 · 播放量 ${playlist.playCountLabel.ifBlank { "—" }}",
+                    primaryMaxLines = 1,
                 )
             }
-            // 同一个操作栏实现只显示在一个位置：原位或覆盖层；原位始终等高占位。
-            val controlBar: @Composable (Boolean) -> Unit = { pinned ->
-                ChromeFloatingBar(
-                    state = controlBarHazeState,
-                    topOffset = chromeTopInset,
-                    height = controlBarHeight,
-                    pinned = pinned,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
+            val showCollapsedTitle by remember(listState) {
+                derivedStateOf { listState.firstVisibleItemIndex > 0 }
+            }
+
+            ChromeScaffold(
+                modifier = Modifier.fillMaxSize(),
+                contentSource = controlBarHazeState,
+                expectedTopBarHeight = 64.dp,
+                topBar = {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(chromeHeaderColor()),
                     ) {
-                        collectionActions()
+                        // 顶栏：普通态（返回 + 标题）⇄ 编辑态（全选 / 已选中 X 项 / 关闭）平滑切换
+                        SongSelectionTopBar(selection, songs, modifier = selectionBarModifier) {
+                            val topBarRow: @Composable (Modifier, String, androidx.compose.ui.graphics.Color, FontWeight) -> Unit = { barModifier, titleText, titleTint, titleWeight ->
+                                Row(
+                                    modifier = barModifier.height(64.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    IconButton(onClick = onBack) {
+                                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "返回", tint = TextMain)
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .fillMaxHeight()
+                                            .padding(end = 16.dp)
+                                            .titleScrollToTop(scrollToTop),
+                                        contentAlignment = Alignment.CenterStart,
+                                    ) {
+                                        Text(
+                                            text = titleText,
+                                            fontSize = if (twoPane) 15.sp else 17.sp,
+                                            fontWeight = titleWeight,
+                                            color = titleTint,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                }
+                            }
+                            when {
+                                twoPane -> Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                    topBarRow(
+                                        Modifier.widthIn(max = 1160.dp).fillMaxWidth().padding(horizontal = 16.dp),
+                                        if (isBook) "有声专辑" else "歌单",
+                                        TextSub,
+                                        FontWeight.Medium,
+                                    )
+                                }
+                                largeSinglePane -> Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                    topBarRow(
+                                        Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(horizontal = 4.dp),
+                                        if (showCollapsedTitle) playlist.name else if (isBook) "有声专辑" else "歌单",
+                                        if (showCollapsedTitle) TextMain else TextSub,
+                                        if (showCollapsedTitle) FontWeight.SemiBold else FontWeight.Medium,
+                                    )
+                                }
+                                else -> topBarRow(
+                                    Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                                    playlist.name,
+                                    TextMain,
+                                    FontWeight.Medium,
+                                )
+                            }
+                        }
+                    }
+                },
+                bottomBar = { SongBatchActionsBar(selection, songs) },
+            ) {
+                val chromeTopInset = LocalChromeTopInset.current
+                val bookControls = if (isBook) BookChapterControls(
+                    page = activePage,
+                    total = bookTotal ?: playlist.total.takeIf { it > 0 },
+                    descending = bookDescending,
+                    loading = bookPageLoading,
+                    onPick = { bookPickerOpen = true },
+                    onToggleDirection = {
+                        val descending = !bookDescending
+                        BookCatalogPaging.pageForDirection(1, bookTotal, descending)?.let { page ->
+                            requestBookPage(page, directionOnAccept = descending)
+                        }
+                    },
+                ) else null
+                val canPlayPlaylist = songs.isNotEmpty() || playButton.intent != CollectionPlayIntent.PlayAll
+
+                fun LazyListScope.playlistSongItems() {
+                    itemsIndexed(displaySongs, key = { _, song -> song.uid }) { _, song ->
+                        val highlight = highlightedBookChapter?.takeIf { it.uid == song.uid }
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(0.6.dp)
-                                .alpha(dividerAlpha)
-                                .background(DividerSoft),
-                        )
-                    }
-                }
-            }
-            when {
-                error != null -> ErrorState(
-                    error!!,
-                    onRetry = {
-                        if (!loading) {
-                            loading = true
-                            if (isBook) requestBookPage(activeBookPage, preserveScroll = true)
-                            else scope.launch { loadFirstPage() }
-                        }
-                    },
-                    retrying = loading,
-                    modifier = Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current),
-                )
-                loading && songs.isEmpty() -> Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(top = LocalChromeTopInset.current),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    // 头部骨架：封面 + 两行文字
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .then(bodyHazeModifier)
-                            .padding(horizontal = 16.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        ShimmerBox(Modifier.size(64.dp), cornerRadius = 12.dp)
-                        Spacer(Modifier.width(14.dp))
-                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                            ShimmerBox(Modifier.fillMaxWidth(0.42f).height(13.dp), cornerRadius = 6.dp)
-                            ShimmerBox(Modifier.fillMaxWidth(0.62f).height(11.dp), cornerRadius = 5.dp)
+                                .then(bodyHazeModifier)
+                                .bookChapterHighlight(highlight),
+                        ) {
+                            OnlineSongRow(
+                                song = song,
+                                isFavorite = song.uid in favoriteUids,
+                                onMore = { moreSong = song },
+                                selectionMode = selection.active,
+                                selected = song.uid in selection.selectedUids,
+                                highlightContainer = isLargeStandalone,
+                                onClick = {
+                                    if (selection.active) {
+                                        selection.toggle(song.uid)
+                                    } else {
+                                        playlist.markCollectionPlayed("playlist.${playlist.source}.${playlist.id}")
+                                        PlaybackController.playTrack(context, UiTrack.fromOnline(song))
+                                    }
+                                },
+                            )
                         }
                     }
-                    Column(Modifier.height(controlBarHeight)) {
-                        collectionActions()
-                        Spacer(Modifier.height(0.6.dp))
-                    }
-                    SkeletonSongList(
-                        modifier = Modifier
-                            .weight(1f)
-                            .then(bodyHazeModifier),
-                        rows = 7,
-                        rowSpacing = 2.dp,
-                    )
-                }
-                songs.isEmpty() -> EmptyState(
-                    emptyHint,
-                    Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current),
-                )
-                else -> {
-                    LoadMoreOnScroll(listState,
-                        enabled = hasMore && pendingBookUid == null,
-                        loading = loadingMore || bookPageLoading, onLoadMore = ::loadMore)
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier.fillMaxSize().testTag("collection-song-list"),
-                        contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                        if (!selection.active) {
-                            item(key = "detailHeader") {
-                                val header = if (isBook) {
-                                    bookHeaderCopy(bookIntro, playlist.author, bookHeat)
-                                } else {
-                                    CollectionHeaderCopy(
-                                        primary = playlist.author.ifBlank { "乐屿精选" },
-                                        secondary = "${maxOf(totalCount, songs.size)} 首歌曲 · 播放量 ${playlist.playCountLabel.ifBlank { "—" }}",
-                                        primaryMaxLines = 1,
-                                    )
-                                }
-                                CollectionInfoHeader(
-                                    image = playlist.img,
-                                    seed = playlist.id,
-                                    primary = header.primary,
-                                    secondary = header.secondary,
-                                    primaryMaxLines = header.primaryMaxLines,
-                                    modifier = bodyHazeModifier,
-                                )
-                            }
-                            item(key = "controlBar", contentType = "controls") {
-                                Box(Modifier.fillMaxWidth().height(controlBarHeight)) {
-                                    if (!controlBarPinned) controlBar(false)
-                                }
-                            }
-                        }
-                        itemsIndexed(displaySongs, key = { _, song -> song.uid }) { _, song ->
-                            val highlight = highlightedBookChapter?.takeIf { it.uid == song.uid }
+                    if (hasMore) {
+                        item(key = "loadMore") {
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .then(bodyHazeModifier)
-                                    .bookChapterHighlight(highlight),
+                                    .padding(vertical = 16.dp),
+                                contentAlignment = Alignment.Center,
                             ) {
-                                OnlineSongRow(
-                                    song = song,
-                                    isFavorite = song.uid in favoriteUids,
-                                    onMore = { moreSong = song },
-                                    selectionMode = selection.active,
-                                    selected = song.uid in selection.selectedUids,
-                                    onClick = {
-                                        if (selection.active) {
-                                            selection.toggle(song.uid)
-                                        } else {
-                                            playlist.markCollectionPlayed("playlist.${playlist.source}.${playlist.id}")
-                                            PlaybackController.playTrack(context, UiTrack.fromOnline(song))
-                                        }
-                                    },
+                                if (loadingMore || bookPageLoading) {
+                                    Text("正在加载…", fontSize = 13.sp, color = TextMuted)
+                                } else {
+                                    Text(
+                                        text = "上滑加载更多",
+                                        fontSize = 13.sp,
+                                        color = BrandBlue,
+                                        modifier = Modifier
+                                            .clickable { loadMore() }
+                                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (twoPane) {
+                    val bookToolbar: @Composable () -> Unit = {
+                        if (bookControls != null) {
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .then(bodyHazeModifier)
+                                    .padding(start = 8.dp, end = 12.dp, top = 4.dp, bottom = 8.dp)
+                                    .testTag("book-chapter-toolbar"),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = "章节目录",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = TextSub,
+                                    modifier = Modifier.padding(start = 8.dp),
+                                )
+                                BookChapterActions(
+                                    bookControls,
+                                    bookControls.label,
+                                    CollectionActionSpacing.Regular,
+                                    placeholder = loading && songs.isEmpty(),
                                 )
                             }
                         }
-                        if (hasMore) {
-                            item {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .then(bodyHazeModifier)
-                                        .padding(vertical = 16.dp),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    if (loadingMore || bookPageLoading) {
-                                        Text("正在加载…", fontSize = 13.sp, color = TextMuted)
-                                    } else {
-                                        Text(
-                                            text = "上滑加载更多",
-                                            fontSize = 13.sp,
-                                            color = BrandBlue,
-                                            modifier = Modifier
-                                                .clickable { loadMore() }
-                                                .padding(horizontal = 10.dp, vertical = 4.dp),
+                    }
+                    Box(Modifier.fillMaxSize().testTag("playlist-two-pane"), contentAlignment = Alignment.TopCenter) {
+                        Row(
+                            Modifier.widthIn(max = 1160.dp).fillMaxSize().padding(horizontal = 28.dp),
+                            horizontalArrangement = Arrangement.spacedBy(32.dp),
+                        ) {
+                            Column(
+                                Modifier
+                                    .width(300.dp)
+                                    .fillMaxHeight()
+                                    .then(bodyHazeModifier)
+                                    .verticalScroll(rememberScrollState())
+                                    .padding(top = chromeTopInset + 16.dp, bottom = 28.dp)
+                                    .testTag("playlist-showcase-pane"),
+                            ) {
+                                CollectionHeroArtwork(
+                                    image = playlist.img,
+                                    seed = playlist.id,
+                                    artist = false,
+                                    size = 196.dp,
+                                    cornerRadius = 18,
+                                )
+                                Spacer(Modifier.height(20.dp))
+                                Text(
+                                    text = playlist.name,
+                                    fontSize = 22.sp,
+                                    lineHeight = 28.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = TextMain,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    text = header.primary,
+                                    fontSize = 13.5.sp,
+                                    lineHeight = 20.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = TextSub,
+                                    maxLines = 4,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                if (header.secondary.isNotBlank()) {
+                                    Text(
+                                        text = header.secondary,
+                                        fontSize = 12.5.sp,
+                                        lineHeight = 18.sp,
+                                        color = TextMuted,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.padding(top = 6.dp),
+                                    )
+                                }
+                                Spacer(Modifier.height(22.dp))
+                                CollectionShowcaseActions(
+                                    canPlay = canPlayPlaylist,
+                                    canSelect = songs.isNotEmpty(),
+                                    favorite = isFav,
+                                    favoriteEnabled = true,
+                                    selectionActive = selection.active,
+                                    loading = loading && songs.isEmpty(),
+                                    playLabel = playButton.label,
+                                    playPause = playButton.pause,
+                                    onPlay = onPlayButton,
+                                    onFavorite = { UserLibrary.toggleFavoritePlaylist(detailPlaylist) },
+                                    onSelect = selection::start,
+                                )
+                            }
+                            Box(
+                                Modifier
+                                    .padding(top = chromeTopInset + 16.dp, bottom = 28.dp)
+                                    .width(0.6.dp)
+                                    .fillMaxHeight()
+                                    .background(DividerSoft.copy(alpha = 0.65f)),
+                            )
+                            Box(Modifier.weight(1f).fillMaxHeight().testTag("playlist-tracklist-pane")) {
+                                when {
+                                    error != null -> ErrorState(
+                                        error!!,
+                                        onRetry = {
+                                            if (!loading) {
+                                                loading = true
+                                                if (isBook) requestBookPage(activeBookPage, preserveScroll = true)
+                                                else scope.launch { loadFirstPage() }
+                                            }
+                                        },
+                                        retrying = loading,
+                                        modifier = Modifier.fillMaxSize().padding(top = chromeTopInset),
+                                    )
+                                    loading && songs.isEmpty() -> Column(
+                                        modifier = Modifier.fillMaxSize().padding(top = chromeTopInset + 10.dp),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                                    ) {
+                                        bookToolbar()
+                                        SkeletonSongList(modifier = Modifier.weight(1f).then(bodyHazeModifier), rows = 7, rowSpacing = 2.dp)
+                                    }
+                                    songs.isEmpty() -> EmptyState(emptyHint, Modifier.fillMaxSize().padding(top = chromeTopInset))
+                                    else -> {
+                                        LoadMoreOnScroll(
+                                            listState,
+                                            enabled = hasMore && pendingBookUid == null,
+                                            loading = loadingMore || bookPageLoading,
+                                            onLoadMore = ::loadMore,
                                         )
+                                        Column(
+                                            Modifier.fillMaxSize()
+                                                .padding(top = if (isBook) chromeTopInset + 10.dp else 0.dp),
+                                        ) {
+                                            if (isBook && !selection.active) bookToolbar()
+                                            LazyColumn(
+                                                state = listState,
+                                                modifier = Modifier.fillMaxWidth().weight(1f).testTag("collection-song-list"),
+                                                contentPadding = if (isBook) PaddingValues(bottom = 28.dp)
+                                                    else chromeContentPadding(PaddingValues(top = 10.dp, bottom = 28.dp)),
+                                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                                            ) {
+                                                if (!isBook && !selection.active) {
+                                                    item(key = "tracklistHeader") {
+                                                        Row(
+                                                            Modifier.fillMaxWidth().then(bodyHazeModifier).padding(horizontal = 16.dp, vertical = 6.dp),
+                                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                        ) {
+                                                            Text("歌曲列表", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = TextSub)
+                                                            Text(
+                                                                "${maxOf(totalCount, songs.size)} 首",
+                                                                fontSize = 12.sp,
+                                                                color = TextMuted,
+                                                                style = LocalTextStyle.current.copy(fontFeatureSettings = "tnum"),
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                                playlistSongItems()
+                                            }
+                                        }
+                                        if (isBook && !selection.active) {
+                                            Surface(
+                                                onClick = ::locateCurrentBookChapter,
+                                                enabled = currentBookSong != null && !bookPageLoading,
+                                                shape = CircleShape,
+                                                color = MeloraAppearance.card.copy(alpha = 0.82f),
+                                                border = MeloraAppearance.cardBorder,
+                                                shadowElevation = 0.dp,
+                                                modifier = Modifier
+                                                    .align(Alignment.BottomEnd)
+                                                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
+                                                    .padding(end = 6.5.dp, bottom = 26.dp)
+                                                    .size(44.dp),
+                                            ) {
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    Icon(
+                                                        Icons.Rounded.MyLocation,
+                                                        contentDescription = "定位当前播放",
+                                                        tint = if (currentBookSong != null && !bookPageLoading) TextSub else TextMuted,
+                                                        modifier = Modifier.size(19.dp),
+                                                    )
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                    if (controlBarPinned && !selection.active) {
-                        Box(Modifier.fillMaxWidth().align(Alignment.TopCenter).padding(top = chromeTopInset)) {
-                            controlBar(true)
+                } else {
+                    // 必须读取本页 ChromeScaffold 提供的累计 inset；函数顶部只能看到父级 inset。
+                    val density = LocalDensity.current
+                    val chromeTopInsetPx = with(density) { chromeTopInset.roundToPx() }
+                    val controlBarPinned by remember(listState, chromeTopInsetPx) {
+                        derivedStateOf {
+                            !selection.active && shouldPinPlaylistControls(
+                                firstVisibleIndex = listState.firstVisibleItemIndex,
+                                controlBarTop = listState.layoutInfo.visibleItemsInfo
+                                    .firstOrNull { it.key == "controlBar" }
+                                    ?.let { it.offset - listState.layoutInfo.viewportStartOffset },
+                                headerBottom = chromeTopInsetPx,
+                            )
                         }
                     }
-                    if (isBook && !selection.active) {
-                        Surface(
-                            onClick = ::locateCurrentBookChapter,
-                            enabled = currentBookSong != null && !bookPageLoading,
-                            shape = CircleShape,
-                            color = MeloraAppearance.card.copy(alpha = 0.82f),
-                            border = MeloraAppearance.cardBorder,
-                            shadowElevation = 0.dp,
-                            modifier = Modifier.align(Alignment.BottomEnd)
-                                .padding(end = 6.5.dp, bottom = 26.dp).size(44.dp),
+                    val dividerAlpha by animateFloatAsState(
+                        targetValue = if (controlBarPinned && !blurEnabled) 1f else 0f,
+                        animationSpec = tween(durationMillis = 200),
+                        label = "stuckDivider",
+                    )
+                    // 初次加载与真实内容使用同一行布局，避免维护另一套失配的操作栏骨架。
+                    val collectionActions: @Composable () -> Unit = {
+                        CollectionActionsRow(
+                            canPlay = canPlayPlaylist,
+                            favorite = isFav,
+                            onPlay = onPlayButton,
+                            playLabel = playButton.label,
+                            playPause = playButton.pause,
+                            onFavorite = { UserLibrary.toggleFavoritePlaylist(detailPlaylist) },
+                            onSelect = selection::start,
+                            loading = loading && songs.isEmpty(),
+                            modifier = if (isBook) Modifier.testTag("book-chapter-toolbar") else Modifier,
+                            bookChapters = bookControls,
+                        )
+                    }
+                    // 同一个操作栏实现只显示在一个位置：原位或覆盖层；原位始终等高占位。
+                    val controlBar: @Composable (Boolean) -> Unit = { pinned ->
+                        ChromeFloatingBar(
+                            state = controlBarHazeState,
+                            topOffset = chromeTopInset,
+                            height = controlBarHeight,
+                            pinned = pinned,
+                            modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(Icons.Rounded.MyLocation, contentDescription = "定位当前播放",
-                                    tint = if (currentBookSong != null && !bookPageLoading) TextSub else TextMuted,
-                                    modifier = Modifier.size(19.dp))
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(chromeHeaderColor()),
+                            ) {
+                                collectionActions()
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(0.6.dp)
+                                        .alpha(dividerAlpha)
+                                        .background(DividerSoft),
+                                )
+                            }
+                        }
+                    }
+                    val stageModifier = if (largeSinglePane) {
+                        Modifier.widthIn(max = 720.dp).fillMaxWidth().testTag("playlist-large-single-pane")
+                    } else {
+                        Modifier.fillMaxWidth()
+                    }
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                        when {
+                            error != null -> ErrorState(
+                                error!!,
+                                onRetry = {
+                                    if (!loading) {
+                                        loading = true
+                                        if (isBook) requestBookPage(activeBookPage, preserveScroll = true)
+                                        else scope.launch { loadFirstPage() }
+                                    }
+                                },
+                                retrying = loading,
+                                modifier = Modifier.then(stageModifier).fillMaxHeight().padding(top = chromeTopInset),
+                            )
+                            loading && songs.isEmpty() -> Column(
+                                modifier = Modifier
+                                    .then(stageModifier)
+                                    .fillMaxHeight()
+                                    .padding(top = chromeTopInset),
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                if (largeSinglePane) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .then(bodyHazeModifier)
+                                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        ShimmerBox(Modifier.size(120.dp), cornerRadius = 16.dp)
+                                        Spacer(Modifier.width(20.dp))
+                                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            ShimmerBox(Modifier.fillMaxWidth(0.55f).height(20.dp), cornerRadius = 6.dp)
+                                            ShimmerBox(Modifier.fillMaxWidth(0.75f).height(14.dp), cornerRadius = 6.dp)
+                                            ShimmerBox(Modifier.fillMaxWidth(0.45f).height(12.dp), cornerRadius = 5.dp)
+                                        }
+                                    }
+                                } else {
+                                    // 头部骨架：封面 + 两行文字
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .then(bodyHazeModifier)
+                                            .padding(horizontal = 16.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        ShimmerBox(Modifier.size(64.dp), cornerRadius = 12.dp)
+                                        Spacer(Modifier.width(14.dp))
+                                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                                            ShimmerBox(Modifier.fillMaxWidth(0.42f).height(13.dp), cornerRadius = 6.dp)
+                                            ShimmerBox(Modifier.fillMaxWidth(0.62f).height(11.dp), cornerRadius = 5.dp)
+                                        }
+                                    }
+                                }
+                                Column(Modifier.height(controlBarHeight)) {
+                                    collectionActions()
+                                    Spacer(Modifier.height(0.6.dp))
+                                }
+                                SkeletonSongList(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .then(bodyHazeModifier),
+                                    rows = 7,
+                                    rowSpacing = 2.dp,
+                                )
+                            }
+                            songs.isEmpty() -> EmptyState(
+                                emptyHint,
+                                Modifier.then(stageModifier).fillMaxHeight().padding(top = chromeTopInset),
+                            )
+                            else -> {
+                                LoadMoreOnScroll(listState,
+                                    enabled = hasMore && pendingBookUid == null,
+                                    loading = loadingMore || bookPageLoading, onLoadMore = ::loadMore)
+                                LazyColumn(
+                                    state = listState,
+                                    modifier = Modifier.then(stageModifier).fillMaxHeight().testTag("collection-song-list"),
+                                    contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                                ) {
+                                    if (!selection.active) {
+                                        item(key = "detailHeader") {
+                                            if (largeSinglePane) {
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .then(bodyHazeModifier)
+                                                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                ) {
+                                                    CollectionHeroArtwork(
+                                                        image = playlist.img,
+                                                        seed = playlist.id,
+                                                        artist = false,
+                                                        size = 120.dp,
+                                                        cornerRadius = 16,
+                                                    )
+                                                    Spacer(Modifier.width(20.dp))
+                                                    Column(Modifier.weight(1f)) {
+                                                        Text(
+                                                            text = playlist.name,
+                                                            fontSize = 21.sp,
+                                                            lineHeight = 27.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = TextMain,
+                                                            maxLines = 2,
+                                                            overflow = TextOverflow.Ellipsis,
+                                                        )
+                                                        Spacer(Modifier.height(6.dp))
+                                                        Text(
+                                                            text = header.primary,
+                                                            fontSize = 13.5.sp,
+                                                            lineHeight = 19.sp,
+                                                            fontWeight = FontWeight.Medium,
+                                                            color = TextSub,
+                                                            maxLines = 2,
+                                                            overflow = TextOverflow.Ellipsis,
+                                                        )
+                                                        if (header.secondary.isNotBlank()) {
+                                                            Text(
+                                                                text = header.secondary,
+                                                                fontSize = 12.5.sp,
+                                                                lineHeight = 17.sp,
+                                                                color = TextMuted,
+                                                                maxLines = 2,
+                                                                overflow = TextOverflow.Ellipsis,
+                                                                modifier = Modifier.padding(top = 4.dp),
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            } else {
+                                                CollectionInfoHeader(
+                                                    image = playlist.img,
+                                                    seed = playlist.id,
+                                                    primary = header.primary,
+                                                    secondary = header.secondary,
+                                                    primaryMaxLines = header.primaryMaxLines,
+                                                    modifier = bodyHazeModifier,
+                                                )
+                                            }
+                                        }
+                                        item(key = "controlBar", contentType = "controls") {
+                                            Box(Modifier.fillMaxWidth().height(controlBarHeight)) {
+                                                if (!controlBarPinned) controlBar(false)
+                                            }
+                                        }
+                                    }
+                                    playlistSongItems()
+                                }
+                                if (controlBarPinned && !selection.active) {
+                                    Box(
+                                        Modifier.then(stageModifier).align(Alignment.TopCenter)
+                                            .padding(top = chromeTopInset).testTag("playlist-pinned-controls"),
+                                    ) {
+                                        controlBar(true)
+                                    }
+                                }
+                                if (isBook && !selection.active) {
+                                    Box(Modifier.then(stageModifier).fillMaxHeight()) {
+                                        Surface(
+                                            onClick = ::locateCurrentBookChapter,
+                                            enabled = currentBookSong != null && !bookPageLoading,
+                                            shape = CircleShape,
+                                            color = MeloraAppearance.card.copy(alpha = 0.82f),
+                                            border = MeloraAppearance.cardBorder,
+                                            shadowElevation = 0.dp,
+                                            modifier = Modifier
+                                                .align(Alignment.BottomEnd)
+                                                .then(
+                                                    if (standalone) Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
+                                                    else Modifier
+                                                )
+                                                .padding(end = 6.5.dp, bottom = 26.dp)
+                                                .size(44.dp),
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Icon(
+                                                    Icons.Rounded.MyLocation,
+                                                    contentDescription = "定位当前播放",
+                                                    tint = if (currentBookSong != null && !bookPageLoading) TextSub else TextMuted,
+                                                    modifier = Modifier.size(19.dp),
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
-        }
 
-        if (bookPickerOpen && isBook) {
-            BookChapterPicker(
-                total = bookTotal,
-                currentPage = activePage,
-                descending = bookDescending,
-                onDismiss = { bookPickerOpen = false },
-                onSelectEpisode = { episode ->
-                    requestBookPage(BookCatalogPaging.pageForOrdinal(episode) ?: 1, targetEpisode = episode)
-                },
-                onSelectPage = { page -> requestBookPage(page) },
-                searchPages = { OnlineCache.cachedBookChapterPages(detailCacheKey) },
-                loadSearchPage = { page -> loadBookPage(playlist.id, page) },
-                detailCacheKey = detailCacheKey,
-                onSelectChapter = { match ->
-                    val generation = beginBookRequest()
-                    bookRequestJob = null
-                    bookPageLoading = false
-                    loading = false
-                    // 搜索命中的原始页直接接回同一目录链路，不按集数猜页、不重复请求、不播放。
-                    applyBookResponse(generation, match.page.page, match.page, match.song.uid,
-                        preserveScroll = false, directionOnAccept = null, append = false)
-                },
-                onLocateCurrent = if (currentBookSong != null && !bookPageLoading) ::locateCurrentBookChapter else null,
-            )
-        }
-        moreSong?.let { song ->
-            SongMoreSheet(song) { moreSong = null }
+            if (bookPickerOpen && isBook) {
+                BookChapterPicker(
+                    total = bookTotal,
+                    currentPage = activePage,
+                    descending = bookDescending,
+                    onDismiss = { bookPickerOpen = false },
+                    onSelectEpisode = { episode ->
+                        requestBookPage(BookCatalogPaging.pageForOrdinal(episode) ?: 1, targetEpisode = episode)
+                    },
+                    onSelectPage = { page -> requestBookPage(page) },
+                    searchPages = { OnlineCache.cachedBookChapterPages(detailCacheKey) },
+                    loadSearchPage = { page -> loadBookPage(playlist.id, page) },
+                    detailCacheKey = detailCacheKey,
+                    onSelectChapter = { match ->
+                        val generation = beginBookRequest()
+                        bookRequestJob = null
+                        bookPageLoading = false
+                        loading = false
+                        // 搜索命中的原始页直接接回同一目录链路，不按集数猜页、不重复请求、不播放。
+                        applyBookResponse(generation, match.page.page, match.page, match.song.uid,
+                            preserveScroll = false, directionOnAccept = null, append = false)
+                    },
+                    onLocateCurrent = if (currentBookSong != null && !bookPageLoading) ::locateCurrentBookChapter else null,
+                )
+            }
+            moreSong?.let { song ->
+                SongMoreSheet(song) { moreSong = null }
+            }
         }
     }
 }

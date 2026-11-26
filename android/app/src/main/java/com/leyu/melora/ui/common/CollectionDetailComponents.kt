@@ -1,12 +1,14 @@
 package com.leyu.melora.ui.common
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.rounded.Checklist
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -17,6 +19,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -75,6 +78,127 @@ internal fun CollectionInfoHeader(
                 overflow = TextOverflow.Ellipsis)
             Text(secondary.ifBlank { " " }, fontSize = 12.sp, lineHeight = 16.sp, color = MeloraAppearance.textSub,
                 minLines = 1, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 3.dp))
+        }
+    }
+}
+
+/** 大屏双栏与居中横幅共用的圆润封面/歌手头像。 */
+@Composable
+internal fun CollectionHeroArtwork(
+    image: String?,
+    seed: String,
+    artist: Boolean,
+    size: Dp,
+    cornerRadius: Int,
+) {
+    if (artist) {
+        var failed by remember(image) { mutableStateOf(false) }
+        Box(
+            Modifier
+                .size(size)
+                .clip(CircleShape)
+                .background(MeloraAppearance.softFill)
+                .border(0.6.dp, MeloraAppearance.divider.copy(alpha = 0.7f), CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (image.isNullOrBlank() || failed) {
+                Icon(Icons.Outlined.Person, null, tint = MeloraAppearance.textMuted, modifier = Modifier.size(size * 0.44f))
+            } else {
+                AsyncImage(
+                    model = image,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    onError = { failed = true },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+    } else {
+        val shape = RoundedCornerShape(cornerRadius.dp)
+        Box(
+            Modifier
+                .size(size)
+                .clip(shape)
+                .border(0.6.dp, MeloraAppearance.divider.copy(alpha = 0.7f), shape),
+        ) {
+            SongArtwork(image, seed, Modifier.fillMaxSize(), cornerRadius = cornerRadius)
+        }
+    }
+}
+
+/** 大屏双栏左展示区共用的操作按钮组：播放全部 + 收藏 + 批量管理。 */
+@Composable
+internal fun CollectionShowcaseActions(
+    canPlay: Boolean,
+    favorite: Boolean,
+    favoriteEnabled: Boolean,
+    selectionActive: Boolean,
+    onPlay: () -> Unit,
+    onFavorite: (() -> Unit)?,
+    onSelect: () -> Unit,
+    loading: Boolean = false,
+    playLabel: String = "播放全部",
+    playPause: Boolean = false,
+    canSelect: Boolean = canPlay,
+) {
+    val activePlay = canPlay && !loading && !selectionActive
+    val playTint = if (activePlay) MeloraAppearance.brand else MeloraAppearance.textMuted
+    val playBg = if (activePlay) MeloraAppearance.tintBlue else MeloraAppearance.softFill
+    val activeBatch = canSelect && !loading && !selectionActive
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.alpha(if (selectionActive) 0.4f else 1f),
+    ) {
+        Surface(
+            onClick = onPlay,
+            enabled = activePlay,
+            shape = RoundedCornerShape(20.dp),
+            color = playBg,
+            modifier = Modifier.height(40.dp),
+        ) {
+            Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    if (playPause) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                    null,
+                    tint = playTint,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(playLabel, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold, color = playTint)
+            }
+        }
+        Surface(
+            onClick = { onFavorite?.invoke() },
+            enabled = favoriteEnabled && onFavorite != null && !loading && !selectionActive,
+            shape = CircleShape,
+            color = MeloraAppearance.softFill,
+            modifier = Modifier.size(40.dp),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    if (favorite) Icons.Rounded.Favorite else Icons.Outlined.FavoriteBorder,
+                    if (favorite) "取消收藏" else "收藏",
+                    tint = if (favorite) MeloraAppearance.accent else MeloraAppearance.textSub,
+                    modifier = Modifier.size(19.dp),
+                )
+            }
+        }
+        Surface(
+            onClick = onSelect,
+            enabled = activeBatch,
+            shape = CircleShape,
+            color = MeloraAppearance.softFill,
+            modifier = Modifier.size(40.dp),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    Icons.Rounded.Checklist,
+                    "批量管理",
+                    tint = if (activeBatch) MeloraAppearance.textSub else MeloraAppearance.textMuted,
+                    modifier = Modifier.size(19.dp),
+                )
+            }
         }
     }
 }
