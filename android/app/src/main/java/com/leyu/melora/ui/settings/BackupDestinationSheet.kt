@@ -2,6 +2,8 @@ package com.leyu.melora.ui.settings
 
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -39,6 +41,8 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -55,8 +59,11 @@ import com.leyu.melora.playback.BackupOrigin
 import com.leyu.melora.playback.WebDavBackup
 import com.leyu.melora.playback.WebDavConfig
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.MeloraSheetHandle
 import com.leyu.melora.ui.common.rememberMeloraBottomSheetState
 import com.leyu.melora.ui.common.runCatchingCancellable
+import com.leyu.melora.ui.theme.DarkGlass
+import com.leyu.melora.ui.theme.LightSheetFrost
 import com.leyu.melora.ui.theme.MeloraAppearance
 import java.text.DateFormat
 import java.util.Date
@@ -164,7 +171,9 @@ internal fun BackupDestinationSheet(
             }
         },
         sheetState = sheetState,
-        containerColor = MeloraAppearance.sheetCard,
+        containerColor = MeloraAppearance.sheet,
+        lightFrostTint = LightSheetFrost.tint,
+        dragHandle = { MeloraSheetHandle(color = MeloraAppearance.textSub.copy(alpha = 0.25f)) },
     ) {
         val canChoose = !closing && !finished
         val result = networkResult
@@ -177,10 +186,10 @@ internal fun BackupDestinationSheet(
         Column(
             modifier = Modifier.fillMaxWidth()
                 .animateContentSize(tween(180))
-                .padding(start = 16.dp, end = 16.dp, bottom = 20.dp)
+                .padding(start = 20.dp, end = 20.dp, bottom = 28.dp)
                 .semantics { paneTitle = title },
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(
                 title,
@@ -224,9 +233,9 @@ private fun DestinationOptions(
     Column(
         modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             DestinationCard(
                 label = if (restore) "本地恢复" else "备份至本地",
                 icon = Icons.Outlined.PhoneAndroid,
@@ -279,8 +288,12 @@ private fun NetworkBackupOptions(
         items(listing.entries, key = BackupFileId::networkName) { entry ->
             LaunchedEffect(listing, entry) { listing.loadOrigin(entry) }
             Column(
-                Modifier.fillMaxWidth().clickable(enabled = canChoose) { onSelect(entry) }.heightIn(min = 48.dp)
-                    .padding(horizontal = 4.dp, vertical = 10.dp),
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable(enabled = canChoose) { onSelect(entry) }
+                    .heightIn(min = 48.dp)
+                    .padding(horizontal = 10.dp, vertical = 10.dp),
             ) {
                 Text(entry.timestamp(), color = SettingsTextMain, fontSize = 16.sp)
                 Text(listing.deviceLabel(entry), color = SettingsTextSub, fontSize = 12.sp,
@@ -298,6 +311,7 @@ private fun NetworkRestoreNotice(
     onRetry: () -> Unit,
     onClose: () -> Unit,
 ) {
+    val accent = if (MeloraAppearance.isDark) DarkGlass.selectedText else LightSheetFrost.blue
     Column(
         modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -309,7 +323,7 @@ private fun NetworkRestoreNotice(
             TextButton(onClick = onRetry, enabled = canRetry) {
                 Box(contentAlignment = Alignment.Center) {
                     Text("重试", modifier = Modifier.padding(horizontal = 6.dp),
-                        color = if (showProgress) androidx.compose.ui.graphics.Color.Transparent else SettingsBrandBlue)
+                        color = if (showProgress) Color.Transparent else accent)
                     if (showProgress) NetworkBackupProgress(Modifier.size(16.dp))
                 }
             }
@@ -319,9 +333,10 @@ private fun NetworkRestoreNotice(
 
 @Composable
 private fun NetworkBackupProgress(modifier: Modifier) {
+    val accent = if (MeloraAppearance.isDark) DarkGlass.selectedText else LightSheetFrost.blue
     CircularProgressIndicator(
         modifier = modifier.semantics { contentDescription = "正在读取网络备份" },
-        color = SettingsBrandBlue,
+        color = accent,
         strokeWidth = 2.dp,
     )
 }
@@ -336,11 +351,15 @@ private fun DestinationCard(
     showProgress: Boolean = false,
     onClick: () -> Unit,
 ) {
+    val dark = MeloraAppearance.isDark
+    val accent = if (dark) DarkGlass.selectedText else LightSheetFrost.blue
     Surface(
         onClick = onClick,
         enabled = available && canChoose,
-        shape = RoundedCornerShape(16.dp),
-        color = MeloraAppearance.softFill,
+        shape = RoundedCornerShape(17.dp),
+        color = if (dark) DarkGlass.card else LightSheetFrost.card,
+        border = if (dark) BorderStroke(0.5.dp, DarkGlass.border) else LightSheetFrost.cardBorder,
+        shadowElevation = 0.dp,
         modifier = modifier.heightIn(min = 96.dp),
     ) {
         Column(
@@ -348,15 +367,21 @@ private fun DestinationCard(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
         ) {
-            Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (dark) DarkGlass.icon else LightSheetFrost.iconWell),
+                contentAlignment = Alignment.Center,
+            ) {
                 if (showProgress) {
-                    NetworkBackupProgress(Modifier.size(23.dp))
+                    NetworkBackupProgress(Modifier.size(20.dp))
                 } else {
                     Icon(
                         icon,
                         contentDescription = null,
-                        tint = if (available) SettingsBrandBlue else SettingsBrandBlue.copy(alpha = 0.45f),
-                        modifier = Modifier.size(28.dp),
+                        tint = if (available) accent else accent.copy(alpha = 0.42f),
+                        modifier = Modifier.size(20.dp),
                     )
                 }
             }

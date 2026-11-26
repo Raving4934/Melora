@@ -115,6 +115,23 @@ fun MeloraTheme(
     }
 }
 
+/** 局部抽屉主题覆盖（例如全屏播放页独立深/浅色）；未提供时沿用全局 MeloraAppearance.isDark。 */
+internal val LocalSheetDarkOverride = staticCompositionLocalOf<Boolean?> { null }
+
+@Composable
+internal fun currentMeloraSheetPalette(): MeloraThemePalette =
+    MeloraAppearance.palette(LocalSheetDarkOverride.current ?: MeloraAppearance.isDark)
+
+@Composable
+internal fun WithMeloraSheetTheme(darkTheme: Boolean, content: @Composable () -> Unit) {
+    CompositionLocalProvider(LocalSheetDarkOverride provides darkTheme) {
+        MaterialTheme(
+            colorScheme = if (darkTheme) DarkColors else LightColors,
+            content = content,
+        )
+    }
+}
+
 @Composable
 internal fun meloraSwitchColors(): SwitchColors {
     val colors = MaterialTheme.colorScheme
@@ -171,19 +188,22 @@ internal fun SystemBarsVisibility(forceHideStatusBar: Boolean = LocalForceHideSt
     val context = LocalContext.current
     val configuredHideStatusBar by MeloraSettings.hideStatusBar.collectAsStateWithLifecycle()
     val hideStatusBar = configuredHideStatusBar || forceHideStatusBar
+    val hideNavBar = forceHideStatusBar
     val window = remember(view, context) {
         generateSequence(view.parent) { it.parent }
             .filterIsInstance<DialogWindowProvider>()
             .firstOrNull()?.window ?: (context as? Activity)?.window
     } ?: return
-    DisposableEffect(window, view, hideStatusBar) {
+    DisposableEffect(window, view, hideStatusBar, hideNavBar) {
         val controller = WindowCompat.getInsetsController(window, window.decorView)
         fun applyVisibility() {
-            controller.systemBarsBehavior = if (hideStatusBar) {
+            controller.systemBarsBehavior = if (hideStatusBar || hideNavBar) {
                 WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             } else WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
             if (hideStatusBar) controller.hide(WindowInsetsCompat.Type.statusBars())
             else controller.show(WindowInsetsCompat.Type.statusBars())
+            if (hideNavBar) controller.hide(WindowInsetsCompat.Type.navigationBars())
+            else controller.show(WindowInsetsCompat.Type.navigationBars())
         }
         applyVisibility()
         // Dialog首次获焦、返回主窗口时再次同步；不替换Compose自己的Insets监听器。

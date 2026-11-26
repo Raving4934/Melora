@@ -1,5 +1,6 @@
 package com.leyu.melora.ui.common
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.LocalOverscrollFactory
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.Orientation
@@ -19,6 +20,8 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.SheetValue
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.material3.contentColorFor
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -48,17 +51,22 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.leyu.melora.ui.theme.DarkGlass
 import com.leyu.melora.ui.theme.LightSheetFrost
 import com.leyu.melora.ui.theme.MeloraAppearance
 import com.leyu.melora.ui.theme.SystemBarsVisibility
+import com.leyu.melora.ui.theme.currentMeloraSheetPalette
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.launch
@@ -131,7 +139,7 @@ private val LocalGlassHandleColor = compositionLocalOf { Color.Unspecified }
 
 @Composable
 internal fun MeloraSheetHandle(
-    color: Color = MeloraAppearance.textSub.copy(alpha = 0.25f),
+    color: Color = currentMeloraSheetPalette().textSub.copy(alpha = 0.25f),
     width: Dp = 36.dp,
     topPadding: Dp = 10.dp,
     bottomPadding: Dp = 6.dp,
@@ -154,7 +162,7 @@ internal fun MeloraSheetHandle(
 internal fun MeloraBottomSheet(
     onDismissRequest: () -> Unit,
     sheetState: SheetState,
-    containerColor: Color = MeloraAppearance.sheet,
+    containerColor: Color = currentMeloraSheetPalette().sheet,
     tonalElevation: Dp = 0.dp,
     shape: Shape = BottomSheetDefaults.ExpandedShape,
     scrimColor: Color = BottomSheetDefaults.ScrimColor,
@@ -287,5 +295,42 @@ internal fun MeloraBottomSheet(
                 }
             }
         }
+    }
+}
+
+/** 歌单与有声书分类抽屉共用的标签胶囊，保持亮/暗与纯色/毛玻璃下的一致质感。 */
+@Composable
+internal fun SheetTagChip(
+    label: String,
+    isSelected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val palette = currentMeloraSheetPalette()
+    val dark = palette.isDark
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(10.dp),
+        color = when {
+            dark -> if (isSelected) DarkGlass.selectedFill else DarkGlass.chip
+            isSelected -> LightSheetFrost.blue
+            else -> LightSheetFrost.chip
+        },
+        contentColor = if (isSelected) {
+            if (dark) DarkGlass.selectedText else Color.White
+        } else palette.textMain,
+        border = when {
+            dark -> BorderStroke(0.5.dp, if (isSelected) DarkGlass.selectedEdge else DarkGlass.border)
+            isSelected -> null
+            else -> LightSheetFrost.chipBorder
+        },
+        modifier = modifier.semantics { selected = isSelected },
+    ) {
+        Text(
+            text = label,
+            fontSize = 12.sp,
+            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+        )
     }
 }

@@ -7,33 +7,63 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
+internal class MeloraThemePalette(val isDark: Boolean) {
+    val canvas: Color = if (isDark) MeloraSurfaceDark else Color(0xFFF4F5F7)
+    val card: Color = if (isDark) MeloraCardDark else Color.White
+    internal val sheet: Color = if (isDark) Color(0xFF141416) else canvas
+    internal val sheetCard: Color = if (isDark) Color(0xFF1E1E21) else card
+    val textMain: Color = if (isDark) Color(0xFFEBEBEF) else Color(0xFF111827)
+    val textSub: Color = if (isDark) Color(0xFF9898A0) else Color(0xFF6B7280)
+    val textMuted: Color = if (isDark) Color(0xFF63636B) else Color(0xFF9CA3AF)
+    val divider: Color = if (isDark) Color(0x0FFFFFFF) else Color(0xFFF3F4F6)
+    val brand: Color = if (isDark) MeloraBlueDark else MeloraBlue
+    val accent: Color = if (isDark) Color(0xFFF2635C) else Color(0xFFE53935)
+    val segmentTrack: Color = if (isDark) Color(0xFF1A1A1D) else Color(0xFFE5E7EB)
+    val segmentThumb: Color = if (isDark) Color(0xFF2A2A2E) else Color.White
+    val softFill: Color = if (isDark) Color(0xFF1E1E22) else Color(0xFFF1F3F6)
+    // 骨架屏底色：需同时与画布和卡片拉开对比，softFill 放画布上几乎不可见
+    val skeleton: Color = if (isDark) Color(0xFF242428) else Color(0xFFE6E9EF)
+    val tintBlue: Color = if (isDark) Color(0xFF1C2536) else Color(0xFFEFF4FE)
+    val tintRed: Color = if (isDark) Color(0xFF2D191D) else Color(0xFFFEE2E2)
+
+    // 现代化极简卡片微描边：替代发脏的不对称单向阴影，深浅统一半透明细边
+    val cardBorderColor: Color = if (isDark) Color(0x08FFFFFF) else Color(0x0D000000)
+    val cardBorder: BorderStroke = BorderStroke(0.6.dp, cardBorderColor)
+    val chipBorderColor: Color = if (isDark) Color(0x0AFFFFFF) else Color(0x0A000000)
+    val chipBorder: BorderStroke = BorderStroke(0.5.dp, chipBorderColor)
+}
+
 object MeloraAppearance {
+    private val lightPalette = MeloraThemePalette(isDark = false)
+    private val darkPalette = MeloraThemePalette(isDark = true)
+
     var isDark: Boolean by mutableStateOf(false)
         internal set
 
-    val canvas: Color get() = if (isDark) MeloraSurfaceDark else Color(0xFFF4F5F7)
-    val card: Color get() = if (isDark) MeloraCardDark else Color.White
-    internal val sheet: Color get() = if (isDark) Color(0xFF141416) else canvas
-    internal val sheetCard: Color get() = if (isDark) Color(0xFF1E1E21) else card
-    val textMain: Color get() = if (isDark) Color(0xFFEBEBEF) else Color(0xFF111827)
-    val textSub: Color get() = if (isDark) Color(0xFF9898A0) else Color(0xFF6B7280)
-    val textMuted: Color get() = if (isDark) Color(0xFF63636B) else Color(0xFF9CA3AF)
-    val divider: Color get() = if (isDark) Color(0x0FFFFFFF) else Color(0xFFF3F4F6)
-    val brand: Color get() = if (isDark) MeloraBlueDark else MeloraBlue
-    val accent: Color get() = if (isDark) Color(0xFFF2635C) else Color(0xFFE53935)
-    val segmentTrack: Color get() = if (isDark) Color(0xFF1A1A1D) else Color(0xFFE5E7EB)
-    val segmentThumb: Color get() = if (isDark) Color(0xFF2A2A2E) else Color.White
-    val softFill: Color get() = if (isDark) Color(0xFF1E1E22) else Color(0xFFF1F3F6)
-    // 骨架屏底色：需同时与画布和卡片拉开对比，softFill 放画布上几乎不可见
-    val skeleton: Color get() = if (isDark) Color(0xFF242428) else Color(0xFFE6E9EF)
-    val tintBlue: Color get() = if (isDark) Color(0xFF1C2536) else Color(0xFFEFF4FE)
-    val tintRed: Color get() = if (isDark) Color(0xFF2D191D) else Color(0xFFFEE2E2)
+    internal fun palette(dark: Boolean): MeloraThemePalette = if (dark) darkPalette else lightPalette
 
-    // 现代化极简卡片微描边：替代发脏的不对称单向阴影，深浅统一半透明细边
-    val cardBorderColor: Color get() = if (isDark) Color(0x08FFFFFF) else Color(0x0D000000)
-    val cardBorder: BorderStroke get() = BorderStroke(0.6.dp, cardBorderColor)
-    val chipBorderColor: Color get() = if (isDark) Color(0x0AFFFFFF) else Color(0x0A000000)
-    val chipBorder: BorderStroke get() = BorderStroke(0.5.dp, chipBorderColor)
+    private val current: MeloraThemePalette get() = palette(isDark)
+
+    val canvas: Color get() = current.canvas
+    val card: Color get() = current.card
+    internal val sheet: Color get() = current.sheet
+    internal val sheetCard: Color get() = current.sheetCard
+    val textMain: Color get() = current.textMain
+    val textSub: Color get() = current.textSub
+    val textMuted: Color get() = current.textMuted
+    val divider: Color get() = current.divider
+    val brand: Color get() = current.brand
+    val accent: Color get() = current.accent
+    val segmentTrack: Color get() = current.segmentTrack
+    val segmentThumb: Color get() = current.segmentThumb
+    val softFill: Color get() = current.softFill
+    val skeleton: Color get() = current.skeleton
+    val tintBlue: Color get() = current.tintBlue
+    val tintRed: Color get() = current.tintRed
+    val cardBorderColor: Color get() = current.cardBorderColor
+    val cardBorder: BorderStroke get() = current.cardBorder
+    val chipBorderColor: Color get() = current.chipBorderColor
+    val chipBorder: BorderStroke get() = current.chipBorder
 }
 
 internal object LightSheetFrost {

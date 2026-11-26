@@ -8,7 +8,6 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -49,7 +48,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -63,9 +61,9 @@ import com.leyu.melora.playback.sdk.OnlineRepository
 import com.leyu.melora.playback.sdk.Tag
 import com.leyu.melora.playback.sdk.TagInfo
 import com.leyu.melora.ui.common.ChromeActionSurface
+import com.leyu.melora.ui.common.SheetTagChip
 import com.leyu.melora.ui.common.sourceAliasDisplay
 import com.leyu.melora.ui.common.runCatchingCancellable
-import com.leyu.melora.ui.theme.DarkGlass
 import com.leyu.melora.ui.theme.LightSheetFrost
 import com.leyu.melora.ui.theme.MeloraAppearance
 import kotlinx.coroutines.delay
@@ -294,16 +292,16 @@ internal fun PlaylistCategoryList(tagInfo: TagInfo?, selectedTagId: String, onSe
                 )
             }
         }) {
-            TagChip(AllPlaylists.name, selectedTagId == AllPlaylists.id, onClick = { onSelectTag(AllPlaylists) })
+            SheetTagChip(AllPlaylists.name, selectedTagId == AllPlaylists.id, onClick = { onSelectTag(AllPlaylists) })
             tagInfo?.hotTag?.forEach { tag ->
-                TagChip(tag.name, selectedTagId == tag.id, modifier = reveal, onClick = { onSelectTag(tag) })
+                SheetTagChip(tag.name, selectedTagId == tag.id, modifier = reveal, onClick = { onSelectTag(tag) })
             }
         }
         tagInfo?.tags?.forEach { group ->
             if (group.list.isNotEmpty()) {
                 CategoryGroupSection(group.name, modifier = reveal) {
                     group.list.forEach { tag ->
-                        TagChip(tag.name, selectedTagId == tag.id, onClick = { onSelectTag(tag) })
+                        SheetTagChip(tag.name, selectedTagId == tag.id, onClick = { onSelectTag(tag) })
                     }
                 }
             }
@@ -329,35 +327,5 @@ private fun CategoryGroupSection(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) { content() }
-    }
-}
-
-@Composable
-private fun TagChip(label: String, isSelected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    val dark = MeloraAppearance.isDark
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(10.dp),
-        color = when {
-            dark -> if (isSelected) DarkGlass.selectedFill else DarkGlass.chip
-            isSelected -> LightSheetFrost.blue
-            else -> LightSheetFrost.chip
-        },
-        contentColor = if (isSelected) {
-            if (dark) DarkGlass.selectedText else Color.White
-        } else MeloraAppearance.textMain,
-        border = when {
-            dark -> BorderStroke(0.5.dp, if (isSelected) DarkGlass.selectedEdge else DarkGlass.border)
-            isSelected -> null
-            else -> LightSheetFrost.chipBorder
-        },
-        modifier = modifier.semantics { selected = isSelected },
-    ) {
-        Text(
-            text = label,
-            fontSize = 12.sp,
-            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-        )
     }
 }
