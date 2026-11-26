@@ -409,6 +409,32 @@ class PlayerSheetNavigationInstrumentedTest {
     private fun colorDistance(a: Color, b: Color) =
         maxOf(abs(a.red - b.red), abs(a.green - b.green), abs(a.blue - b.blue))
 
+    @Test fun tappingMiniKeepsFadingControlsAlignedWithTheRisingSheet() {
+        show(forcePortrait = true)
+        val mini = compose.onNodeWithTag("player-mini-track")
+        compose.awaitStable(mini)
+        val slider = compose.onNodeWithTag("player-seek-slider", useUnmergedTree = true)
+        val sliderCentersInSheet = mutableListOf<Float>()
+        compose.mainClock.autoAdvance = false
+        try {
+            mini.performClick()
+            repeat(32) {
+                compose.mainClock.advanceTimeByFrame()
+                val offset = compose.runOnIdle { back.sheet.requireOffset() }
+                val progress = playerSheetProgress(offset, back.sheet.anchors.positionOf(PlayerSheetAnchor.Collapsed))
+                if (progress in 0.84f..0.99f) {
+                    sliderCentersInSheet += compose.boundsInSameFrame(slider).single().center.y - offset
+                }
+            }
+            compose.mainClock.advanceTimeBy(1_500)
+            val finalY = compose.boundsInSameFrame(slider).single().center.y
+            assertTrue("应采到多个淡入帧，实际=$sliderCentersInSheet", sliderCentersInSheet.size >= 3)
+            for (y in sliderCentersInSheet) assertEquals("进度条应随面板同步滑入", finalY, y, 1f)
+        } finally {
+            compose.mainClock.autoAdvance = true
+        }
+    }
+
     @Test fun miniExpandAndSystemBackKeepTheMovingPanelOpaque() {
         show(forcePortrait = true)
         val mini = compose.onAllNodesWithText(track.title, substring = true).onLast()
