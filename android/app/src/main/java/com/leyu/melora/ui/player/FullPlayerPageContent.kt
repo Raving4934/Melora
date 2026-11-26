@@ -751,9 +751,11 @@ internal fun FullPlayerPageContent(
             }
 
         }
-        // 复用同一阅读区；断点变化时按业务页面恢复Pager位置。
-        val currentPane by rememberUpdatedState(paneContent)
-        val pane = remember { movableContentOf<Modifier> { currentPane(it) } }
+        // 阅读区可移动；两页和三页布局各自持有与 PagerState 匹配的页面内容和 key。
+        val pane = key(coverPagerState) {
+            val currentPane by rememberUpdatedState(paneContent)
+            remember { movableContentOf<Modifier> { currentPane(it) } }
+        }
         val transport: @Composable () -> Unit = {
             // 曲目切换必须一起销毁 Slider 内部拖动和预览，不能只清空外部数值。
             key(track?.uid) {
