@@ -1,6 +1,7 @@
 package com.leyu.melora.ui.player
 
 import com.leyu.melora.ui.awaitStable
+import com.leyu.melora.ui.boundsInSameFrame
 
 import android.view.View
 import androidx.compose.foundation.layout.Box
@@ -13,10 +14,12 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.assertIsDisplayed
@@ -38,10 +41,12 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.swipeRight
+import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.filters.SdkSuppress
 import com.leyu.melora.playback.AudioSpecification
 import com.leyu.melora.playback.LyricsUiConfig
 import com.leyu.melora.playback.LyricLine
@@ -83,6 +88,7 @@ class ImmersivePlayerInstrumentedTest {
         observeCoverStyle: Boolean = false,
         linesOverride: androidx.compose.runtime.State<List<LyricLine>>? = null,
         playerVisible: androidx.compose.runtime.State<Boolean>? = null,
+        simulateSystemBars: Boolean = false,
     ) {
         val position = mutableLongStateOf(2_000)
         val defaultLines = listOf(LyricLine(0, "慢慢听见海风"), LyricLine(5_000, "灯火落在远方"))
@@ -95,25 +101,30 @@ class ImmersivePlayerInstrumentedTest {
                 PlayerCoverStyle.Default
             }
             view = LocalView.current
-            SystemBarsAppearance(darkStatusIcons = false, forceHideStatusBar = immersive.value)
-            PlayerAppearanceProvider(dark = true) {
-                FullPlayerPageContent(
-                    state = PlayerUiState(current = UiTrack("immersive-test", "晚风与海", "测试歌手", "测试专辑"), durationMs = 180_000),
-                    immersive = immersive.value, onImmersiveChange = { immersive.value = it },
-                    lyricPosition = position, motionEnabled = motionEnabled,
-                    lyricFrame = rememberLyricFrame(lines, position), lyricLines = lines,
-                    onOpenQueue = {}, onCloseQueue = {}, queuePagerState = rememberPagerState { 2 },
-                    onArtworkPositioned = {}, artworkAlpha = { 1f },
-                    coverStyle = coverStyle, artworkRotation = { 0f },
-                    onPageVisualChanged = { _, _, _ -> },
-                    modifier = when {
-                        landscape -> Modifier.requiredSize(720.dp, 360.dp)
-                        compact -> Modifier.fillMaxWidth().height(340.dp)
-                        // 依赖窄屏三页或竖屏几何的用例显式固定视口，不跟随宿主平板尺寸。
-                        forcePortrait -> Modifier.requiredSize(360.dp, 640.dp)
-                        else -> Modifier.fillMaxSize()
-                    },
-                )
+            if (!simulateSystemBars) {
+                SystemBarsAppearance(darkStatusIcons = false, forceHideStatusBar = immersive.value)
+            }
+            val density = if (simulateSystemBars) Density(1f) else LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides density) {
+                PlayerAppearanceProvider(dark = true) {
+                    FullPlayerPageContent(
+                        state = PlayerUiState(current = UiTrack("immersive-test", "晚风与海", "测试歌手", "测试专辑"), durationMs = 180_000),
+                        immersive = immersive.value, onImmersiveChange = { immersive.value = it },
+                        lyricPosition = position, motionEnabled = motionEnabled,
+                        lyricFrame = rememberLyricFrame(lines, position), lyricLines = lines,
+                        onOpenQueue = {}, onCloseQueue = {}, queuePagerState = rememberPagerState { 2 },
+                        onArtworkPositioned = {}, artworkAlpha = { 1f },
+                        coverStyle = coverStyle, artworkRotation = { 0f },
+                        onPageVisualChanged = { _, _, _ -> },
+                        modifier = when {
+                            landscape -> Modifier.requiredSize(720.dp, 360.dp)
+                            compact -> Modifier.fillMaxWidth().height(340.dp)
+                            // 依赖窄屏三页或竖屏几何的用例显式固定视口，不跟随宿主平板尺寸。
+                            forcePortrait -> Modifier.requiredSize(360.dp, 640.dp)
+                            else -> Modifier.fillMaxSize()
+                        },
+                    )
+                }
             }
         }
     }
@@ -157,6 +168,7 @@ class ImmersivePlayerInstrumentedTest {
         val selectedTag = "player-cover-${selectedStyle.storageValue}"
         try {
             showPlayer(observeCoverStyle = true)
+            compose.awaitStable("player-artwork")
             compose.onNodeWithTag("player-artwork").performTouchInput { longClick() }
             compose.awaitStable("player-cover-picker")
             compose.runOnIdle { assertFalse(immersive.value) }
@@ -189,6 +201,7 @@ class ImmersivePlayerInstrumentedTest {
         val coverTag = "player-cover-${originalCoverStyle.storageValue}"
         try {
             showPlayer(observeCoverStyle = true)
+            compose.awaitStable("player-artwork")
             compose.onNodeWithTag("player-artwork").performTouchInput { longClick() }
             compose.awaitStable("player-cover-picker")
             compose.onNodeWithTag(coverTag).assertIsSelected()
@@ -242,15 +255,23 @@ class ImmersivePlayerInstrumentedTest {
     fun coverControlsHideAfterThreeSecondsAndRepeatedTapRestartsTimeout() {
         showPlayer()
         compose.runOnIdle { immersive.value = true }
-        compose.onNodeWithTag("player-artwork").performClick()
-        compose.onNodeWithTag("immersive-playback-controls").assertIsDisplayed()
-        compose.mainClock.advanceTimeBy(2_000)
-        compose.onNodeWithTag("player-artwork").performClick()
-        compose.mainClock.advanceTimeBy(2_000)
-        compose.onNodeWithTag("immersive-playback-controls").assertIsDisplayed()
-        compose.mainClock.advanceTimeBy(1_300)
-        compose.onNodeWithTag("immersive-playback-controls").assertDoesNotExist()
-        compose.onNodeWithTag("player-artwork").performClick()
+        val artwork = compose.onNodeWithTag("player-artwork")
+        compose.awaitStable(artwork)
+        fun tapExposedArtwork() = artwork.performTouchInput { click(percentOffset(0.5f, 0.2f)) }
+        tapExposedArtwork()
+        val controls = compose.onNodeWithTag("immersive-playback-controls").assertIsDisplayed()
+        compose.mainClock.autoAdvance = false
+        try {
+            compose.mainClock.advanceTimeBy(2_000)
+            tapExposedArtwork()
+            compose.mainClock.advanceTimeBy(2_000)
+            controls.assertIsDisplayed()
+            compose.mainClock.advanceTimeBy(1_300)
+            controls.assertDoesNotExist()
+        } finally {
+            compose.mainClock.autoAdvance = true
+        }
+        tapExposedArtwork()
         compose.onNodeWithContentDescription("退出沉浸播放").performClick()
         compose.runOnIdle { assertFalse(immersive.value) }
     }
@@ -314,6 +335,134 @@ class ImmersivePlayerInstrumentedTest {
         assertEquals(original.id, restored.id)
         assertEquals(originalCenter.x, restored.boundsInRoot.center.x, 1f)
     }
+
+    // API 30 起可以独立设置系统栏的当前内距和忽略可见性的内距。
+    private fun dispatchPortraitBars(statusVisible: Boolean, navigationVisible: Boolean = statusVisible) {
+        val status = WindowInsetsCompat.Type.statusBars()
+        val navigation = WindowInsetsCompat.Type.navigationBars()
+        val statusInsets = Insets.of(0, 24, 0, 0)
+        val navigationInsets = Insets.of(0, 0, 0, 48)
+        val insets = WindowInsetsCompat.Builder()
+            .setInsets(status, if (statusVisible) statusInsets else Insets.NONE)
+            .setInsets(navigation, if (navigationVisible) navigationInsets else Insets.NONE)
+            .setInsetsIgnoringVisibility(status, statusInsets)
+            .setInsetsIgnoringVisibility(navigation, navigationInsets)
+            .setVisible(status, statusVisible)
+            .setVisible(navigation, navigationVisible)
+            .build()
+        ViewCompat.dispatchApplyWindowInsets(view, insets)
+    }
+
+    private fun withSimulatedPortraitPlayer(
+        playerVisible: State<Boolean>? = null,
+        verify: (SemanticsNodeInteraction) -> Unit,
+    ) {
+        val originalMiniLyrics = MeloraSettings.miniLyricsEnabled.value
+        val originalHideStatusBar = MeloraSettings.hideStatusBar.value
+        try {
+            MeloraSettings.miniLyricsEnabled.value = true
+            MeloraSettings.hideStatusBar.value = false
+            showPlayer(
+                motionEnabled = true, forcePortrait = true,
+                simulateSystemBars = true, playerVisible = playerVisible,
+            )
+            compose.runOnIdle { dispatchPortraitBars(statusVisible = true) }
+            verify(compose.onNodeWithTag("player-artwork"))
+        } finally {
+            compose.mainClock.autoAdvance = true
+            MeloraSettings.miniLyricsEnabled.value = originalMiniLyrics
+            MeloraSettings.hideStatusBar.value = originalHideStatusBar
+        }
+    }
+
+    @SdkSuppress(minSdkVersion = 30)
+    @Test
+    fun portraitArtworkMovesUpWhenNavigationInsetsClearAndRestoresAfterReversal() =
+        withSimulatedPortraitPlayer { cover ->
+            val original = compose.awaitStable(cover).center
+
+            compose.mainClock.autoAdvance = false
+            compose.runOnIdle {
+                immersive.value = true
+                dispatchPortraitBars(statusVisible = false)
+            }
+            repeat(2) {
+                compose.mainClock.advanceTimeByFrame()
+                val early = compose.boundsInSameFrame(cover).single().center
+                assertTrue("系统栏消失时封面向下跳动，原位置=$original，当前位置=$early", early.y <= original.y + 1f)
+            }
+            compose.mainClock.advanceTimeBy(128)
+            val during = compose.boundsInSameFrame(cover).single().center
+            assertTrue("进入沉浸 160ms 时封面应上移，原位置=$original，当前位置=$during", during.y < original.y)
+
+            compose.runOnIdle {
+                immersive.value = false
+                dispatchPortraitBars(statusVisible = true)
+            }
+            compose.mainClock.advanceTimeBy(1_600)
+            val restored = compose.boundsInSameFrame(cover).single().center
+            assertEquals(original.x, restored.x, 1f)
+            assertEquals(original.y, restored.y, 1f)
+        }
+
+    @SdkSuppress(minSdkVersion = 30)
+    @Test
+    fun portraitExitAfterImmersiveLayoutRecreationDoesNotOvershoot() {
+        val visible = mutableStateOf(true)
+        withSimulatedPortraitPlayer(playerVisible = visible) { cover ->
+            val normal = compose.awaitStable(cover).center
+            compose.runOnIdle { visible.value = false }
+            cover.assertDoesNotExist()
+            // 保留宿主的沉浸状态，让重新创建的竖屏播放器直接从沉浸布局开始。
+            compose.runOnIdle {
+                immersive.value = true
+                visible.value = true
+            }
+            cover.assertExists()
+            compose.runOnIdle { dispatchPortraitBars(statusVisible = false) }
+            val start = compose.awaitStable(cover).center
+            assertTrue("沉浸封面应在普通位置上方，沉浸位置=$start，普通位置=$normal", start.y < normal.y)
+
+            compose.mainClock.autoAdvance = false
+            compose.runOnIdle {
+                immersive.value = false
+                dispatchPortraitBars(statusVisible = true)
+            }
+            repeat(24) {
+                compose.mainClock.advanceTimeByFrame()
+                val during = compose.boundsInSameFrame(cover).single().center
+                assertTrue("退出时封面越过普通位置，普通位置=$normal，当前位置=$during", during.y <= normal.y + 1f)
+            }
+            compose.mainClock.advanceTimeBy(1_600)
+            val restored = compose.boundsInSameFrame(cover).single().center
+            assertEquals(normal.x, restored.x, 1f)
+            assertEquals(normal.y, restored.y, 1f)
+        }
+    }
+
+    @SdkSuppress(minSdkVersion = 30)
+    @Test
+    fun delayedNavigationInsetReleaseKeepsImmersiveArtworkContinuous() =
+        withSimulatedPortraitPlayer { cover ->
+            compose.runOnIdle {
+                immersive.value = true
+                dispatchPortraitBars(statusVisible = false, navigationVisible = true)
+            }
+            val before = compose.awaitStable(cover)
+            val pages = compose.onNodeWithTag("player-pages")
+            val beforeHeight = pages.fetchSemanticsNode().size.height
+
+            compose.mainClock.autoAdvance = false
+            compose.runOnIdle { dispatchPortraitBars(statusVisible = false) }
+            repeat(2) {
+                compose.mainClock.advanceTimeByFrame()
+                val during = compose.boundsInSameFrame(cover).single()
+                assertEquals("导航栏回调不应使封面中心跳动", before.center.y, during.center.y, 1f)
+                assertEquals("导航栏回调不应使封面宽度突变", before.width, during.width, 1f)
+            }
+            compose.mainClock.advanceTimeBy(1_600)
+            assertEquals(beforeHeight + 48, pages.fetchSemanticsNode().size.height)
+        }
 
     @Test
     fun shortViewportDoesNotSqueezeExitOrPlaybackButtonsInsideSmallArtwork() {

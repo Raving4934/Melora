@@ -146,7 +146,11 @@ class PlayerLyricsPagingTest {
         showPlayer()
         compose.mainClock.autoAdvance = false
         try {
-            fun artworkBounds() = compose.onNodeWithTag("player-artwork").fetchSemanticsNode().boundsInRoot
+            fun bounds(tag: String): Rect {
+                val node = compose.onNodeWithTag(tag).fetchSemanticsNode()
+                return compose.runOnUiThread { node.boundsInRoot }
+            }
+            fun artworkBounds() = bounds("player-artwork")
             fun assertBoundsNear(expected: Rect, actual: Rect, message: String) {
                 assertEquals("$message (left)", expected.left, actual.left, 1f)
                 assertEquals("$message (top)", expected.top, actual.top, 1f)
@@ -157,7 +161,7 @@ class PlayerLyricsPagingTest {
                 abs(to.left - from.left), abs(to.right - from.right),
                 abs(to.top - from.top), abs(to.bottom - from.bottom),
             )
-            val coverPageTop = compose.onNodeWithTag("player-page-1").fetchSemanticsNode().boundsInRoot.top
+            val coverPageTop = bounds("player-page-1").top
             fun assertIntermediate(actual: Rect, square: Rect, circle: Rect, label: String) {
                 assertTrue("$label 封面边长应处于动画中间帧: $square → $actual → $circle",
                     square.width - actual.width > 1f && actual.width - circle.width > 1f)
@@ -172,13 +176,13 @@ class PlayerLyricsPagingTest {
                 assertEquals("$label 封面顶边应随留白连续移动", expectedTop, actual.top, 2f)
             }
             fun assertChromeUnchanged(heading: Rect, transport: Rect, label: String) {
-                assertBoundsNear(heading, compose.onNodeWithTag("player-heading").fetchSemanticsNode().boundsInRoot, "$label 标题区域不应移动")
-                assertBoundsNear(transport, compose.onNodeWithTag("player-transport").fetchSemanticsNode().boundsInRoot, "$label transport区域不应移动")
+                assertBoundsNear(heading, bounds("player-heading"), "$label 标题区域不应移动")
+                assertBoundsNear(transport, bounds("player-transport"), "$label transport区域不应移动")
             }
 
             val defaultArtwork = artworkBounds()
-            val heading = compose.onNodeWithTag("player-heading").fetchSemanticsNode().boundsInRoot
-            val transport = compose.onNodeWithTag("player-transport").fetchSemanticsNode().boundsInRoot
+            val heading = bounds("player-heading")
+            val transport = bounds("player-transport")
 
             compose.runOnIdle { coverStyleState.value = PlayerCoverStyle.Circle }
             // MainTestClock先重组、下一帧才给动画t=0；从实际起点取64/128ms，

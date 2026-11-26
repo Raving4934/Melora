@@ -71,6 +71,13 @@ import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.captionBar
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBarsIgnoringVisibility
+import androidx.compose.foundation.layout.statusBarsIgnoringVisibility
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.layout.BoxWithConstraints
 import android.content.Context
 import android.content.Intent
@@ -490,6 +497,20 @@ internal fun FullPlayerPageContent(
             }
 
         }
+        var headingHeightPx by remember { mutableIntStateOf(0) }
+        var transportHeightPx by remember { mutableIntStateOf(0) }
+        val portraitCoverSpace = if (twoPanes) null else {
+            val hideStatusBar by MeloraSettings.hideStatusBar.collectAsStateWithLifecycle()
+            val permanentInsets = WindowInsets.displayCutout.union(WindowInsets.ime).union(WindowInsets.captionBar)
+            val withNavigation = permanentInsets.union(WindowInsets.navigationBarsIgnoringVisibility)
+            val normalInsets = (if (hideStatusBar) withNavigation else withNavigation.union(WindowInsets.statusBarsIgnoringVisibility))
+                .asPaddingValues()
+            val chromeHeight = with(LocalDensity.current) { (headingHeightPx + transportHeightPx).toDp() }
+            PortraitCoverSpace(
+                normal = (maxHeight - normalInsets.calculateTopPadding() - normalInsets.calculateBottomPadding() - chromeHeight).coerceAtLeast(0.dp),
+                immersive = (maxHeight - permanentInsets.asPaddingValues().calculateBottomPadding()).coerceAtLeast(0.dp),
+            )
+        }
         val currentCover by rememberUpdatedState<@Composable () -> Unit> {
             PlayerCoverPage(
                 state = state, onOpenCoverPicker = { showCoverPicker = true }, immersive = immersive, immersion = immersion,
@@ -499,7 +520,7 @@ internal fun FullPlayerPageContent(
                 retryArtwork = isVisible && coverPageVisible,
                 compact = compactLandscape, lyricsInCover = !expandedLayout,
                 phoneLandscape = compactLandscape,
-                largePortrait = largePortrait,
+                largePortrait = largePortrait, portraitSpace = portraitCoverSpace,
                 miniLyricsEnabled = miniLyricsEnabled, wordLiftEnabled = lyricsConfig.isWordLiftEnabled,
                 posterMode = posterMode, coverStyle = coverStyle,
                 artworkAlpha = artworkAlpha, artworkRotation = artworkRotation,
@@ -941,17 +962,24 @@ internal fun FullPlayerPageContent(
                 pane(Modifier.fillMaxSize())
             }
         } else {
+            val bottomInset by animateDpAsState(
+                WindowInsets.safeDrawing.asPaddingValues().calculateBottomPadding(),
+                if (motionEnabled) spring(dampingRatio = 1f, stiffness = 220f) else snap(), label = "portraitBottomInset",
+            )
+            val portraitInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal).union(WindowInsets(bottom = bottomInset))
             playerAndQueue(Modifier.fillMaxSize()) {
                 Column(
-                    Modifier.fillMaxSize().windowInsetsPadding(playerInsets).padding(top = playerTopInset),
+                    Modifier.fillMaxSize().windowInsetsPadding(portraitInsets).padding(top = playerTopInset),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Column(Modifier.then(portraitStageModifier).fillMaxWidth().immersionChrome(immersion).testTag("player-heading")) {
+                    Column(Modifier.then(portraitStageModifier).fillMaxWidth().immersionChrome(immersion)
+                        .onSizeChanged { headingHeightPx = it.height }.testTag("player-heading")) {
                         heading(Modifier.padding(controlsPadding))
                         Spacer(Modifier.height(16.dp))
                     }
                     pane(Modifier.fillMaxWidth().weight(1f))
-                    Column(Modifier.then(portraitStageModifier).fillMaxWidth().immersionChrome(immersion).testTag("player-transport")) {
+                    Column(Modifier.then(portraitStageModifier).fillMaxWidth().immersionChrome(immersion)
+                        .onSizeChanged { transportHeightPx = it.height }.testTag("player-transport")) {
                         Spacer(Modifier.height(2.dp))
                         Column(Modifier.padding(controlsPadding)) { transport() }
                     }
@@ -1894,6 +1922,8 @@ internal fun landscapeImmersiveLayout(widthDp: Float, heightDp: Float): Landscap
     )
 }
 
+private data class PortraitCoverSpace(val normal: Dp, val immersive: Dp)
+
 // 播放页 Page 1：默认封面歌词对齐左边沿，圆形/黑胶歌词居中。
 @Composable
 private fun PlayerCoverPage(
@@ -1913,6 +1943,7 @@ private fun PlayerCoverPage(
     lyricsInCover: Boolean = true,
     largePortrait: Boolean = false,
     posterMode: Boolean = false,
+    portraitSpace: PortraitCoverSpace?,
     coverStyle: PlayerCoverStyle,
     artworkAlpha: () -> Float,
     artworkRotation: () -> Float,
@@ -1951,22 +1982,25 @@ private fun PlayerCoverPage(
         val paneWidth = maxWidth
         val landscapeImmersive = lyricsInCover && (phoneLandscape || compact)
         val targetLandscape = if (landscapeImmersive) landscapeImmersiveLayout(paneWidth.value, maxHeight.value) else null
-        val squareSide = minOf(maxWidth, (maxHeight - normalContentHeight).coerceAtLeast(0.dp), if (maxWidth >= 600.dp) 480.dp else maxWidth)
+        // 进出时用完整控件和系统栏的端点，避免从变化中的剩余空间重复推算封面大小。
+        val normalPaneHeight = if (!immersive && t == 0f) maxHeight else portraitSpace?.normal ?: maxHeight
+        val immersivePaneHeight = portraitSpace?.immersive ?: maxHeight
+        val squareSide = minOf(maxWidth, (normalPaneHeight - normalContentHeight).coerceAtLeast(0.dp), if (maxWidth >= 600.dp) 480.dp else maxWidth)
         val circleSide = if (posterTitleVisible) {
-            minOf(maxWidth, (maxHeight - normalContentHeight).coerceAtLeast(0.dp), if (maxWidth >= 600.dp) 480.dp else maxWidth) * 0.96f
+            squareSide * 0.96f
         } else {
-            playerCoverSideDp(maxWidth.value, maxHeight.value, normalLyricsHeight.value).dp
+            playerCoverSideDp(maxWidth.value, normalPaneHeight.value, normalLyricsHeight.value).dp
         }
         val normalSide = (squareSide * (1f - c) + circleSide * c) * if (phoneLandscape) 0.9f else 1f
         val floatingSide = when {
             targetLandscape != null -> targetLandscape.coverSideDp.dp
-            lyricsInCover -> minOf(maxWidth * 0.75f, maxHeight * 0.40f)
+            lyricsInCover -> minOf(maxWidth * 0.75f, immersivePaneHeight * 0.40f)
             else -> minOf(maxWidth * 0.85f, maxHeight * 0.70f, 420.dp)
         }
         val side = normalSide * (1f - t) + floatingSide * t
         val normalBelowCover = if (normalLyricsVisible) previewHeight + 24.dp else 12.dp
         // 普通态留白只能由普通态封面计算；用插值中的 side 会把缩小释放的空间再次加到顶部，导致先下沉再上移。
-        val remaining = (maxHeight - normalSide - if (posterTitleVisible) posterReservedHeight else normalBelowCover).coerceAtLeast(0.dp)
+        val remaining = (normalPaneHeight - normalSide - if (posterTitleVisible) posterReservedHeight else normalBelowCover).coerceAtLeast(0.dp)
         val extraCoverToTitle = if (posterTitleVisible) (remaining * 0.25f).coerceAtMost(14.dp) else 0.dp
         val coverToTitleGap = posterBaseTopGap + extraCoverToTitle
         // 与歌词共用外层窗口判定，不能用扣除页内边距后的宽度再次判断断点。无歌词时也居中。
@@ -1977,8 +2011,8 @@ private fun PlayerCoverPage(
             roomyLyrics -> minOf(12.dp, remaining)
             else -> remaining * (1f - centering * 0.5f)
         }
-        val normalLyricHeight = if (roomyLyrics) (maxHeight - normalSide - normalTop - 20.dp).coerceAtLeast(0.dp) else previewHeight
-        val topSpace = if (lyricsInCover) normalTop * (1f - t) + maxHeight * (0.04f * t)
+        val normalLyricHeight = if (roomyLyrics) (normalPaneHeight - normalSide - normalTop - 20.dp).coerceAtLeast(0.dp) else previewHeight
+        val topSpace = if (lyricsInCover) normalTop * (1f - t) + immersivePaneHeight * (0.04f * t)
             else ((maxHeight - side - 26.dp * t) / 2f).coerceAtLeast(0.dp)
         val normalLyricWidth = if (roomyLyrics) maxWidth else normalSide
         val timeHeight = 26.dp * t
