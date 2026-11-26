@@ -949,6 +949,75 @@ class DeviceWorkflowTest(unittest.TestCase):
         self.assertIn('-Pandroid.testInstrumentationRunnerArguments.numShards="$TEST_SHARD_COUNT"', connected)
         self.assertIn('-Pandroid.testInstrumentationRunnerArguments.shardIndex="$TEST_SHARD_INDEX"', connected)
 
+    def test_device_test_retries_only_maven_rate_limit_before_tests_start(self) -> None:
+        script = shell_script(step(self.workflow, "执行完整 Android 设备回归"))
+        rate_limit = dedent("""\
+            > Task :app:connectedDebugAndroidTest FAILED
+            Execution failed for task ':app:connectedDebugAndroidTest' (registered by plugin 'com.android.internal.application').
+            > Could not resolve all files for configuration ':app:unified-test-platform-gradle-work-action'.
+               > Could not resolve org.junit.platform:junit-platform-engine:1.13.3.
+                  > Could not GET 'https://repo.maven.apache.org/maven2/org/junit/platform/junit-platform-engine/1.13.3/junit-platform-engine-1.13.3.pom'.
+                     > Received status code 429 from server: Too Many Requests
+            """)
+        success = (0, "Running tests on devices: melora-ci(AVD) - 15\nBUILD SUCCESSFUL\n", True)
+        limited = (7, rate_limit, False)
+        for name, attempts, expected_exit, expected_waits in (
+            ("success", [success], 0, []),
+            ("recovery", [limited, success], 0, ["10"]),
+            ("exhausted", [limited, limited, (23, rate_limit, False)], 23, ["10", "20"]),
+            ("already started", [(11, "Running tests on devices: melora-ci(AVD) - 15\n" + rate_limit, False)], 11, []),
+            ("reports exist", [(12, rate_limit, True)], 12, []),
+            ("test assertion", [(13, "> There were failing tests. See the report at:\n" + rate_limit, False)], 13, []),
+            ("different repository", [(14, rate_limit.replace("repo.maven.apache.org", "dl.google.com"), False)], 14, []),
+            ("different configuration", [(15, rate_limit.replace("unified-test-platform-gradle-work-action", "debugRuntimeClasspath"), False)], 15, []),
+            ("different task", [(16, rate_limit.replace(":app:connectedDebugAndroidTest", ":app:assembleDebug"), False)], 16, []),
+            ("non-retryable HTTP error", [(17, rate_limit.replace("429", "404"), False)], 17, []),
+            ("mixed HTTP errors", [(18, rate_limit + rate_limit.replace("429", "401"), False)], 18, []),
+        ):
+            with self.subTest(name=name), tempfile.TemporaryDirectory(prefix="melora connected tests ") as directory:
+                root = Path(directory)
+                gradle = root / "gradlew"
+                gradle.write_text(dedent("""\
+                    #!/usr/bin/env python3
+                    import json
+                    import os
+                    from pathlib import Path
+                    import sys
+
+                    calls = Path("gradle-calls.jsonl")
+                    attempt = len(calls.read_text().splitlines()) if calls.exists() else 0
+                    with calls.open("a") as output:
+                        output.write(json.dumps(sys.argv[1:]) + "\\n")
+                    status, message, report = json.loads(os.environ["GRADLE_RESULTS"])[attempt]
+                    if report:
+                        reports = Path("app/build/outputs/androidTest-results/connected/debug")
+                        reports.mkdir(parents=True)
+                        (reports / "TEST-device.xml").write_text("<testsuite/>")
+                    print(message, end="")
+                    sys.exit(status)
+                    """))
+                gradle.chmod(0o755)
+                sleep = root / "sleep"
+                sleep.write_text('#!/bin/bash\nprintf \'%s\\n\' "$@" >> sleep-calls.log\n')
+                sleep.chmod(0o755)
+                result = subprocess.run(
+                    ["bash", "-euc", script], cwd=root, capture_output=True, text=True, timeout=10,
+                    env={**os.environ, "PATH": directory + os.pathsep + os.environ["PATH"],
+                         "DEVICE_LOG_DIR": directory, "CI_GRADLE_JVM_ARGS": "-Xmx4G",
+                         "TEST_SHARD_COUNT": "2", "TEST_SHARD_INDEX": "1",
+                         "GRADLE_RESULTS": json.dumps(attempts)},
+                )
+                self.assertEqual(result.returncode, expected_exit, result.stdout + result.stderr)
+                calls = [json.loads(line) for line in (root / "gradle-calls.jsonl").read_text().splitlines()]
+                self.assertEqual(len(calls), len(attempts))
+                self.assertIn("-Pandroid.testInstrumentationRunnerArguments.numShards=2", calls[0])
+                self.assertIn("-Pandroid.testInstrumentationRunnerArguments.shardIndex=1", calls[0])
+                self.assertEqual(calls, [calls[0]] * len(attempts))
+                waits = root / "sleep-calls.log"
+                self.assertEqual(waits.read_text().splitlines() if waits.exists() else [], expected_waits)
+                for attempt, (_, message, _) in enumerate(attempts, start=1):
+                    self.assertEqual((root / f"connected-tests-attempt-{attempt}.log").read_text(), message)
+
     def test_prebuilt_install_failure_cannot_continue_to_overlay_setup(self) -> None:
         script = shell_script(step(self.workflow, "安装测试目标并预置 overlay 权限"))
         with tempfile.TemporaryDirectory(prefix="melora install ") as directory:

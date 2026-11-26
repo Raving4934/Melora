@@ -408,11 +408,46 @@ jobs:
           rm -rf app/build/outputs/androidTest-results/connected app/build/reports/androidTests/connected
           # runner 自动发现全部测试，再按原生分片划分到两个独立设备。
           # 不过滤测试类、不放宽30分钟上限，避免完整串行回归挤占报告收尾时间。
-          ./gradlew --no-daemon --build-cache --max-workers=1 \
-            -Dorg.gradle.jvmargs="$CI_GRADLE_JVM_ARGS" -Pmelora.debugAbi=x86_64 \
-            -Pandroid.testInstrumentationRunnerArguments.numShards="$TEST_SHARD_COUNT" \
-            -Pandroid.testInstrumentationRunnerArguments.shardIndex="$TEST_SHARD_INDEX" \
-            :app:connectedDebugAndroidTest 2>&1 | tee "$DEVICE_LOG_DIR/connected-tests.log"
+          test_task=:app:connectedDebugAndroidTest
+          reports=app/build/outputs/androidTest-results/connected
+          for attempt in 1 2 3; do
+            attempt_log="$DEVICE_LOG_DIR/connected-tests-attempt-$attempt.log"
+            if ./gradlew --no-daemon --build-cache --max-workers=1 --console=plain \
+              -Dorg.gradle.jvmargs="$CI_GRADLE_JVM_ARGS" -Pmelora.debugAbi=x86_64 \
+              -Pandroid.testInstrumentationRunnerArguments.numShards="$TEST_SHARD_COUNT" \
+              -Pandroid.testInstrumentationRunnerArguments.shardIndex="$TEST_SHARD_INDEX" \
+              "$test_task" 2>&1 | tee -a "$DEVICE_LOG_DIR/connected-tests.log" "$attempt_log"; then
+              break
+            else
+              run_status=("${PIPESTATUS[@]}")
+            fi
+            if (( run_status[1] != 0 )); then exit "${run_status[1]}"; fi
+            # 只重试 UTP 尚未启动设备测试时的 Maven Central 限流，保留实际测试与其它错误的退出码。
+            if (( attempt == 3 )) ||
+              grep -Eq 'Running tests on devices:|There were failing tests\.' "$attempt_log" ||
+              [[ -d "$reports" && -n "$(find "$reports" -type f -name 'TEST-*.xml' -print -quit)" ]] ||
+              ! grep -Fq "Execution failed for task '$test_task'" "$attempt_log" ||
+              ! awk '
+                /^> Could not resolve all files for configuration / {
+                  utp = /:app:unified-test-platform-gradle-work-action/
+                }
+                /Could not (GET|HEAD) / {
+                  central = utp && /https:\/\/repo\.maven\.apache\.org\/maven2\//
+                  next
+                }
+                /Received status code [0-9]+ from server:/ {
+                  if (central && /Received status code 429 from server:/) limited = 1
+                  else other_error = 1
+                }
+                { central = 0 }
+                END { exit (!limited || other_error) }
+              ' "$attempt_log"; then
+              exit "${run_status[0]}"
+            fi
+            delay=$((attempt * 10))
+            echo "::warning::Maven Central rate-limited Android test-runner dependencies (attempt $attempt/3), retrying in $delay seconds."
+            sleep "$delay"
+          done
       - name: 校验 Android 设备 JUnit 结果
         if: always()
         run: |

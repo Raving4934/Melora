@@ -24,6 +24,8 @@ RESOLVE_HOME = (
 )
 STAY_AWAKE = ("svc", "power", "stayon", "true")
 DISMISS_KEYGUARD = ("wm", "dismiss-keyguard")
+CONFIRM_IMMERSIVE = ("settings", "--user", "current", "put", "secure", "immersive_mode_confirmations", "confirmed")
+GET_IMMERSIVE = ("settings", "--user", "current", "get", "secure", "immersive_mode_confirmations")
 DUMP_WINDOWS = ("dumpsys", "window", "-a")
 
 # 从 API 35 的 .superpowers/tmp/ci-v020-20261016/window-verbose.log
@@ -191,6 +193,7 @@ class PrepareUiTest(unittest.TestCase):
         self.log_dir = Path(temp.name) / "logs"
         self.home = HOME_COMPONENT
         self.home_output = HOME_PACKAGE + "/.NexusLauncherActivity\n"
+        self.immersive_confirmation = "confirmed\n"
         self.snapshots = iter(())
         self.failures: dict[tuple[str, ...], Exception] = {}
         self.now = 0.0
@@ -227,7 +230,9 @@ class PrepareUiTest(unittest.TestCase):
             return self.home_output
         if args == DUMP_WINDOWS:
             return next(self.snapshots)
-        if args in (STAY_AWAKE, DISMISS_KEYGUARD, self.stop_command(), self.start_command()):
+        if args == GET_IMMERSIVE:
+            return self.immersive_confirmation
+        if args in (STAY_AWAKE, DISMISS_KEYGUARD, CONFIRM_IMMERSIVE, self.stop_command(), self.start_command()):
             return ""
         # 包括 boot 时注入 MENU(82)/HOME 的旧链路在内，任何额外命令都失败。
         raise AssertionError(f"Unexpected adb shell command: {args!r}")
@@ -246,11 +251,19 @@ class PrepareUiTest(unittest.TestCase):
             call(SERIAL, *RESOLVE_HOME),
             call(SERIAL, *STAY_AWAKE),
             call(SERIAL, *DISMISS_KEYGUARD),
+            call(SERIAL, *CONFIRM_IMMERSIVE),
+            call(SERIAL, *GET_IMMERSIVE),
             *[call(SERIAL, *DUMP_WINDOWS)] * 3,
         ])
         self.assertEqual(self.clock.sleep.call_args_list, [call(1), call(1)])
         self.assertEqual((self.log_dir / "window-before-tests.log").read_text(), READY_SNAPSHOT)
         self.assertFalse((self.log_dir / "window-boot-anr.log").exists())
+
+    def test_missing_immersive_confirmation_aborts_preflight(self) -> None:
+        self.immersive_confirmation = "null\n"
+        with self.assertRaisesRegex(RuntimeError, "immersive mode confirmation was not saved"):
+            self.prepare([READY_SNAPSHOT] * 3)
+        self.assert_poll_count(0)
 
     def test_one_or_two_stable_snapshots_are_not_ready(self) -> None:
         for count in (1, 2):
@@ -290,6 +303,8 @@ class PrepareUiTest(unittest.TestCase):
             call(SERIAL, *RESOLVE_HOME),
             call(SERIAL, *STAY_AWAKE),
             call(SERIAL, *DISMISS_KEYGUARD),
+            call(SERIAL, *CONFIRM_IMMERSIVE),
+            call(SERIAL, *GET_IMMERSIVE),
             *[call(SERIAL, *DUMP_WINDOWS)] * 3,
             call(SERIAL, "am", "force-stop", package),
             call(SERIAL, "am", "start", "-W", "-n", self.home,
@@ -312,6 +327,8 @@ class PrepareUiTest(unittest.TestCase):
                     call(SERIAL, *RESOLVE_HOME),
                     call(SERIAL, *STAY_AWAKE),
                     call(SERIAL, *DISMISS_KEYGUARD),
+                    call(SERIAL, *CONFIRM_IMMERSIVE),
+                    call(SERIAL, *GET_IMMERSIVE),
                     call(SERIAL, *DUMP_WINDOWS),
                 ])
                 self.clock.sleep.assert_not_called()

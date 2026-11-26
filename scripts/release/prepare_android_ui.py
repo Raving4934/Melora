@@ -60,6 +60,11 @@ def prepare_ui(serial: str, log_dir: Path, *, timeout: float = 120) -> None:
     # 使用系统服务解锁，不向尚未绘制完的 Launcher 注入 MENU/HOME 键而触发输入 ANR。
     shell(serial, "svc", "power", "stayon", "true")
     shell(serial, "wm", "dismiss-keyguard")
+    # 模拟已确认过首次全屏提示的设备，避免系统浮层截获沉浸测试的返回键。
+    shell(serial, "settings", "--user", "current", "put", "secure", "immersive_mode_confirmations", "confirmed")
+    if shell(serial, "settings", "--user", "current", "get", "secure", "immersive_mode_confirmations").strip() != "confirmed":
+        raise RuntimeError("AVD immersive mode confirmation was not saved")
+    print("Verified AVD immersive mode confirmation", flush=True)
     deadline = time.monotonic() + timeout
     stable = 0
     restarted = False
