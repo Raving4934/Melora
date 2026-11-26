@@ -69,6 +69,17 @@ import com.leyu.melora.ui.theme.currentMeloraSheetPalette
 import com.leyu.melora.ui.theme.meloraSwitchColors
 import com.leyu.melora.ui.common.LocalChromeTopInset
 import com.leyu.melora.ui.common.chromeContentPadding
+import androidx.compose.runtime.State
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.lerp
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.onLongClick
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -207,6 +218,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
@@ -359,12 +371,14 @@ internal fun FullPlayerPageContent(
             }
         },
     ) {
+    val anchors = remember { LandscapeArtworkAnchors() }
     BoxWithConstraints(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize().onPlaced { anchors.root = it },
     ) {
         val expandedLayout = playerUsesExpandedLayout(maxWidth.value, maxHeight.value)
         val compactLandscape = playerUsesCompactLandscape(maxWidth.value, maxHeight.value)
         val twoPanes = expandedLayout || compactLandscape
+        val compactControlsScroll = rememberScrollState()
         val compactLandscapeNormal = compactLandscape && !immersive
         val expandedNormal = expandedLayout && !immersive
         val landscapeImmersivePager = twoPanes && immersive
@@ -390,7 +404,7 @@ internal fun FullPlayerPageContent(
         }
         LaunchedEffect(coverPagerState) {
             // 横屏用歌词补齐缺失的封面页，沉浸态也有自己的初始页。只记住后续实际停稳的分页。
-            snapshotFlow { coverPagerState.settledPage }.drop(1).collect { selectedPage = pages[it] }
+            if (!landscapeImmersivePager) snapshotFlow { coverPagerState.settledPage }.drop(1).collect { selectedPage = pages[it] }
         }
         fun selectReadingTab(index: Int) {
             if (coverPagerState.settledPage == index) selectedPage = pages[index]
@@ -419,7 +433,9 @@ internal fun FullPlayerPageContent(
             }
         }
         val t = immersion.value
-        val playerInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom)
+        val permanentInsets = WindowInsets.displayCutout.union(WindowInsets.ime).union(WindowInsets.captionBar)
+        val playerInsets = (if (landscapeImmersivePager) permanentInsets else WindowInsets.safeDrawing)
+            .only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom)
         val playerTopInset by animateDpAsState(
             if (immersive) 0.dp else WindowInsets.safeDrawing.asPaddingValues().calculateTopPadding(),
             if (motionEnabled) spring(dampingRatio = 1f, stiffness = 220f) else snap(), label = "playerTopInset",
@@ -504,7 +520,6 @@ internal fun FullPlayerPageContent(
         var transportHeightPx by remember { mutableIntStateOf(0) }
         val portraitCoverSpace = if (twoPanes) null else {
             val hideStatusBar by MeloraSettings.hideStatusBar.collectAsStateWithLifecycle()
-            val permanentInsets = WindowInsets.displayCutout.union(WindowInsets.ime).union(WindowInsets.captionBar)
             val withNavigation = permanentInsets.union(WindowInsets.navigationBarsIgnoringVisibility)
             val normalInsets = (if (hideStatusBar) withNavigation else withNavigation.union(WindowInsets.statusBarsIgnoringVisibility))
                 .asPaddingValues()
@@ -514,23 +529,93 @@ internal fun FullPlayerPageContent(
                 immersive = (maxHeight - permanentInsets.asPaddingValues().calculateBottomPadding()).coerceAtLeast(0.dp),
             )
         }
+        val centered = nowPlayingArtworkShape(coverStyle) == NowPlayingArtworkShape.Circle
+        val roundness = animateFloatAsState(if (centered) 1f else 0f,
+            if (motionEnabled) PlayerCoverMorphSpec else snap(), label = "coverLayout")
+        var controlsVisible by remember(immersive) { mutableStateOf(false) }
+        var controlInteraction by remember { mutableIntStateOf(0) }
+        LaunchedEffect(immersive, isVisible, coverPageVisible, controlsVisible, controlInteraction, track?.uid) {
+            if (!immersive || !isVisible || !coverPageVisible) controlsVisible = false
+            else if (controlsVisible) { delay(3_000); controlsVisible = false }
+        }
+        val interact = { controlsVisible = true; controlInteraction++ }
+        val tapArtwork: () -> Unit = { if (immersive) interact() }
+        val artworkActions = Modifier.combinedClickable(
+            interactionSource = remember { MutableInteractionSource() }, indication = null,
+            onLongClickLabel = "选择封面类型", onLongClick = { showCoverPicker = true }, onClick = tapArtwork,
+        )
+        val artwork: @Composable BoxScope.() -> Unit = {
+            Box(Modifier.fillMaxSize().graphicsLayer {
+                alpha = artworkAlpha()
+                rotationX = -2f * immersion.value
+                rotationY = 3f * immersion.value
+                rotationZ = -0.5f * immersion.value
+                cameraDistance = 16f * density
+            }, contentAlignment = Alignment.Center) {
+                ImmersiveCoverProgress(lyricPosition, state.durationMs, immersion, roundness = roundness,
+                    modifier = Modifier.matchParentSize())
+                NowPlayingArtwork(
+                    url = track?.artwork, seed = track?.uid ?: "empty", style = coverStyle,
+                    modifier = Modifier.fillMaxSize().padding(6.dp * t)
+                        .testTag("player-artwork")
+                        .semantics { contentDescription = "${track?.title.orEmpty()}，${track?.artist.orEmpty()}" }
+                        .onGloballyPositioned(onArtworkPositioned)
+                        .graphicsLayer {
+                            // 黑胶外圈透明且自带径向投影，不叠加 HWUI 阴影；其余样式用透明度淡出阴影并维持足够海拔，避免 Skia 低海拔圆形阴影退化为八边形切角。
+                            val shadowAlpha = if (coverStyle == PlayerCoverStyle.Vinyl || MeloraAppearance.isEInk) 0f else immersion.value.coerceIn(0f, 1f)
+                            shadowElevation = if (shadowAlpha > 0.005f) 14.dp.toPx() * (0.35f + 0.65f * shadowAlpha) else 0f
+                            ambientShadowColor = Color.Black.copy(alpha = shadowAlpha)
+                            spotShadowColor = Color.Black.copy(alpha = shadowAlpha)
+                            shape = if (roundness.value >= 0.999f) CircleShape
+                                else RoundedCornerShape((18f * (1f - roundness.value) + size.minDimension / (2f * density) * roundness.value).dp)
+                        }
+                        .then(
+                            if (compactLandscape && !immersive && coverStyle == PlayerCoverStyle.Default) {
+                                Modifier.border(0.6.dp, FullPlayerTextPrimary.copy(alpha = 0.08f * (1f - t)), RoundedCornerShape(16.dp))
+                            } else if (MeloraAppearance.isEInk && coverStyle != PlayerCoverStyle.Vinyl) {
+                                Modifier.border(1.dp, Color.Black, if (centered) CircleShape else RoundedCornerShape(18.dp))
+                            } else {
+                                Modifier
+                            },
+                        )
+                        .then(if (twoPanes) Modifier.semantics {
+                            onClick { tapArtwork(); true }
+                            onLongClick("选择封面类型") { showCoverPicker = true; true }
+                        } else artworkActions),
+                    cornerRadius = if (compactLandscape && !immersive) 16 else 18, retryOnError = isVisible && coverPageVisible, smoothChanges = true,
+                    rotationDegrees = artworkRotation, motionEnabled = motionEnabled,
+                    tonearmAngle = tonearmAngle,
+                    recordChange = recordChange,
+                )
+            }
+            val eInk = MeloraAppearance.isEInk
+            AnimatedVisibility(
+                visible = controlsVisible && immersive && isVisible && coverPageVisible,
+                enter = if (eInk) EnterTransition.None else fadeIn(tween(120)),
+                exit = if (eInk) ExitTransition.None else fadeOut(tween(160)),
+                modifier = Modifier.align(Alignment.Center).wrapContentWidth(unbounded = true),
+            ) {
+                ImmersivePlaybackControls(
+                    playing = state.playing,
+                    onPrevious = { interact(); PlaybackController.previous() },
+                    onToggle = { interact(); PlaybackController.toggle() },
+                    onNext = { interact(); PlaybackController.next() },
+                    onExit = { onImmersiveChange(false) },
+                )
+            }
+        }
+        // 横屏分页承接手势，封面在分页外持续绘制，切换布局时保留已解码的图片和黑胶状态。
+        val artworkAnchor = Modifier.onGloballyPositioned { anchors.update(it, immersive) }
+            .clearAndSetSemantics {}.then(artworkActions)
         val currentCover by rememberUpdatedState<@Composable () -> Unit> {
             PlayerCoverPage(
-                state = state, onOpenCoverPicker = { showCoverPicker = true }, immersive = immersive, immersion = immersion,
-                onImmersiveChange = onImmersiveChange,
-                isVisible = isVisible && coverPageVisible,
-                track = track, lyrics = lyricLines,
-                retryArtwork = isVisible && coverPageVisible,
-                compact = compactLandscape, lyricsInCover = !expandedLayout,
-                phoneLandscape = compactLandscape,
+                state = state, immersive = immersive, immersion = immersion,
+                track = track, lyrics = lyricLines, compact = compactLandscape, lyricsInCover = !expandedLayout,
                 largePortrait = largePortrait, portraitSpace = portraitCoverSpace,
                 miniLyricsEnabled = miniLyricsEnabled, wordLiftEnabled = lyricsConfig.isWordLiftEnabled,
-                posterMode = posterMode, coverStyle = coverStyle,
-                artworkAlpha = artworkAlpha, artworkRotation = artworkRotation,
-                tonearmAngle = tonearmAngle,
-                recordChange = recordChange,
-                onArtworkPositioned = onArtworkPositioned, position = lyricPosition, frame = lyricFrame,
-                motionEnabled = motionEnabled,
+                posterMode = posterMode, roundness = roundness, centered = centered, twoPanes = twoPanes,
+                artwork = { if (twoPanes) Spacer(Modifier.fillMaxSize().then(artworkAnchor)) else artwork() },
+                position = lyricPosition, frame = lyricFrame, motionEnabled = motionEnabled,
                 onNavigateToLyrics = { scope.launch { coverPagerState.animateScrollToPage(pages.indexOf(2), animationSpec = PlayerPageSnapSpec) } },
             )
         }
@@ -551,7 +636,8 @@ internal fun FullPlayerPageContent(
                 } else Modifier
                 // 先按整页边界裁切，再留正文内距：不串页，也不在屏幕内侧提前硬切。
                 Box(
-                    Modifier.fillMaxSize().testTag("player-page-$pageIndex").clipToBounds(),
+                    Modifier.fillMaxSize().testTag("player-page-$pageIndex").clipToBounds()
+                        .then(if (landscapeImmersivePager && pageIndex == 1) Modifier.onPlaced { anchors.page = it } else Modifier),
                     contentAlignment = Alignment.TopCenter,
                 ) {
                     Box(
@@ -624,7 +710,7 @@ internal fun FullPlayerPageContent(
                                             motionEnabled = motionEnabled,
                                             immersive = true,
                                             modifier = Modifier.fillMaxSize().testTag("player-full-lyrics")
-                                                .lyricViewportFade(),
+                                                .graphicsLayer { alpha = immersion.value }.lyricViewportFade(),
                                             onLineClick = { if (lyricLines.isNotEmpty()) PlaybackController.seekTo(it.startMs) },
                                         )
                                     }
@@ -852,9 +938,9 @@ internal fun FullPlayerPageContent(
                     contentAlignment = Alignment.Center,
                 ) {
                     Column(Modifier.widthIn(max = 460.dp).fillMaxSize()) {
-                        Box(Modifier.immersionChrome(immersion).testTag("player-heading")) { heading(Modifier) }
+                        Box(Modifier.graphicsLayer { alpha = 1f - immersion.value }.testTag("player-heading")) { heading(Modifier) }
                         Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 16.dp)) { cover() }
-                        Column(Modifier.fillMaxWidth().immersionChrome(immersion).testTag("player-transport")) { transport() }
+                        Column(Modifier.fillMaxWidth().graphicsLayer { alpha = 1f - immersion.value }.testTag("player-transport")) { transport() }
                     }
                 }
                 playerAndQueue(Modifier.weight(0.56f).fillMaxHeight().nestedScroll(readingScroll).testTag("player-reading-pane")) {
@@ -862,7 +948,7 @@ internal fun FullPlayerPageContent(
                         PlayerReadingTabs(
                             pages = pages,
                             selectedPage = currentPage,
-                            modifier = Modifier.fillMaxWidth().immersionChrome(immersion).padding(horizontal = 20.dp, vertical = 8.dp),
+                            modifier = Modifier.fillMaxWidth().graphicsLayer { alpha = 1f - immersion.value }.padding(horizontal = 20.dp, vertical = 8.dp),
                             tabTagPrefix = "player-page-tab-",
                             compact = false,
                             onSelect = ::selectReadingTab,
@@ -882,40 +968,18 @@ internal fun FullPlayerPageContent(
                     Modifier.weight(0.43f).fillMaxHeight().clipToBounds()
                         .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Start + WindowInsetsSides.Bottom))
                         .testTag("player-compact-controls")
-                        .padding(start = 20.dp, end = 4.dp, top = 12.dp, bottom = 8.dp),
+                        .padding(start = 20.dp, end = 4.dp, top = 12.dp, bottom = 8.dp)
+                        .onGloballyPositioned { viewport ->
+                            anchors.normalViewport = anchors.root?.localBoundingBoxOf(viewport)
+                        },
                     contentAlignment = Alignment.Center,
                 ) {
                     CompactLandscapeControls(
+                        scrollState = compactControlsScroll,
                         heading = { heading(Modifier.testTag("player-heading")) },
                         transport = { Column(Modifier.fillMaxWidth().testTag("player-transport")) { transport() } },
                     ) {
-                        val coverOutline = if (coverStyle == PlayerCoverStyle.Default) {
-                            Modifier.border(0.6.dp, FullPlayerTextPrimary.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
-                        } else Modifier
-                        NowPlayingArtwork(
-                            url = track?.artwork,
-                            seed = track?.uid ?: "empty",
-                            style = coverStyle,
-                            modifier = coverOutline
-                                .testTag("player-artwork")
-                                .semantics { contentDescription = "${track?.title.orEmpty()}，${track?.artist.orEmpty()}" }
-                                .onGloballyPositioned(onArtworkPositioned)
-                                .graphicsLayer { alpha = artworkAlpha() }
-                                .combinedClickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                    onLongClickLabel = "选择封面类型",
-                                    onLongClick = { showCoverPicker = true },
-                                    onClick = {},
-                                ),
-                            cornerRadius = 16,
-                            retryOnError = isVisible && coverPageVisible,
-                            smoothChanges = true,
-                            rotationDegrees = artworkRotation,
-                            motionEnabled = motionEnabled,
-                            tonearmAngle = tonearmAngle,
-                            recordChange = recordChange,
-                        )
+                        Spacer(Modifier.fillMaxSize().then(artworkAnchor))
                     }
                 }
                 playerAndQueue(Modifier.weight(0.57f).fillMaxHeight().nestedScroll(readingScroll).testTag("player-compact-content")) {
@@ -969,6 +1033,10 @@ internal fun FullPlayerPageContent(
                 }
             }
         }
+        if (twoPanes) LandscapeArtworkLayer(
+            anchors, immersion, if (landscapeImmersivePager) coverPagerState else null, compactLandscape, artwork,
+        )
+
     }
 
     if (showCoverPicker) {
@@ -1915,50 +1983,99 @@ private fun AnimatedContentTransitionScope<UiTrack?>.playerHeadingTransition(eIn
 
 private data class PortraitCoverSpace(val normal: Dp, val immersive: Dp)
 
+// 端点均为播放器视口内的像素。沉浸端点相对第 1 页测量，翻页偏移仅在放置时计入。
+private class LandscapeArtworkAnchors {
+    var root: LayoutCoordinates? = null
+    var page: LayoutCoordinates? = null
+    var lastPageOffset = 0f
+    var normalViewport by mutableStateOf<Rect?>(null)
+    private var normal by mutableStateOf<Rect?>(null)
+    private var full by mutableStateOf<Rect?>(null)
+
+    fun update(slot: LayoutCoordinates, immersive: Boolean) {
+        val parent = (if (immersive) page else root)?.takeIf { it.isAttached } ?: return
+        val bounds = parent.localBoundingBoxOf(slot, clipBounds = false)
+        if (immersive) full = bounds else normal = bounds
+    }
+
+    fun bounds(progress: Float): Rect {
+        val from = normal ?: full ?: return Rect.Zero
+        return lerp(from, full ?: from, progress)
+    }
+}
+
+@Composable
+private fun LandscapeArtworkLayer(
+    anchors: LandscapeArtworkAnchors,
+    immersion: State<Float>,
+    immersivePager: PagerState?,
+    compact: Boolean,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    val direction = if (LocalLayoutDirection.current == LayoutDirection.Ltr) 1 else -1
+    fun pageOffset() = if (immersivePager == null) anchors.lastPageOffset else
+        (1 - immersivePager.currentPage - immersivePager.currentPageOffsetFraction) * direction
+    val modifier = Modifier.fillMaxSize().clipToBounds().drawWithContent {
+        val viewport = anchors.normalViewport
+        val window = Rect(Offset.Zero, size)
+        val clip = when {
+            immersivePager != null -> window.translate(pageOffset() * size.width, 0f)
+            compact && viewport != null -> lerp(viewport, window, immersion.value)
+            else -> window
+        }
+        clipRect(clip.left, clip.top, clip.right, clip.bottom) { this@drawWithContent.drawContent() }
+    }.layout { measurable, constraints ->
+        val progress = immersion.value
+        // 从不可见的相邻页退出时，在普通位置淡入，避免先画出整张沉浸封面。
+        val fromOtherPage = immersivePager == null && abs(anchors.lastPageOffset) >= 1f
+        val bounds = anchors.bounds(if (fromOtherPage) 0f else progress)
+        val side = bounds.width.roundToInt().coerceAtLeast(0)
+        val face = measurable.measure(Constraints.fixed(side, side))
+        layout(constraints.maxWidth, constraints.maxHeight) {
+            val offset = when {
+                immersivePager != null -> pageOffset().also { anchors.lastPageOffset = it }
+                fromOtherPage -> 0f
+                else -> anchors.lastPageOffset * progress
+            }
+            val inViewport = !compact || progress > 0f || anchors.normalViewport?.overlaps(bounds) != false
+            if (side > 0 && abs(offset) < 1f && inViewport) {
+                face.placeWithLayer((bounds.left + constraints.maxWidth * offset).roundToInt(), bounds.top.roundToInt()) {
+                    alpha = if (fromOtherPage) 1f - progress else 1f
+                }
+            }
+        }
+    }
+    Box(modifier, contentAlignment = Alignment.Center, content = content)
+}
+
 // 播放页 Page 1：默认封面歌词对齐左边沿，圆形/黑胶歌词居中。
 @Composable
 private fun PlayerCoverPage(
     state: PlayerUiState,
-    onOpenCoverPicker: () -> Unit,
     immersive: Boolean,
-    immersion: androidx.compose.runtime.State<Float>,
-    onImmersiveChange: (Boolean) -> Unit,
-    isVisible: Boolean,
+    immersion: State<Float>,
     track: UiTrack?,
     lyrics: List<LyricLine>,
-    retryArtwork: Boolean,
     compact: Boolean,
-    phoneLandscape: Boolean,
     miniLyricsEnabled: Boolean,
     wordLiftEnabled: Boolean,
-    lyricsInCover: Boolean = true,
-    largePortrait: Boolean = false,
-    posterMode: Boolean = false,
+    lyricsInCover: Boolean,
+    largePortrait: Boolean,
+    posterMode: Boolean,
     portraitSpace: PortraitCoverSpace?,
-    coverStyle: PlayerCoverStyle,
-    artworkAlpha: () -> Float,
-    artworkRotation: () -> Float,
-    tonearmAngle: (() -> Float)?,
-    recordChange: VinylRecordChange?,
-    onArtworkPositioned: (LayoutCoordinates) -> Unit,
-    position: androidx.compose.runtime.State<Long>,
+    centered: Boolean,
+    twoPanes: Boolean,
+    roundness: State<Float>,
+    artwork: @Composable BoxScope.() -> Unit,
+    position: State<Long>,
     motionEnabled: Boolean,
-    frame: androidx.compose.runtime.State<com.leyu.melora.playback.LyricFrame>,
+    frame: State<com.leyu.melora.playback.LyricFrame>,
     onNavigateToLyrics: () -> Unit,
 ) {
     val lines = fullPlayerLyricsOrFallback(track, lyrics)
-    val centered = nowPlayingArtworkShape(coverStyle) == NowPlayingArtworkShape.Circle
-    val roundness = animateFloatAsState(if (centered) 1f else 0f,
-        if (motionEnabled) PlayerCoverMorphSpec else snap(), label = "coverLayout")
     val c = roundness.value
-    val t = immersion.value
-    var controlsVisible by remember(immersive) { mutableStateOf(false) }
-    var controlInteraction by remember { mutableIntStateOf(0) }
-    LaunchedEffect(immersive, isVisible, controlsVisible, controlInteraction, track?.uid) {
-        if (!immersive || !isVisible) controlsVisible = false
-        else if (controlsVisible) { delay(3_000); controlsVisible = false }
-    }
-    val interact = { controlsVisible = true; controlInteraction++ }
+    // 横屏的两个独立布局只报告各自端点；连续插值由共有的封面完成。
+    val t = if (twoPanes) (if (immersive) 1f else 0f) else immersion.value
     val miniFontSize = if (largePortrait) 24f else if (compact) 12f else 16f
     val previewHeight = if (compact) 28.dp else with(LocalDensity.current) { maxOf(24f, miniFontSize * 1.5f).sp.toDp() * 5 } + 12.dp
     val normalLyricsVisible = miniLyricsEnabled && lyricsInCover
@@ -1971,8 +2088,7 @@ private fun PlayerCoverPage(
     val normalContentHeight = if (normalLyricsVisible) normalLyricsHeight else posterReservedHeight
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val paneWidth = maxWidth
-        val landscapeImmersive = lyricsInCover && (phoneLandscape || compact)
-        val targetLandscape = if (landscapeImmersive) landscapeImmersiveLayout(paneWidth.value, maxHeight.value) else null
+        val targetLandscape = if (compact) landscapeImmersiveLayout(paneWidth.value, maxHeight.value) else null
         // 进出时用完整控件和系统栏的端点，避免从变化中的剩余空间重复推算封面大小。
         val normalPaneHeight = if (!immersive && t == 0f) maxHeight else portraitSpace?.normal ?: maxHeight
         val immersivePaneHeight = portraitSpace?.immersive ?: maxHeight
@@ -1982,7 +2098,7 @@ private fun PlayerCoverPage(
         } else {
             playerCoverSideDp(maxWidth.value, normalPaneHeight.value, normalLyricsHeight.value).dp
         }
-        val normalSide = (squareSide * (1f - c) + circleSide * c) * if (phoneLandscape) 0.9f else 1f
+        val normalSide = squareSide * (1f - c) + circleSide * c
         val floatingSide = when {
             targetLandscape != null -> targetLandscape.coverSideDp.dp
             lyricsInCover -> minOf(maxWidth * 0.75f, immersivePaneHeight * 0.40f)
@@ -1995,7 +2111,7 @@ private fun PlayerCoverPage(
         val extraCoverToTitle = if (posterTitleVisible) (remaining * 0.25f).coerceAtMost(14.dp) else 0.dp
         val coverToTitleGap = posterBaseTopGap + extraCoverToTitle
         // 与歌词共用外层窗口判定，不能用扣除页内边距后的宽度再次判断断点。无歌词时也居中。
-        val centering = if (!normalLyricsVisible || largePortrait || phoneLandscape) 1f else c
+        val centering = if (!normalLyricsVisible || largePortrait || compact) 1f else c
         val roomyLyrics = largePortrait && normalLyricsVisible
         val normalTop = when {
             posterTitleVisible -> (remaining - extraCoverToTitle).coerceAtLeast(0.dp) * 0.55f
@@ -2003,81 +2119,23 @@ private fun PlayerCoverPage(
             else -> remaining * (1f - centering * 0.5f)
         }
         val normalLyricHeight = if (roomyLyrics) (normalPaneHeight - normalSide - normalTop - 20.dp).coerceAtLeast(0.dp) else previewHeight
-        val topSpace = if (lyricsInCover) normalTop * (1f - t) + immersivePaneHeight * (0.04f * t)
-            else ((maxHeight - side - 26.dp * t) / 2f).coerceAtLeast(0.dp)
+        val immersiveTop = immersivePaneHeight * 0.04f
+        val immersiveTimeHeight = 26.dp
+        val timeHeight = immersiveTimeHeight * t
+        val topSpace = if (lyricsInCover) lerp(normalTop, immersiveTop, t)
+            else ((maxHeight - side - timeHeight) / 2f).coerceAtLeast(0.dp)
         val normalLyricWidth = if (roomyLyrics) maxWidth else normalSide
-        val timeHeight = 26.dp * t
-        val lyricHeight = (if (miniLyricsEnabled) normalLyricHeight else 0.dp) * (1f - t) +
-            (maxHeight - side - topSpace - timeHeight - 24.dp).coerceAtLeast(0.dp) * t
-        val lyricWidth = if (immersive) maxWidth else maxWidth * (1f - centering) + (if (roomyLyrics) normalLyricWidth else side) * centering
-        val artworkContent: @Composable BoxScope.() -> Unit = {
-            // 进度轮廓与艺术封面共享同一透视平面，不再将方形封面放进独立大圆盘。
-            Box(Modifier.size(side).graphicsLayer {
-                alpha = artworkAlpha()
-                rotationX = -2f * immersion.value
-                rotationY = 3f * immersion.value
-                rotationZ = -0.5f * immersion.value
-                cameraDistance = 16f * density
-            }, contentAlignment = Alignment.Center) {
-                ImmersiveCoverProgress(position, state.durationMs, immersion, roundness = roundness,
-                    modifier = Modifier.matchParentSize())
-                NowPlayingArtwork(
-                    url = track?.artwork, seed = track?.uid ?: "empty", style = coverStyle,
-                    modifier = Modifier.fillMaxSize().padding(6.dp * t)
-                        .testTag("player-artwork")
-                        .semantics { contentDescription = "${track?.title.orEmpty()}，${track?.artist.orEmpty()}" }
-                        .onGloballyPositioned(onArtworkPositioned)
-                        .graphicsLayer {
-                            // 黑胶外圈透明且自带径向投影，不叠加 HWUI 阴影；其余样式用透明度淡出阴影并维持足够海拔，避免 Skia 低海拔圆形阴影退化为八边形切角。
-                            val shadowAlpha = if (coverStyle == PlayerCoverStyle.Vinyl || MeloraAppearance.isEInk) 0f else immersion.value.coerceIn(0f, 1f)
-                            shadowElevation = if (shadowAlpha > 0.005f) 14.dp.toPx() * (0.35f + 0.65f * shadowAlpha) else 0f
-                            ambientShadowColor = Color.Black.copy(alpha = shadowAlpha)
-                            spotShadowColor = Color.Black.copy(alpha = shadowAlpha)
-                            shape = if (c >= 0.999f) CircleShape
-                                else RoundedCornerShape((18f * (1f - c) + size.minDimension / (2f * density) * c).dp)
-                        }
-                        .then(
-                            if (MeloraAppearance.isEInk && coverStyle != PlayerCoverStyle.Vinyl) {
-                                Modifier.border(1.dp, Color.Black, if (centered) CircleShape else RoundedCornerShape(18.dp))
-                            } else {
-                                Modifier
-                            },
-                        )
-                        .combinedClickable(
-                            interactionSource = remember { MutableInteractionSource() }, indication = null,
-                            onLongClickLabel = "选择封面类型",
-                            onLongClick = onOpenCoverPicker,
-                            onClick = { if (immersive) interact() },
-                        ),
-                    cornerRadius = 18, retryOnError = retryArtwork, smoothChanges = true,
-                    rotationDegrees = artworkRotation, motionEnabled = motionEnabled,
-                    tonearmAngle = tonearmAngle,
-                    recordChange = recordChange,
-                )
-            }
-            val eInk = MeloraAppearance.isEInk
-            AnimatedVisibility(
-                visible = controlsVisible && immersive && isVisible,
-                enter = if (eInk) EnterTransition.None else fadeIn(tween(120)),
-                exit = if (eInk) ExitTransition.None else fadeOut(tween(160)),
-                modifier = Modifier.align(Alignment.Center).wrapContentWidth(unbounded = true),
-            ) {
-                ImmersivePlaybackControls(
-                    playing = state.playing,
-                    onPrevious = { interact(); PlaybackController.previous() },
-                    onToggle = { interact(); PlaybackController.toggle() },
-                    onNext = { interact(); PlaybackController.next() },
-                    onExit = { onImmersiveChange(false) },
-                )
-            }
-        }
+        // 歌词焦点在视口中线。直接插值两端高度，收回时不会越过普通焦点再回弹。
+        val immersiveLyricHeight = (immersivePaneHeight - immersiveTop - floatingSide - immersiveTimeHeight - 24.dp).coerceAtLeast(0.dp)
+        val lyricHeight = lerp(if (miniLyricsEnabled) normalLyricHeight else 0.dp, immersiveLyricHeight, t)
+        val lyricWidth = lerp(maxWidth * (1f - centering) + normalLyricWidth * centering, maxWidth, t)
         val lyricsContent: @Composable (Modifier) -> Unit = { lyricsModifier ->
             LyricsViewport(
                 lines = lines, position = position,
                 config = LyricsUiConfig(fontSizeSp = miniFontSize, isWordLiftEnabled = wordLiftEnabled),
                 mini = !immersive, immersive = immersive,
                 frameState = frame, motionEnabled = motionEnabled,
-                centered = (centered && (!phoneLandscape || immersive)) || largePortrait,
+                centered = (centered && (!compact || immersive)) || largePortrait,
                 modifier = lyricsModifier.testTag("player-mini-lyrics")
                     .then(
                         when {
@@ -2092,35 +2150,23 @@ private fun PlayerCoverPage(
         }
         if (targetLandscape != null) {
             Box(Modifier.fillMaxSize()) {
-                val normalCoverX = (paneWidth - normalSide) * 0.5f
-                val normalCoverY = normalTop
-                val coverX = normalCoverX * (1f - t) + targetLandscape.coverXDp.dp * t
-                val coverY = normalCoverY * (1f - t) + targetLandscape.coverYDp.dp * t
                 Column(
-                    Modifier.offset(x = coverX, y = coverY).width(side),
+                    Modifier.offset(x = targetLandscape.coverXDp.dp, y = targetLandscape.coverYDp.dp).width(side),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Box(contentAlignment = Alignment.Center) { artworkContent() }
-                    if (t > 0f) ImmersiveTrackTime(position, state.durationMs,
+                    Box(Modifier.size(side), contentAlignment = Alignment.Center, content = artwork)
+                    ImmersiveTrackTime(position, state.durationMs,
                         Modifier.height(timeHeight).graphicsLayer { alpha = immersion.value })
                 }
-                if (miniLyricsEnabled || t > 0f) {
-                    val normalLyricsW = paneWidth * (1f - centering) + normalLyricWidth * centering
-                    val normalLyricsH = if (miniLyricsEnabled) normalLyricHeight else 0.dp
-                    val normalLyricsX = (paneWidth - normalLyricsW) * 0.5f * centering
-                    val normalLyricsY = normalCoverY + normalSide + 12.dp
-                    val lyricsX = normalLyricsX * (1f - t) + targetLandscape.lyricsXDp.dp * t
-                    val lyricsY = normalLyricsY * (1f - t) + targetLandscape.lyricsYDp.dp * t
-                    val lyricsW = normalLyricsW * (1f - t) + targetLandscape.lyricsWidthDp.dp * t
-                    val lyricsH = normalLyricsH * (1f - t) + targetLandscape.lyricsHeightDp.dp * t
-                    lyricsContent(Modifier.offset(x = lyricsX, y = lyricsY).width(lyricsW).height(lyricsH))
-                }
+                lyricsContent(Modifier.offset(x = targetLandscape.lyricsXDp.dp, y = targetLandscape.lyricsYDp.dp)
+                    .size(targetLandscape.lyricsWidthDp.dp, targetLandscape.lyricsHeightDp.dp)
+                    .graphicsLayer { alpha = immersion.value })
             }
         } else {
             Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
                 Spacer(Modifier.height(topSpace))
                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    artworkContent()
+                    Box(Modifier.size(side), contentAlignment = Alignment.Center, content = artwork)
                 }
                 if (t > 0f) ImmersiveTrackTime(position, state.durationMs,
                     Modifier.height(timeHeight).graphicsLayer { alpha = immersion.value })

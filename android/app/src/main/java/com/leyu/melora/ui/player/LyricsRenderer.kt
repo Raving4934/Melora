@@ -503,38 +503,39 @@ internal fun LyricsViewport(
     BoxWithConstraints(modifier.clipToBounds()) {
         val width = constraints.maxWidth
         val height = constraints.maxHeight
-        // 只测量聚焦锚点，不在首次展示时排版整首歌词；可见行由 LazyColumn 自行测量。
-        val rowHeight: (Int) -> Int = remember(
-            lines, width, style, subStyle, mini, immersiveMode, density.density, density.fontScale,
-        ) {
-            val cache = mutableMapOf<Int, Int>();
-            { index: Int -> cache.getOrPut(index) {
-                if (mini) with(density) { miniLineHeight.roundToPx() }
-                else {
-                    val line = lines[index]
-                    measurer.measure(line.text, style, constraints = Constraints(maxWidth = width)).size.height +
-                        listOfNotNull(line.translation, line.romanization).sumOf {
-                            measurer.measure(it, subStyle, constraints = Constraints(maxWidth = width)).size.height + with(density) { 3.dp.roundToPx() }
-                        }
+        val index = frame.focusIndex.coerceAtLeast(0)
+        val focusedLine = lines.getOrNull(index)
+        val offset = when {
+            focusedLine == null -> 0
+            mini -> with(density) { miniLineHeight.roundToPx() / 2 }
+            else -> remember(focusedLine, width, style, subStyle, density, measurer) {
+                val bounds = Constraints(maxWidth = width)
+                val main = measurer.measure(focusedLine.text, style, constraints = bounds).size.height
+                val subtitles = listOfNotNull(focusedLine.translation, focusedLine.romanization).sumOf {
+                    measurer.measure(it, subStyle, constraints = bounds).size.height + with(density) { 3.dp.roundToPx() }
                 }
-            } }
+                (main + subtitles) / 2
+            }
         }
-        val initial = frame.focusIndex.coerceAtLeast(0)
-        val list = rememberLazyListState(initial, if (lines.isEmpty()) 0 else rowHeight(initial) / 2)
-        var browsing by remember { mutableStateOf(false) }
-        var touching by remember { mutableStateOf(false) }
-        var tapEligible by remember { mutableStateOf(true) }
+        // 单行预览与多行正文的行高不同，第一帧就用新排版定位到同一句。
+        val list = key(mini) { rememberLazyListState(index, offset) }
+        var followedIndex by remember(list) { mutableIntStateOf(index) }
+        var browsing by remember(list) { mutableStateOf(false) }
+        var touching by remember(list) { mutableStateOf(false) }
+        var tapEligible by remember(list) { mutableStateOf(true) }
         LaunchedEffect(browsing, touching) {
             if (browsing && !touching) snapshotFlow { list.isScrollInProgress }.distinctUntilChanged().collectLatest { moving ->
                 if (!moving) { delay(3_000); browsing = false }
             }
         }
-        LaunchedEffect(frame.focusIndex, browsing, touching, rowHeight, animate) {
-            val index = frame.focusIndex.coerceAtLeast(0)
-            if (browsing || touching || index !in lines.indices) return@LaunchedEffect
-            val offset = rowHeight(index) / 2
-            if (!animate) {
-                // BoxWithConstraints 会在测量中子组合，交由列表下一次测量应用歌词锚点。
+        LaunchedEffect(list, index, browsing, touching, offset, animate, focusedLine != null) {
+            if (browsing || touching || focusedLine == null) {
+                followedIndex = -1
+                return@LaunchedEffect
+            }
+            val followWithMotion = animate && followedIndex != index
+            followedIndex = index
+            if (!followWithMotion) {
                 list.requestScrollToItem(index, offset)
                 return@LaunchedEffect
             }

@@ -9,7 +9,7 @@ import com.leyu.melora.ui.theme.MeloraAppearance
 
 import android.os.SystemClock
 import androidx.compose.foundation.background
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -388,6 +388,7 @@ internal val CompactLandscapeTitleSize = 20.sp
 
 @Composable
 internal fun CompactLandscapeControls(
+    scrollState: ScrollState,
     heading: @Composable () -> Unit,
     transport: @Composable () -> Unit,
     artwork: @Composable () -> Unit,
@@ -398,7 +399,7 @@ internal fun CompactLandscapeControls(
             artwork()
             transport()
         },
-        modifier = Modifier.widthIn(max = 376.dp).fillMaxSize().verticalScroll(rememberScrollState()),
+        modifier = Modifier.widthIn(max = 376.dp).fillMaxSize().verticalScroll(scrollState),
     ) { (titleSlot, coverSlot, transportSlot), constraints ->
         // fillMaxSize 在滚动层外保留视口高度。先测实际控制栏，包含换行的次级按钮和系统字体缩放。
         val width = constraints.maxWidth
