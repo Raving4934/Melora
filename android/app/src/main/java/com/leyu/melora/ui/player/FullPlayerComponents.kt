@@ -9,6 +9,8 @@ import com.leyu.melora.ui.theme.MeloraAppearance
 
 import android.os.SystemClock
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,6 +26,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -49,6 +52,9 @@ import androidx.compose.runtime.Composable
 import com.leyu.melora.ui.common.AudioEffectsIcon
 import com.leyu.melora.playback.sdk.CatalogMetadata
 import coil3.compose.AsyncImage
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.unit.Constraints
+import kotlin.math.roundToInt
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
@@ -374,6 +380,55 @@ internal fun ArtistInfoCard(
                     )
                 }
             }
+        }
+    }
+}
+
+internal val CompactLandscapeTitleSize = 20.sp
+
+@Composable
+internal fun CompactLandscapeControls(
+    heading: @Composable () -> Unit,
+    transport: @Composable () -> Unit,
+    artwork: @Composable () -> Unit,
+) {
+    Layout(
+        content = {
+            heading()
+            artwork()
+            transport()
+        },
+        modifier = Modifier.widthIn(max = 376.dp).fillMaxSize().verticalScroll(rememberScrollState()),
+    ) { (titleSlot, coverSlot, transportSlot), constraints ->
+        // fillMaxSize 在滚动层外保留视口高度。先测实际控制栏，包含换行的次级按钮和系统字体缩放。
+        val width = constraints.maxWidth
+        val viewport = constraints.minHeight
+        val loose = constraints.copy(minHeight = 0, minWidth = 0)
+        val controls = transportSlot.measure(loose)
+        val room = viewport - controls.height
+        val gap = 8.dp.roundToPx()
+        val minimumSide = 48.dp.roundToPx()
+        val inlineLimit = compactLandscapeInlineCoverLimit(width.toDp(), CompactLandscapeTitleSize.toDp())
+        val inline = inlineLimit != null
+        val fraction = if (inline) 0.45f else 0.32f
+        val preferredSide = (viewport * fraction).roundToInt().coerceIn(minimumSide, 152.dp.roundToPx())
+        val inlineSide = inlineLimit?.let {
+            minOf(it.roundToPx(), preferredSide, (room - gap).coerceAtLeast(minimumSide))
+        }
+        val titleOffset = inlineSide?.let { it + CompactLandscapeHeadingGap.roundToPx() } ?: 0
+        val title = titleSlot.measure(loose.copy(maxWidth = width - titleOffset))
+        val side = inlineSide ?: minOf(width, preferredSide, (room - title.height - 2 * gap).coerceAtLeast(minimumSide))
+        val cover = coverSlot.measure(Constraints.fixed(side, side))
+
+        val groupHeight = if (inline) maxOf(title.height, side) else title.height + gap + side
+        val height = maxOf(viewport, groupHeight + gap + controls.height)
+        val controlsY = height - controls.height
+        val groupY = (controlsY - gap - groupHeight) / 2
+        layout(width, height) {
+            title.placeRelative(titleOffset, if (inline) groupY + (groupHeight - title.height) / 2 else groupY)
+            if (inline) cover.placeRelative(0, groupY + (groupHeight - side) / 2)
+            else cover.placeRelative((width - side) / 2, groupY + title.height + gap)
+            controls.placeRelative(0, controlsY)
         }
     }
 }

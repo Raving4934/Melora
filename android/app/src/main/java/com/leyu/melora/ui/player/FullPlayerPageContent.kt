@@ -468,7 +468,7 @@ internal fun FullPlayerPageContent(
                     Column(Modifier.fillMaxWidth()) {
                         Text(
                             text = headingTrack?.title ?: "未在播放",
-                            fontSize = if (compactLandscapeNormal) 20.sp else 19.sp,
+                            fontSize = if (compactLandscapeNormal) CompactLandscapeTitleSize else 19.sp,
                             lineHeight = if (compactLandscapeNormal) 25.sp else 24.sp,
                             fontWeight = if (compactLandscapeNormal) FontWeight.Bold else FontWeight.SemiBold,
                             color = FullPlayerTextPrimary,
@@ -872,22 +872,23 @@ internal fun FullPlayerPageContent(
                 }
             }
         } else if (compactLandscapeNormal) {
+            val compactTopInset = compactLandscapeTopInsetDp(playerTopInset.value, maxHeight.value).dp
             Row(
-                Modifier.fillMaxSize().padding(top = playerTopInset)
+                Modifier.fillMaxSize().padding(top = compactTopInset)
                     .testTag("player-phone-landscape"),
                 horizontalArrangement = Arrangement.spacedBy(20.dp),
             ) {
-                BoxWithConstraints(
+                Box(
                     Modifier.weight(0.43f).fillMaxHeight().clipToBounds()
                         .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Start + WindowInsetsSides.Bottom))
                         .testTag("player-compact-controls")
                         .padding(start = 20.dp, end = 4.dp, top = 12.dp, bottom = 8.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    val leftHeight = maxHeight
-                    val coverSide = (leftHeight * 0.43f).coerceIn(112.dp, 136.dp)
-                    val sideBySide = maxWidth >= coverSide + 144.dp
-                    val compactArtwork: @Composable () -> Unit = {
+                    CompactLandscapeControls(
+                        heading = { heading(Modifier.testTag("player-heading")) },
+                        transport = { Column(Modifier.fillMaxWidth().testTag("player-transport")) { transport() } },
+                    ) {
                         val coverOutline = if (coverStyle == PlayerCoverStyle.Default) {
                             Modifier.border(0.6.dp, FullPlayerTextPrimary.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
                         } else Modifier
@@ -895,9 +896,7 @@ internal fun FullPlayerPageContent(
                             url = track?.artwork,
                             seed = track?.uid ?: "empty",
                             style = coverStyle,
-                            modifier = Modifier
-                                .size(if (sideBySide) coverSide else minOf(coverSide, leftHeight * 0.32f, maxWidth))
-                                .then(coverOutline)
+                            modifier = coverOutline
                                 .testTag("player-artwork")
                                 .semantics { contentDescription = "${track?.title.orEmpty()}，${track?.artist.orEmpty()}" }
                                 .onGloballyPositioned(onArtworkPositioned)
@@ -917,26 +916,6 @@ internal fun FullPlayerPageContent(
                             tonearmAngle = tonearmAngle,
                             recordChange = recordChange,
                         )
-                    }
-                    Column(
-                        Modifier.widthIn(max = 376.dp).fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = leftHeight),
-                        verticalArrangement = Arrangement.SpaceBetween,
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        if (sideBySide) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                            ) {
-                                compactArtwork()
-                                heading(Modifier.weight(1f).testTag("player-heading"))
-                            }
-                        } else {
-                            heading(Modifier.testTag("player-heading"))
-                            compactArtwork()
-                        }
-                        Column(Modifier.fillMaxWidth().padding(top = 10.dp).testTag("player-transport")) { transport() }
                     }
                 }
                 playerAndQueue(Modifier.weight(0.57f).fillMaxHeight().nestedScroll(readingScroll).testTag("player-compact-content")) {

@@ -308,6 +308,22 @@ class PlayerSheetMotionTest {
     }
 
     @Test
+    fun compactLandscapeTopInsetKeepsMinimumBreathingRoomWhenStatusBarIsHidden() {
+        assertEquals(16f, compactLandscapeTopInsetDp(systemTopInsetDp = 0f, windowHeightDp = 412f), 0f)
+        assertEquals(16f, compactLandscapeTopInsetDp(systemTopInsetDp = 0f, windowHeightDp = 360f), 0f)
+        assertEquals(8f, compactLandscapeTopInsetDp(systemTopInsetDp = 0f, windowHeightDp = 320f), 0f)
+        assertEquals(32f, compactLandscapeTopInsetDp(systemTopInsetDp = 32f, windowHeightDp = 412f), 0f)
+    }
+
+    @Test
+    fun compactLandscapeInlineCoverReservesReadableTitleAtCurrentFontSize() {
+        assertEquals(138.dp, compactLandscapeInlineCoverLimit(320.dp, 20.dp))
+        assertEquals(112.dp, compactLandscapeInlineCoverLimit(294.dp, 20.dp))
+        assertEquals(null, compactLandscapeInlineCoverLimit(277.dp, 20.dp))
+        assertEquals(null, compactLandscapeInlineCoverLimit(320.dp, 30.dp))
+    }
+
+    @Test
     fun expandedPlayerDependsOnAvailableWindowNotDeviceOrientation() {
         assertTrue(playerUsesExpandedLayout(1280f, 800f))
         assertTrue(playerUsesExpandedLayout(900f, 1280f))

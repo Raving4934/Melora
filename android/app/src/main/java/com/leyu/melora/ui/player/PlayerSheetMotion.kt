@@ -112,6 +112,18 @@ internal fun playerPaneContentPadding(twoPanes: Boolean, controls: Boolean): Pad
     end = if (twoPanes && !controls) 0.dp else 22.dp,
 )
 
+/** 手机横屏隐藏状态栏后保留最低顶部呼吸留白，避免封面与歌词顶栏贴死屏幕上沿。 */
+internal fun compactLandscapeTopInsetDp(systemTopInsetDp: Float, windowHeightDp: Float): Float {
+    val minimum = if (windowHeightDp >= 350f) 16f else 8f
+    return maxOf(systemTopInsetDp, minimum)
+}
+
+internal val CompactLandscapeHeadingGap = 14.dp
+
+/** 为设备按钮及至少六个当前字号的汉字保留宽度；较窄的左栏将标题放到封面上方。 */
+internal fun compactLandscapeInlineCoverLimit(paneWidth: Dp, titleSize: Dp): Dp? =
+    (paneWidth - 48.dp - CompactLandscapeHeadingGap - titleSize * 6).takeIf { it >= 112.dp }
+
 /**
  * 为手动上一首/下一首提供一个共享的、懒惰恢复的短时点击预算。
  * 时间只由调用方在真实点击时传入，因此不会排队、补发或启动计时任务。
