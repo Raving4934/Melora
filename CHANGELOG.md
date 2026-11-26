@@ -2,6 +2,48 @@
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-11-27
+
+### 安卓客户端
+
+【播放与歌词】
+
+- 优化手机横屏、平板和大屏的播放布局。宽屏底部播放条支持直接切歌和拖动进度，横屏播放页将封面与控件、歌词或音频信息分栏展示。
+- 改进进出沉浸播放时封面和歌词的过渡，当前歌词退出时平滑收回预览区。使用系统手势导航时，从屏幕边缘滑动一次即可退出沉浸。
+- 新增黑胶唱片换碟动效，优化换歌时封面的交接、唱臂动作和进度环层级。
+- 优化逐字歌词高亮、换行和间奏提示，区分普通歌词页与沉浸歌词的样式。
+
+【外观与设置】
+
+- 新增「墨水屏模式」。可在「其他设置」开启黑白高对比界面，减少动效，歌词按句刷新。
+- 基本设置新增「行为」分组。Android 13 及以上可在「模糊组件」中选择关闭、只模糊标题栏或模糊所有受支持组件。统一浅色和深色主题下抽屉、弹窗和分类标签的配色。
+- 歌曲列表和批量操作区随窗口宽度调整。歌单和听书详情在宽屏下支持双栏展示。
+
+【搜索、歌单与听书】
+
+- 歌曲、歌单和听书分别提供搜索联想，结果滑动到底部时自动加载。聚合搜索遇到部分音源请求失败时，其他音源仍可继续翻页，失败页可重试。
+- 改进歌单广场的分页，修复网易云歌单详情缺曲及分页顺序问题。
+- 听书选集适配长目录和大字号，定位当前章节或跳转到搜索命中的章节后，目录显示对应位置。
+
+【资料库、同步与备份】
+
+- WebDAV 同步遇到暂时无法读取的设备记录时，保留该设备最近一次完整记录。本地播放历史按上限整理时，在线历史独立保留。
+- 写完本地和 WebDAV 备份后回读校验，重试时继续处理同一备份。网络备份等待重试时，仍会处理到期的本地备份。
+- 修复本地扫描失败时音乐库被清理、系统删除授权返回后操作中断、删除本地曲目后播放断点错配的问题。改进音频缓存查找与重复下载。
+- 修复从系统文件选择器返回后设置页丢失、音源导出中断的问题。恢复备份时同步加载音源，音源管理补齐读屏名称。
+- 从系统安装授权页返回后可以继续当前更新。撤销悬浮窗权限后，应用会同步关闭桌面歌词。
+
+### 提交追溯
+
+Android 版本号为 0.2.5，versionCode 为 25。完整提交区间见 [android-v0.2.4 至 android-v0.2.5][Android 0.2.5]。
+
+- 横屏和平板播放器、进出沉浸动效及侧滑返回。[`d754ff3`](https://github.com/Raving4934/Melora/commit/d754ff3c157ae54ebe629f6ffbeff61043e0a393)、[`6e8a72c`](https://github.com/Raving4934/Melora/commit/6e8a72c4f0876bdf8041ab8bc738524591705285)、[`8aeb9b8`](https://github.com/Raving4934/Melora/commit/8aeb9b8576e075e88663d4c71e462c69f9b849bf)、[`80d6e31`](https://github.com/Raving4934/Melora/commit/80d6e3140fbd3191026d23f44a7ec4b56056efde)
+- 黑胶换碟、进度环层级、逐字歌词及墨水屏模式。[`c1f4952`](https://github.com/Raving4934/Melora/commit/c1f495269db434ddea8bed69483bc128a30a6690)、[`c7f17eb`](https://github.com/Raving4934/Melora/commit/c7f17ebf0d7797a2365996be589991990ebce665)、[`32d67bf`](https://github.com/Raving4934/Melora/commit/32d67bf821657149d9801e2cbe4f19a022873a8e)、[`805858a`](https://github.com/Raving4934/Melora/commit/805858ad3d017be96ce3ed85ace32160941c711c)
+- 组件模糊、主题配色、大屏列表及详情。[`426a274`](https://github.com/Raving4934/Melora/commit/426a2740838f297ea711a8c07b5d19ce30775b4d)、[`2578bca`](https://github.com/Raving4934/Melora/commit/2578bca0f77400573eee2ae719f52d7a91b46bcd)、[`b0246d5`](https://github.com/Raving4934/Melora/commit/b0246d5488bdbbe33bd8a3a941e479af5f373928)、[`8bcd4d7`](https://github.com/Raving4934/Melora/commit/8bcd4d7d89181a18800b6833b5dcd7e38d993232)
+- 搜索联想与续页、歌单广场、网易云歌单和听书目录。[`aff4a66`](https://github.com/Raving4934/Melora/commit/aff4a6699a019a65b50fce9358d0ef314ef0cb5f)、[`285b074`](https://github.com/Raving4934/Melora/commit/285b0743d5f9e06b8178ab5504ab6d8eebccd86d)、[`2669ae0`](https://github.com/Raving4934/Melora/commit/2669ae0970e0b4613d36f08d96350a6eb0e8f67e)、[`ac870f5`](https://github.com/Raving4934/Melora/commit/ac870f592935bf982d33975cc0a23288688662c7)、[`e171cdd`](https://github.com/Raving4934/Melora/commit/e171cdd0e77066ab081bb518f4e39ff97d1c23b3)、[`0925bd4`](https://github.com/Raving4934/Melora/commit/0925bd4069b6c1de2afafc1c7d5f6f5b0d87f0cf)
+- 多设备记录保护和备份校验、重试。[`9483c16`](https://github.com/Raving4934/Melora/commit/9483c1652775eb418eb199f30b84de43b161f276)、[`e6f4290`](https://github.com/Raving4934/Melora/commit/e6f42901d83916fddbc0aa749a731a05ce7e89f3)、[`00ef057`](https://github.com/Raving4934/Melora/commit/00ef057f123e3fdc501a36bf793a025c8a3b53d6)、[`0be52d8`](https://github.com/Raving4934/Melora/commit/0be52d86406e6fae07f4f26cc6f403bb0280ca7f)
+- 本地扫描和删除授权、系统文件选择器、桌面歌词与安装授权恢复。[`82df22b`](https://github.com/Raving4934/Melora/commit/82df22bb3e9f0db5e08cbe812e2d0c061325cb97)、[`015aabe`](https://github.com/Raving4934/Melora/commit/015aabe17dff41f845e03594f7b4336c996d3268)、[`b609300`](https://github.com/Raving4934/Melora/commit/b609300fd49db5315cd2760b45bf098688b65276)、[`c0f85fc`](https://github.com/Raving4934/Melora/commit/c0f85fc797ded7e4e36df8d0e77933ba9f16f0e8)、[`55a0e79`](https://github.com/Raving4934/Melora/commit/55a0e795e035a436b8ba6b5229eb19d2cf0a2101)
+
 ## [0.2.4] - 2026-11-25
 
 ### 安卓客户端
@@ -642,7 +684,9 @@ Android 版本号为 0.2.4，versionCode 为 24。完整 Android 提交区间见
 
 **Docker 镜像：** `ghcr.io/raving4934/melora:0.1.0`（支持 `linux/amd64`、`linux/arm64`）。
 
-[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.4...HEAD
+[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.5...HEAD
+[0.2.5]: https://github.com/Raving4934/Melora/compare/android-v0.2.4...android-v0.2.5
+[Android 0.2.5]: https://github.com/Raving4934/Melora/compare/android-v0.2.4...android-v0.2.5
 [0.2.4]: https://github.com/Raving4934/Melora/compare/android-v0.2.3...android-v0.2.4
 [Android 0.2.4]: https://github.com/Raving4934/Melora/compare/android-v0.2.3...android-v0.2.4
 [0.2.3]: https://github.com/Raving4934/Melora/compare/android-v0.2.2...android-v0.2.3
@@ -655,7 +699,7 @@ Android 版本号为 0.2.4，versionCode 为 24。完整 Android 提交区间见
 [Android 0.2.0]: https://github.com/Raving4934/Melora/compare/android-v0.1.10...android-v0.2.0
 [0.1.10]: https://github.com/Raving4934/Melora/compare/android-v0.1.9...android-v0.1.10
 [Android 0.1.10]: https://github.com/Raving4934/Melora/compare/android-v0.1.9...android-v0.1.10
-[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.4...HEAD
+[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.5...HEAD
 [Web Unreleased]: https://github.com/Raving4934/Melora/compare/v0.1.3...HEAD
 [Web 0.1.3]: https://github.com/Raving4934/Melora/compare/v0.1.2...v0.1.3
 [Web 0.1.2]: https://github.com/Raving4934/Melora/compare/v0.1.1...v0.1.2
