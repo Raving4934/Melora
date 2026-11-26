@@ -295,14 +295,16 @@ class PlayerSheetMotionTest {
     }
 
     @Test
-    fun compactPhoneLandscapeRequiresBothAHandheldDisplayAndALowLandscapeWindow() {
-        assertTrue(playerUsesCompactPhoneLandscape(800f, 360f, 393f))
-        assertTrue(playerUsesCompactPhoneLandscape(540f, 320f, 320f))
-        assertFalse(playerUsesCompactPhoneLandscape(360f, 800f, 393f))
-        assertFalse(playerUsesCompactPhoneLandscape(800f, 480f, 393f))
-        assertFalse(playerUsesCompactPhoneLandscape(800f, 360f, 600f))
-        assertFalse(playerUsesCompactPhoneLandscape(800f, 360f, 800f))
-        assertFalse(playerUsesCompactPhoneLandscape(800f, 360f, 0f))
+    fun compactLandscapeDependsOnlyOnLowLandscapeWindow() {
+        assertTrue(playerUsesCompactLandscape(800f, 360f))
+        assertTrue(playerUsesCompactLandscape(540f, 320f))
+        assertTrue(playerUsesCompactLandscape(800f, 440f))
+        assertTrue(playerUsesCompactLandscape(1280f, 440f))
+        assertFalse(playerUsesCompactLandscape(360f, 800f))
+        assertFalse(playerUsesCompactLandscape(800f, 480f))
+        assertFalse(playerUsesCompactLandscape(840f, 480f))
+        assertFalse(playerUsesCompactLandscape(1280f, 800f))
+        assertFalse(playerUsesCompactLandscape(635f, 732f))
     }
 
     @Test
@@ -529,6 +531,14 @@ class PlayerSheetMotionTest {
                 }
             }
         }
+    }
+
+    @Test
+    fun desktopMiniBarMatchesTabletWindowDimensions() {
+        assertTrue(playerUsesDesktopMiniBar(1280f, 800f))
+        assertTrue(playerUsesDesktopMiniBar(600f, 480f))
+        assertFalse(playerUsesDesktopMiniBar(599f, 800f))
+        assertFalse(playerUsesDesktopMiniBar(800f, 440f))
     }
 
     private fun playerPageSnapAnimation(initialValue: Float, targetValue: Float) =

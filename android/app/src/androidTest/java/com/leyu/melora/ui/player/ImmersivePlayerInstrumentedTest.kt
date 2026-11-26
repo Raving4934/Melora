@@ -21,6 +21,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertIsNotSelected
@@ -422,7 +423,10 @@ class ImmersivePlayerInstrumentedTest {
             compose.onNodeWithContentDescription("关闭桌面歌词").assertIsSelected()
             assertEquals(before, compose.onNodeWithTag("player-pages").fetchSemanticsNode().boundsInRoot)
             compose.onNodeWithContentDescription("收起歌词设置").performClick()
-            compose.onNodeWithContentDescription("关闭桌面歌词").assertDoesNotExist()
+            compose.onNodeWithContentDescription("展开歌词设置").assertIsDisplayed()
+            compose.waitUntil(5_000) {
+                compose.onAllNodesWithContentDescription("关闭桌面歌词").fetchSemanticsNodes().isEmpty()
+            }
         } finally { MeloraSettings.showDesktopLyrics.value = original }
     }
 

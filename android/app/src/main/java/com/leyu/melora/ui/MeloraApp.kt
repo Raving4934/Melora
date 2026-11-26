@@ -136,6 +136,7 @@ import com.leyu.melora.ui.common.LocalChromeStartBleed
 import com.leyu.melora.ui.common.DetailPageHost
 import com.leyu.melora.ui.common.chromeHeaderColor
 import com.leyu.melora.ui.player.ContinuousPlayerSheet
+import com.leyu.melora.ui.player.DesktopMiniPlayerHeight
 import com.leyu.melora.ui.player.MiniPlayerContentHeight
 import com.leyu.melora.ui.player.PlayerSheetAnchor
 import com.leyu.melora.ui.player.rememberPlayerSheetBackState
@@ -399,6 +400,7 @@ fun MeloraApp(modifier: Modifier = Modifier, initialTab: Int = 5) {
     val playerNavigationInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val playerSheetBackState = if (hasActivePlayback) rememberPlayerSheetBackState() else null
     val playerOwnsBack = playerSheetBackState?.ownsBack == true
+    val miniBarHeight = if (isPersistentDrawer) DesktopMiniPlayerHeight else MiniPlayerContentHeight
 
     // 全局提示消息：显示 2.4 秒后自动消费
     androidx.compose.runtime.LaunchedEffect(playerState.message) {
@@ -461,7 +463,7 @@ fun MeloraApp(modifier: Modifier = Modifier, initialTab: Int = 5) {
                     top = if (isCompactLandscape) WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 8.dp else 36.dp,
                 )
                 .navigationBarsPadding()
-                .padding(bottom = MiniPlayerContentHeight + 24.dp),
+                .padding(bottom = miniBarHeight + 20.dp),
             verticalArrangement = Arrangement.spacedBy(if (isCompactLandscape) 8.dp else 12.dp),
         ) {
             // Bento Card 1: 顶部项目品牌卡片
@@ -576,7 +578,7 @@ fun MeloraApp(modifier: Modifier = Modifier, initialTab: Int = 5) {
                         ),
                     ),
                 bottomBar = if (hasActivePlayback && !imeVisible) {
-                    { Spacer(Modifier.navigationBarsPadding().height(MiniPlayerContentHeight)) }
+                    { Spacer(Modifier.navigationBarsPadding().height(miniBarHeight)) }
                 } else null,
             ) {
                 Box(
@@ -713,7 +715,7 @@ fun MeloraApp(modifier: Modifier = Modifier, initialTab: Int = 5) {
             exit = fadeOut(tween(160)) + slideOutVertically(tween(180)) { it / 2 },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = if (hasActivePlayback) MiniPlayerContentHeight + maxOf(24.dp, playerNavigationInset + 8.dp) else 32.dp)
+                .padding(bottom = if (hasActivePlayback) miniBarHeight + maxOf(24.dp, playerNavigationInset + 8.dp) else 32.dp)
                 .padding(horizontal = 24.dp),
         ) {
             val message = playerState.message.orEmpty()

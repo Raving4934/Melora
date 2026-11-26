@@ -13,7 +13,6 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.only
-import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -23,6 +22,7 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import kotlinx.coroutines.delay
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
@@ -62,6 +62,8 @@ import com.leyu.melora.ui.common.ChromeScaffold
 import com.leyu.melora.ui.theme.DarkGlass
 import com.leyu.melora.ui.theme.LightSheetFrost
 import com.leyu.melora.ui.theme.MeloraAppearance
+import com.leyu.melora.ui.theme.WithMeloraSheetTheme
+import com.leyu.melora.ui.theme.currentMeloraSheetPalette
 import com.leyu.melora.ui.theme.meloraSwitchColors
 import com.leyu.melora.ui.common.LocalChromeTopInset
 import com.leyu.melora.ui.common.chromeContentPadding
@@ -105,7 +107,9 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -118,7 +122,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
@@ -149,6 +155,7 @@ import androidx.compose.material.icons.rounded.FormatAlignCenter
 import androidx.compose.material.icons.automirrored.rounded.FormatAlignLeft
 import androidx.compose.material.icons.rounded.FormatBold
 import androidx.compose.material.icons.rounded.BlurOn
+import androidx.compose.material.icons.rounded.Animation
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -162,6 +169,8 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.LocalTextStyle
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.key
@@ -198,6 +207,7 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.style.LineHeightStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -220,6 +230,8 @@ import com.leyu.melora.ui.common.ErrorState
 import com.leyu.melora.ui.common.OnlineSongRow
 import com.leyu.melora.ui.common.rememberFastScrollToTop
 import com.leyu.melora.ui.common.titleScrollToTop
+import com.leyu.melora.ui.common.CollectionHeroArtwork
+import com.leyu.melora.ui.common.CollectionShowcaseActions
 import com.leyu.melora.ui.common.SkeletonSongList
 import com.leyu.melora.ui.common.SongMoreSheet
 import com.leyu.melora.ui.common.sourceAliasDisplay
@@ -227,6 +239,7 @@ import com.leyu.melora.ui.common.toUiTracks
 import com.leyu.melora.ui.common.runCatchingCancellable
 import com.leyu.melora.ui.common.PlaylistDetailContent
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 
 
@@ -323,11 +336,13 @@ internal fun FullPlayerPageContent(
                 is FullPlayerDetailTarget.Collection -> SongsCollectionPage(
                     collection = target.value,
                     onBack = { openedDetail = null },
+                    standalone = true,
                 )
                 is FullPlayerDetailTarget.Playlist -> PlaylistDetailContent(
                     playlist = target.value,
                     onBack = { openedDetail = null },
                     emptyHint = "该有声专辑暂无可播放音频",
+                    standalone = true,
                 )
             }
         },
@@ -336,30 +351,60 @@ internal fun FullPlayerPageContent(
         modifier = Modifier.fillMaxSize(),
     ) {
         val expandedLayout = playerUsesExpandedLayout(maxWidth.value, maxHeight.value)
-        val twoPanes = playerUsesTwoPanes(maxWidth.value, maxHeight.value)
-        val phoneLandscape = isCompactPhonePlayerLandscape(maxWidth, maxHeight)
-        val pages = remember(expandedLayout) { if (expandedLayout) listOf(2, 0) else listOf(0, 1, 2) }
-        val coverPagerState = key(expandedLayout) {
-            rememberPagerState(initialPage = pages.indexOf(selectedPage).coerceAtLeast(0), pageCount = { pages.size })
+        val compactLandscape = playerUsesCompactLandscape(maxWidth.value, maxHeight.value)
+        val twoPanes = expandedLayout || compactLandscape
+        val compactLandscapeNormal = compactLandscape && !immersive
+        val expandedNormal = expandedLayout && !immersive
+        val landscapeImmersivePager = twoPanes && immersive
+        val splitTwoPages = expandedNormal || compactLandscapeNormal
+        val pages = remember(splitTwoPages) { if (splitTwoPages) listOf(2, 0) else listOf(0, 1, 2) }
+        val coverPagerState = key(splitTwoPages) {
+            val targetPage = if (landscapeImmersivePager) 1 else selectedPage
+            rememberPagerState(initialPage = pages.indexOf(targetPage).coerceAtLeast(0), pageCount = { pages.size })
         }
         val currentPage = pages[coverPagerState.currentPage]
-        val phoneQueueOpen = phoneLandscape && queuePagerState.targetPage == 1
-        val coverPageVisible = (expandedLayout || currentPage == 1) && !phoneQueueOpen
-        LaunchedEffect(coverPagerState) {
-            snapshotFlow { pages[coverPagerState.currentPage] }.collect { selectedPage = it }
+        val compactQueueOpen = compactLandscape && queuePagerState.targetPage == 1
+        val coverPageVisible = expandedNormal || compactLandscapeNormal || currentPage == 1
+        val largePortrait = !twoPanes && maxWidth >= 600.dp
+        val portraitStageModifier = if (largePortrait) Modifier.widthIn(max = 560.dp) else Modifier
+        val posterMode = !miniLyricsEnabled && !twoPanes
+        val coverPageIndex = pages.indexOf(1)
+        val awayFromCover by remember(coverPagerState, coverPageIndex) {
+            derivedStateOf {
+                if (coverPageIndex < 0) 1f
+                else abs((coverPagerState.currentPage + coverPagerState.currentPageOffsetFraction) - coverPageIndex)
+                    .coerceIn(0f, 1f)
+            }
         }
-        LaunchedEffect(track?.uid, currentPage, expandedLayout, isVisible, phoneQueueOpen) {
+        LaunchedEffect(coverPagerState) {
+            // 横屏用歌词补齐缺失的封面页，沉浸态也有自己的初始页。只记住后续实际停稳的分页。
+            snapshotFlow { coverPagerState.settledPage }.drop(1).collect { selectedPage = pages[it] }
+        }
+        fun selectReadingTab(index: Int) {
+            if (coverPagerState.settledPage == index) selectedPage = pages[index]
+            scope.launch { coverPagerState.animateScrollToPage(index, animationSpec = PlayerPageSnapSpec) }
+        }
+        LaunchedEffect(track?.uid, currentPage, expandedNormal, compactLandscapeNormal, isVisible) {
             if (isVisible && coverPageVisible) PlaybackController.ensureCurrentArtwork()
         }
         // 播放分页是同级视图，不消费返回；仅沉浸态先退出，再由外层收起播放器。
         BackHandler(enabled = isVisible && immersive) { onImmersiveChange(false) }
-        LaunchedEffect(detailTarget != null, currentPage, coverPagerState.isScrollInProgress, pageIsLight, immersive, expandedLayout, phoneQueueOpen) {
+        LaunchedEffect(detailTarget != null, currentPage, coverPagerState.isScrollInProgress, pageIsLight, immersive, expandedNormal, compactLandscapeNormal) {
             onPageVisualChanged(
-                !immersive && detailTarget == null && coverPageVisible && (expandedLayout || !coverPagerState.isScrollInProgress),
+                !immersive && detailTarget == null && coverPageVisible && (expandedNormal || compactLandscapeNormal || !coverPagerState.isScrollInProgress),
                 pageIsLight,
                 // 宽屏封面区允许下拉；右侧阅读区在自己的边界消费剩余滚动。
-                detailTarget != null || (!expandedLayout && currentPage == 2),
+                detailTarget != null || (!expandedNormal && !compactLandscapeNormal && currentPage == 2),
             )
+        }
+        val stageLyricsMode = immersive && twoPanes
+        val lyricsPageIndex = pages.indexOf(2)
+        val stagePageFraction by remember(coverPagerState, lyricsPageIndex) {
+            derivedStateOf {
+                if (lyricsPageIndex < 0) 0f
+                else (1f - abs((coverPagerState.currentPage + coverPagerState.currentPageOffsetFraction) - lyricsPageIndex))
+                    .coerceIn(0f, 1f)
+            }
         }
         val t = immersion.value
         val playerInsets = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom)
@@ -367,33 +412,41 @@ internal fun FullPlayerPageContent(
             if (immersive) 0.dp else WindowInsets.safeDrawing.asPaddingValues().calculateTopPadding(),
             if (motionEnabled) spring(dampingRatio = 1f, stiffness = 220f) else snap(), label = "playerTopInset",
         )
-        // 竖屏保持纯净；横向可用空间更充裕时才让歌名成为背景纹理。
+        // 竖屏保持纯净；横屏普通页和封面沉浸展示歌名纹理，滑到第3页剧场歌词时平滑让位给两侧流动大字。
         if (t > 0f && maxWidth > maxHeight) ImmersiveTitleWatermark(
             title = track?.title.orEmpty(), immersion = immersion,
             playing = state.positionAdvancing, motionEnabled = motionEnabled && isVisible,
-            modifier = Modifier.fillMaxSize().testTag("immersive-title-watermark"),
+            modifier = Modifier.fillMaxSize()
+                .graphicsLayer { alpha = if (stageLyricsMode) 1f - stagePageFraction else 1f }
+                .testTag("immersive-title-watermark"),
         )
         val pagePadding = when {
-            phoneLandscape -> PaddingValues(start = 16.dp, end = 4.dp)
+            compactLandscapeNormal -> PaddingValues(start = 12.dp, end = 24.dp)
+            compactLandscape -> PaddingValues(horizontal = 16.dp)
             expandedLayout -> PaddingValues(horizontal = 20.dp)
-            else -> playerPaneContentPadding(twoPanes, controls = false)
+            else -> playerPaneContentPadding(twoPanes = false, controls = false)
         }
         val controlsPadding = playerPaneContentPadding(twoPanes, controls = true)
         val heading: @Composable (Modifier) -> Unit = { headingModifier ->
             Row(
                 modifier = headingModifier
                     .fillMaxWidth()
-                    .padding(top = if (phoneLandscape) 0.dp else 10.dp),
+                    .padding(top = if (compactLandscape) 0.dp else 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (expandedLayout) IconButton(onClick = onCollapse, modifier = Modifier.testTag("player-collapse")) {
                     Icon(Icons.AutoMirrored.Outlined.ArrowBack, "收起播放页", tint = FullPlayerTextMuted)
                 }
                 // 只有换曲才滚动标题；进度、循环模式、封面回填不重启动效。
+                val topTitleAlpha = if (posterMode) awayFromCover else 1f
                 AnimatedContent(
                     targetState = track,
                     contentKey = { it?.uid },
-                    modifier = Modifier.weight(1f).clipToBounds(),
+                    modifier = Modifier
+                        .weight(1f)
+                        .clipToBounds()
+                        .graphicsLayer { alpha = topTitleAlpha }
+                        .then(if (posterMode && awayFromCover < 0.5f) Modifier.clearAndSetSemantics {} else Modifier),
                     transitionSpec = {
                         ((slideInHorizontally(tween(320, easing = LinearOutSlowInEasing)) { it } +
                             fadeIn(tween(160))) togetherWith
@@ -405,10 +458,11 @@ internal fun FullPlayerPageContent(
                     Column(Modifier.fillMaxWidth()) {
                         Text(
                             text = headingTrack?.title ?: "未在播放",
-                            fontSize = 19.sp,
-                            fontWeight = FontWeight.SemiBold,
+                            fontSize = if (compactLandscapeNormal) 20.sp else 19.sp,
+                            lineHeight = if (compactLandscapeNormal) 25.sp else 24.sp,
+                            fontWeight = if (compactLandscapeNormal) FontWeight.Bold else FontWeight.SemiBold,
                             color = FullPlayerTextPrimary,
-                            maxLines = 1,
+                            maxLines = if (compactLandscapeNormal) 2 else 1,
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
@@ -424,13 +478,13 @@ internal fun FullPlayerPageContent(
                 }
                 IconButton(
                     onClick = { showSystemOutputSwitcher(context) },
-                    modifier = if (phoneLandscape) Modifier else Modifier.offset(x = 13.dp),
+                    modifier = if (compactLandscapeNormal) Modifier else Modifier.offset(x = 13.dp),
                 ) {
                     Icon(
                         Icons.Outlined.Sensors,
                         contentDescription = "播放设备",
-                        tint = FullPlayerTextMuted,
-                        modifier = Modifier.size(22.dp),
+                        tint = FullPlayerTextMuted.copy(alpha = if (compactLandscapeNormal) 0.68f else 1f),
+                        modifier = Modifier.size(if (compactLandscapeNormal) 20.dp else 22.dp),
                     )
                 }
             }
@@ -443,10 +497,11 @@ internal fun FullPlayerPageContent(
                 isVisible = isVisible && coverPageVisible,
                 track = track, lyrics = lyricLines,
                 retryArtwork = isVisible && coverPageVisible,
-                compact = twoPanes && !expandedLayout, lyricsInCover = !expandedLayout,
-                phoneLandscape = phoneLandscape,
-                largePortrait = !twoPanes && maxWidth >= 600.dp,
-                miniLyricsEnabled = miniLyricsEnabled, coverStyle = coverStyle,
+                compact = compactLandscape, lyricsInCover = !expandedLayout,
+                phoneLandscape = compactLandscape,
+                largePortrait = largePortrait,
+                miniLyricsEnabled = miniLyricsEnabled, wordLiftEnabled = lyricsConfig.isWordLiftEnabled,
+                posterMode = posterMode, coverStyle = coverStyle,
                 artworkAlpha = artworkAlpha, artworkRotation = artworkRotation,
                 tonearmAngle = tonearmAngle,
                 recordChange = recordChange,
@@ -466,11 +521,25 @@ internal fun FullPlayerPageContent(
                 key = { pages[it] },
             ) { index ->
                 val pageIndex = pages[index]
+                val selfInsetPage = (pageIndex == 2 && stageLyricsMode) || (pageIndex == 1 && expandedLayout && immersive)
+                val pageInsetsModifier = if (landscapeImmersivePager && !selfInsetPage) {
+                    Modifier.windowInsetsPadding(playerInsets)
+                } else Modifier
                 // 先按整页边界裁切，再留正文内距：不串页，也不在屏幕内侧提前硬切。
-                Box(Modifier.fillMaxSize().testTag("player-page-$pageIndex").clipToBounds().padding(pagePadding)) {
-                    when (pageIndex) {
-                        0 -> AudioInfoPage(
-                            immersive = immersive,
+                Box(
+                    Modifier.fillMaxSize().testTag("player-page-$pageIndex").clipToBounds(),
+                    contentAlignment = Alignment.TopCenter,
+                ) {
+                    Box(
+                        Modifier.fillMaxHeight().then(portraitStageModifier).fillMaxWidth()
+                            .then(pageInsetsModifier)
+                            .padding(if (selfInsetPage) PaddingValues(0.dp) else pagePadding),
+                    ) {
+                        when (pageIndex) {
+                            0 -> AudioInfoPage(
+                                immersive = immersive,
+                                compactSpacing = compactLandscapeNormal,
+                                largePortrait = largePortrait,
                             track = track,
                             audioSpec = state.audioSpec,
                             sourceLabel = playbackSourceLabel(state, autoSwitch),
@@ -510,10 +579,43 @@ internal fun FullPlayerPageContent(
                                 openedDetail = FullPlayerDetailTarget.Collection(artistCollection(track, artist))
                             },
                         )
-                        1 -> cover()
+                        1 -> if (expandedLayout && immersive) {
+                            val immersiveLines = remember(track?.uid, track?.title, track?.artist, lyricLines) {
+                                fullPlayerLyricsOrFallback(track, lyricLines)
+                            }
+                            val immersiveContentKey = remember(immersiveLines) { immersiveLines.map { it.startMs to it.text } }
+                            Row(
+                                Modifier.fillMaxSize().windowInsetsPadding(playerInsets)
+                                    .padding(horizontal = 24.dp, vertical = 12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(32.dp),
+                            ) {
+                                Box(Modifier.weight(0.44f).fillMaxHeight()) { cover() }
+                                Box(Modifier.weight(0.56f).fillMaxHeight()) {
+                                    key(track?.uid, immersiveContentKey) {
+                                        LyricsViewport(
+                                            lines = immersiveLines,
+                                            position = lyricPosition,
+                                            config = lyricsConfig,
+                                            frameState = lyricFrame,
+                                            motionEnabled = motionEnabled,
+                                            immersive = true,
+                                            modifier = Modifier.fillMaxSize().testTag("player-full-lyrics").lyricViewportFade(),
+                                            onLineClick = { if (lyricLines.isNotEmpty()) PlaybackController.seekTo(it.startMs) },
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            cover()
+                        }
                         2 -> LyricsPage(
-                            toolsPadding = if (expandedLayout) PaddingValues(top = 6.dp, bottom = 10.dp) else PaddingValues(0.dp),
+                            toolsPadding = when {
+                                expandedLayout -> PaddingValues(top = 6.dp, bottom = 10.dp)
+                                compactLandscapeNormal -> PaddingValues(top = 4.dp, bottom = 6.dp)
+                                else -> PaddingValues(0.dp)
+                            },
                             track = track,
+                            durationMs = state.durationMs,
                             lyrics = lyricLines,
                             position = lyricPosition,
                             frame = lyricFrame,
@@ -522,7 +624,17 @@ internal fun FullPlayerPageContent(
                             immersive = immersive, immersion = immersion,
                             onConfigChange = MeloraSettings::updatePlayerLyrics,
                             onOpenSource = { showLyricsSource = true },
+                            stageMode = stageLyricsMode,
+                            playing = state.playing,
+                            isVisible = isVisible && currentPage == 2,
+                            onImmersiveChange = onImmersiveChange,
+                            onPrevious = onPrevious,
+                            onNext = onNext,
+                            largeDisplay = largePortrait || expandedLayout,
+                            compactLandscape = compactLandscapeNormal,
+                            lyricsTestTag = if (expandedLayout && immersive) "player-stage-lyrics" else "player-full-lyrics",
                         )
+                        }
                     }
                 }
             }
@@ -581,22 +693,27 @@ internal fun FullPlayerPageContent(
                         .fillMaxWidth()
                         .padding(horizontal = 2.dp),
                 ) {
+                    val clockColor = FullPlayerTextMuted.copy(alpha = if (compactLandscapeNormal) 0.78f else 1f)
+                    val clockStyle = LocalTextStyle.current.copy(
+                        fontSize = if (compactLandscapeNormal) 11.sp else 12.sp,
+                        fontFeatureSettings = "tnum",
+                    )
                     Text(
                         formatClock(dragging?.toLong() ?: state.positionMs),
-                        color = FullPlayerTextMuted,
-                        fontSize = 12.sp,
+                        color = clockColor,
+                        style = clockStyle,
                     )
                     Spacer(Modifier.weight(1f))
                     Text(
                         formatClock(state.durationMs),
-                        color = FullPlayerTextMuted,
-                        fontSize = 12.sp,
+                        color = clockColor,
+                        style = clockStyle,
                     )
                 }
             }
 
             // 紧凑控制区：进度条与播放控制紧密贴合
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(if (compactLandscapeNormal) 2.dp else 4.dp))
 
             // 主播放控制：上一首 / 纯白大号播放键（无底圆） / 下一首
             FullPlayerPrimaryControls(
@@ -604,9 +721,10 @@ internal fun FullPlayerPageContent(
                 onPrevious = onPrevious,
                 onToggle = { PlaybackController.toggle() },
                 onNext = onNext,
+                compact = compactLandscapeNormal,
             )
 
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(if (compactLandscapeNormal) 2.dp else 4.dp))
 
             // 底部 5 个次要控制钮（循环模式、定时设置、音效、队列、更多操作）
             FullPlayerSecondaryControls(
@@ -615,19 +733,18 @@ internal fun FullPlayerPageContent(
                 onCycleMode = { PlaybackController.cycleMode() },
                 onShowTimer = { showTimerSettings = true },
                 onOpenEffects = { showAudioEffects = true },
-                onOpenQueue = if (phoneQueueOpen) onCloseQueue else onOpenQueue,
-                queueOpen = phoneQueueOpen,
-                modifier = if (phoneLandscape) Modifier.widthIn(max = 272.dp).fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()).widthIn(min = 240.dp) else Modifier,
+                onOpenQueue = if (compactQueueOpen) onCloseQueue else onOpenQueue,
+                queueOpen = compactQueueOpen,
                 onShowMore = { showMoreActions = true },
+                compact = compactLandscapeNormal,
             )
         }
-        // 手机横屏的队列和阅读内容共用左栏，歌词和信息优先消费自己的纵向滚动。
+        // 手机横屏的队列和阅读内容共用右栏，歌词和信息优先消费自己的纵向滚动。
         val viewConfiguration = LocalViewConfiguration.current
         val verticalViewConfiguration = rememberPlayerVerticalViewConfiguration()
         val queueGestureEnabled by rememberUpdatedState(
             LocalPageActive.current && !immersive && !expandedLayout && detailTarget == null &&
-                (!phoneLandscape || currentPage == 1 || queuePagerState.currentPage == 1 || queuePagerState.isScrollInProgress),
+                (!compactLandscape || queuePagerState.currentPage == 1 || queuePagerState.isScrollInProgress),
         )
         val queueFling = PagerDefaults.flingBehavior(queuePagerState, snapAnimationSpec = PlayerPageSnapSpec)
         val defaultQueueScroll = PagerDefaults.pageNestedScrollConnection(queuePagerState, Orientation.Vertical)
@@ -666,19 +783,24 @@ internal fun FullPlayerPageContent(
                         if (page == 0) {
                             playerContent()
                         } else {
-                            QueuePageContent(
-                                state = state,
-                                onClose = onCloseQueue,
-                                isVisible = !isCollapsed && (queuePagerState.currentPage == 1 || queuePagerState.targetPage == 1),
-                                motionEnabled = queueMotionEnabled,
-                                horizontalPadding = if (twoPanes) 0.dp else 18.dp,
-                                modifier = when {
-                                    phoneLandscape -> Modifier.padding(pagePadding)
-                                    twoPanes -> Modifier.padding(controlsPadding)
-                                    else -> Modifier
-                                },
-                                besideTransport = phoneLandscape,
-                            )
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                                QueuePageContent(
+                                    state = state,
+                                    onClose = onCloseQueue,
+                                    isVisible = !isCollapsed && (queuePagerState.currentPage == 1 || queuePagerState.targetPage == 1),
+                                    motionEnabled = queueMotionEnabled,
+                                    horizontalPadding = if (twoPanes) 0.dp else 18.dp,
+                                    modifier = when {
+                                        compactLandscape -> Modifier
+                                            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.End + WindowInsetsSides.Bottom))
+                                            .padding(start = 12.dp, end = 24.dp, top = 12.dp, bottom = 8.dp)
+                                        expandedLayout -> Modifier.padding(controlsPadding)
+                                        largePortrait -> Modifier.then(portraitStageModifier).fillMaxSize()
+                                        else -> Modifier
+                                    },
+                                    besideTransport = compactLandscape,
+                                )
+                            }
                         }
                     }
                 }
@@ -688,96 +810,135 @@ internal fun FullPlayerPageContent(
         val playerAndQueue = remember {
             movableContentOf<Modifier, @Composable () -> Unit> { paneModifier, content -> currentQueuePane(paneModifier, content) }
         }
-        if (expandedLayout) {
-            val readingScroll = remember {
-                object : NestedScrollConnection {
-                    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource) = Offset(0f, available.y)
-                    override suspend fun onPostFling(consumed: Velocity, available: Velocity) = Velocity(0f, available.y)
-                }
+        val readingScroll = remember {
+            object : NestedScrollConnection {
+                override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource) = Offset(0f, available.y)
+                override suspend fun onPostFling(consumed: Velocity, available: Velocity) = Velocity(0f, available.y)
             }
+        }
+        if (expandedNormal) {
             Row(
                 Modifier.fillMaxSize().windowInsetsPadding(playerInsets).padding(top = playerTopInset)
                     .padding(horizontal = 24.dp, vertical = 12.dp).testTag("player-expanded-layout"),
                 horizontalArrangement = Arrangement.spacedBy(32.dp),
             ) {
-                Column(Modifier.weight(0.44f).fillMaxHeight().testTag("player-artwork-pane")) {
-                    Box(Modifier.immersionChrome(immersion).testTag("player-heading")) { heading(Modifier) }
-                    Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 16.dp)) { cover() }
-                    Column(Modifier.fillMaxWidth().immersionChrome(immersion).testTag("player-transport")) { transport() }
+                Box(
+                    Modifier.weight(0.44f).fillMaxHeight().testTag("player-artwork-pane"),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(Modifier.widthIn(max = 460.dp).fillMaxSize()) {
+                        Box(Modifier.immersionChrome(immersion).testTag("player-heading")) { heading(Modifier) }
+                        Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 16.dp)) { cover() }
+                        Column(Modifier.fillMaxWidth().immersionChrome(immersion).testTag("player-transport")) { transport() }
+                    }
                 }
                 playerAndQueue(Modifier.weight(0.56f).fillMaxHeight().nestedScroll(readingScroll).testTag("player-reading-pane")) {
                     Column(Modifier.fillMaxSize()) {
-                        Row(Modifier.fillMaxWidth().immersionChrome(immersion).padding(horizontal = 20.dp, vertical = 8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            pages.forEachIndexed { index, page ->
-                                val title = if (page == 2) "歌词" else "信息"
-                                Box(Modifier.weight(1f).height(48.dp).testTag("player-page-tab-$page")
-                                    .selectable(selected = coverPagerState.currentPage == index, role = Role.Tab,
-                                        onClick = { scope.launch { coverPagerState.animateScrollToPage(index, animationSpec = PlayerPageSnapSpec) } }),
-                                    contentAlignment = Alignment.Center) {
-                                    Text(title, fontSize = 14.sp,
-                                        fontWeight = if (coverPagerState.currentPage == index) FontWeight.SemiBold else FontWeight.Normal,
-                                        color = if (coverPagerState.currentPage == index) FullPlayerTextPrimary else FullPlayerTextMuted)
-                                }
-                            }
-                        }
+                        PlayerReadingTabs(
+                            pages = pages,
+                            selectedPage = currentPage,
+                            modifier = Modifier.fillMaxWidth().immersionChrome(immersion).padding(horizontal = 20.dp, vertical = 8.dp),
+                            tabTagPrefix = "player-page-tab-",
+                            compact = false,
+                            onSelect = ::selectReadingTab,
+                        )
                         pane(Modifier.fillMaxWidth().weight(1f))
                     }
                 }
             }
-        } else if (phoneLandscape) {
+        } else if (compactLandscapeNormal) {
             Row(
-                Modifier.fillMaxSize().windowInsetsPadding(playerInsets).padding(top = playerTopInset)
+                Modifier.fillMaxSize().padding(top = playerTopInset)
                     .testTag("player-phone-landscape"),
-                horizontalArrangement = Arrangement.spacedBy((16f * (1f - t)).dp),
+                horizontalArrangement = Arrangement.spacedBy(20.dp),
             ) {
-                playerAndQueue(Modifier.weight(1.05f + 0.95f * t).fillMaxHeight().testTag("player-compact-content")) {
-                    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
-                        if (t < 0.999f) {
-                            CompactPlayerTabs(pages, currentPage, Modifier.padding(pagePadding).immersionChrome(immersion)) { index ->
-                                scope.launch { coverPagerState.animateScrollToPage(index, animationSpec = PlayerPageSnapSpec) }
+                BoxWithConstraints(
+                    Modifier.weight(0.43f).fillMaxHeight().clipToBounds()
+                        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Start + WindowInsetsSides.Bottom))
+                        .testTag("player-compact-controls")
+                        .padding(start = 20.dp, end = 4.dp, top = 12.dp, bottom = 8.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    val leftHeight = maxHeight
+                    val coverSide = (leftHeight * 0.43f).coerceIn(112.dp, 136.dp)
+                    val sideBySide = maxWidth >= coverSide + 144.dp
+                    val compactArtwork: @Composable () -> Unit = {
+                        val coverOutline = if (coverStyle == PlayerCoverStyle.Default) {
+                            Modifier.border(0.6.dp, FullPlayerTextPrimary.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
+                        } else Modifier
+                        NowPlayingArtwork(
+                            url = track?.artwork,
+                            seed = track?.uid ?: "empty",
+                            style = coverStyle,
+                            modifier = Modifier
+                                .size(if (sideBySide) coverSide else minOf(coverSide, leftHeight * 0.32f, maxWidth))
+                                .then(coverOutline)
+                                .testTag("player-artwork")
+                                .semantics { contentDescription = "${track?.title.orEmpty()}，${track?.artist.orEmpty()}" }
+                                .onGloballyPositioned(onArtworkPositioned)
+                                .graphicsLayer { alpha = artworkAlpha() }
+                                .combinedClickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    onLongClickLabel = "选择封面类型",
+                                    onLongClick = { showCoverPicker = true },
+                                    onClick = {},
+                                ),
+                            cornerRadius = 16,
+                            retryOnError = isVisible && coverPageVisible,
+                            smoothChanges = true,
+                            rotationDegrees = artworkRotation,
+                            motionEnabled = motionEnabled,
+                            tonearmAngle = tonearmAngle,
+                            recordChange = recordChange,
+                        )
+                    }
+                    Column(
+                        Modifier.widthIn(max = 376.dp).fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = leftHeight),
+                        verticalArrangement = Arrangement.SpaceBetween,
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        if (sideBySide) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                            ) {
+                                compactArtwork()
+                                heading(Modifier.weight(1f).testTag("player-heading"))
                             }
+                        } else {
+                            heading(Modifier.testTag("player-heading"))
+                            compactArtwork()
                         }
+                        Column(Modifier.fillMaxWidth().padding(top = 10.dp).testTag("player-transport")) { transport() }
+                    }
+                }
+                playerAndQueue(Modifier.weight(0.57f).fillMaxHeight().nestedScroll(readingScroll).testTag("player-compact-content")) {
+                    Column(
+                        Modifier.fillMaxSize()
+                            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.End + WindowInsetsSides.Bottom))
+                            .padding(top = 12.dp, bottom = 8.dp),
+                        horizontalAlignment = Alignment.Start,
+                    ) {
+                        PlayerReadingTabs(
+                            pages = pages,
+                            selectedPage = currentPage,
+                            modifier = Modifier.padding(start = 12.dp, top = 2.dp, bottom = 4.dp),
+                            tabTagPrefix = "player-compact-tab-",
+                            compact = true,
+                            onSelect = ::selectReadingTab,
+                        )
                         pane(Modifier.fillMaxWidth().weight(1f))
                     }
                 }
-                if (t < 0.999f) {
-                    Box(
-                        Modifier.weight(0.95f * (1f - t)).fillMaxHeight().clipToBounds()
-                            .graphicsLayer { alpha = 1f - immersion.value }
-                            .then(if (immersive) Modifier.clearAndSetSemantics {} else Modifier)
-                            .testTag("player-compact-controls").padding(start = 4.dp, end = 20.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Column(
-                            Modifier.widthIn(max = 336.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(vertical = 8.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            heading(Modifier.testTag("player-heading"))
-                            Spacer(Modifier.height(8.dp))
-                            transport()
-                        }
-                    }
-                }
             }
-        } else if (twoPanes) {
-            Row(
-                Modifier.fillMaxSize().windowInsetsPadding(playerInsets).padding(top = playerTopInset),
-                horizontalArrangement = Arrangement.spacedBy((28f * (1f - t)).dp),
+        } else if (landscapeImmersivePager) {
+            Box(
+                Modifier.fillMaxSize()
+                    .testTag(if (expandedLayout) "player-expanded-layout" else "player-phone-landscape"),
             ) {
-                pane(Modifier.weight(1f + t).fillMaxHeight())
-                if (t < 0.999f) playerAndQueue(Modifier.weight((1f - t).coerceAtLeast(0.001f)).fillMaxHeight().clipToBounds()
-                    .graphicsLayer { alpha = 1f - immersion.value }
-                    .then(if (immersive) Modifier.clearAndSetSemantics {} else Modifier)) {
-                    Column(
-                        Modifier.fillMaxSize().padding(controlsPadding).verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.Center,
-                    ) {
-                        heading(Modifier)
-                        Spacer(Modifier.height(20.dp))
-                        transport()
-                    }
-                }
+                pane(Modifier.fillMaxSize())
             }
         } else {
             playerAndQueue(Modifier.fillMaxSize()) {
@@ -785,12 +946,12 @@ internal fun FullPlayerPageContent(
                     Modifier.fillMaxSize().windowInsetsPadding(playerInsets).padding(top = playerTopInset),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Column(Modifier.immersionChrome(immersion).testTag("player-heading")) {
+                    Column(Modifier.then(portraitStageModifier).fillMaxWidth().immersionChrome(immersion).testTag("player-heading")) {
                         heading(Modifier.padding(controlsPadding))
                         Spacer(Modifier.height(16.dp))
                     }
                     pane(Modifier.fillMaxWidth().weight(1f))
-                    Column(Modifier.fillMaxWidth().immersionChrome(immersion).testTag("player-transport")) {
+                    Column(Modifier.then(portraitStageModifier).fillMaxWidth().immersionChrome(immersion).testTag("player-transport")) {
                         Spacer(Modifier.height(2.dp))
                         Column(Modifier.padding(controlsPadding)) { transport() }
                     }
@@ -866,6 +1027,8 @@ private fun AudioInfoPage(
     sourceLabel: String,
     onOpenAlbum: (String) -> Unit,
     onOpenArtist: (String) -> Unit,
+    compactSpacing: Boolean = false,
+    largePortrait: Boolean = false,
 ) {
     val platformName = sourceAliasDisplay(track?.source.orEmpty(), platformLabel(track?.source))
     // 只显示已选中音轨的实测徽标，不借目录最高档或请求档冒充实际音质。
@@ -876,21 +1039,58 @@ private fun AudioInfoPage(
     val viewConfiguration = LocalViewConfiguration.current
     val verticalViewConfiguration = rememberPlayerVerticalViewConfiguration()
     CompositionLocalProvider(LocalViewConfiguration provides verticalViewConfiguration) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(vertical = 4.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            CompositionLocalProvider(LocalViewConfiguration provides viewConfiguration) {
-                AudioInfoCard(
-                    platformName = platformName,
-                    audioSpec = audioSpec,
-                    sourceLabel = sourceLabel,
-                )
-                AlbumInfoCard(track = track, onOpenAlbum = onOpenAlbum)
-                ArtistInfoCard(track = track, onOpenArtist = onOpenArtist)
+        if (largePortrait) {
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                val minViewportHeight = maxHeight
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .heightIn(min = minViewportHeight)
+                        .padding(vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
+                ) {
+                    CompositionLocalProvider(LocalViewConfiguration provides viewConfiguration) {
+                        AudioInfoCard(
+                            platformName = platformName,
+                            audioSpec = audioSpec,
+                            sourceLabel = sourceLabel,
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max),
+                            horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        ) {
+                            AlbumInfoCard(
+                                track = track,
+                                onOpenAlbum = onOpenAlbum,
+                                modifier = Modifier.weight(1f).fillMaxHeight(),
+                            )
+                            ArtistInfoCard(
+                                track = track,
+                                onOpenArtist = onOpenArtist,
+                                modifier = Modifier.weight(1f).fillMaxHeight(),
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(if (compactSpacing) 10.dp else 14.dp),
+            ) {
+                CompositionLocalProvider(LocalViewConfiguration provides viewConfiguration) {
+                    AudioInfoCard(
+                        platformName = platformName,
+                        audioSpec = audioSpec,
+                        sourceLabel = sourceLabel,
+                    )
+                    AlbumInfoCard(track = track, onOpenAlbum = onOpenAlbum)
+                    ArtistInfoCard(track = track, onOpenArtist = onOpenArtist)
+                }
             }
         }
     }
@@ -908,64 +1108,89 @@ internal fun ImmersiveTrackNotes(
 ) {
     BoxWithConstraints(Modifier.fillMaxSize().testTag("immersive-track-notes")) {
         val viewportHeight = maxHeight
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-            Column(
-                Modifier.fillMaxWidth().heightIn(min = viewportHeight).padding(horizontal = 12.dp, vertical = 32.dp),
-                verticalArrangement = Arrangement.Center,
-            ) {
-                Text("唱片内页", fontSize = 11.sp, letterSpacing = 3.sp,
-                    color = FullPlayerTextMuted.copy(alpha = 0.60f))
-                Spacer(Modifier.height(24.dp))
-                Text(track?.title?.takeIf { it.isNotBlank() } ?: "未选择歌曲",
-                    fontSize = 32.sp, lineHeight = 40.sp, fontWeight = FontWeight.Bold,
-                    color = FullPlayerTextPrimary)
-                val artist = track?.artist?.takeIf { it.isNotBlank() }
-                Row(Modifier.fillMaxWidth().testTag("immersive-artist")
-                    .clickable(enabled = artist != null, role = Role.Button, onClickLabel = "查看歌手歌曲") {
-                        artist?.let(onOpenArtist)
-                    }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(artist ?: "未知艺术家", fontSize = 18.sp, lineHeight = 26.sp,
-                        color = FullPlayerTextMuted, modifier = Modifier.weight(1f))
-                    if (artist != null) Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null,
+        val twoColumn = maxWidth >= 600.dp && (maxHeight < 500.dp || maxWidth >= 840.dp)
+        val artist = track?.artist?.takeIf { it.isNotBlank() }
+        val album = track?.album?.takeIf { it.isNotBlank() }
+        val identityBlock: @Composable () -> Unit = {
+            Text("唱片内页", fontSize = 11.sp, letterSpacing = 3.sp,
+                color = FullPlayerTextMuted.copy(alpha = 0.60f))
+            Spacer(Modifier.height(if (twoColumn) 16.dp else 24.dp))
+            Text(track?.title?.takeIf { it.isNotBlank() } ?: "未选择歌曲",
+                fontSize = if (twoColumn) 30.sp else 32.sp,
+                lineHeight = if (twoColumn) 38.sp else 40.sp,
+                fontWeight = FontWeight.Bold,
+                color = FullPlayerTextPrimary)
+            Row(Modifier.fillMaxWidth().testTag("immersive-artist")
+                .clickable(enabled = artist != null, role = Role.Button, onClickLabel = "查看歌手歌曲") {
+                    artist?.let(onOpenArtist)
+                }.padding(vertical = if (twoColumn) 10.dp else 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(artist ?: "未知艺术家", fontSize = 18.sp, lineHeight = 26.sp,
+                    color = FullPlayerTextMuted, modifier = Modifier.weight(1f))
+                if (artist != null) Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null,
+                    tint = FullPlayerTextMuted.copy(alpha = 0.5f), modifier = Modifier.size(18.dp))
+            }
+            if (twoColumn) {
+                Spacer(Modifier.height(14.dp))
+                Box(Modifier.width(32.dp).height(1.dp).background(FullPlayerTextPrimary.copy(alpha = 0.25f)))
+            }
+        }
+        val metadataBlock: @Composable () -> Unit = {
+            Column(Modifier.fillMaxWidth().testTag("immersive-album")
+                .clickable(enabled = album != null, role = Role.Button, onClickLabel = "查看专辑歌曲") {
+                    album?.let(onOpenAlbum)
+                }.padding(vertical = 8.dp)) {
+                Text("收录专辑", fontSize = 11.sp, color = FullPlayerTextMuted.copy(alpha = 0.65f))
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(album ?: "未知专辑", fontSize = 20.sp, lineHeight = 28.sp,
+                        fontWeight = FontWeight.Medium, color = FullPlayerTextPrimary, modifier = Modifier.weight(1f))
+                    if (album != null) Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null,
                         tint = FullPlayerTextMuted.copy(alpha = 0.5f), modifier = Modifier.size(18.dp))
                 }
-                Spacer(Modifier.height(24.dp))
-                Box(Modifier.width(32.dp).height(1.dp).background(FullPlayerTextPrimary.copy(alpha = 0.25f)))
-                Spacer(Modifier.height(24.dp))
-                val album = track?.album?.takeIf { it.isNotBlank() }
-                Column(Modifier.fillMaxWidth().testTag("immersive-album")
-                    .clickable(enabled = album != null, role = Role.Button, onClickLabel = "查看专辑歌曲") {
-                        album?.let(onOpenAlbum)
-                    }.padding(vertical = 8.dp)) {
-                    Text("收录专辑", fontSize = 11.sp, color = FullPlayerTextMuted.copy(alpha = 0.65f))
-                    Spacer(Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(album ?: "未知专辑", fontSize = 20.sp, lineHeight = 28.sp,
-                            fontWeight = FontWeight.Medium, color = FullPlayerTextPrimary, modifier = Modifier.weight(1f))
-                        if (album != null) Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null,
-                            tint = FullPlayerTextMuted.copy(alpha = 0.5f), modifier = Modifier.size(18.dp))
-                    }
+            }
+            Spacer(Modifier.height(if (twoColumn) 20.dp else 32.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                Column(Modifier.weight(1f)) {
+                    Text("实际音质", fontSize = 11.sp, color = FullPlayerTextMuted.copy(alpha = 0.65f))
+                    Text(
+                        audioSpec?.qualityBadge?.label ?: "未识别",
+                        fontSize = 16.sp,
+                        color = FullPlayerTextPrimary,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
                 }
-                Spacer(Modifier.height(32.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                    Column(Modifier.weight(1f)) {
-                        Text("实际音质", fontSize = 11.sp, color = FullPlayerTextMuted.copy(alpha = 0.65f))
-                        Text(
-                            audioSpec?.qualityBadge?.label ?: "未识别",
-                            fontSize = 16.sp,
-                            color = FullPlayerTextPrimary,
-                            modifier = Modifier.padding(top = 8.dp),
-                        )
-                    }
-                    Column(Modifier.weight(1f)) {
-                        Text("音乐平台", fontSize = 11.sp, color = FullPlayerTextMuted.copy(alpha = 0.65f))
-                        Text(platformName, fontSize = 16.sp, color = FullPlayerTextPrimary,
-                            modifier = Modifier.padding(top = 8.dp))
-                    }
+                Column(Modifier.weight(1f)) {
+                    Text("音乐平台", fontSize = 11.sp, color = FullPlayerTextMuted.copy(alpha = 0.65f))
+                    Text(platformName, fontSize = 16.sp, color = FullPlayerTextPrimary,
+                        modifier = Modifier.padding(top = 8.dp))
                 }
-                AudioSpecificationLine(audioSpec, Modifier.padding(top = 12.dp, bottom = 6.dp))
-                Text(sourceLabel, fontSize = 11.sp, lineHeight = 18.sp,
-                    color = FullPlayerTextMuted.copy(alpha = 0.65f))
+            }
+            AudioSpecificationLine(audioSpec, Modifier.padding(top = 12.dp, bottom = 6.dp))
+            Text(sourceLabel, fontSize = 11.sp, lineHeight = 18.sp,
+                color = FullPlayerTextMuted.copy(alpha = 0.65f))
+        }
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
+            if (twoColumn) {
+                Row(
+                    Modifier.widthIn(max = 880.dp).fillMaxWidth().heightIn(min = viewportHeight).padding(horizontal = 24.dp, vertical = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(24.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(0.46f)) { identityBlock() }
+                    Box(Modifier.width(1.dp).height(112.dp).background(FullPlayerTextPrimary.copy(alpha = 0.12f)))
+                    Column(Modifier.weight(0.54f)) { metadataBlock() }
+                }
+            } else {
+                Column(
+                    Modifier.fillMaxWidth().heightIn(min = viewportHeight).padding(horizontal = 12.dp, vertical = 32.dp),
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    identityBlock()
+                    Spacer(Modifier.height(24.dp))
+                    Box(Modifier.width(32.dp).height(1.dp).background(FullPlayerTextPrimary.copy(alpha = 0.25f)))
+                    Spacer(Modifier.height(24.dp))
+                    metadataBlock()
+                }
             }
         }
     }
@@ -1054,9 +1279,10 @@ internal fun artistCollection(track: UiTrack?, artist: String): SongsCollection 
 internal fun SongsCollectionPage(
     collection: SongsCollection,
     onBack: () -> Unit,
+    standalone: Boolean = false,
 ) {
     if (collection.isBookAuthor) {
-        BookAuthorPage(collection.artistName ?: collection.title, onBack)
+        BookAuthorPage(collection.artistName ?: collection.title, onBack, standalone = standalone)
         return
     }
     val context = LocalContext.current
@@ -1230,153 +1456,403 @@ internal fun SongsCollectionPage(
         )) } }
         else -> null
     }
-    ChromeScaffold(
-        modifier = Modifier.fillMaxSize(),
-        contentSource = controlBarHazeState,
-        expectedTopBarHeight = 64.dp,
-        topBar = {
-            SongSelectionTopBar(selection, songs) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回", tint = MeloraAppearance.textMain)
+    val header = remember(isArtist, artistProfile, albumProfile, artistName, songs) {
+        if (isArtist) artistHeaderCopy(artistProfile, songs)
+        else albumHeaderCopy(albumProfile, artistName, songs)
+    }
+    val showCollapsedTitle by remember(listState) {
+        derivedStateOf { listState.firstVisibleItemIndex > 0 }
+    }
+    val playAll = {
+        PlaybackController.playQueue(context, songs.toUiTracks(), 0, container = playContainer())
+    }
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val paneWidth = maxWidth
+        val paneHeight = maxHeight
+        val twoPane = paneWidth >= 840.dp && paneHeight >= 480.dp
+        val largeSinglePane = !twoPane && paneWidth >= 600.dp && paneHeight >= 480.dp
+        val isLargeScreen = twoPane || largeSinglePane
+        val selectionBarModifier = when {
+            twoPane -> Modifier.widthIn(max = 1160.dp).padding(horizontal = 16.dp)
+            largeSinglePane -> Modifier.widthIn(max = 720.dp)
+            else -> Modifier
+        }
+
+        ChromeScaffold(
+            modifier = Modifier.fillMaxSize(),
+            contentSource = controlBarHazeState,
+            expectedTopBarHeight = 64.dp,
+            topBar = {
+                SongSelectionTopBar(selection, songs, modifier = selectionBarModifier) {
+                    val topBarContent: @Composable (Modifier, String, Color, FontWeight) -> Unit = { barModifier, titleText, titleTint, titleWeight ->
+                        Row(
+                            modifier = barModifier.height(64.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            IconButton(onClick = onBack) {
+                                Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回", tint = MeloraAppearance.textMain)
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .padding(end = 16.dp)
+                                    .titleScrollToTop(scrollToTop),
+                                contentAlignment = Alignment.CenterStart,
+                            ) {
+                                Text(
+                                    text = titleText,
+                                    fontSize = if (twoPane) 15.sp else 17.sp,
+                                    fontWeight = titleWeight,
+                                    color = titleTint,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
                     }
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                            .padding(end = 16.dp)
-                            .titleScrollToTop(scrollToTop),
-                        contentAlignment = Alignment.CenterStart,
-                    ) {
-                        Text(
+                    when {
+                        twoPane -> Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            topBarContent(
+                                Modifier.widthIn(max = 1160.dp).fillMaxWidth().padding(horizontal = 16.dp),
+                                if (isArtist) "歌手" else "专辑",
+                                MeloraAppearance.textSub,
+                                FontWeight.Medium,
+                            )
+                        }
+                        largeSinglePane -> Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            topBarContent(
+                                Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(horizontal = 4.dp),
+                                if (showCollapsedTitle) collection.title else if (isArtist) "歌手" else "专辑",
+                                if (showCollapsedTitle) MeloraAppearance.textMain else MeloraAppearance.textSub,
+                                if (showCollapsedTitle) FontWeight.SemiBold else FontWeight.Medium,
+                            )
+                        }
+                        else -> topBarContent(
+                            Modifier.fillMaxWidth().padding(horizontal = 4.dp),
                             collection.title,
-                            fontSize = 17.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MeloraAppearance.textMain,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                            MeloraAppearance.textMain,
+                            FontWeight.SemiBold,
                         )
                     }
                 }
-            }
-        },
-        bottomBar = { SongBatchActionsBar(selection, songs) },
-    ) {
-        val topInset = LocalChromeTopInset.current
-        val headerBottom = with(LocalDensity.current) { topInset.roundToPx() }
-        val pinned by remember(listState, headerBottom) {
-            derivedStateOf {
-                !selection.active && shouldPinPlaylistControls(
-                    listState.firstVisibleItemIndex,
-                    listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == "controlBar" }
-                        ?.let { it.offset - listState.layoutInfo.viewportStartOffset },
-                    headerBottom,
-                )
-            }
-        }
-        val dividerAlpha by animateFloatAsState(if (pinned && !blurEnabled) 1f else 0f, tween(200), label = "collectionDivider")
-        val controls: @Composable (Boolean) -> Unit = { stuck ->
-            ChromeFloatingBar(state = controlBarHazeState, topOffset = topInset, height = PlaylistControlsHeight,
-                pinned = stuck, modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.fillMaxWidth().background(chromeHeaderColor())) {
-                    CollectionActionsRow(
-                        canPlay = songs.isNotEmpty(), favorite = isFavorite,
-                        onPlay = { PlaybackController.playQueue(context, songs.toUiTracks(), 0, container = playContainer()) },
-                        onFavorite = onFavorite, onSelect = selection::start,
-                    )
-                    Box(Modifier.fillMaxWidth().height(.6.dp).alpha(dividerAlpha).background(MeloraAppearance.divider))
-                }
-            }
-        }
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+            },
+            bottomBar = { SongBatchActionsBar(selection, songs) },
         ) {
-            if (!selection.active) {
-                item(key = "detailHeader") {
-                    val header = when {
-                        isArtist -> artistHeaderCopy(artistProfile, songs)
-                        else -> albumHeaderCopy(albumProfile, artistName, songs)
+            val topInset = LocalChromeTopInset.current
+            fun LazyListScope.collectionTrackItems() {
+                when {
+                    loading -> item(key = "loading") { SkeletonSongList(modifier = bodyHazeModifier, rows = 7, rowSpacing = 2.dp) }
+                    error != null -> item(key = "error") {
+                        ErrorState(error!!, onRetry = { load(1) }, modifier = Modifier.fillParentMaxHeight(.65f).then(bodyHazeModifier))
                     }
-                    CollectionInfoHeader(
-                        image = artwork, seed = "${collection.source}_${collection.title}", artist = isArtist,
-                        primary = header.primary,
-                        secondary = header.secondary,
-                        primaryMaxLines = header.primaryMaxLines,
-                        modifier = bodyHazeModifier,
-                    )
-                }
-                item(key = "controlBar", contentType = "controls") {
-                    Box(Modifier.fillMaxWidth().height(PlaylistControlsHeight)) { if (!pinned) controls(false) }
-                }
-            }
-            when {
-                loading -> item(key = "loading") { SkeletonSongList(modifier = bodyHazeModifier, rows = 7, rowSpacing = 2.dp) }
-                error != null -> item(key = "error") {
-                    ErrorState(error!!, onRetry = { load(1) }, modifier = Modifier.fillParentMaxHeight(.65f).then(bodyHazeModifier))
-                }
-                songs.isEmpty() -> item(key = "empty") {
-                    EmptyState("没有找到相关歌曲", Modifier.fillParentMaxHeight(.65f).then(bodyHazeModifier))
-                }
-                else -> {
-                    itemsIndexed(songs, key = { index, song -> "${song.uid}:$index" }) { index, song ->
-                        Box(Modifier.fillMaxWidth().then(bodyHazeModifier)) {
-                            OnlineSongRow(
-                                song = song, showAlbum = collection.albumName == null,
-                                isFavorite = song.uid in favoriteUids,
-                                onMore = { moreSong = song },
-                                selectionMode = selection.active, selected = song.uid in selection.selectedUids,
-                                onClick = {
-                                    if (selection.active) selection.toggle(song.uid)
-                                    else PlaybackController.playTrack(context, UiTrack.fromOnline(song), container = playContainer())
-                                },
-                            )
-                        }
+                    songs.isEmpty() -> item(key = "empty") {
+                        EmptyState("没有找到相关歌曲", Modifier.fillParentMaxHeight(.65f).then(bodyHazeModifier))
                     }
-                    if (loadingMore || loadMoreFailed || (hasMore && autoBudget == 0)) {
-                        item(key = "loadMore") {
-                            val interactive = !loadingMore && hasMore
-                            Box(Modifier.fillMaxWidth().then(bodyHazeModifier).padding(vertical = 16.dp), contentAlignment = Alignment.Center) {
-                                Text(
-                                    text = when { loadMoreFailed -> "加载更多失败，点击重试"; loadingMore -> "正在加载…"; else -> "点击加载更多" },
-                                    fontSize = 13.sp, color = if (interactive) MeloraAppearance.brand else MeloraAppearance.textMuted,
-                                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(enabled = interactive) { load(page + 1) }
-                                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    else -> {
+                        itemsIndexed(songs, key = { index, song -> "${song.uid}:$index" }) { index, song ->
+                            Box(Modifier.fillMaxWidth().then(bodyHazeModifier)) {
+                                OnlineSongRow(
+                                    song = song,
+                                    showAlbum = isArtist,
+                                    isFavorite = song.uid in favoriteUids,
+                                    onMore = { moreSong = song },
+                                    selectionMode = selection.active,
+                                    selected = song.uid in selection.selectedUids,
+                                    leadingIndex = if (isLargeScreen && !isArtist) index + 1 else null,
+                                    highlightContainer = isLargeScreen,
+                                    onClick = {
+                                        if (selection.active) selection.toggle(song.uid)
+                                        else PlaybackController.playTrack(context, UiTrack.fromOnline(song), container = playContainer())
+                                    },
                                 )
+                            }
+                        }
+                        if (loadingMore || loadMoreFailed || (hasMore && autoBudget == 0)) {
+                            item(key = "loadMore") {
+                                val interactive = !loadingMore && hasMore
+                                Box(Modifier.fillMaxWidth().then(bodyHazeModifier).padding(vertical = 16.dp), contentAlignment = Alignment.Center) {
+                                    Text(
+                                        text = when {
+                                            loadMoreFailed -> "加载更多失败，点击重试"
+                                            loadingMore -> "正在加载…"
+                                            else -> "点击加载更多"
+                                        },
+                                        fontSize = 13.sp,
+                                        color = if (interactive) MeloraAppearance.brand else MeloraAppearance.textMuted,
+                                        modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(enabled = interactive) { load(page + 1) }
+                                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                                    )
+                                }
                             }
                         }
                     }
                 }
             }
-        }
-        if (pinned && !selection.active) {
-            Box(Modifier.fillMaxWidth().align(Alignment.TopCenter).padding(top = topInset)) { controls(true) }
+
+            if (twoPane) {
+                Box(Modifier.fillMaxSize().testTag("collection-two-pane"), contentAlignment = Alignment.TopCenter) {
+                    Row(
+                        Modifier.widthIn(max = 1160.dp).fillMaxSize().padding(horizontal = 28.dp),
+                        horizontalArrangement = Arrangement.spacedBy(32.dp),
+                    ) {
+                        Column(
+                            Modifier
+                                .width(300.dp)
+                                .fillMaxHeight()
+                                .then(bodyHazeModifier)
+                                .verticalScroll(rememberScrollState())
+                                .padding(top = topInset + 16.dp, bottom = 28.dp)
+                                .testTag("collection-showcase-pane"),
+                        ) {
+                            CollectionHeroArtwork(
+                                image = artwork,
+                                seed = "${collection.source}_${collection.title}",
+                                artist = isArtist,
+                                size = 196.dp,
+                                cornerRadius = 18,
+                            )
+                            Spacer(Modifier.height(20.dp))
+                            Text(
+                                text = collection.title,
+                                fontSize = 24.sp,
+                                lineHeight = 30.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MeloraAppearance.textMain,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = header.primary,
+                                fontSize = 14.sp,
+                                lineHeight = 20.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MeloraAppearance.textSub,
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            if (header.secondary.isNotBlank()) {
+                                Text(
+                                    text = header.secondary,
+                                    fontSize = 12.5.sp,
+                                    lineHeight = 18.sp,
+                                    color = MeloraAppearance.textMuted,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(top = 6.dp),
+                                )
+                            }
+                            Spacer(Modifier.height(22.dp))
+                            CollectionShowcaseActions(
+                                canPlay = songs.isNotEmpty(),
+                                favorite = isFavorite,
+                                favoriteEnabled = onFavorite != null,
+                                selectionActive = selection.active,
+                                loading = loading,
+                                onPlay = playAll,
+                                onFavorite = onFavorite,
+                                onSelect = selection::start,
+                            )
+                        }
+                        Box(
+                            Modifier
+                                .padding(top = topInset + 16.dp, bottom = 28.dp)
+                                .width(0.6.dp)
+                                .fillMaxHeight()
+                                .background(MeloraAppearance.divider.copy(alpha = 0.65f)),
+                        )
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier.weight(1f).fillMaxHeight().testTag("collection-tracklist-pane"),
+                            contentPadding = chromeContentPadding(PaddingValues(top = 10.dp, bottom = 28.dp)),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            if (!loading && error == null && songs.isNotEmpty()) {
+                                item(key = "tracklistHeader") {
+                                    Row(
+                                        Modifier.fillMaxWidth().then(bodyHazeModifier).padding(horizontal = 16.dp, vertical = 6.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Text(
+                                            text = if (isArtist) "热门作品" else "专辑曲目",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MeloraAppearance.textSub,
+                                        )
+                                        Text(
+                                            text = "${songs.size}${if (hasMore) "+" else ""} 首",
+                                            fontSize = 12.sp,
+                                            color = MeloraAppearance.textMuted,
+                                            style = LocalTextStyle.current.copy(fontFeatureSettings = "tnum"),
+                                        )
+                                    }
+                                }
+                            }
+                            collectionTrackItems()
+                        }
+                    }
+                }
+            } else {
+                val headerBottom = with(LocalDensity.current) { topInset.roundToPx() }
+                val pinned by remember(listState, headerBottom) {
+                    derivedStateOf {
+                        !selection.active && shouldPinPlaylistControls(
+                            listState.firstVisibleItemIndex,
+                            listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == "controlBar" }
+                                ?.let { it.offset - listState.layoutInfo.viewportStartOffset },
+                            headerBottom,
+                        )
+                    }
+                }
+                val dividerAlpha by animateFloatAsState(if (pinned && !blurEnabled) 1f else 0f, tween(200), label = "collectionDivider")
+                val stageModifier = if (largeSinglePane) {
+                    Modifier.widthIn(max = 720.dp).fillMaxWidth().testTag("collection-large-single-pane")
+                } else {
+                    Modifier.fillMaxWidth()
+                }
+                val controls: @Composable (Boolean) -> Unit = { stuck ->
+                    ChromeFloatingBar(
+                        state = controlBarHazeState, topOffset = topInset, height = PlaylistControlsHeight,
+                        pinned = stuck, modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(Modifier.fillMaxWidth().background(chromeHeaderColor())) {
+                            CollectionActionsRow(
+                                canPlay = songs.isNotEmpty(), favorite = isFavorite,
+                                onPlay = playAll, onFavorite = onFavorite, onSelect = selection::start,
+                            )
+                            Box(Modifier.fillMaxWidth().height(.6.dp).alpha(dividerAlpha).background(MeloraAppearance.divider))
+                        }
+                    }
+                }
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.then(stageModifier).fillMaxHeight(),
+                        contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        if (!selection.active) {
+                            item(key = "detailHeader") {
+                                if (largeSinglePane) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().then(bodyHazeModifier)
+                                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        CollectionHeroArtwork(
+                                            image = artwork,
+                                            seed = "${collection.source}_${collection.title}",
+                                            artist = isArtist,
+                                            size = 120.dp,
+                                            cornerRadius = 16,
+                                        )
+                                        Spacer(Modifier.width(20.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(
+                                                text = collection.title,
+                                                fontSize = 22.sp,
+                                                lineHeight = 28.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MeloraAppearance.textMain,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                            Spacer(Modifier.height(6.dp))
+                                            Text(
+                                                text = header.primary,
+                                                fontSize = 13.5.sp,
+                                                lineHeight = 19.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = MeloraAppearance.textSub,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                            if (header.secondary.isNotBlank()) {
+                                                Text(
+                                                    text = header.secondary,
+                                                    fontSize = 12.5.sp,
+                                                    lineHeight = 17.sp,
+                                                    color = MeloraAppearance.textMuted,
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    modifier = Modifier.padding(top = 4.dp),
+                                                )
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    CollectionInfoHeader(
+                                        image = artwork, seed = "${collection.source}_${collection.title}", artist = isArtist,
+                                        primary = header.primary,
+                                        secondary = header.secondary,
+                                        primaryMaxLines = header.primaryMaxLines,
+                                        modifier = bodyHazeModifier,
+                                    )
+                                }
+                            }
+                            item(key = "controlBar", contentType = "controls") {
+                                Box(Modifier.fillMaxWidth().height(PlaylistControlsHeight)) { if (!pinned) controls(false) }
+                            }
+                        }
+                        collectionTrackItems()
+                    }
+                    if (pinned && !selection.active) {
+                        Box(Modifier.then(stageModifier).align(Alignment.TopCenter).padding(top = topInset)) { controls(true) }
+                    }
+                }
+            }
         }
     }
     moreSong?.let { song -> SongMoreSheet(song) { moreSong = null } }
 }
 
 @Composable
-private fun CompactPlayerTabs(pages: List<Int>, selectedPage: Int, modifier: Modifier, onSelect: (Int) -> Unit) {
-    Row(modifier.selectableGroup(), horizontalArrangement = Arrangement.Center) {
+private fun PlayerReadingTabs(
+    pages: List<Int>,
+    selectedPage: Int,
+    modifier: Modifier,
+    tabTagPrefix: String,
+    compact: Boolean,
+    onSelect: (Int) -> Unit,
+) {
+    val ink = FullPlayerTextPrimary
+    val haptics = LocalHapticFeedback.current
+    Row(
+        modifier = modifier.selectableGroup(),
+        horizontalArrangement = if (compact) Arrangement.spacedBy(20.dp) else Arrangement.spacedBy(28.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         pages.forEachIndexed { index, page ->
             val active = selectedPage == page
             val title = when (page) { 0 -> "信息"; 1 -> "封面"; else -> "歌词" }
-            Box(
-                Modifier.height(48.dp).widthIn(min = 54.dp).testTag("player-compact-tab-$page")
-                    .selectable(selected = active, role = Role.Tab, onClick = { onSelect(index) })
-                    .padding(horizontal = 8.dp),
-                contentAlignment = Alignment.Center,
+            Column(
+                Modifier
+                    .then(if (compact) Modifier.height(28.dp) else Modifier.widthIn(min = 56.dp).height(48.dp))
+                    .testTag("$tabTagPrefix$page")
+                    .selectable(selected = active, role = Role.Tab) {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onSelect(index)
+                    },
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
             ) {
-                Text(title, fontSize = 13.sp, maxLines = 1, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-                    color = if (active) FullPlayerTextPrimary else FullPlayerTextMuted)
-                if (active) Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 6.dp)
-                    .size(width = 16.dp, height = 2.dp).background(FullPlayerTextPrimary, CircleShape))
+                Text(
+                    text = title,
+                    fontSize = if (compact) 13.5.sp else 14.5.sp,
+                    maxLines = 1,
+                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (active) ink else FullPlayerTextMuted.copy(alpha = 0.62f),
+                )
+                Box(
+                    Modifier
+                        .padding(top = if (compact) 3.dp else 4.dp)
+                        .width(if (compact) 14.dp else 16.dp)
+                        .height(2.dp)
+                        .clip(CircleShape)
+                        .background(if (active) ink.copy(alpha = 0.72f) else Color.Transparent),
+                )
             }
         }
     }
@@ -1385,6 +1861,38 @@ private fun CompactPlayerTabs(pages: List<Int>, selectedPage: Int, modifier: Mod
 // 封面与歌词使用同一个约束计算宽度，不依赖测量回调后二次改布局。
 internal fun playerCoverSideDp(width: Float, height: Float, lyricAreaHeight: Float): Float =
     minOf(width, (height - lyricAreaHeight).coerceAtLeast(0f), if (width >= 600f) 480f else width) * 0.92f
+
+internal data class LandscapeImmersiveLayout(
+    val leftPaneWidthDp: Float,
+    val coverSideDp: Float,
+    val coverXDp: Float,
+    val coverYDp: Float,
+    val lyricsXDp: Float,
+    val lyricsYDp: Float,
+    val lyricsWidthDp: Float,
+    val lyricsHeightDp: Float,
+)
+
+internal fun landscapeImmersiveLayout(widthDp: Float, heightDp: Float): LandscapeImmersiveLayout {
+    val leftPaneWidth = widthDp * 0.42f
+    val gap = 20f
+    val coverSide = minOf(leftPaneWidth * 0.82f, (heightDp - 58f).coerceAtLeast(0f) * 0.82f, 280f)
+    val coverX = ((leftPaneWidth - coverSide) / 2f).coerceAtLeast(0f)
+    val coverY = ((heightDp - coverSide - 26f) / 2f).coerceAtLeast(12f)
+    val lyricsX = leftPaneWidth + gap
+    val lyricsWidth = (widthDp - lyricsX).coerceAtLeast(0f)
+    val lyricsHeight = (heightDp - 24f).coerceAtLeast(0f)
+    return LandscapeImmersiveLayout(
+        leftPaneWidthDp = leftPaneWidth,
+        coverSideDp = coverSide,
+        coverXDp = coverX,
+        coverYDp = coverY,
+        lyricsXDp = lyricsX,
+        lyricsYDp = 12f,
+        lyricsWidthDp = lyricsWidth,
+        lyricsHeightDp = lyricsHeight,
+    )
+}
 
 // 播放页 Page 1：默认封面歌词对齐左边沿，圆形/黑胶歌词居中。
 @Composable
@@ -1401,8 +1909,10 @@ private fun PlayerCoverPage(
     compact: Boolean,
     phoneLandscape: Boolean,
     miniLyricsEnabled: Boolean,
+    wordLiftEnabled: Boolean,
     lyricsInCover: Boolean = true,
     largePortrait: Boolean = false,
+    posterMode: Boolean = false,
     coverStyle: PlayerCoverStyle,
     artworkAlpha: () -> Float,
     artworkRotation: () -> Float,
@@ -1431,98 +1941,210 @@ private fun PlayerCoverPage(
     val previewHeight = if (compact) 28.dp else with(LocalDensity.current) { maxOf(24f, miniFontSize * 1.5f).sp.toDp() * 5 } + 12.dp
     val normalLyricsVisible = miniLyricsEnabled && lyricsInCover
     val normalLyricsHeight = if (normalLyricsVisible) previewHeight + 16.dp else 0.dp
+    val posterTitleVisible = posterMode && !normalLyricsVisible
+    val posterTitleHeight = with(LocalDensity.current) { 28.sp.toDp() + 19.sp.toDp() + 4.dp }
+    val posterBaseTopGap = 20.dp
+    val posterBaseBottomGap = 16.dp
+    val posterReservedHeight = if (posterTitleVisible) posterBaseTopGap + posterTitleHeight + posterBaseBottomGap else 0.dp
+    val normalContentHeight = if (normalLyricsVisible) normalLyricsHeight else posterReservedHeight
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val squareSide = minOf(maxWidth, (maxHeight - normalLyricsHeight).coerceAtLeast(0.dp), if (maxWidth >= 600.dp) 480.dp else maxWidth)
-        val circleSide = playerCoverSideDp(maxWidth.value, maxHeight.value, normalLyricsHeight.value).dp
+        val paneWidth = maxWidth
+        val landscapeImmersive = lyricsInCover && (phoneLandscape || compact)
+        val targetLandscape = if (landscapeImmersive) landscapeImmersiveLayout(paneWidth.value, maxHeight.value) else null
+        val squareSide = minOf(maxWidth, (maxHeight - normalContentHeight).coerceAtLeast(0.dp), if (maxWidth >= 600.dp) 480.dp else maxWidth)
+        val circleSide = if (posterTitleVisible) {
+            minOf(maxWidth, (maxHeight - normalContentHeight).coerceAtLeast(0.dp), if (maxWidth >= 600.dp) 480.dp else maxWidth) * 0.96f
+        } else {
+            playerCoverSideDp(maxWidth.value, maxHeight.value, normalLyricsHeight.value).dp
+        }
         val normalSide = (squareSide * (1f - c) + circleSide * c) * if (phoneLandscape) 0.9f else 1f
-        val floatingSide = if (lyricsInCover) minOf(maxWidth * 0.75f, maxHeight * 0.40f)
-            else minOf(maxWidth * 0.85f, maxHeight * 0.70f, 420.dp)
+        val floatingSide = when {
+            targetLandscape != null -> targetLandscape.coverSideDp.dp
+            lyricsInCover -> minOf(maxWidth * 0.75f, maxHeight * 0.40f)
+            else -> minOf(maxWidth * 0.85f, maxHeight * 0.70f, 420.dp)
+        }
         val side = normalSide * (1f - t) + floatingSide * t
         val normalBelowCover = if (normalLyricsVisible) previewHeight + 24.dp else 12.dp
         // 普通态留白只能由普通态封面计算；用插值中的 side 会把缩小释放的空间再次加到顶部，导致先下沉再上移。
-        val remaining = (maxHeight - normalSide - normalBelowCover).coerceAtLeast(0.dp)
+        val remaining = (maxHeight - normalSide - if (posterTitleVisible) posterReservedHeight else normalBelowCover).coerceAtLeast(0.dp)
+        val extraCoverToTitle = if (posterTitleVisible) (remaining * 0.25f).coerceAtMost(14.dp) else 0.dp
+        val coverToTitleGap = posterBaseTopGap + extraCoverToTitle
         // 与歌词共用外层窗口判定，不能用扣除页内边距后的宽度再次判断断点。无歌词时也居中。
         val centering = if (!normalLyricsVisible || largePortrait || phoneLandscape) 1f else c
         val roomyLyrics = largePortrait && normalLyricsVisible
-        val normalTop = if (roomyLyrics) minOf(12.dp, remaining) else remaining * (1f - centering * 0.5f)
+        val normalTop = when {
+            posterTitleVisible -> (remaining - extraCoverToTitle).coerceAtLeast(0.dp) * 0.55f
+            roomyLyrics -> minOf(12.dp, remaining)
+            else -> remaining * (1f - centering * 0.5f)
+        }
         val normalLyricHeight = if (roomyLyrics) (maxHeight - normalSide - normalTop - 20.dp).coerceAtLeast(0.dp) else previewHeight
         val topSpace = if (lyricsInCover) normalTop * (1f - t) + maxHeight * (0.04f * t)
             else ((maxHeight - side - 26.dp * t) / 2f).coerceAtLeast(0.dp)
-        val normalLyricWidth = if (roomyLyrics) maxWidth * 0.88f else side
+        val normalLyricWidth = if (roomyLyrics) maxWidth else normalSide
         val timeHeight = 26.dp * t
         val lyricHeight = (if (miniLyricsEnabled) normalLyricHeight else 0.dp) * (1f - t) +
             (maxHeight - side - topSpace - timeHeight - 24.dp).coerceAtLeast(0.dp) * t
-        val lyricWidth = if (immersive) maxWidth else maxWidth * (1f - centering) + normalLyricWidth * centering
-        Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
-            Spacer(Modifier.height(topSpace))
-            Box(Modifier.fillMaxWidth(), contentAlignment = BiasAlignment((t - 1f) * (1f - centering), 0f)) {
-                // 进度轮廓与艺术封面共享同一透视平面，不再将方形封面放进独立大圆盘。
-                Box(Modifier.size(side).graphicsLayer {
-                    alpha = artworkAlpha()
-                    rotationX = -2f * immersion.value
-                    rotationY = 3f * immersion.value
-                    rotationZ = -0.5f * immersion.value
-                    cameraDistance = 16f * density
-                }, contentAlignment = Alignment.Center) {
-                    ImmersiveCoverProgress(position, state.durationMs, immersion, roundness = roundness,
-                        modifier = Modifier.matchParentSize())
-                    NowPlayingArtwork(
-                        url = track?.artwork, seed = track?.uid ?: "empty", style = coverStyle,
-                        modifier = Modifier.fillMaxSize().padding(6.dp * t)
-                            .testTag("player-artwork")
-                            .semantics { contentDescription = "${track?.title.orEmpty()}，${track?.artist.orEmpty()}" }
-                            .onGloballyPositioned(onArtworkPositioned)
-                            .graphicsLayer {
-                                shadowElevation = 14.dp.toPx() * immersion.value
-                                shape = RoundedCornerShape((18f * (1f - c) + size.minDimension / (2f * density) * c).dp)
-                            }
-                            .combinedClickable(
-                                interactionSource = remember { MutableInteractionSource() }, indication = null,
-                                onLongClickLabel = "选择封面类型",
-                                onLongClick = onOpenCoverPicker,
-                                onClick = { if (immersive) interact() },
-                            ),
-                        cornerRadius = 18, retryOnError = retryArtwork, smoothChanges = true,
-                        rotationDegrees = artworkRotation, motionEnabled = motionEnabled,
-                        tonearmAngle = tonearmAngle,
-                        recordChange = recordChange,
+        val lyricWidth = if (immersive) maxWidth else maxWidth * (1f - centering) + (if (roomyLyrics) normalLyricWidth else side) * centering
+        val artworkContent: @Composable BoxScope.() -> Unit = {
+            // 进度轮廓与艺术封面共享同一透视平面，不再将方形封面放进独立大圆盘。
+            Box(Modifier.size(side).graphicsLayer {
+                alpha = artworkAlpha()
+                rotationX = -2f * immersion.value
+                rotationY = 3f * immersion.value
+                rotationZ = -0.5f * immersion.value
+                cameraDistance = 16f * density
+            }, contentAlignment = Alignment.Center) {
+                ImmersiveCoverProgress(position, state.durationMs, immersion, roundness = roundness,
+                    modifier = Modifier.matchParentSize())
+                NowPlayingArtwork(
+                    url = track?.artwork, seed = track?.uid ?: "empty", style = coverStyle,
+                    modifier = Modifier.fillMaxSize().padding(6.dp * t)
+                        .testTag("player-artwork")
+                        .semantics { contentDescription = "${track?.title.orEmpty()}，${track?.artist.orEmpty()}" }
+                        .onGloballyPositioned(onArtworkPositioned)
+                        .graphicsLayer {
+                            // 黑胶外圈透明且自带径向投影，不叠加 HWUI 阴影；其余样式用透明度淡出阴影并维持足够海拔，避免 Skia 低海拔圆形阴影退化为八边形切角。
+                            val shadowAlpha = if (coverStyle == PlayerCoverStyle.Vinyl) 0f else immersion.value.coerceIn(0f, 1f)
+                            shadowElevation = if (shadowAlpha > 0.005f) 14.dp.toPx() * (0.35f + 0.65f * shadowAlpha) else 0f
+                            ambientShadowColor = Color.Black.copy(alpha = shadowAlpha)
+                            spotShadowColor = Color.Black.copy(alpha = shadowAlpha)
+                            shape = if (c >= 0.999f) CircleShape
+                                else RoundedCornerShape((18f * (1f - c) + size.minDimension / (2f * density) * c).dp)
+                        }
+                        .combinedClickable(
+                            interactionSource = remember { MutableInteractionSource() }, indication = null,
+                            onLongClickLabel = "选择封面类型",
+                            onLongClick = onOpenCoverPicker,
+                            onClick = { if (immersive) interact() },
+                        ),
+                    cornerRadius = 18, retryOnError = retryArtwork, smoothChanges = true,
+                    rotationDegrees = artworkRotation, motionEnabled = motionEnabled,
+                    tonearmAngle = tonearmAngle,
+                    recordChange = recordChange,
+                )
+            }
+            androidx.compose.animation.AnimatedVisibility(
+                visible = controlsVisible && immersive && isVisible,
+                enter = fadeIn(tween(120)), exit = fadeOut(tween(160)),
+                modifier = Modifier.align(Alignment.Center).wrapContentWidth(unbounded = true),
+            ) {
+                ImmersivePlaybackControls(
+                    playing = state.playing,
+                    onPrevious = { interact(); PlaybackController.previous() },
+                    onToggle = { interact(); PlaybackController.toggle() },
+                    onNext = { interact(); PlaybackController.next() },
+                    onExit = { onImmersiveChange(false) },
+                )
+            }
+        }
+        val lyricsContent: @Composable (Modifier) -> Unit = { lyricsModifier ->
+            LyricsViewport(
+                lines = lines, position = position,
+                config = LyricsUiConfig(fontSizeSp = miniFontSize, isWordLiftEnabled = wordLiftEnabled),
+                mini = !immersive, immersive = immersive,
+                frameState = frame, motionEnabled = motionEnabled,
+                centered = (centered && (!phoneLandscape || immersive)) || largePortrait,
+                modifier = lyricsModifier.testTag("player-mini-lyrics")
+                    .then(
+                        when {
+                            immersive || roomyLyrics -> Modifier.lyricViewportFade()
+                            !compact -> Modifier.lyricViewportFade(0.14f)
+                            else -> Modifier
+                        },
                     )
-                }
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = controlsVisible && immersive && isVisible,
-                    enter = fadeIn(tween(120)), exit = fadeOut(tween(160)),
-                    modifier = Modifier.align(Alignment.Center),
+                    .graphicsLayer { alpha = if (miniLyricsEnabled) 1f else immersion.value },
+                onLineClick = { onNavigateToLyrics() },
+            )
+        }
+        if (targetLandscape != null) {
+            Box(Modifier.fillMaxSize()) {
+                val normalCoverX = (paneWidth - normalSide) * 0.5f
+                val normalCoverY = normalTop
+                val coverX = normalCoverX * (1f - t) + targetLandscape.coverXDp.dp * t
+                val coverY = normalCoverY * (1f - t) + targetLandscape.coverYDp.dp * t
+                Column(
+                    Modifier.offset(x = coverX, y = coverY).width(side),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    ImmersivePlaybackControls(
-                        playing = state.playing,
-                        onPrevious = { interact(); PlaybackController.previous() },
-                        onToggle = { interact(); PlaybackController.toggle() },
-                        onNext = { interact(); PlaybackController.next() },
-                        onExit = { onImmersiveChange(false) },
-                    )
+                    Box(contentAlignment = Alignment.Center) { artworkContent() }
+                    if (t > 0f) ImmersiveTrackTime(position, state.durationMs,
+                        Modifier.height(timeHeight).graphicsLayer { alpha = immersion.value })
+                }
+                if (miniLyricsEnabled || t > 0f) {
+                    val normalLyricsW = paneWidth * (1f - centering) + normalLyricWidth * centering
+                    val normalLyricsH = if (miniLyricsEnabled) normalLyricHeight else 0.dp
+                    val normalLyricsX = (paneWidth - normalLyricsW) * 0.5f * centering
+                    val normalLyricsY = normalCoverY + normalSide + 12.dp
+                    val lyricsX = normalLyricsX * (1f - t) + targetLandscape.lyricsXDp.dp * t
+                    val lyricsY = normalLyricsY * (1f - t) + targetLandscape.lyricsYDp.dp * t
+                    val lyricsW = normalLyricsW * (1f - t) + targetLandscape.lyricsWidthDp.dp * t
+                    val lyricsH = normalLyricsH * (1f - t) + targetLandscape.lyricsHeightDp.dp * t
+                    lyricsContent(Modifier.offset(x = lyricsX, y = lyricsY).width(lyricsW).height(lyricsH))
                 }
             }
-            if (t > 0f) ImmersiveTrackTime(position, state.durationMs,
-                Modifier.height(timeHeight).graphicsLayer { alpha = immersion.value })
-            if (lyricsInCover && (miniLyricsEnabled || t > 0f)) {
-                Spacer(Modifier.height(12.dp))
-                LyricsViewport(
-                    lines = lines, position = position,
-                    config = LyricsUiConfig(fontSizeSp = miniFontSize),
-                    mini = !immersive, immersive = immersive,
-                    frameState = frame, motionEnabled = motionEnabled, centered = (centered && (!phoneLandscape || immersive)) || largePortrait,
-                    modifier = Modifier.width(lyricWidth)
-                        .height(lyricHeight).testTag("player-mini-lyrics")
-                        .then(
-                            when {
-                                immersive || roomyLyrics -> Modifier.lyricViewportFade()
-                                !compact -> Modifier.lyricViewportFade(0.14f)
-                                else -> Modifier
+        } else {
+            Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+                Spacer(Modifier.height(topSpace))
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    artworkContent()
+                }
+                if (t > 0f) ImmersiveTrackTime(position, state.durationMs,
+                    Modifier.height(timeHeight).graphicsLayer { alpha = immersion.value })
+                if (posterTitleVisible && t < 0.99f) {
+                    val posterAlpha = (1f - t * 2f).coerceIn(0f, 1f)
+                    Column(
+                        modifier = (if (centered) Modifier.fillMaxWidth() else Modifier.width(side))
+                            .graphicsLayer { alpha = posterAlpha }
+                            .then(if (immersive) Modifier.clearAndSetSemantics {} else Modifier),
+                        horizontalAlignment = if (centered) Alignment.CenterHorizontally else Alignment.Start,
+                    ) {
+                        Spacer(Modifier.height(coverToTitleGap * (1f - t)))
+                        AnimatedContent(
+                            targetState = track,
+                            contentKey = { it?.uid },
+                            modifier = Modifier.fillMaxWidth().clipToBounds().testTag("player-poster-heading"),
+                            transitionSpec = {
+                                ((slideInHorizontally(tween(320, easing = LinearOutSlowInEasing)) { it } +
+                                    fadeIn(tween(160))) togetherWith
+                                    (slideOutHorizontally(tween(220, easing = LinearOutSlowInEasing)) { -it } +
+                                        fadeOut(tween(120)))).using(null)
                             },
-                        )
-                        .graphicsLayer { alpha = if (miniLyricsEnabled) 1f else immersion.value },
-                    onLineClick = { onNavigateToLyrics() },
-                )
+                            label = "playerPosterHeading",
+                        ) { posterTrack ->
+                            val align = if (centered) TextAlign.Center else TextAlign.Start
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalAlignment = if (centered) Alignment.CenterHorizontally else Alignment.Start,
+                            ) {
+                                Text(
+                                    text = posterTrack?.title ?: "未在播放",
+                                    fontSize = 21.sp,
+                                    lineHeight = 28.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = FullPlayerTextPrimary,
+                                    textAlign = align,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    text = listOfNotNull(posterTrack?.artist, posterTrack?.album.takeIf { !it.isNullOrBlank() })
+                                        .joinToString(" · "),
+                                    fontSize = 13.5.sp,
+                                    lineHeight = 19.sp,
+                                    color = FullPlayerTextMuted,
+                                    textAlign = align,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(top = 4.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+                if (lyricsInCover && ((miniLyricsEnabled && !posterTitleVisible) || t > 0f)) {
+                    Spacer(Modifier.height(12.dp))
+                    lyricsContent(Modifier.width(lyricWidth).height(lyricHeight))
+                }
             }
         }
     }
@@ -1542,16 +2164,78 @@ private fun LyricsPage(
     onConfigChange: (LyricsUiConfig) -> Unit,
     onOpenSource: () -> Unit,
     toolsPadding: PaddingValues = PaddingValues(0.dp),
+    durationMs: Long = 0L,
+    stageMode: Boolean = false,
+    playing: Boolean = false,
+    isVisible: Boolean = true,
+    onImmersiveChange: (Boolean) -> Unit = {},
+    onPrevious: () -> Unit = {},
+    onNext: () -> Unit = {},
+    largeDisplay: Boolean = false,
+    compactLandscape: Boolean = false,
+    lyricsTestTag: String = "player-full-lyrics",
 ) {
     val lines = remember(track?.uid, track?.title, track?.artist, lyrics) { fullPlayerLyricsOrFallback(track, lyrics) }
     // 后台只补词时间时保留浏览/滚动状态；仅歌词正文或行时间改变才重新定位视口。
     val contentKey = remember(lines) { lines.map { it.startMs to it.text } }
+    if (stageMode) {
+        var controlsVisible by remember(stageMode) { mutableStateOf(false) }
+        var controlInteraction by remember { mutableIntStateOf(0) }
+        LaunchedEffect(stageMode, isVisible, controlsVisible, controlInteraction, track?.uid) {
+            if (!stageMode || !isVisible) controlsVisible = false
+            else if (controlsVisible) { delay(3_000); controlsVisible = false }
+        }
+        val interact = { controlsVisible = true; controlInteraction++ }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                ) { interact() },
+        ) {
+            key(track?.uid, contentKey) {
+                ImmersiveStageLyrics(
+                    track = track,
+                    durationMs = durationMs,
+                    playing = playing,
+                    isVisible = isVisible,
+                    lines = lines,
+                    position = position,
+                    frameState = frame,
+                    config = config,
+                    motionEnabled = motionEnabled,
+                    modifier = Modifier.fillMaxSize().testTag(lyricsTestTag),
+                )
+            }
+            AnimatedVisibility(
+                visible = controlsVisible && isVisible,
+                enter = fadeIn(tween(120)),
+                exit = fadeOut(tween(160)),
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 36.dp),
+            ) {
+                ImmersivePlaybackControls(
+                    playing = playing,
+                    onPrevious = { interact(); onPrevious() },
+                    onToggle = { interact(); PlaybackController.toggle() },
+                    onNext = { interact(); onNext() },
+                    onExit = { onImmersiveChange(false) },
+                )
+            }
+        }
+        return
+    }
     Column(Modifier.fillMaxSize()) {
+        val effectiveConfig = when {
+            largeDisplay && !immersive -> config.copy(fontSizeSp = (config.fontSizeSp + 4f).coerceAtMost(34f))
+            compactLandscape && !immersive -> config.copy(fontSizeSp = (config.fontSizeSp + 2f).coerceAtMost(30f))
+            else -> config
+        }
         key(track?.uid, contentKey) {
-            LyricsViewport(lines, position, config, frameState = frame, motionEnabled = motionEnabled,
+            LyricsViewport(lines, position, effectiveConfig, frameState = frame, motionEnabled = motionEnabled,
                 immersive = immersive,
-                modifier = Modifier.weight(1f).fillMaxWidth().testTag("player-full-lyrics")
-                    .lyricViewportFade(),
+                modifier = Modifier.weight(1f).fillMaxWidth().testTag(lyricsTestTag)
+                    .lyricViewportFade(0.16f),
                 onLineClick = { if (lyrics.isNotEmpty()) PlaybackController.seekTo(it.startMs) },
             )
         }
@@ -1575,6 +2259,7 @@ private fun LyricsSettingsTools(
     val accent = FullPlayerSheetPrimaryBlue
     val ink = FullPlayerTextPrimary
     val chipInteraction = remember { MutableInteractionSource() }
+    val haptics = LocalHapticFeedback.current
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -1588,7 +2273,10 @@ private fun LyricsSettingsTools(
                     interactionSource = chipInteraction,
                     indication = null,
                     role = Role.Button,
-                ) { expanded = !expanded }
+                ) {
+                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    expanded = !expanded
+                }
                 .semantics { contentDescription = if (expanded) "收起歌词设置" else "展开歌词设置" },
             contentAlignment = Alignment.CenterStart,
         ) {
@@ -1622,7 +2310,7 @@ private fun LyricsSettingsTools(
                 )
             }
         }
-        Spacer(Modifier.width(6.dp))
+        Spacer(Modifier.width(2.dp))
         // 外层由起点揭示；横向滚动不越界
         Box(Modifier.weight(1f).height(36.dp), contentAlignment = Alignment.CenterStart) {
             LyricsToolsPanel(expanded, config, onConfigChange, onOpenSource, desktopLyricsEnabled, onDesktopLyricsChanged)
@@ -1645,7 +2333,7 @@ internal fun LyricsToolsPanel(
         exit = shrinkHorizontally(tween(180), shrinkTowards = Alignment.Start) + fadeOut(tween(120)),
     ) {
         Row(
-            Modifier.height(36.dp).horizontalScroll(rememberScrollState()),
+            Modifier.height(36.dp).horizontalScroll(rememberScrollState()).padding(end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             LyricsToolButton(
@@ -1679,13 +2367,16 @@ internal fun LyricsToolsPanel(
             LyricsToolButton(Icons.Rounded.BlurOn, "虚化非当前歌词", iconSize = 20.dp, isSelected = config.isBlurEnabled) {
                 onConfigChange(config.copy(isBlurEnabled = !config.isBlurEnabled))
             }
+            LyricsToolButton(Icons.Rounded.Animation, "逐字微浮起", iconSize = 20.dp, isSelected = config.isWordLiftEnabled) {
+                onConfigChange(config.copy(isWordLiftEnabled = !config.isWordLiftEnabled))
+            }
         }
     }
 }
 
 @Composable
 private fun LyricsToolDivider() {
-    Box(Modifier.padding(horizontal = 5.dp).width(1.dp).height(16.dp).background(FullPlayerTextMuted.copy(alpha = 0.22f)))
+    Box(Modifier.padding(horizontal = 3.dp).width(1.dp).height(16.dp).background(FullPlayerTextMuted.copy(alpha = 0.22f)))
 }
 
 @Composable
@@ -1698,11 +2389,15 @@ private fun LyricsToolButton(
     onClick: () -> Unit,
 ) {
     val accent = FullPlayerSheetPrimaryBlue
+    val haptics = LocalHapticFeedback.current
     Box(
         modifier = Modifier
-            .size(32.dp)
+            .size(30.dp)
             .clip(CircleShape)
-            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .clickable(enabled = enabled, role = Role.Button) {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onClick()
+            }
             .semantics {
                 contentDescription = label
                 isSelected?.let { selected = it }
@@ -1737,195 +2432,202 @@ private fun TimerSettingsBottomSheet(
 
     val speedOptions = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
 
-    MeloraBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        dragHandle = { MeloraSheetHandle() },
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 28.dp),
+    val colors = LocalPlayerColors.current
+
+    WithMeloraSheetTheme(darkTheme = colors.isDark) {
+        val palette = currentMeloraSheetPalette()
+        MeloraBottomSheet(
+            onDismissRequest = onDismiss,
+            sheetState = sheetState,
+            containerColor = colors.sheetBackground,
+            lightFrostTint = if (!colors.isDark) LightSheetFrost.tint else Color.Unspecified,
+            dragHandle = { MeloraSheetHandle(color = colors.sheetTextMuted.copy(alpha = 0.25f)) },
         ) {
-            // 统一头部卡片：44dp 质感图标 + 标题 + 副标题
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(if (MeloraAppearance.isDark) Color(0xFF222226) else MeloraAppearance.brand.copy(alpha = 0.12f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        Icons.Outlined.Timer,
-                        contentDescription = null,
-                        tint = MeloraAppearance.brand,
-                        modifier = Modifier.size(22.dp),
-                    )
-                }
-                Spacer(Modifier.width(14.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "睡眠与播放设置",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = MeloraAppearance.textMain,
-                    )
-                    Spacer(Modifier.height(3.dp))
-                    Text(
-                        text = if (sleepRemaining == 0) {
-                            "播完当前歌曲后停止"
-                        } else if (sleepTimerEnabled) {
-                            val minutes = sleepRemaining?.div(60) ?: 0
-                            val seconds = sleepRemaining?.rem(60) ?: 0
-                            "定时中 · 剩余 %d 分 %d 秒后停止".format(minutes, seconds)
-                        } else {
-                            "播放倍速与定时停止"
-                        },
-                        fontSize = 12.sp,
-                        color = MeloraAppearance.textSub,
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(22.dp))
-
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp),
+                    .padding(bottom = 28.dp),
             ) {
-                // 1. 播放倍速调节：Melora 统一分段胶囊设计
+                // 统一头部卡片：44dp 质感图标 + 标题 + 副标题
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    Text("播放倍速", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MeloraAppearance.textMain)
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = MeloraAppearance.segmentTrack,
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (palette.isDark) Color(0xFF222226) else palette.brand.copy(alpha = 0.12f)),
+                        contentAlignment = Alignment.Center,
                     ) {
-                        Row(modifier = Modifier.padding(2.dp), verticalAlignment = Alignment.CenterVertically) {
-                            speedOptions.forEach { speed ->
-                                val isSelected = Math.abs(currentSpeed - speed) < 0.05f
-                                Surface(
-                                    shape = RoundedCornerShape(14.dp),
-                                    color = if (isSelected) MeloraAppearance.card else Color.Transparent,
-                                    shadowElevation = if (isSelected) 1.dp else 0.dp,
-                                    modifier = Modifier.clickable(
-                                        indication = null,
-                                        interactionSource = remember { MutableInteractionSource() },
-                                    ) { onSpeedChange(speed) },
-                                ) {
-                                    Text(
-                                        text = "${speed}x",
-                                        fontSize = 12.sp,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                        color = if (isSelected) MeloraAppearance.textMain else MeloraAppearance.textSub,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-                                    )
-                                }
-                            }
-                        }
+                        Icon(
+                            Icons.Outlined.Timer,
+                            contentDescription = null,
+                            tint = palette.brand,
+                            modifier = Modifier.size(22.dp),
+                        )
                     }
-                }
-
-                Spacer(Modifier.height(16.dp))
-
-                // 2. 睡眠定时开关
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                        Text("睡眠定时", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MeloraAppearance.textMain)
-                        Spacer(Modifier.height(2.dp))
+                    Spacer(Modifier.width(14.dp))
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            if (sleepRemaining == 0) {
+                            text = "睡眠与播放设置",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = palette.textMain,
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            text = if (sleepRemaining == 0) {
                                 "播完当前歌曲后停止"
                             } else if (sleepTimerEnabled) {
                                 val minutes = sleepRemaining?.div(60) ?: 0
                                 val seconds = sleepRemaining?.rem(60) ?: 0
-                                "剩余 %d 分 %d 秒后自动停止播放".format(minutes, seconds)
+                                "定时中 · 剩余 %d 分 %d 秒后停止".format(minutes, seconds)
                             } else {
-                                "到期自动暂停播放"
+                                "播放倍速与定时停止"
                             },
                             fontSize = 12.sp,
-                            color = MeloraAppearance.textSub,
-                        )
-                    }
-                    Switch(
-                        checked = sleepTimerEnabled,
-                        onCheckedChange = { enabled ->
-                            if (enabled) PlaybackController.setSleepTimer(timerState.value.toInt(), extendToFinishTrack)
-                            else PlaybackController.cancelSleepTimer()
-                        },
-                        colors = meloraSwitchColors(),
-                    )
-                }
-
-                if (sleepTimerEnabled) {
-                    Spacer(Modifier.height(14.dp))
-                    // 3. 定时时长调节滑块
-                    Column {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text("定时时长", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MeloraAppearance.textMain)
-                            Text("${timerState.value.toInt()} 分钟", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MeloraAppearance.brand)
-                        }
-                        Slider(
-                            state = timerState,
-                            onValueChange = { timerState.value = it },
-                            onValueChangeFinished = {
-                                PlaybackController.setSleepTimer(timerState.value.toInt(), extendToFinishTrack)
-                            },
-                            thumb = {
-                                Box(
-                                    Modifier
-                                        .size(16.dp)
-                                        .clip(CircleShape)
-                                        .background(MeloraAppearance.brand),
-                                )
-                            },
-                            colors = SliderDefaults.colors(
-                                activeTrackColor = MeloraAppearance.brand,
-                                inactiveTrackColor = MeloraAppearance.softFill,
-                            ),
+                            color = palette.textSub,
                         )
                     }
                 }
 
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(22.dp))
 
-                // 4. 自动延长到整首歌播完开关
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp),
                 ) {
-                    Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                        Text("播完当前歌曲后再停止", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = MeloraAppearance.textMain)
-                        Spacer(Modifier.height(2.dp))
-                        Text("倒计时结束后，等当前歌曲播完再暂停", fontSize = 12.sp, color = MeloraAppearance.textSub)
+                    // 1. 播放倍速调节：Melora 统一分段胶囊设计
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text("播放倍速", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = palette.textMain)
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = palette.segmentTrack,
+                        ) {
+                            Row(modifier = Modifier.padding(2.dp), verticalAlignment = Alignment.CenterVertically) {
+                                speedOptions.forEach { speed ->
+                                    val isSelected = Math.abs(currentSpeed - speed) < 0.05f
+                                    Surface(
+                                        shape = RoundedCornerShape(14.dp),
+                                        color = if (isSelected) palette.card else Color.Transparent,
+                                        shadowElevation = if (isSelected) 1.dp else 0.dp,
+                                        modifier = Modifier.clickable(
+                                            indication = null,
+                                            interactionSource = remember { MutableInteractionSource() },
+                                        ) { onSpeedChange(speed) },
+                                    ) {
+                                        Text(
+                                            text = "${speed}x",
+                                            fontSize = 12.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (isSelected) palette.textMain else palette.textSub,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
-                    Switch(
-                        checked = extendToFinishTrack,
-                        onCheckedChange = { value ->
-                            extendToFinishTrack = value
-                            if (sleepTimerEnabled) PlaybackController.setSleepTimer(timerState.value.toInt(), value)
-                        },
-                        colors = meloraSwitchColors(),
-                    )
+
+                    Spacer(Modifier.height(16.dp))
+
+                    // 2. 睡眠定时开关
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                            Text("睡眠定时", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = palette.textMain)
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                if (sleepRemaining == 0) {
+                                    "播完当前歌曲后停止"
+                                } else if (sleepTimerEnabled) {
+                                    val minutes = sleepRemaining?.div(60) ?: 0
+                                    val seconds = sleepRemaining?.rem(60) ?: 0
+                                    "剩余 %d 分 %d 秒后自动停止播放".format(minutes, seconds)
+                                } else {
+                                    "到期自动暂停播放"
+                                },
+                                fontSize = 12.sp,
+                                color = palette.textSub,
+                            )
+                        }
+                        Switch(
+                            checked = sleepTimerEnabled,
+                            onCheckedChange = { enabled ->
+                                if (enabled) PlaybackController.setSleepTimer(timerState.value.toInt(), extendToFinishTrack)
+                                else PlaybackController.cancelSleepTimer()
+                            },
+                            colors = meloraSwitchColors(),
+                        )
+                    }
+
+                    if (sleepTimerEnabled) {
+                        Spacer(Modifier.height(14.dp))
+                        // 3. 定时时长调节滑块
+                        Column {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text("定时时长", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = palette.textMain)
+                                Text("${timerState.value.toInt()} 分钟", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = palette.brand)
+                            }
+                            Slider(
+                                state = timerState,
+                                onValueChange = { timerState.value = it },
+                                onValueChangeFinished = {
+                                    PlaybackController.setSleepTimer(timerState.value.toInt(), extendToFinishTrack)
+                                },
+                                thumb = {
+                                    Box(
+                                        Modifier
+                                            .size(16.dp)
+                                            .clip(CircleShape)
+                                            .background(palette.brand),
+                                    )
+                                },
+                                colors = SliderDefaults.colors(
+                                    activeTrackColor = palette.brand,
+                                    inactiveTrackColor = palette.softFill,
+                                ),
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.height(14.dp))
+
+                    // 4. 自动延长到整首歌播完开关
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                            Text("播完当前歌曲后再停止", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = palette.textMain)
+                            Spacer(Modifier.height(2.dp))
+                            Text("倒计时结束后，等当前歌曲播完再暂停", fontSize = 12.sp, color = palette.textSub)
+                        }
+                        Switch(
+                            checked = extendToFinishTrack,
+                            onCheckedChange = { value ->
+                                extendToFinishTrack = value
+                                if (sleepTimerEnabled) PlaybackController.setSleepTimer(timerState.value.toInt(), value)
+                            },
+                            colors = meloraSwitchColors(),
+                        )
+                    }
                 }
             }
         }
@@ -2183,7 +2885,9 @@ private fun MoreActionsBottomSheet(
         onDismiss()
         return
     }
-    com.leyu.melora.ui.common.SongMoreSheet(song = song, onDismiss = onDismiss)
+    WithMeloraSheetTheme(darkTheme = LocalPlayerColors.current.isDark) {
+        com.leyu.melora.ui.common.SongMoreSheet(song = song, onDismiss = onDismiss)
+    }
 }
 
 

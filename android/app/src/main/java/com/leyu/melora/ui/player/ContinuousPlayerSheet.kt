@@ -6,9 +6,11 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.rememberSplineBasedDecay
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.border
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.gestures.AnchoredDraggableDefaults
 import androidx.compose.foundation.gestures.DraggableAnchors
 import androidx.compose.foundation.gestures.Orientation
@@ -21,19 +23,31 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Repeat
+import androidx.compose.material.icons.rounded.RepeatOne
+import androidx.compose.material.icons.rounded.Shuffle
+import androidx.compose.material.icons.rounded.SkipNext
+import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -59,9 +73,13 @@ import androidx.compose.ui.zIndex
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.leyu.melora.playback.MeloraSettings
+import com.leyu.melora.playback.PlayMode
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.PlayerCoverStyle
 import com.leyu.melora.playback.PlayerUiState
+import com.leyu.melora.playback.UserLibrary
+import com.leyu.melora.playback.sdk.OnlineSong
+import com.leyu.melora.ui.common.AccentRed
 import com.leyu.melora.ui.common.LocalPageActive
 import com.leyu.melora.ui.theme.MeloraCardDark
 import com.leyu.melora.ui.theme.SystemBarsAppearance
@@ -76,7 +94,7 @@ private fun formatClockMs(ms: Long): String {
     return "%d:%02d".format(seconds / 60, seconds % 60)
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 internal fun ContinuousPlayerSheet(
     state: PlayerUiState,
@@ -136,11 +154,13 @@ internal fun ContinuousPlayerSheet(
     BoxWithConstraints(modifier.fillMaxSize().clipToBounds()) {
         val twoPanes = playerUsesTwoPanes(maxWidth.value, maxHeight.value)
         val expandedLayout = playerUsesExpandedLayout(maxWidth.value, maxHeight.value)
-        val compactPhoneLandscape = isCompactPhonePlayerLandscape(maxWidth, maxHeight)
+        val desktopMiniBar = playerUsesDesktopMiniBar(maxWidth.value, maxHeight.value)
+        val desktopCenterControlsWidth = if (maxWidth >= 900.dp) 420.dp else 280.dp
+        val miniBarHeight = if (desktopMiniBar) DesktopMiniPlayerHeight else MiniPlayerContentHeight
         val screenHeightPx = with(density) { maxHeight.toPx() }
         val screenWidthPx = with(density) { maxWidth.toPx() }
         val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-        val travel = with(density) { (maxHeight - MiniPlayerContentHeight - bottomInset).toPx() }.coerceAtLeast(1f)
+        val travel = with(density) { (maxHeight - miniBarHeight - bottomInset).toPx() }.coerceAtLeast(1f)
         val topInset = WindowInsets.statusBars.getTop(density).toFloat()
         val velocityThreshold = with(density) { 125.dp.toPx() }
         SideEffect {
@@ -166,7 +186,7 @@ internal fun ContinuousPlayerSheet(
             { sheetState.offset.takeIf(Float::isFinite)?.coerceIn(0f, travel) ?: travel }
         }
         val progress = remember(offset, travel) { { playerSheetProgress(offset(), travel) } }
-        val coverPersistsAcrossQueue = twoPanes && !expandedLayout && !compactPhoneLandscape
+        val coverPersistsAcrossQueue = twoPanes && !expandedLayout
         val playbackPage = remember(verticalPagerState, coverPersistsAcrossQueue) {
             {
                 // 手机横屏队列会占用封面的位置；只有封面归位后才允许拉动整张播放页。
@@ -387,180 +407,427 @@ internal fun ContinuousPlayerSheet(
                         }
                     }
                     }
-                    Box(
-                        Modifier.fillMaxWidth().align(Alignment.TopStart)
-                            // 始终测量迷你端点，旋转后直接恢复展开态也能连续收起。
-                            .zIndex(if (showMini) 1f else -1f)
-                            .then(if (showMini) Modifier else Modifier.clearAndSetSemantics {})
-                            .graphicsLayer { alpha = 1f - playerMotionPhase(progress(), 0f, PlayerMiniFadeEnd) }
-                            .testTag("player-mini-bar")
-                            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
-                            .navigationBarsPadding(),
-                    ) {
-                        HorizontalDivider(color = miniColors.outlineVariant.copy(alpha = 0.4f))
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(MiniPlayerContentHeight)
-                                .padding(start = 14.dp, end = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                    val miniTrackModifier = Modifier
+                        .graphicsLayer { translationX = swipeOffset.floatValue }
+                        .testTag("player-mini-track")
+                        .clickable(
+                            enabled = showMini,
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() },
                         ) {
-                            // 封面 + 双行信息：整块左右滑切歌、点击展开全屏播放页
-                            Row(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .graphicsLayer { translationX = swipeOffset.floatValue }
-                                    .testTag("player-mini-track")
-                                    .clickable(
-                                        enabled = showMini,
-                                        indication = null,
-                                        interactionSource = remember { MutableInteractionSource() },
-                                    ) {
-                                        expandPlayer()
+                            expandPlayer()
+                        }
+                        .pointerInput(track.uid, showMini, maxSwipePx, swipeThresholdPx) {
+                            if (!showMini) return@pointerInput
+                            coroutineScope {
+                                var resetJob: Job? = null
+                                val velocityTracker = VelocityTracker()
+                                fun resetSwipe() {
+                                    resetJob?.cancel()
+                                    resetJob = launch {
+                                        animate(
+                                            initialValue = swipeOffset.floatValue,
+                                            targetValue = 0f,
+                                            animationSpec = spring(dampingRatio = 1f, stiffness = Spring.StiffnessMedium),
+                                        ) { value, _ -> swipeOffset.floatValue = value }
                                     }
-                                    .pointerInput(track.uid, showMini, maxSwipePx, swipeThresholdPx) {
-                                        if (!showMini) return@pointerInput
-                                        coroutineScope {
-                                            var resetJob: Job? = null
-                                            val velocityTracker = VelocityTracker()
-                                            fun resetSwipe() {
-                                                resetJob?.cancel()
-                                                resetJob = launch {
-                                                    animate(
-                                                        initialValue = swipeOffset.floatValue,
-                                                        targetValue = 0f,
-                                                        animationSpec = spring(dampingRatio = 1f, stiffness = Spring.StiffnessMedium),
-                                                    ) { value, _ -> swipeOffset.floatValue = value }
+                                }
+                                try {
+                                    detectDragGestures(
+                                        orientationLock = Orientation.Horizontal,
+                                        onDragStart = { down, _, _ ->
+                                            resetJob?.cancel()
+                                            velocityTracker.resetTracking()
+                                            velocityTracker.addPointerInputChange(down)
+                                        },
+                                        onDrag = { change, delta ->
+                                            velocityTracker.addPointerInputChange(change)
+                                            swipeOffset.floatValue = (swipeOffset.floatValue + delta.x)
+                                                .coerceIn(-maxSwipePx, maxSwipePx)
+                                        },
+                                        onDragEnd = { up ->
+                                            velocityTracker.addPointerInputChange(up)
+                                            val velocity = velocityTracker.calculateVelocity().x
+                                            val offset = swipeOffset.floatValue
+                                            when {
+                                                velocity < -600f || offset < -swipeThresholdPx -> {
+                                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    currentNext()
+                                                }
+                                                velocity > 600f || offset > swipeThresholdPx -> {
+                                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    currentPrevious()
                                                 }
                                             }
-                                            try {
-                                                detectDragGestures(
-                                                    orientationLock = Orientation.Horizontal,
-                                                    onDragStart = { down, _, _ ->
-                                                        resetJob?.cancel()
-                                                        velocityTracker.resetTracking()
-                                                        velocityTracker.addPointerInputChange(down)
-                                                    },
-                                                    onDrag = { change, delta ->
-                                                        velocityTracker.addPointerInputChange(change)
-                                                        swipeOffset.floatValue = (swipeOffset.floatValue + delta.x)
-                                                            .coerceIn(-maxSwipePx, maxSwipePx)
-                                                    },
-                                                    onDragEnd = { up ->
-                                                        velocityTracker.addPointerInputChange(up)
-                                                        val velocity = velocityTracker.calculateVelocity().x
-                                                        val offset = swipeOffset.floatValue
-                                                        when {
-                                                            velocity < -600f || offset < -swipeThresholdPx -> {
-                                                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                                currentNext()
-                                                            }
-                                                            velocity > 600f || offset > swipeThresholdPx -> {
-                                                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                                currentPrevious()
-                                                            }
-                                                        }
-                                                        resetSwipe()
-                                                    },
-                                                    // 取消不是零速度松手；只能复位，不能按位移阈值切歌。
-                                                    onDragCancel = { resetSwipe() },
-                                                )
-                                            } finally {
-                                                // 切歌、迷你条退场或卸载同时终止手势与回弹。
-                                                resetJob?.cancel()
-                                                swipeOffset.floatValue = 0f
-                                            }
-                                        }
+                                            resetSwipe()
+                                        },
+                                        // 取消不是零速度松手；只能复位，不能按位移阈值切歌。
+                                        onDragCancel = { resetSwipe() },
+                                    )
+                                } finally {
+                                    // 切歌、迷你条退场或卸载同时终止手势与回弹。
+                                    resetJob?.cancel()
+                                    swipeOffset.floatValue = 0f
+                                }
+                            }
+                        }
+                    val miniTrackArtwork: @Composable (Dp, Int, Modifier) -> Unit = { artworkSize, cornerRadius, extraModifier ->
+                        NowPlayingArtwork(
+                            url = track.artwork,
+                            seed = track.uid,
+                            style = playerCoverStyle,
+                            rotationDegrees = vinylRotation,
+                            motionEnabled = playerMotionEnabled,
+                            modifier = Modifier
+                                .size(artworkSize)
+                                .then(extraModifier)
+                                .onGloballyPositioned { child ->
+                                    val parent = sheetCoordinates
+                                    if (parent != null && parent.isAttached && child.isAttached) {
+                                        miniBounds = parent.localBoundingBoxOf(child, clipBounds = false)
+                                            .translate(Offset(-swipeOffset.floatValue, 0f))
                                     }
-                                    .padding(end = 4.dp),
+                                }
+                                .graphicsLayer { alpha = if (morphing()) 0f else 1f },
+                            cornerRadius = cornerRadius,
+                        )
+                    }
+                    val miniSubtitle: @Composable (Modifier) -> Unit = { subtitleModifier ->
+                        if (playbackStatus == null && currentLine != null) {
+                            TimedLyricText(
+                                line = currentLine,
+                                position = lyricPosition,
+                                active = lyricFrame.focusIndex in lyricFrame.activeIndices,
+                                color = miniColors.onSurfaceVariant,
+                                style = LocalTextStyle.current.copy(fontSize = 12.sp),
+                                modifier = subtitleModifier,
+                                maxLines = 1,
+                                inactiveAlpha = 1f,
+                            )
+                        } else {
+                            Text(
+                                text = subtitleText,
+                                fontSize = 12.sp,
+                                color = miniColors.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = subtitleModifier,
+                            )
+                        }
+                    }
+                    val openMiniQueue = {
+                        queueReturnTarget = PlayerSheetAnchor.Collapsed
+                        backState.transitionTo(scope, PlayerSheetTransition.OpenQueue) {
+                            verticalPagerState.scrollToPage(1)
+                            sheetState.animateTo(PlayerSheetAnchor.Expanded, PlayerPageSnapSpec)
+                        }
+                    }
+                    if (desktopMiniBar) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .align(Alignment.TopStart)
+                                .zIndex(if (showMini) 1f else -1f)
+                                .then(if (showMini) Modifier else Modifier.clearAndSetSemantics {})
+                                .graphicsLayer { alpha = 1f - playerMotionPhase(progress(), 0f, PlayerMiniFadeEnd) }
+                                .testTag("player-mini-bar")
+                                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
+                                .navigationBarsPadding(),
+                        ) {
+                            HorizontalDivider(
+                                thickness = 0.8.dp,
+                                color = miniColors.outlineVariant.copy(alpha = 0.45f),
+                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(DesktopMiniPlayerHeight)
+                                    .padding(horizontal = 20.dp),
                                 verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(20.dp),
                             ) {
-                                NowPlayingArtwork(
-                                    url = track.artwork,
-                                    seed = track.uid,
-                                    style = playerCoverStyle,
-                                    rotationDegrees = vinylRotation, motionEnabled = playerMotionEnabled,
-                                    modifier = Modifier.size(46.dp)
-                                        .onGloballyPositioned { child ->
-                                            val parent = sheetCoordinates
-                                            if (parent != null && parent.isAttached && child.isAttached) {
-                                                miniBounds = parent.localBoundingBoxOf(child, clipBounds = false)
-                                                    .translate(Offset(-swipeOffset.floatValue, 0f))
-                                            }
-                                        }
-                                        .graphicsLayer { alpha = if (morphing()) 0f else 1f },
-                                    cornerRadius = 10,
-                                )
-                                Column(
+                                // 左段：封面 + 歌名 · 歌手 + 实时逐字歌词
+                                Row(
                                     modifier = Modifier
                                         .weight(1f)
-                                        .padding(start = 12.dp),
+                                        .then(miniTrackModifier),
+                                    verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    Text(
-                                        text = listOf(track.title, track.artist)
-                                            .filter { it.isNotBlank() }
-                                            .joinToString(" - "),
-                                        fontSize = 15.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        color = miniColors.onSurface,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                    Row(
+                                    val desktopArtworkBorder = if (playerCoverStyle == PlayerCoverStyle.Default) {
+                                        Modifier.border(
+                                            0.5.dp,
+                                            miniColors.outlineVariant.copy(alpha = 0.25f),
+                                            RoundedCornerShape(10.dp),
+                                        )
+                                    } else {
+                                        Modifier
+                                    }
+                                    miniTrackArtwork(48.dp, 10, desktopArtworkBorder)
+                                    Column(
                                         modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(top = 3.dp),
+                                            .weight(1f)
+                                            .padding(start = 12.dp),
+                                    ) {
+                                        Text(
+                                            text = buildAnnotatedString {
+                                                withStyle(SpanStyle(color = miniColors.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp)) {
+                                                    append(track.title)
+                                                }
+                                                if (track.artist.isNotBlank()) {
+                                                    withStyle(SpanStyle(color = miniColors.onSurfaceVariant, fontWeight = FontWeight.Normal, fontSize = 12.5.sp)) {
+                                                        append(" · ")
+                                                        append(track.artist)
+                                                    }
+                                                }
+                                            },
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        miniSubtitle(Modifier.fillMaxWidth().padding(top = 3.dp))
+                                    }
+                                }
+
+                                // 中段：视觉居中上一首 · 播放/暂停 · 下一首 + 可拖细进度条
+                                Column(
+                                    modifier = Modifier.width(desktopCenterControlsWidth),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center,
+                                ) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(18.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
-                                        if (playbackStatus == null && currentLine != null) {
-                                            TimedLyricText(
-                                                line = currentLine, position = lyricPosition,
-                                                active = lyricFrame.focusIndex in lyricFrame.activeIndices,
-                                                color = miniColors.onSurfaceVariant,
-                                                style = LocalTextStyle.current.copy(fontSize = 12.sp),
-                                                modifier = Modifier.weight(1f), maxLines = 1,
-                                                inactiveAlpha = 1f,
+                                        IconButton(enabled = showMini, onClick = onPrevious, modifier = Modifier.size(32.dp)) {
+                                            Icon(
+                                                Icons.Rounded.SkipPrevious,
+                                                contentDescription = "上一首",
+                                                tint = miniColors.onSurface.copy(alpha = 0.78f),
+                                                modifier = Modifier.size(22.dp),
                                             )
-                                        } else Text(
-                                            text = subtitleText, fontSize = 12.sp,
-                                            color = miniColors.onSurfaceVariant, maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
-                                        )
-                                        Spacer(Modifier.width(8.dp))
-                                        Text(
-                                            text = if (state.durationMs > 0L) {
-                                                "${formatClockMs(state.positionMs)} / ${formatClockMs(state.durationMs)}"
-                                            } else {
-                                                formatClockMs(state.positionMs)
+                                        }
+                                        IconButton(enabled = showMini, onClick = { PlaybackController.toggle() }, modifier = Modifier.size(36.dp)) {
+                                            Icon(
+                                                imageVector = if (state.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                                contentDescription = if (state.playing) "暂停" else "播放",
+                                                tint = miniColors.onSurface,
+                                                modifier = Modifier.size(28.dp),
+                                            )
+                                        }
+                                        IconButton(enabled = showMini, onClick = onNext, modifier = Modifier.size(32.dp)) {
+                                            Icon(
+                                                Icons.Rounded.SkipNext,
+                                                contentDescription = "下一首",
+                                                tint = miniColors.onSurface.copy(alpha = 0.78f),
+                                                modifier = Modifier.size(22.dp),
+                                            )
+                                        }
+                                    }
+                                    key(track.uid) {
+                                        var dragging by remember { mutableStateOf<Float?>(null) }
+                                        val range = 0f..(state.durationMs.takeIf { it > 0L }?.toFloat() ?: 1f)
+                                        val seekState = remember(range) { SliderState(trackRange = range) }
+                                        seekState.value = dragging ?: state.positionMs.toFloat()
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(top = 2.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                        ) {
+                                            Text(
+                                                text = formatClockMs(dragging?.toLong() ?: state.positionMs),
+                                                fontSize = 11.sp,
+                                                style = LocalTextStyle.current.copy(fontFeatureSettings = "tnum"),
+                                                color = miniColors.onSurfaceVariant,
+                                                maxLines = 1,
+                                            )
+                                            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
+                                                Slider(
+                                                    state = seekState,
+                                                    onValueChange = { dragging = it },
+                                                    onValueChangeFinished = {
+                                                        dragging?.let { onSeek(it.toLong()) }
+                                                        dragging = null
+                                                    },
+                                                    enabled = showMini && state.durationMs > 0L,
+                                                    colors = SliderDefaults.colors(
+                                                        activeTrackColor = miniColors.onSurface.copy(alpha = 0.88f),
+                                                        inactiveTrackColor = miniColors.onSurface.copy(alpha = 0.12f),
+                                                    ),
+                                                    thumb = {},
+                                                    track = { sliderState: SliderState ->
+                                                        val barHeight = if (dragging != null) 4.dp else 2.5.dp
+                                                        Box(
+                                                            Modifier
+                                                                .fillMaxWidth()
+                                                                .height(16.dp),
+                                                            contentAlignment = Alignment.CenterStart,
+                                                        ) {
+                                                            Box(
+                                                                Modifier
+                                                                    .fillMaxWidth()
+                                                                    .height(barHeight)
+                                                                    .clip(RoundedCornerShape(2.dp))
+                                                                    .background(miniColors.onSurface.copy(alpha = 0.12f)),
+                                                            ) {
+                                                                Box(
+                                                                    Modifier
+                                                                        .fillMaxWidth(
+                                                                            ((sliderState.value - range.start) / (range.endInclusive - range.start))
+                                                                                .coerceIn(0f, 1f),
+                                                                        )
+                                                                        .height(barHeight)
+                                                                        .background(miniColors.onSurface.copy(alpha = 0.88f)),
+                                                                )
+                                                            }
+                                                        }
+                                                    },
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .height(16.dp)
+                                                        .testTag("player-mini-seek-slider"),
+                                                )
+                                            }
+                                            Text(
+                                                text = if (state.durationMs > 0L) formatClockMs(state.durationMs) else "--:--",
+                                                fontSize = 11.sp,
+                                                style = LocalTextStyle.current.copy(fontFeatureSettings = "tnum"),
+                                                color = miniColors.onSurfaceVariant,
+                                                maxLines = 1,
+                                            )
+                                        }
+                                    }
+                                }
+
+                                // 右段：克制留白的收藏、循环模式与播放队列
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    val favoriteUids by UserLibrary.favoriteUids.collectAsStateWithLifecycle()
+                                    val favoriteSong = remember(track.uid, track.raw) { track.raw?.let(OnlineSong::from) }
+                                    val isFavorite = favoriteSong != null && favoriteSong.uid in favoriteUids
+                                    if (favoriteSong != null) {
+                                        IconButton(
+                                            enabled = showMini,
+                                            onClick = {
+                                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                UserLibrary.toggleFavorite(favoriteSong)
                                             },
-                                            fontSize = 11.sp,
-                                            color = miniColors.onSurfaceVariant,
-                                            maxLines = 1,
+                                            modifier = Modifier.size(36.dp),
+                                        ) {
+                                            Icon(
+                                                imageVector = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                                                contentDescription = if (isFavorite) "取消收藏" else "收藏",
+                                                tint = if (isFavorite) AccentRed else miniColors.onSurfaceVariant,
+                                                modifier = Modifier.size(20.dp),
+                                            )
+                                        }
+                                    }
+                                    IconButton(enabled = showMini, onClick = { PlaybackController.cycleMode() }, modifier = Modifier.size(36.dp)) {
+                                        Icon(
+                                            imageVector = when (state.mode) {
+                                                PlayMode.List -> Icons.Rounded.Repeat
+                                                PlayMode.Single -> Icons.Rounded.RepeatOne
+                                                PlayMode.Shuffle -> Icons.Rounded.Shuffle
+                                            },
+                                            contentDescription = "循环模式",
+                                            tint = miniColors.onSurfaceVariant,
+                                            modifier = Modifier.size(19.dp),
+                                        )
+                                    }
+                                    IconButton(enabled = showMini, onClick = openMiniQueue, modifier = Modifier.size(36.dp)) {
+                                        Icon(
+                                            Icons.AutoMirrored.Rounded.QueueMusic,
+                                            contentDescription = "播放队列",
+                                            tint = miniColors.onSurface,
+                                            modifier = Modifier.size(23.dp),
                                         )
                                     }
                                 }
                             }
-                            IconButton(enabled = showMini, onClick = { PlaybackController.toggle() }) {
-                                Icon(
-                                    imageVector = if (state.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                    contentDescription = if (state.playing) "暂停" else "播放",
-                                    tint = miniColors.onSurface,
-                                    modifier = Modifier.size(32.dp),
-                                )
-                            }
-                            IconButton(enabled = showMini, onClick = {
-                                queueReturnTarget = PlayerSheetAnchor.Collapsed
-                                backState.transitionTo(scope, PlayerSheetTransition.OpenQueue) {
-                                    verticalPagerState.scrollToPage(1)
-                                    sheetState.animateTo(PlayerSheetAnchor.Expanded, PlayerPageSnapSpec)
+                        }
+                    } else {
+                        Box(
+                            Modifier.fillMaxWidth().align(Alignment.TopStart)
+                                // 始终测量迷你端点，旋转后直接恢复展开态也能连续收起。
+                                .zIndex(if (showMini) 1f else -1f)
+                                .then(if (showMini) Modifier else Modifier.clearAndSetSemantics {})
+                                .graphicsLayer { alpha = 1f - playerMotionPhase(progress(), 0f, PlayerMiniFadeEnd) }
+                                .testTag("player-mini-bar")
+                                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
+                                .navigationBarsPadding(),
+                        ) {
+                            HorizontalDivider(color = miniColors.outlineVariant.copy(alpha = 0.4f))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(MiniPlayerContentHeight)
+                                    .padding(start = 14.dp, end = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                // 封面 + 双行信息：整块左右滑切歌、点击展开全屏播放页
+                                Row(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .then(miniTrackModifier)
+                                        .padding(end = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    miniTrackArtwork(46.dp, 10, Modifier)
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .padding(start = 12.dp),
+                                    ) {
+                                        Text(
+                                            text = listOf(track.title, track.artist)
+                                                .filter { it.isNotBlank() }
+                                                .joinToString(" - "),
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = miniColors.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(top = 3.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            miniSubtitle(Modifier.weight(1f))
+                                            Spacer(Modifier.width(8.dp))
+                                            Text(
+                                                text = if (state.durationMs > 0L) {
+                                                    "${formatClockMs(state.positionMs)} / ${formatClockMs(state.durationMs)}"
+                                                } else {
+                                                    formatClockMs(state.positionMs)
+                                                },
+                                                fontSize = 11.sp,
+                                                color = miniColors.onSurfaceVariant,
+                                                maxLines = 1,
+                                            )
+                                        }
+                                    }
                                 }
-                            }) {
-                                Icon(
-                                    Icons.AutoMirrored.Rounded.QueueMusic,
-                                    contentDescription = "播放队列",
-                                    tint = miniColors.onSurface,
-                                    modifier = Modifier.size(26.dp),
-                                )
+                                IconButton(enabled = showMini, onClick = { PlaybackController.toggle() }) {
+                                    Icon(
+                                        imageVector = if (state.playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                        contentDescription = if (state.playing) "暂停" else "播放",
+                                        tint = miniColors.onSurface,
+                                        modifier = Modifier.size(32.dp),
+                                    )
+                                }
+                                IconButton(enabled = showMini, onClick = openMiniQueue) {
+                                    Icon(
+                                        Icons.AutoMirrored.Rounded.QueueMusic,
+                                        contentDescription = "播放队列",
+                                        tint = miniColors.onSurface,
+                                        modifier = Modifier.size(26.dp),
+                                    )
+                                }
                             }
                         }
                     }

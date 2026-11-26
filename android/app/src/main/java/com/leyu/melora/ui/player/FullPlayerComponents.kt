@@ -12,6 +12,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -207,12 +209,13 @@ internal fun AudioInfoCard(
 internal fun AlbumInfoCard(
     track: UiTrack?,
     onOpenAlbum: (String) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val albumName = track?.album?.takeIf { it.isNotBlank() }
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = FullPlayerCardSurface,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -278,12 +281,13 @@ internal fun AlbumInfoCard(
 internal fun ArtistInfoCard(
     track: UiTrack?,
     onOpenArtist: (String) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val artistName = track?.artist?.takeIf { it.isNotBlank() }
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = FullPlayerCardSurface,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -376,8 +380,13 @@ internal fun FullPlayerPrimaryControls(
     onPrevious: () -> Unit,
     onToggle: () -> Unit,
     onNext: () -> Unit,
+    compact: Boolean = false,
 ) {
     val skipBurstGate = remember { PlayerSkipBurstGate() }
+    val skipSize = if (compact) 28.dp else 38.dp
+    val toggleButtonSize = if (compact) 52.dp else 68.dp
+    val toggleIconSize = if (compact) 40.dp else 54.dp
+    val skipTint = FullPlayerTextPrimary.copy(alpha = if (compact) 0.84f else 1f)
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -394,19 +403,19 @@ internal fun FullPlayerPrimaryControls(
             Icon(
                 Icons.Rounded.SkipPrevious,
                 contentDescription = "上一首",
-                tint = FullPlayerTextPrimary,
-                modifier = Modifier.size(38.dp),
+                tint = skipTint,
+                modifier = Modifier.size(skipSize),
             )
         }
         IconButton(
             onClick = onToggle,
-            modifier = Modifier.size(68.dp),
+            modifier = Modifier.size(toggleButtonSize),
         ) {
             Icon(
                 imageVector = if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                 contentDescription = if (playing) "暂停" else "播放",
                 tint = FullPlayerTextPrimary,
-                modifier = Modifier.size(54.dp),
+                modifier = Modifier.size(toggleIconSize),
             )
         }
         IconButton(
@@ -419,13 +428,14 @@ internal fun FullPlayerPrimaryControls(
             Icon(
                 Icons.Rounded.SkipNext,
                 contentDescription = "下一首",
-                tint = FullPlayerTextPrimary,
-                modifier = Modifier.size(38.dp),
+                tint = skipTint,
+                modifier = Modifier.size(skipSize),
             )
         }
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun FullPlayerSecondaryControls(
     mode: PlayMode,
@@ -437,15 +447,18 @@ internal fun FullPlayerSecondaryControls(
     onShowMore: () -> Unit,
     modifier: Modifier = Modifier,
     queueOpen: Boolean = false,
+    compact: Boolean = false,
 ) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(bottom = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    val iconSize = if (compact) 19.dp else 22.dp
+    val buttonModifier = if (compact) Modifier.size(40.dp) else Modifier
+    val mutedTint = FullPlayerTextMuted.copy(alpha = if (compact) 0.72f else 1f)
+
+    FlowRow(
+        modifier = modifier.fillMaxWidth().padding(bottom = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        IconButton(onClick = onCycleMode) {
+        IconButton(onClick = onCycleMode, modifier = buttonModifier) {
             Icon(
                 imageVector = when (mode) {
                     PlayMode.List -> Icons.Rounded.Repeat
@@ -453,40 +466,40 @@ internal fun FullPlayerSecondaryControls(
                     PlayMode.Shuffle -> Icons.Rounded.Shuffle
                 },
                 contentDescription = "循环模式",
-                tint = FullPlayerTextMuted,
-                modifier = Modifier.size(22.dp),
+                tint = mutedTint,
+                modifier = Modifier.size(iconSize),
             )
         }
-        IconButton(onClick = onShowTimer) {
+        IconButton(onClick = onShowTimer, modifier = buttonModifier) {
             Icon(
                 Icons.Outlined.Timer,
                 contentDescription = "定时与播放设置",
-                tint = FullPlayerTextMuted,
-                modifier = Modifier.size(22.dp),
+                tint = mutedTint,
+                modifier = Modifier.size(iconSize),
             )
         }
-        IconButton(onClick = onOpenEffects) {
+        IconButton(onClick = onOpenEffects, modifier = buttonModifier) {
             Icon(
                 imageVector = AudioEffectsIcon,
                 contentDescription = if (effectActive) "音效已开启" else "音效设置",
-                tint = if (effectActive) FullPlayerTextPrimary else FullPlayerTextMuted,
-                modifier = Modifier.size(22.dp),
+                tint = if (effectActive) FullPlayerTextPrimary else mutedTint,
+                modifier = Modifier.size(iconSize),
             )
         }
-        IconButton(onClick = onOpenQueue) {
+        IconButton(onClick = onOpenQueue, modifier = buttonModifier) {
             Icon(
                 Icons.AutoMirrored.Rounded.FormatListBulleted,
                 contentDescription = if (queueOpen) "收起播放队列" else "播放队列",
-                tint = if (queueOpen) FullPlayerTextPrimary else FullPlayerTextMuted,
-                modifier = Modifier.size(22.dp),
+                tint = if (queueOpen) FullPlayerTextPrimary else mutedTint,
+                modifier = Modifier.size(iconSize),
             )
         }
-        IconButton(onClick = onShowMore) {
+        IconButton(onClick = onShowMore, modifier = buttonModifier) {
             Icon(
                 Icons.Outlined.MoreHoriz,
                 contentDescription = "更多操作",
-                tint = FullPlayerTextMuted,
-                modifier = Modifier.size(22.dp),
+                tint = mutedTint,
+                modifier = Modifier.size(iconSize),
             )
         }
     }

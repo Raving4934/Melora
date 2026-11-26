@@ -195,7 +195,8 @@ class PhoneLandscapePlayerInstrumentedTest {
     private fun playerControl(label: String) =
         compose.onNode(hasContentDescription(label) and hasAnyAncestor(hasTestTag("player-compact-controls")))
 
-    private fun rightControlBounds() = compose.boundsInSameFrame(
+    private fun leftControlBounds() = compose.boundsInSameFrame(
+        compose.onNodeWithTag("player-artwork"),
         compose.onNodeWithTag("player-heading"),
         compose.onNodeWithTag("player-seek-slider"),
         playerControl("暂停"),
@@ -212,37 +213,40 @@ class PhoneLandscapePlayerInstrumentedTest {
     fun phoneLandscapeTabsAndPagingKeepPlaybackControlsInPlace() {
         showPlayer()
         compose.onNodeWithTag("player-phone-landscape").assertIsDisplayed()
-        tab(1).assertIsSelected()
-        val (infoTab, coverTab, lyricsTab) = compose.boundsInSameFrame(tab(0), tab(1), tab(2))
-        val (cover, miniLyrics, controls) = compose.boundsInSameFrame(
+        tab(2).assertIsSelected()
+        tab(0).assertIsDisplayed()
+        tab(1).assertDoesNotExist()
+        val (lyricsTab, infoTab) = compose.boundsInSameFrame(tab(2), tab(0))
+        val (cover, lyrics, controls) = compose.boundsInSameFrame(
             compose.onNodeWithTag("player-artwork"),
-            compose.onNodeWithTag("player-mini-lyrics"),
+            compose.onNodeWithTag("player-full-lyrics"),
             compose.onNodeWithTag("player-compact-controls"),
         )
-        assertTrue(infoTab.right <= coverTab.left && coverTab.right <= lyricsTab.left)
-        assertTrue("封面应低于切换入口", cover.top > coverTab.bottom)
-        assertTrue("迷你歌词应在封面下方", miniLyrics.top >= cover.bottom)
-        assertTrue("封面应给播放控件保留独立空间", cover.right < controls.left)
-        val before = rightControlBounds()
+        assertTrue(lyricsTab.right <= infoTab.left)
+        assertTrue("封面与控制区应常驻左侧，歌词位于右侧", controls.right <= lyrics.left && cover.right < lyrics.left)
+        assertTrue("歌词应位于切换胶囊下方", lyrics.top >= lyricsTab.bottom)
+        val before = leftControlBounds()
         capture("cover")
 
         selectTab(0)
         compose.onNodeWithText("音频信息").assertIsDisplayed()
-        compose.onNodeWithText("24-bit · 192 kHz · FLAC · 4,812 kbps").assertIsDisplayed()
-        assertEquals(before, rightControlBounds())
-        selectTab(1)
+        compose.onNodeWithText("24-bit · 192 kHz · FLAC · 4,812 kbps").performScrollTo().assertIsDisplayed()
+        assertEquals(before, leftControlBounds())
+        selectTab(2)
         compose.onNodeWithTag("player-pages").performTouchInput { swipeLeft(durationMillis = 420L) }
+        compose.awaitStable("player-page-0")
+        tab(0).assertIsSelected()
+        compose.onNodeWithTag("player-pages").performTouchInput { swipeRight(durationMillis = 420L) }
         compose.awaitStable("player-full-lyrics")
         tab(2).assertIsSelected()
-        assertEquals(before, rightControlBounds())
+        assertEquals(before, leftControlBounds())
         capture("lyrics")
     }
 
     @Test
     fun phoneLandscapeQueueLeavesTheRightSideInteractiveAndReturnsToLyrics() {
         showPlayer()
-        selectTab(2)
-        val before = rightControlBounds()
+        val before = leftControlBounds()
         val open = playerControl("播放队列")
         open.assertIsDisplayed().performClick()
         compose.awaitStable("playback-queue-list")
@@ -250,8 +254,8 @@ class PhoneLandscapePlayerInstrumentedTest {
             compose.onNodeWithTag("playback-queue-list"),
             compose.onNodeWithTag("player-compact-controls"),
         )
-        assertTrue("队列列表应位于播放控制左侧", queue.right < controls.left)
-        assertEquals(before, rightControlBounds())
+        assertTrue("队列列表应位于左侧封面与播放控制右侧", controls.right <= queue.left)
+        assertEquals(before, leftControlBounds())
         playerControl("暂停").assertIsDisplayed().assertIsEnabled().assertHasClickAction()
         capture("queue")
 
@@ -268,7 +272,7 @@ class PhoneLandscapePlayerInstrumentedTest {
         playerControl("收起播放队列").performClick()
         compose.awaitStable("player-full-lyrics")
         tab(2).assertIsSelected()
-        assertEquals(before, rightControlBounds())
+        assertEquals(before, leftControlBounds())
 
         open.performClick()
         compose.awaitStable("playback-queue-list")
@@ -276,6 +280,49 @@ class PhoneLandscapePlayerInstrumentedTest {
         compose.awaitStable("player-full-lyrics")
         tab(2).assertIsSelected()
         compose.onNodeWithTag("playback-queue-list").assertIsNotDisplayed()
+    }
+
+    @Test
+    fun letterboxedLyricsAtTheTopDoNotCollapseButTheCoverStillDoes() {
+        showPlayer(viewport = DpSize(720.dp, 360.dp), carMode = true)
+        val lyrics = compose.onNodeWithTag("player-full-lyrics")
+        val lyricList = compose.onNode(
+            hasScrollToIndexAction() and hasAnyAncestor(hasTestTag("player-full-lyrics")),
+            useUnmergedTree = true,
+        )
+        lyricList.performScrollToIndex(0)
+        lyrics.performTouchInput {
+            swipeDown(startY = height * 0.12f, endY = height * 0.93f, durationMillis = 300L)
+        }
+        compose.runOnIdle {
+            assertEquals(PlayerSheetAnchor.Expanded, back.sheet.settledValue)
+            assertEquals(0f, back.sheet.offset, 1f)
+        }
+        lyrics.assertIsDisplayed()
+
+        compose.onNodeWithTag("player-compact-controls").performTouchInput {
+            swipeDown(startY = height * 0.12f, endY = height * 0.93f, durationMillis = 300L)
+        }
+        compose.mainClock.advanceTimeUntil(5_000) { back.sheet.settledValue == PlayerSheetAnchor.Collapsed }
+    }
+
+    @Test
+    fun narrowLandscapeKeepsTheTitleAndAllSecondaryControlsReachable() {
+        showPlayer(viewport = DpSize(440.dp, 320.dp), carMode = true)
+        val title = compose.onNode(
+            hasText("夜航") and hasAnyAncestor(hasTestTag("player-heading")),
+            useUnmergedTree = true,
+        ).assertIsDisplayed()
+        val (titleBounds, artworkBounds) = compose.boundsInSameFrame(title, compose.onNodeWithTag("player-artwork"))
+        assertTrue("窄栏歌名应和封面纵向分布", titleBounds.bottom <= artworkBounds.top)
+        val actions = listOf("循环模式", "定时与播放设置", "音效设置", "播放队列", "更多操作")
+        actions.forEach { label ->
+            val action = playerControl(label)
+            action.performScrollTo().assertIsDisplayed().assertIsEnabled().assertHasClickAction()
+            assertTrue("$label 应能整颗按钮滚入可视区域", action.fetchSemanticsNode().boundsInRoot.width >= 39f)
+        }
+        playerControl("播放队列").performScrollTo().performTouchInput { click() }
+        compose.awaitStable("playback-queue-list")
     }
 
     @Test
@@ -327,16 +374,20 @@ class PhoneLandscapePlayerInstrumentedTest {
     }
 
     private fun assertQueueReplacesOnlyRightPane() {
-        compose.onNodeWithTag("player-phone-landscape").assertDoesNotExist()
+        compose.onNodeWithTag("player-phone-landscape").assertIsDisplayed()
         val cover = compose.onNodeWithTag("player-artwork").assertIsDisplayed()
         val seek = compose.onNodeWithTag("player-seek-slider").assertIsDisplayed()
-        val (coverBounds, seekBounds) = compose.boundsInSameFrame(cover, seek)
-        assertTrue("播放进度应在封面右侧，封面=$coverBounds，进度=$seekBounds", coverBounds.right < seekBounds.left)
-        val openQueue = compose.onNode(hasContentDescription("播放队列") and hasClickAction() and isEnabled())
-        openQueue.performScrollTo().assertIsDisplayed()
-        openQueue.performSemanticsAction(SemanticsActions.OnClick)
+        val controls = compose.onNodeWithTag("player-compact-controls").assertIsDisplayed()
+        val lyrics = compose.onNodeWithTag("player-full-lyrics").assertIsDisplayed()
+        val (controlsBounds, lyricsBounds) = compose.boundsInSameFrame(controls, lyrics)
+        assertTrue("封面与控制区应常驻左侧，歌词位于右侧", controlsBounds.right <= lyricsBounds.left)
+        val openQueue = playerControl("播放队列")
+        openQueue.assertIsDisplayed().performClick()
         compose.mainClock.advanceTimeUntil(5_000) { back.transition == null }
-        val header = compose.onNodeWithText("收起播放队列")
+        val header = compose.onNode(hasText("播放队列") and hasAnyAncestor(hasTestTag("player-compact-content")))
+        val close = compose.onNode(
+            hasContentDescription("收起播放队列") and hasAnyAncestor(hasTestTag("player-compact-content")),
+        )
         val queue = compose.onNodeWithTag("playback-queue-list")
         try {
             compose.awaitStable(header)
@@ -345,12 +396,14 @@ class PhoneLandscapePlayerInstrumentedTest {
             val tree = compose.onRoot().printToString()
             throw AssertionError("短窗未完整显示队列的表头与列表，转场=${back.transition}\n$tree", failure)
         }
-        val (artwork, heading, list) = compose.boundsInSameFrame(cover, header, queue)
+        close.assertIsDisplayed().assertHasClickAction()
+        val (artwork, leftControls, heading, list) = compose.boundsInSameFrame(cover, controls, header, queue)
         assertTrue(
-            "短窗应保留右侧队列，封面=$artwork，表头=$heading，队列=$list",
-            artwork.right < heading.left && artwork.right < list.left && heading.bottom < list.top,
+            "短窗应保留右侧队列，封面=$artwork，左栏=$leftControls，表头=$heading，队列=$list",
+            leftControls.right <= heading.left && leftControls.right <= list.left && heading.bottom < list.top,
         )
-        seek.assertIsNotDisplayed()
+        seek.assertIsDisplayed()
+        cover.assertIsDisplayed()
     }
 
     private fun capture(page: String) {

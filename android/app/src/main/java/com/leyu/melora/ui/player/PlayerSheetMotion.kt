@@ -1,11 +1,5 @@
 package com.leyu.melora.ui.player
 
-import android.content.pm.PackageManager
-import android.content.res.Configuration
-import android.os.Build
-import android.util.DisplayMetrics
-import android.view.Display
-import android.view.WindowManager
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -13,10 +7,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalResources
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.ViewConfiguration
 import androidx.compose.ui.unit.dp
@@ -35,6 +25,7 @@ internal const val PlayerContentFadeStart = 0.8f
 /** 迷你控件在靠近收起端时淡入，这一段已经使用迷你条底色。 */
 internal const val PlayerMiniFadeEnd = 0.16f
 internal val MiniPlayerContentHeight = 64.dp
+internal val DesktopMiniPlayerHeight = 72.dp
 
 internal enum class PlayerSheetAnchor { Collapsed, Expanded }
 
@@ -96,6 +87,9 @@ internal fun playerSheetShape(progress: Float, offset: Dp): RoundedCornerShape {
     return RoundedCornerShape(topStart = radius, topEnd = radius, bottomStart = bottom, bottomEnd = bottom)
 }
 
+internal fun playerUsesDesktopMiniBar(widthDp: Float, heightDp: Float): Boolean =
+    widthDp >= 600f && heightDp >= 480f
+
 /** 两个端点都在Sheet局部坐标中；整层位移与封面插值合成一条连续轨迹。 */
 internal fun playerArtworkBounds(mini: Rect, full: Rect, progress: Float): Rect =
     lerp(mini, full, progress.coerceIn(0f, 1f))
@@ -104,40 +98,13 @@ internal fun playerArtworkBounds(mini: Rect, full: Rect, progress: Float): Rect 
 internal fun playerUsesExpandedLayout(widthDp: Float, heightDp: Float): Boolean =
     widthDp >= 840f && heightDp >= 480f
 
-/** 只有高度受限的横屏才用手机紧凑双栏；中等宽度分屏不能仅因宽大于高就降为单行歌词。 */
+/** 高度受限的矮宽横屏窗口（手机横屏、平板上下分屏、矮宽小窗与车机）统一使用紧凑横屏双栏。 */
+internal fun playerUsesCompactLandscape(widthDp: Float, heightDp: Float): Boolean =
+    !playerUsesExpandedLayout(widthDp, heightDp) && widthDp > heightDp && heightDp < 480f
+
+/** 展开大屏与紧凑横屏均使用双栏结构；中等宽度竖屏/方屏分屏仍保留单栏纵向布局。 */
 internal fun playerUsesTwoPanes(widthDp: Float, heightDp: Float): Boolean =
-    playerUsesExpandedLayout(widthDp, heightDp) || (heightDp < 480f && widthDp > heightDp)
-
-internal fun playerUsesCompactPhoneLandscape(widthDp: Float, heightDp: Float, deviceShortSideDp: Float): Boolean =
-    widthDp > heightDp && heightDp < 480f && deviceShortSideDp > 0f && deviceShortSideDp < 600f
-
-/** 用设备全屏短边识别手机，分屏窗口和应用内的缩放不参与设备判断。 */
-@Composable
-internal fun isCompactPhonePlayerLandscape(width: Dp, height: Dp): Boolean {
-    val context = LocalContext.current
-    val configuration = LocalConfiguration.current
-    val display = LocalView.current.display
-    val systemDensity = LocalResources.current.displayMetrics.density
-    val deviceShortSideDp = remember(context, configuration, display, systemDensity) {
-        val mode = configuration.uiMode and Configuration.UI_MODE_TYPE_MASK
-        val ordinaryMode = mode == Configuration.UI_MODE_TYPE_NORMAL || mode == Configuration.UI_MODE_TYPE_UNDEFINED
-        if (display == null || display.displayId != Display.DEFAULT_DISPLAY || !ordinaryMode ||
-            context.packageManager.hasSystemFeature(PackageManager.FEATURE_AUTOMOTIVE) ||
-            context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
-        ) {
-            0f
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val bounds = context.getSystemService(WindowManager::class.java)?.maximumWindowMetrics?.bounds
-            bounds?.let { minOf(it.width(), it.height()) / systemDensity } ?: 0f
-        } else {
-            // 旧系统的分屏任务可覆盖 Configuration，直接读取该屏的完整尺寸。
-            @Suppress("DEPRECATION")
-            val metrics = DisplayMetrics().also { display.getRealMetrics(it) }
-            minOf(metrics.widthPixels, metrics.heightPixels) / metrics.density
-        }
-    }
-    return playerUsesCompactPhoneLandscape(width.value, height.value, deviceShortSideDp)
-}
+    playerUsesExpandedLayout(widthDp, heightDp) || playerUsesCompactLandscape(widthDp, heightDp)
 
 /** 翻页视口和单页始终等宽，内距只用于页内内容；横屏内侧由两栏间距负责。 */
 internal fun playerPaneContentPadding(twoPanes: Boolean, controls: Boolean): PaddingValues = PaddingValues(
