@@ -2,13 +2,14 @@
 
 ## [Unreleased]
 
-## [0.2.5] - 2026-11-27
+## [0.2.6] - 2026-11-27
 
 ### 安卓客户端
 
 【播放与歌词】
 
 - 优化手机横屏、平板和大屏的播放布局。宽屏底部播放条支持直接切歌和拖动进度，横屏播放页将封面与控件、歌词或音频信息分栏展示。
+- 修复调整窗口宽度或切换分栏布局时，播放器偶尔崩溃的问题。
 - 改进进出沉浸播放时封面和歌词的过渡，当前歌词退出时平滑收回预览区。使用系统手势导航时，从屏幕边缘滑动一次即可退出沉浸。
 - 新增黑胶唱片换碟动效，优化换歌时封面的交接、唱臂动作和进度环层级。
 - 优化逐字歌词高亮、换行和间奏提示，区分普通歌词页与沉浸歌词的样式。
@@ -35,8 +36,9 @@
 
 ### 提交追溯
 
-Android 版本号为 0.2.5，versionCode 为 25。完整提交区间见 [android-v0.2.4 至 android-v0.2.5][Android 0.2.5]。
+Android 版本号为 0.2.6，versionCode 为 26。0.2.5 候选在设备回归时发现分页崩溃，未公开发布。完整提交区间见 [android-v0.2.4 至 android-v0.2.6][Android 0.2.6]。
 
+- 修复窗口切换时的分页越界，校准墨水屏进度测试的快照时序。[`34ef20d`](https://github.com/Raving4934/Melora/commit/34ef20d21f55e8d0f7324a524feb02f5b19d772d)、[`685ee8e`](https://github.com/Raving4934/Melora/commit/685ee8ea788b451406dce60c2598501147d7c0bd)
 - 横屏和平板播放器、进出沉浸动效及侧滑返回。[`d754ff3`](https://github.com/Raving4934/Melora/commit/d754ff3c157ae54ebe629f6ffbeff61043e0a393)、[`6e8a72c`](https://github.com/Raving4934/Melora/commit/6e8a72c4f0876bdf8041ab8bc738524591705285)、[`8aeb9b8`](https://github.com/Raving4934/Melora/commit/8aeb9b8576e075e88663d4c71e462c69f9b849bf)、[`80d6e31`](https://github.com/Raving4934/Melora/commit/80d6e3140fbd3191026d23f44a7ec4b56056efde)
 - 黑胶换碟、进度环层级、逐字歌词及墨水屏模式。[`c1f4952`](https://github.com/Raving4934/Melora/commit/c1f495269db434ddea8bed69483bc128a30a6690)、[`c7f17eb`](https://github.com/Raving4934/Melora/commit/c7f17ebf0d7797a2365996be589991990ebce665)、[`32d67bf`](https://github.com/Raving4934/Melora/commit/32d67bf821657149d9801e2cbe4f19a022873a8e)、[`805858a`](https://github.com/Raving4934/Melora/commit/805858ad3d017be96ce3ed85ace32160941c711c)
 - 组件模糊、主题配色、大屏列表及详情。[`426a274`](https://github.com/Raving4934/Melora/commit/426a2740838f297ea711a8c07b5d19ce30775b4d)、[`2578bca`](https://github.com/Raving4934/Melora/commit/2578bca0f77400573eee2ae719f52d7a91b46bcd)、[`b0246d5`](https://github.com/Raving4934/Melora/commit/b0246d5488bdbbe33bd8a3a941e479af5f373928)、[`8bcd4d7`](https://github.com/Raving4934/Melora/commit/8bcd4d7d89181a18800b6833b5dcd7e38d993232)
@@ -684,9 +686,9 @@ Android 版本号为 0.2.4，versionCode 为 24。完整 Android 提交区间见
 
 **Docker 镜像：** `ghcr.io/raving4934/melora:0.1.0`（支持 `linux/amd64`、`linux/arm64`）。
 
-[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.5...HEAD
-[0.2.5]: https://github.com/Raving4934/Melora/compare/android-v0.2.4...android-v0.2.5
-[Android 0.2.5]: https://github.com/Raving4934/Melora/compare/android-v0.2.4...android-v0.2.5
+[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.6...HEAD
+[0.2.6]: https://github.com/Raving4934/Melora/compare/android-v0.2.4...android-v0.2.6
+[Android 0.2.6]: https://github.com/Raving4934/Melora/compare/android-v0.2.4...android-v0.2.6
 [0.2.4]: https://github.com/Raving4934/Melora/compare/android-v0.2.3...android-v0.2.4
 [Android 0.2.4]: https://github.com/Raving4934/Melora/compare/android-v0.2.3...android-v0.2.4
 [0.2.3]: https://github.com/Raving4934/Melora/compare/android-v0.2.2...android-v0.2.3
@@ -699,7 +701,7 @@ Android 版本号为 0.2.4，versionCode 为 24。完整 Android 提交区间见
 [Android 0.2.0]: https://github.com/Raving4934/Melora/compare/android-v0.1.10...android-v0.2.0
 [0.1.10]: https://github.com/Raving4934/Melora/compare/android-v0.1.9...android-v0.1.10
 [Android 0.1.10]: https://github.com/Raving4934/Melora/compare/android-v0.1.9...android-v0.1.10
-[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.5...HEAD
+[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.6...HEAD
 [Web Unreleased]: https://github.com/Raving4934/Melora/compare/v0.1.3...HEAD
 [Web 0.1.3]: https://github.com/Raving4934/Melora/compare/v0.1.2...v0.1.3
 [Web 0.1.2]: https://github.com/Raving4934/Melora/compare/v0.1.1...v0.1.2
