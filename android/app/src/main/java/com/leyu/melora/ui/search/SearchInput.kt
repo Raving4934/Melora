@@ -1,6 +1,7 @@
 package com.leyu.melora.ui.search
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -95,6 +96,7 @@ internal fun SearchInputSection(
     onPlatformChange: (PlatformSource) -> Unit,
 ) {
     var capsuleWidthPx by remember { mutableIntStateOf(0) }
+    val eInk = MeloraAppearance.isEInk
     val blurred = chromeHeaderBlurred()
     val controlFill = if (blurred) MeloraAppearance.softFill.copy(alpha = 0.72f) else MeloraAppearance.softFill
     val placeholderColor = if (blurred) TextMain.copy(alpha = 0.76f) else TextSub
@@ -139,8 +141,7 @@ internal fun SearchInputSection(
                                 Box(
                                     modifier = Modifier
                                         .size(7.dp)
-                                        .clip(CircleShape)
-                                        .background(selectedPlatform.color),
+                                        .background(if (eInk) TextMain else selectedPlatform.color, CircleShape),
                                 )
                                 Spacer(Modifier.width(5.dp))
                                 Text(
@@ -308,10 +309,23 @@ private fun SearchPlatformMenu(
     val contentDensity = LocalDensity.current
     val windowScale = contentDensity.density / LocalResources.current.displayMetrics.density
     val shape = RoundedCornerShape(20.dp * windowScale)
+    val eInk = MeloraAppearance.isEInk
     val light = !MeloraAppearance.isDark
-    val selectedText = if (light) LightSheetFrost.activeText else BrandBlue
-    val selectedFill = if (light) LightSheetFrost.activeCard else BrandBlue.copy(alpha = 0.09f)
-    val optionFill = if (light) LightSheetFrost.card else MeloraAppearance.softFill
+    val selectedText = when {
+        eInk -> CardWhite
+        light -> LightSheetFrost.activeText
+        else -> BrandBlue
+    }
+    val selectedFill = when {
+        eInk -> TextMain
+        light -> LightSheetFrost.activeCard
+        else -> BrandBlue.copy(alpha = 0.09f)
+    }
+    val optionFill = when {
+        eInk -> CardWhite
+        light -> LightSheetFrost.card
+        else -> MeloraAppearance.softFill
+    }
     DropdownMenu(
         expanded = expanded && anchorWidthPx > 0,
         onDismissRequest = onDismiss,
@@ -325,10 +339,10 @@ private fun SearchPlatformMenu(
             val menu = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
             layout(menu.width, menu.height) { menu.placeRelative(0, 0) }
         }.glassPanel(
-            baseColor = if (light) LightSheetFrost.base else CardWhite,
+            baseColor = if (light && !eInk) LightSheetFrost.base else CardWhite,
             shape = shape,
-            frostTint = if (light) LightSheetFrost.tint else Color.Unspecified,
-        ),
+            frostTint = if (light && !eInk) LightSheetFrost.tint else Color.Unspecified,
+        ).then(if (eInk) Modifier.border(MeloraAppearance.cardBorder, shape) else Modifier),
     ) {
         CompositionLocalProvider(LocalDensity provides contentDensity) {
             BoxWithConstraints(
@@ -379,6 +393,7 @@ private fun SearchPlatformMenu(
                                     shape = RoundedCornerShape(12.dp),
                                     color = if (selected) selectedFill else optionFill,
                                     border = when {
+                                        eInk -> if (selected) null else MeloraAppearance.chipBorder
                                         !light -> null
                                         selected -> LightSheetFrost.activeBorder
                                         else -> LightSheetFrost.cardBorder
@@ -389,7 +404,12 @@ private fun SearchPlatformMenu(
                                         modifier = Modifier.padding(horizontal = optionPadding, vertical = 10.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
-                                        Box(Modifier.size(dotSize).background(platform.color, CircleShape))
+                                        val dotColor = when {
+                                            !eInk -> platform.color
+                                            selected -> selectedText
+                                            else -> TextMain
+                                        }
+                                        Box(Modifier.size(dotSize).background(dotColor, CircleShape))
                                         Spacer(Modifier.width(spacing))
                                         Text(
                                             text = label,

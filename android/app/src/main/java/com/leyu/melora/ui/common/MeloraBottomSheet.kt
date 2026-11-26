@@ -175,18 +175,22 @@ internal fun MeloraBottomSheet(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     if (!LocalPageActive.current) return
-    val glassSource = glassBackdropSource(containerColor)
-    val lightFrost = lightFrostTint.isSpecified && containerColor.isSpecified &&
-        containerColor.alpha == 1f && containerColor.luminance() > 0.5f
+    val eInk = MeloraAppearance.isEInk
+    val resolvedContainerColor = if (eInk) Color.White else containerColor
+    val glassSource = if (eInk) null else glassBackdropSource(resolvedContainerColor)
+    val lightFrost = !eInk && lightFrostTint.isSpecified && resolvedContainerColor.isSpecified &&
+        resolvedContainerColor.alpha == 1f && resolvedContainerColor.luminance() > 0.5f
     val glassHandleColor = when {
+        eInk -> Color.Black
         lightFrost -> LightSheetFrost.handle
-        glassSource != null && containerColor.luminance() <= 0.5f -> DarkGlass.handle
+        glassSource != null && resolvedContainerColor.luminance() <= 0.5f -> DarkGlass.handle
         else -> Color.Unspecified
     }
     val panelScrim = when {
         scrimColor != BottomSheetDefaults.ScrimColor -> scrimColor
+        eInk -> Color.Black.copy(alpha = 0.25f)
         lightFrost -> LightSheetFrost.scrim
-        glassSource != null -> Color.Black.copy(alpha = glassScrimAlpha(containerColor))
+        glassSource != null -> Color.Black.copy(alpha = glassScrimAlpha(resolvedContainerColor))
         else -> scrimColor
     }
     // 窗口沿用系统 Density，避免应用缩放触发 Material 重建窗口及其 Composition。
@@ -235,10 +239,11 @@ internal fun MeloraBottomSheet(
             sheetMaxWidth = BottomSheetDefaults.SheetMaxWidth * windowScale,
             containerColor = when {
                 glassSource != null -> Color.Transparent
+                eInk -> Color.White
                 lightFrost -> LightSheetFrost.base
-                else -> containerColor
+                else -> resolvedContainerColor
             },
-            contentColor = contentColorFor(containerColor),
+            contentColor = contentColorFor(resolvedContainerColor),
             // 保留原生遮罩的点击/无障碍关闭；可视遮罩只由上方物理位移驱动。
             scrimColor = if (scrimColor == Color.Unspecified) Color.Unspecified else Color.Transparent,
             tonalElevation = tonalElevation,
@@ -307,19 +312,24 @@ internal fun SheetTagChip(
     onClick: () -> Unit,
 ) {
     val palette = currentMeloraSheetPalette()
-    val dark = palette.isDark
+    val eInk = palette.isEInk
+    val dark = !eInk && palette.isDark
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(10.dp),
         color = when {
+            eInk -> if (isSelected) Color.Black else Color.White
             dark -> if (isSelected) DarkGlass.selectedFill else DarkGlass.chip
             isSelected -> LightSheetFrost.blue
             else -> LightSheetFrost.chip
         },
-        contentColor = if (isSelected) {
-            if (dark) DarkGlass.selectedText else Color.White
-        } else palette.textMain,
+        contentColor = when {
+            eInk -> if (isSelected) Color.White else Color.Black
+            isSelected -> if (dark) DarkGlass.selectedText else Color.White
+            else -> palette.textMain
+        },
         border = when {
+            eInk -> if (isSelected) null else BorderStroke(1.dp, Color.Black)
             dark -> BorderStroke(0.5.dp, if (isSelected) DarkGlass.selectedEdge else DarkGlass.border)
             isSelected -> null
             else -> LightSheetFrost.chipBorder

@@ -261,6 +261,7 @@ class BackupRoundTripTest {
 
     @Test
     fun realFileExportImportRoundTripRestoresAllPortableDataAndKeepsOtherSources() = runBlocking<Unit> {
+        MeloraSettings.updateEInkMode(true)
         MeloraSettings.updatePlayerLyrics(LyricsUiConfig(26f, true, true, true))
         MeloraSettings.updatePlaylistTag("tag-id", "测试分类")
         MeloraSettings.updatePlaylistSort(1)
@@ -278,6 +279,7 @@ class BackupRoundTripTest {
             assertEquals("saved.js", exportedScripts.single().fileName)
             assertEquals(originUrl, exportedScripts.single().originUrl)
 
+            MeloraSettings.updateEInkMode(false)
             MeloraSettings.updatePlayerLyrics(LyricsUiConfig())
             MeloraSettings.updatePlaylistTag("different", "changed")
             MeloraSettings.updateLyricBackground(false)
@@ -285,9 +287,12 @@ class BackupRoundTripTest {
             store.import("saved.js", "// changed test source", "https://stale.example.test/saved.js")
             store.import("other.js", "// not part of backup")
             BackupManager.import(context, target).getOrThrow()
+            assertTrue(MeloraSettings.eInkMode.value)
+            MeloraSettings.eInkMode.value = false
             assertEquals(LyricsUiConfig(26f, true, true, true), MeloraSettings.playerLyrics.value)
             MeloraSettings.playerLyrics.value = LyricsUiConfig()
             MeloraSettings.reloadAfterRestore()
+            assertTrue(MeloraSettings.eInkMode.value)
             assertEquals(LyricsUiConfig(26f, true, true, true), MeloraSettings.playerLyrics.value)
             assertEquals("original", UserLibrary.favorites.value.single().name)
             assertEquals("tag-id", MeloraSettings.playlistTagId.value)
@@ -769,6 +774,7 @@ class BackupRoundTripTest {
 
     @Test
     fun unknownFieldsAreIgnoredAndOtherSettingsStillRestore() = runBlocking<Unit> {
+        MeloraSettings.updateEInkMode(true)
         val uri = document("legacy.json")
         File(uri.path!!).writeText(JSONObject().put("settings", JSONObject()
             .put("followSystemTheme", "FaLsE").put("playQuality", "flac")
@@ -778,6 +784,7 @@ class BackupRoundTripTest {
             .put("localFolders", JSONArray().put("content://missing/tree/music"))
             .put("downloadPath", "content://missing/tree/downloads")).toString())
         val result = BackupManager.import(context, uri).getOrThrow()
+        assertTrue(MeloraSettings.eInkMode.value)
         assertEquals(ThemeMode.Light, MeloraSettings.themeMode.value)
         assertEquals("flac", MeloraSettings.playQualityWifi.value)
         assertEquals(24f, MeloraSettings.lyricFontSize.value, 0f)

@@ -59,6 +59,34 @@ private val LightInkFallback = Color(0xFF24313A)
 /** 无封面时的兼容令牌；动态令牌通过 [playerColorsFor] 派生。 */
 internal val DarkPlayerColors = buildDarkPlayerColors(null)
 internal val LightPlayerColors = buildLightPlayerColors(null)
+internal val EInkPlayerColors = PlayerColors(
+    isDark = false,
+    background = Color.White,
+    textPrimary = Color.Black,
+    textSecondary = Color(0xFF222222),
+    progressActive = Color.Black,
+    progressInactive = Color(0xFFBDBDBD),
+    cardSurface = Color.White,
+    cardSelected = Color(0xFFE8E8E8),
+    queueSelected = Color(0xFFE8E8E8),
+    divider = Color(0xFFCCCCCC),
+    outline = Color.Black,
+    accent = Color.Black,
+    accentSoft = Color(0xFF222222),
+    sheetBackground = Color.White,
+    sheetText = Color.Black,
+    sheetTextMuted = Color(0xFF222222),
+    sheetTextFaint = Color(0xFF4A4A4A),
+    segmentTrack = Color(0xFFE5E5E5),
+    softFill = Color(0xFFF2F2F2),
+    tintBlue = Color(0xFFE8E8E8),
+    chipBorder = BorderStroke(1.dp, Color.Black),
+    backdrop = PlayerBackdropOverlay(
+        baseColor = Color.White,
+        artworkAlpha = 0f,
+        scrimStops = listOf(0f to Color.Transparent, 1f to Color.Transparent),
+    ),
+)
 
 /**
  * 由封面代表色生成播放器令牌。
@@ -67,7 +95,8 @@ internal val LightPlayerColors = buildLightPlayerColors(null)
  * 因灰色封面变脏。卡片都使用同一色相的低 alpha 层，但选中态只提高 alpha，避免白色实心
  * 卡片盖住背景。
  */
-internal fun playerColorsFor(dark: Boolean, artworkColor: Color? = null): PlayerColors {
+internal fun playerColorsFor(dark: Boolean, artworkColor: Color? = null, eInk: Boolean = false): PlayerColors {
+    if (eInk) return EInkPlayerColors
     val tone = normalizePlayerArtworkColor(artworkColor)
     return if (dark) buildDarkPlayerColors(tone) else buildLightPlayerColors(tone)
 }
@@ -251,40 +280,45 @@ internal val LocalPlayerColors = staticCompositionLocalOf { DarkPlayerColors }
 internal fun PlayerAppearanceProvider(
     dark: Boolean,
     artworkColor: Color? = null,
+    eInk: Boolean = com.leyu.melora.ui.theme.MeloraAppearance.isEInk,
     content: @Composable () -> Unit,
 ) {
     // 不把播放进度、手势或模式放进派生 key；代表色变化只发生在封面加载/换歌时。
-    val target = remember(dark, artworkColor) { playerColorsFor(dark, artworkColor) }
-    val animationSpec = remember { tween<Color>(durationMillis = PlayerBackdropTransitionMillis) }
-    val background by animateColorAsState(target.background, animationSpec, label = "playerBackground")
-    val textPrimary by animateColorAsState(target.textPrimary, animationSpec, label = "playerTextPrimary")
-    val textSecondary by animateColorAsState(target.textSecondary, animationSpec, label = "playerTextSecondary")
-    val cardSurface by animateColorAsState(target.cardSurface, animationSpec, label = "playerCardSurface")
-    val cardSelected by animateColorAsState(target.cardSelected, animationSpec, label = "playerCardSelected")
-    val queueSelected by animateColorAsState(target.queueSelected, animationSpec, label = "playerQueueSelected")
-    val artworkAlpha by animateFloatAsState(
-        target.backdrop.artworkAlpha,
-        tween(PlayerBackdropTransitionMillis),
-        label = "playerBackdropArtworkAlpha",
-    )
-    val backdrop = target.backdrop.copy(
-        baseColor = background,
-        artworkAlpha = artworkAlpha,
-        scrimStops = target.backdrop.scrimStops.mapIndexed { index, stop ->
-            if (index >= 2) stop.first to background.copy(alpha = stop.second.alpha) else stop
-        },
-    )
-    val colors = target.copy(
-        background = background,
-        textPrimary = textPrimary,
-        textSecondary = textSecondary,
-        progressActive = textPrimary,
-        progressInactive = textPrimary.copy(alpha = target.progressInactive.alpha),
-        cardSurface = cardSurface,
-        cardSelected = cardSelected,
-        queueSelected = queueSelected,
-        backdrop = backdrop,
-    )
+    val target = remember(dark, artworkColor, eInk) { playerColorsFor(dark, artworkColor, eInk) }
+    val colors = if (eInk) {
+        target
+    } else {
+        val animationSpec = remember { tween<Color>(durationMillis = PlayerBackdropTransitionMillis) }
+        val background by animateColorAsState(target.background, animationSpec, label = "playerBackground")
+        val textPrimary by animateColorAsState(target.textPrimary, animationSpec, label = "playerTextPrimary")
+        val textSecondary by animateColorAsState(target.textSecondary, animationSpec, label = "playerTextSecondary")
+        val cardSurface by animateColorAsState(target.cardSurface, animationSpec, label = "playerCardSurface")
+        val cardSelected by animateColorAsState(target.cardSelected, animationSpec, label = "playerCardSelected")
+        val queueSelected by animateColorAsState(target.queueSelected, animationSpec, label = "playerQueueSelected")
+        val artworkAlpha by animateFloatAsState(
+            target.backdrop.artworkAlpha,
+            tween(PlayerBackdropTransitionMillis),
+            label = "playerBackdropArtworkAlpha",
+        )
+        val backdrop = target.backdrop.copy(
+            baseColor = background,
+            artworkAlpha = artworkAlpha,
+            scrimStops = target.backdrop.scrimStops.mapIndexed { index, stop ->
+                if (index >= 2) stop.first to background.copy(alpha = stop.second.alpha) else stop
+            },
+        )
+        target.copy(
+            background = background,
+            textPrimary = textPrimary,
+            textSecondary = textSecondary,
+            progressActive = textPrimary,
+            progressInactive = textPrimary.copy(alpha = target.progressInactive.alpha),
+            cardSurface = cardSurface,
+            cardSelected = cardSelected,
+            queueSelected = queueSelected,
+            backdrop = backdrop,
+        )
+    }
     CompositionLocalProvider(
         LocalPlayerColors provides colors,
         LocalBadgeThemeDark provides colors.isDark,

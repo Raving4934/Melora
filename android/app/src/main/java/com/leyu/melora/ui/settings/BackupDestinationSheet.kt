@@ -22,6 +22,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.DeviceHub
+import androidx.compose.material.icons.outlined.HourglassEmpty
 import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -92,6 +93,13 @@ internal class NetworkBackupListing(val config: WebDavConfig, val entries: List<
 
 internal fun BackupFileId.timestamp() =
     DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM).format(Date(createdAt))
+
+private val backupSheetAccent: Color
+    get() = when {
+        MeloraAppearance.isEInk -> MeloraAppearance.textMain
+        MeloraAppearance.isDark -> DarkGlass.selectedText
+        else -> LightSheetFrost.blue
+    }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -185,7 +193,7 @@ internal fun BackupDestinationSheet(
         }
         Column(
             modifier = Modifier.fillMaxWidth()
-                .animateContentSize(tween(180))
+                .then(if (MeloraAppearance.isEInk) Modifier else Modifier.animateContentSize(tween(180)))
                 .padding(start = 20.dp, end = 20.dp, bottom = 28.dp)
                 .semantics { paneTitle = title },
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -311,7 +319,6 @@ private fun NetworkRestoreNotice(
     onRetry: () -> Unit,
     onClose: () -> Unit,
 ) {
-    val accent = if (MeloraAppearance.isDark) DarkGlass.selectedText else LightSheetFrost.blue
     Column(
         modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -323,7 +330,7 @@ private fun NetworkRestoreNotice(
             TextButton(onClick = onRetry, enabled = canRetry) {
                 Box(contentAlignment = Alignment.Center) {
                     Text("重试", modifier = Modifier.padding(horizontal = 6.dp),
-                        color = if (showProgress) Color.Transparent else accent)
+                        color = if (showProgress) Color.Transparent else backupSheetAccent)
                     if (showProgress) NetworkBackupProgress(Modifier.size(16.dp))
                 }
             }
@@ -333,12 +340,16 @@ private fun NetworkRestoreNotice(
 
 @Composable
 private fun NetworkBackupProgress(modifier: Modifier) {
-    val accent = if (MeloraAppearance.isDark) DarkGlass.selectedText else LightSheetFrost.blue
-    CircularProgressIndicator(
-        modifier = modifier.semantics { contentDescription = "正在读取网络备份" },
-        color = accent,
-        strokeWidth = 2.dp,
-    )
+    val label = "正在读取网络备份"
+    if (MeloraAppearance.isEInk) {
+        Icon(Icons.Outlined.HourglassEmpty, contentDescription = label, modifier = modifier, tint = backupSheetAccent)
+    } else {
+        CircularProgressIndicator(
+            modifier = modifier.semantics { contentDescription = label },
+            color = backupSheetAccent,
+            strokeWidth = 2.dp,
+        )
+    }
 }
 
 @Composable
@@ -351,14 +362,23 @@ private fun DestinationCard(
     showProgress: Boolean = false,
     onClick: () -> Unit,
 ) {
+    val eInk = MeloraAppearance.isEInk
     val dark = MeloraAppearance.isDark
-    val accent = if (dark) DarkGlass.selectedText else LightSheetFrost.blue
+    val accent = backupSheetAccent
     Surface(
         onClick = onClick,
         enabled = available && canChoose,
         shape = RoundedCornerShape(17.dp),
-        color = if (dark) DarkGlass.card else LightSheetFrost.card,
-        border = if (dark) BorderStroke(0.5.dp, DarkGlass.border) else LightSheetFrost.cardBorder,
+        color = when {
+            eInk -> MeloraAppearance.card
+            dark -> DarkGlass.card
+            else -> LightSheetFrost.card
+        },
+        border = when {
+            eInk -> MeloraAppearance.cardBorder
+            dark -> BorderStroke(0.5.dp, DarkGlass.border)
+            else -> LightSheetFrost.cardBorder
+        },
         shadowElevation = 0.dp,
         modifier = modifier.heightIn(min = 96.dp),
     ) {
@@ -371,7 +391,13 @@ private fun DestinationCard(
                 modifier = Modifier
                     .size(36.dp)
                     .clip(RoundedCornerShape(10.dp))
-                    .background(if (dark) DarkGlass.icon else LightSheetFrost.iconWell),
+                    .background(
+                        when {
+                            eInk -> MeloraAppearance.softFill
+                            dark -> DarkGlass.icon
+                            else -> LightSheetFrost.iconWell
+                        },
+                    ),
                 contentAlignment = Alignment.Center,
             ) {
                 if (showProgress) {

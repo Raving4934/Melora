@@ -33,6 +33,8 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -70,30 +72,46 @@ import androidx.compose.ui.text.style.ResolvedTextDirection
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import com.leyu.melora.playback.*
+import com.leyu.melora.ui.theme.MeloraAppearance
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.isActive
+import kotlin.math.ceil
 
 /** 同一时钟供三个展示入口读取；时间只在 draw 或时间线边界派生中消费。 */
 @Composable
-internal fun rememberLyricPosition(state: PlayerUiState, visible: Boolean): State<Long> {
+internal fun rememberLyricPosition(
+    state: PlayerUiState,
+    visible: Boolean,
+    eInkTimeline: LyricTimeline? = null,
+): State<Long> {
     val latest by rememberUpdatedState(state)
     val position = remember(state.current?.uid) { mutableLongStateOf(lyricPositionAt(state, SystemClock.elapsedRealtime())) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    LaunchedEffect(state.current?.uid, state.positionSampleRealtimeMs, state.positionAdvancing, visible) {
+    LaunchedEffect(
+        state.current?.uid, state.positionMs, state.positionSampleRealtimeMs, state.positionAdvancing,
+        state.buffering, state.resolving, state.speed, state.durationMs, visible, eInkTimeline, lifecycle,
+    ) {
         // 采样抵达界面时已过时；重锚与逐帧绘制必须使用同一时刻，不能先回写旧位置再追赶。
         position.longValue = lyricPositionAt(state, SystemClock.elapsedRealtime())
         if (!visible || !state.positionAdvancing) return@LaunchedEffect
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (isActive) {
-                withFrameNanos { position.longValue = lyricPositionAt(latest, SystemClock.elapsedRealtime()) }
+                if (eInkTimeline == null) {
+                    withFrameNanos { position.longValue = lyricPositionAt(latest, SystemClock.elapsedRealtime()) }
+                } else {
+                    val nowMs = SystemClock.elapsedRealtime()
+                    position.longValue = lyricPositionAt(latest, nowMs)
+                    delay(eInkLyricRefreshDelay(eInkTimeline, latest, nowMs) ?: break)
+                }
             }
         }
     }
@@ -101,9 +119,32 @@ internal fun rememberLyricPosition(state: PlayerUiState, visible: Boolean): Stat
 }
 
 @Composable
-internal fun rememberLyricFrame(lines: List<LyricLine>, position: State<Long>): State<LyricFrame> {
-    val timeline = remember(lines) { LyricTimeline(lines) }
-    return remember(timeline, position) { derivedStateOf { timeline.at(position.value) } }
+internal fun rememberLyricFrame(
+    lines: List<LyricLine>,
+    position: State<Long>,
+    timeline: LyricTimeline = remember(lines) { LyricTimeline(lines) },
+): State<LyricFrame> = remember(timeline, position) {
+    derivedStateOf(structuralEqualityPolicy()) { timeline.at(position.value) }
+}
+
+/** 墨水屏只在句界、间奏开始或进度走到下一整秒时唤醒。 */
+internal fun eInkLyricRefreshDelay(timeline: LyricTimeline, state: PlayerUiState, nowMs: Long): Long? {
+    if (!state.positionAdvancing || state.buffering || state.resolving ||
+        !state.speed.isFinite() || state.speed <= 0f) return null
+    val positionMs = lyricPositionAt(state, nowMs)
+    val durationMs = state.durationMs.takeIf { it > 0 } ?: Long.MAX_VALUE
+    if (positionMs >= durationMs) return null
+    val nextSecond = positionMs + minOf(1_000L - positionMs % 1_000L, durationMs - positionMs)
+    val interlude = lyricInterludeForFrame(timeline.lines, timeline.at(positionMs))
+    val next = minOf(
+        nextSecond,
+        timeline.nextBoundaryAfter(positionMs) ?: Long.MAX_VALUE,
+        interlude?.startMs?.takeIf { it > positionMs } ?: Long.MAX_VALUE,
+    )
+    // 采样校正可能使显示位置暂时领先，只在实际采样时钟追上边界后更新。
+    val elapsedMs = (nowMs - state.positionSampleRealtimeMs).coerceAtLeast(0L)
+    val sampledMs = state.positionMs + (elapsedMs * state.speed).toLong()
+    return ceil((next - sampledMs) / state.speed.toDouble()).toLong().coerceAtLeast(1L)
 }
 
 /** 文字仍由 Text 提供测量及无障碍语义；逐词高亮仅重绘，不每帧布局/重组。 */
@@ -122,8 +163,9 @@ internal fun TimedLyricText(
     centerFraction: State<Float>? = null,
     liftEnabled: Boolean = false,
 ) {
+    val eInk = MeloraAppearance.isEInk
     var layout by remember(line.text, style) { mutableStateOf<TextLayoutResult?>(null) }
-    val runs = remember(line, layout) { layout?.let { wordRuns(line, it) }.orEmpty() }
+    val runs = remember(eInk, line, layout) { if (eInk) emptyList() else layout?.let { wordRuns(line, it) }.orEmpty() }
     val wordLiftActive = liftEnabled && active && runs.isNotEmpty() &&
         line.words.sumOf { it.text.length } == line.text.length
     val alignment = if (centerFraction != null) Modifier.drawWithContent {
@@ -140,16 +182,17 @@ internal fun TimedLyricText(
         text = line.text,
         style = style,
         color = when {
+            eInk -> if (active) color else color.copy(alpha = EInkContextAlpha)
             active && line.words.isEmpty() -> color
             mutedColor != null -> mutedColor
             else -> color.copy(alpha = if (active) 0.4f else inactiveAlpha)
         },
         maxLines = maxLines,
-        overflow = if (marquee) TextOverflow.Clip else TextOverflow.Ellipsis,
-        onTextLayout = { layout = it },
-        modifier = modifier.then(alignment).then(if (marquee) Modifier.basicMarquee(iterations = Int.MAX_VALUE,
+        overflow = if (marquee && !eInk) TextOverflow.Clip else TextOverflow.Ellipsis,
+        onTextLayout = { if (!eInk || centerFraction != null) layout = it },
+        modifier = modifier.then(alignment).then(if (marquee && !eInk) Modifier.basicMarquee(iterations = Int.MAX_VALUE,
             initialDelayMillis = 1000, repeatDelayMillis = 1200, velocity = 32.dp) else Modifier)
-            .drawWithContent {
+            .then(if (eInk) Modifier else Modifier.drawWithContent {
                 val currentLayout = layout
                 if (wordLiftActive && currentLayout != null) {
                     val baseMuted = mutedColor ?: color.copy(alpha = 0.4f)
@@ -159,7 +202,7 @@ internal fun TimedLyricText(
                     drawContent()
                     if (active && runs.isNotEmpty()) currentLayout?.let { drawTimedWords(it, runs, position.value, color) }
                 }
-            },
+            }),
     )
 }
 
@@ -290,6 +333,7 @@ internal const val ORDINARY_LYRICS_FOCUS_FRACTION = 0.38f
 private const val INTERLUDE_MIN_DURATION_MS = 4_000L
 private const val PLAIN_LRC_INTERLUDE_MIN_SPAN_MS = 10_000L
 private const val PLAIN_LRC_INTERLUDE_LEAD_MS = 5_000L
+private const val EInkContextAlpha = 0.66f
 
 internal data class LyricInterlude(
     val anchorIndex: Int,
@@ -299,6 +343,8 @@ internal data class LyricInterlude(
 )
 
 internal data class InterludeDotVisual(val alpha: Float, val scale: Float)
+
+private val EInkInterludeDots = List(3) { InterludeDotVisual(alpha = EInkContextAlpha, scale = 1f) }
 
 internal fun lyricInterludeForFrame(lines: List<LyricLine>, frame: LyricFrame): LyricInterlude? {
     if (lines.isEmpty()) return null
@@ -329,9 +375,11 @@ internal fun interludeDotVisuals(
     interlude: LyricInterlude,
     positionMs: Long,
     motionEnabled: Boolean,
+    eInk: Boolean = false,
 ): List<InterludeDotVisual>? {
     val duration = interlude.endMs - interlude.startMs
     if (duration <= 0L || positionMs !in interlude.startMs until interlude.endMs) return null
+    if (eInk) return EInkInterludeDots
     val elapsed = positionMs - interlude.startMs
     val remaining = interlude.endMs - positionMs
     val fadeMs = minOf(360f, duration * 0.25f)
@@ -352,8 +400,10 @@ internal fun interludeDotVisuals(
  * 统一歌词视口上下缓冲，主歌词页和沉浸页共用同一离屏 alpha mask。
  * 调用方只需把它放在视口尺寸 modifier 之后；不要再叠加另一层 DstIn mask。
  */
+@Composable
 internal fun Modifier.lyricViewportFade(edgeFraction: Float = 0.12f): Modifier =
-    graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+    if (MeloraAppearance.isEInk) this
+    else graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
         .drawWithContent {
             drawContent()
             val fade = edgeFraction.coerceIn(0f, 0.45f)
@@ -393,6 +443,20 @@ internal fun lyricsBlurRadiusDp(distance: Int, immersive: Boolean): Float = when
     else -> if (immersive) 5f else 3.25f
 }
 
+@Composable
+private fun visibleLyricInterlude(
+    interlude: LyricInterlude?,
+    position: State<Long>,
+    eInk: Boolean,
+): LyricInterlude? {
+    if (!eInk || interlude == null) return interlude
+    return remember(interlude, position) {
+        derivedStateOf(structuralEqualityPolicy()) {
+            interlude.takeIf { position.value in it.startMs until it.endMs }
+        }
+    }.value
+}
+
 /** 全屏与封面 mini 共用同一列表和行渲染。mini 固定视口、不接受拖动，只响应点击进入全屏。 */
 @Composable
 internal fun LyricsViewport(
@@ -412,10 +476,12 @@ internal fun LyricsViewport(
     val baseStyle = LocalTextStyle.current
     // 歌词与标题、控件使用同一封面墨水；弱化只调透明度，不叠加中性灰。
     val ink = FullPlayerTextPrimary
+    val eInk = MeloraAppearance.isEInk
+    val animate = motionEnabled && !eInk
     val immersiveMode = immersive && !mini
     val forceCenter = immersive || centered || config.isCentered
     val centerFraction = animateFloatAsState(if (forceCenter) 1f else 0f,
-        if (mini && motionEnabled) PlayerCoverMorphSpec else snap(), label = "miniLyricAlignment")
+        if (mini && animate) PlayerCoverMorphSpec else snap(), label = "miniLyricAlignment")
     val alignment = if (forceCenter) Alignment.CenterHorizontally else Alignment.Start
     val fontSize = when {
         mini -> config.fontSizeSp.coerceIn(12f, 26f)
@@ -463,11 +529,11 @@ internal fun LyricsViewport(
                 if (!moving) { delay(3_000); browsing = false }
             }
         }
-        LaunchedEffect(frame.focusIndex, browsing, touching, rowHeight, motionEnabled) {
+        LaunchedEffect(frame.focusIndex, browsing, touching, rowHeight, animate) {
             val index = frame.focusIndex.coerceAtLeast(0)
             if (browsing || touching || index !in lines.indices) return@LaunchedEffect
             val offset = rowHeight(index) / 2
-            if (!motionEnabled) {
+            if (!animate) {
                 // BoxWithConstraints 会在测量中子组合，交由列表下一次测量应用歌词锚点。
                 list.requestScrollToItem(index, offset)
                 return@LaunchedEffect
@@ -485,7 +551,11 @@ internal fun LyricsViewport(
             immersiveMode -> (fontSize * IMMERSIVE_LYRICS_SPACING_MULTIPLIER).dp
             else -> maxOf(14f, fontSize * 0.66f).dp
         }
-        val interlude = remember(lines, frame, mini) { if (mini) null else lyricInterludeForFrame(lines, frame) }
+        val interlude = visibleLyricInterlude(
+            remember(lines, frame, mini) { if (mini) null else lyricInterludeForFrame(lines, frame) },
+            position,
+            eInk,
+        )
         CompositionLocalProvider(LocalViewConfiguration provides verticalViewConfiguration) {
             LazyColumn(
                 state = list,
@@ -533,20 +603,20 @@ internal fun LyricsViewport(
                             if (immersiveRow) immersiveLyricsScale(depthDistance)
                             else if (mini) when (distance) { 0 -> 1f; 1 -> 0.82f; else -> 0.75f }
                             else if (emphasized) 1f else 0.88f,
-                            if (motionEnabled) spring(dampingRatio = 0.9f, stiffness = 300f) else snap(), label = "lyricFocusScale",
+                            if (animate) spring(dampingRatio = 0.9f, stiffness = 300f) else snap(), label = "lyricFocusScale",
                         )
-                        val depthEnabled = !mini && (immersiveRow || config.isBlurEnabled)
+                        val depthEnabled = !eInk && !mini && (immersiveRow || config.isBlurEnabled)
                         val blurRadius = animateFloatAsState(
                             if (depthEnabled) lyricsBlurRadiusDp(depthDistance, immersiveRow) else 0f,
-                            if (motionEnabled) tween(180) else snap(), label = "lyricDepthBlur",
+                            if (animate) tween(180) else snap(), label = "lyricDepthBlur",
                         )
                         val depthAlpha = animateFloatAsState(
                             when {
-                                mini -> 1f
+                                mini || eInk -> 1f
                                 immersiveRow -> immersiveLyricsAlpha(depthDistance)
                                 else -> ordinaryLyricsAlpha(depthDistance, index < frame.focusIndex)
                             },
-                            if (motionEnabled) tween(200) else snap(),
+                            if (animate) tween(200) else snap(),
                             label = "lyricDepthAlpha",
                         )
                         val muted = ink.copy(
@@ -564,12 +634,13 @@ internal fun LyricsViewport(
                                 val centerY = if (rowInterlude.beforeFirst) -spacingPx * 0.65f else size.height + spacingPx * 0.5f
                                 drawInterludeDots(
                                     interlude = rowInterlude,
-                                    positionMs = position.value,
-                                    motionEnabled = motionEnabled,
+                                    positionMs = if (eInk) rowInterlude.startMs else position.value,
+                                    motionEnabled = animate,
                                     ink = ink,
                                     centered = alignment == Alignment.CenterHorizontally,
                                     baseRadiusDp = if (immersiveRow) 3.5f else 3.2f,
                                     centerY = centerY,
+                                    eInk = eInk,
                                 )
                             } else Modifier
                         ).clickable(
@@ -583,7 +654,7 @@ internal fun LyricsViewport(
                         }, horizontalAlignment = alignment) {
                             Column(Modifier.fillMaxWidth()
                                 .graphicsLayer {
-                                    alpha = (if (line.isBackground) 0.78f else 1f) * depthAlpha.value
+                                    alpha = if (eInk) 1f else (if (line.isBackground) 0.78f else 1f) * depthAlpha.value
                                     scaleX = scale.value; scaleY = scale.value
                                     transformOrigin = TransformOrigin(if (mini) centerFraction.value * 0.5f else if (alignment == Alignment.CenterHorizontally) 0.5f else 0f, 0.5f)
                                     val radiusPx = blurRadius.value * density.density
@@ -593,13 +664,18 @@ internal fun LyricsViewport(
                                 TimedLyricText(line, position, emphasized, ink, style,
                                     modifier = if (mini) Modifier.fillMaxWidth().height(with(density) { miniLineHeight.toDp() }) else Modifier.fillMaxWidth(),
                                     maxLines = if (mini) 1 else Int.MAX_VALUE,
-                                    mutedColor = if (mini) null else muted, marquee = mini && active && motionEnabled,
+                                    mutedColor = if (mini) null else muted, marquee = mini && active && animate,
                                     centerFraction = if (mini) centerFraction else null,
                                     inactiveAlpha = if (distance == 1) 0.47f else 0.27f,
-                                    liftEnabled = !mini && motionEnabled && config.isWordLiftEnabled)
+                                    liftEnabled = !mini && animate && config.isWordLiftEnabled)
                                 if (!mini) for (text in listOfNotNull(line.translation, line.romanization)) Text(
                                     text, style = subStyle,
-                                    color = ink.copy(alpha = if (emphasized) 0.72f else if (immersiveRow) 0.48f else 0.80f),
+                                    color = ink.copy(alpha = when {
+                                        emphasized -> 0.72f
+                                        eInk -> EInkContextAlpha
+                                        immersiveRow -> 0.48f
+                                        else -> 0.80f
+                                    }),
                                     modifier = Modifier.fillMaxWidth().padding(top = 3.dp),
                                 )
                             }
@@ -619,8 +695,9 @@ private fun DrawScope.drawInterludeDots(
     centered: Boolean,
     baseRadiusDp: Float,
     centerY: Float,
+    eInk: Boolean = false,
 ) {
-    val dots = interludeDotVisuals(interlude, positionMs, motionEnabled) ?: return
+    val dots = interludeDotVisuals(interlude, positionMs, motionEnabled, eInk) ?: return
     val baseRadius = baseRadiusDp.dp.toPx()
     val step = baseRadius * 3.5f
     val startX = if (centered) size.width * 0.5f - step else baseRadius + 1.dp.toPx()
@@ -640,6 +717,18 @@ internal fun stageHeroFontSizeSp(textLength: Int, widthDp: Float): Float = when 
     textLength <= 10 && widthDp >= 700f -> 44f
     textLength <= 18 -> 38f
     else -> 32f
+}
+
+internal fun eInkStageHeroFontSizeSp(textLength: Int, widthDp: Float, heightDp: Float): Float = when {
+    widthDp >= 960f && heightDp >= 520f && textLength <= 10 -> 48f
+    widthDp >= 960f && heightDp >= 520f && textLength <= 18 -> 40f
+    widthDp >= 960f && heightDp >= 520f -> 34f
+    heightDp < 420f && textLength <= 10 -> 36f
+    heightDp < 420f && textLength <= 18 -> 30f
+    heightDp < 420f -> 25f
+    widthDp >= 700f && textLength <= 10 -> 42f
+    textLength <= 18 -> 34f
+    else -> 28f
 }
 
 internal fun stageLineProgress(lines: List<LyricLine>, index: Int, positionMs: Long, durationMs: Long): Float {
@@ -705,6 +794,17 @@ internal fun ImmersiveStageLyrics(
     motionEnabled: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    if (MeloraAppearance.isEInk) {
+        EInkStageLyrics(
+            track = track,
+            durationMs = durationMs,
+            lines = lines,
+            position = position,
+            frameState = frameState,
+            modifier = modifier,
+        )
+        return
+    }
     val frame by frameState
     val colors = LocalPlayerColors.current
     val isDark = colors.isDark
@@ -935,7 +1035,7 @@ internal fun ImmersiveStageLyrics(
                         baseRadiusDp = 3.5f,
                         centerY = size.height * 0.5f,
                     )
-                } else if (stardustAlpha > 0f) {
+                } else if (stardustAlpha > 0f && motionEnabled) {
                     val progress = stageLineProgress(lines, displayIndex, position.value, durationMs)
                     drawStageStardust(
                         progress = progress,
@@ -1055,4 +1155,187 @@ internal fun ImmersiveStageLyrics(
             }
         }
     }
+}
+
+/** 墨水屏横屏沉浸优先显示当前原词和译文，空间充足时再显示前后句。 */
+@Composable
+private fun EInkStageLyrics(
+    track: UiTrack?,
+    durationMs: Long,
+    lines: List<LyricLine>,
+    position: State<Long>,
+    frameState: State<LyricFrame>,
+    modifier: Modifier = Modifier,
+) {
+    val frame by frameState
+    val baseStyle = LocalTextStyle.current
+    val displayIndex = frame.focusIndex.coerceAtLeast(0)
+    val current = lines.getOrNull(displayIndex)
+    val interlude = visibleLyricInterlude(
+        remember(lines, frame) { lyricInterludeForFrame(lines, frame) },
+        position,
+        eInk = true,
+    )
+
+    BoxWithConstraints(modifier.background(Color.White).clipToBounds()) {
+        val stageWidth = maxWidth
+        val stageHeight = maxHeight
+        val largeStage = stageWidth >= 960.dp && stageHeight >= 520.dp
+        val shortStage = stageHeight < 260.dp
+        val lyricStyle = baseStyle.copy(fontFamily = FontFamily.Serif, textAlign = TextAlign.Center)
+        Column(
+            modifier = Modifier.fillMaxSize().padding(
+                horizontal = if (largeStage) 48.dp else if (shortStage) 16.dp else 32.dp,
+                vertical = if (largeStage) 24.dp else if (shortStage) 8.dp else 16.dp,
+            ),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            val trackLabel = listOfNotNull(
+                track?.title?.takeIf { it.isNotBlank() },
+                track?.artist?.takeIf { it.isNotBlank() },
+            ).joinToString(" · ")
+            if (!shortStage && trackLabel.isNotEmpty()) {
+                Text(
+                    text = trackLabel,
+                    style = lyricStyle.copy(fontSize = if (largeStage) 13.sp else 12.sp, letterSpacing = 1.8.sp),
+                    color = Color.Black.copy(alpha = 0.72f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(if (largeStage) 12.dp else 8.dp))
+                Box(Modifier.fillMaxWidth(0.76f).height(0.75.dp).background(Color.Black.copy(alpha = 0.25f)))
+            }
+
+            Box(
+                modifier = Modifier.weight(1f).fillMaxWidth(0.88f),
+                contentAlignment = Alignment.Center,
+            ) {
+                BoxWithConstraints(Modifier.widthIn(max = if (largeStage) 760.dp else 620.dp).fillMaxSize()) {
+                    val heroSp = eInkStageHeroFontSizeSp(current?.text?.length ?: 0, stageWidth.value, stageHeight.value)
+                    val heroStyle = lyricStyle.copy(
+                        fontSize = heroSp.sp,
+                        lineHeight = (heroSp * 1.28f).sp,
+                        letterSpacing = 0.8.sp,
+                        fontWeight = FontWeight.Bold,
+                        lineBreak = LineBreak.Heading,
+                    )
+                    val translationStyle = lyricStyle.copy(
+                        fontSize = if (largeStage) 16.sp else 14.sp,
+                        lineHeight = if (largeStage) 22.sp else 20.sp,
+                    )
+                    val previewStyle = lyricStyle.copy(
+                        fontSize = if (largeStage) 17.sp else 15.sp,
+                        lineHeight = if (largeStage) 24.sp else 21.sp,
+                    )
+                    val measurer = rememberTextMeasurer()
+                    val density = LocalDensity.current
+                    val textConstraints = Constraints(maxWidth = constraints.maxWidth)
+                    val annotations = remember(current) {
+                        listOfNotNull(current?.translation, current?.romanization).filter { it.isNotBlank() }
+                    }
+                    val currentHeight = remember(current?.text, annotations, measurer, textConstraints, heroStyle, translationStyle) {
+                        val primaryHeight = current?.text?.let {
+                            measurer.measure(it, heroStyle, constraints = textConstraints).size.height
+                        } ?: 0
+                        val annotationGapPx = with(density) { 6.dp.roundToPx() }
+                        primaryHeight + annotations.sumOf {
+                            measurer.measure(it, translationStyle, constraints = textConstraints).size.height + annotationGapPx
+                        }
+                    }
+                    val gap = if (largeStage) 20.dp else 14.dp
+                    val previewHeight = with(density) { previewStyle.lineHeight.toDp() }
+                    val previewAndGaps = with(density) { ((previewHeight + gap) * 2 + 8.dp).roundToPx() }
+                    val showContext = currentHeight + previewAndGaps <= constraints.maxHeight
+
+                    // 新句从首行开始。极长的原词和副文仍可在固定的阅读区内手动滚动。
+                    val scroll = key(displayIndex) { rememberScrollState() }
+                    Column(
+                        modifier = Modifier.fillMaxSize().verticalScroll(scroll).padding(vertical = 4.dp),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        if (showContext) {
+                            EInkStagePreview(lines.getOrNull(displayIndex - 1)?.text, previewStyle, previewHeight)
+                        }
+                        val before = interlude?.takeIf { it.beforeFirst }
+                        if (showContext || before != null) EInkStageInterludeSlot(before, gap)
+
+                        if (current != null) Text(current.text, color = Color.Black, style = heroStyle, modifier = Modifier.fillMaxWidth())
+                        for (annotation in annotations) {
+                            Text(
+                                text = annotation,
+                                style = translationStyle,
+                                color = Color.Black.copy(alpha = 0.72f),
+                                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                            )
+                        }
+
+                        val after = interlude?.takeUnless { it.beforeFirst }
+                        if (showContext || after != null) EInkStageInterludeSlot(after, gap)
+                        if (showContext) {
+                            EInkStagePreview(lines.getOrNull(displayIndex + 1)?.text, previewStyle, previewHeight)
+                        }
+                    }
+                }
+            }
+
+            EInkStageProgress(position, durationMs, baseStyle, largeStage)
+        }
+    }
+}
+
+@Composable
+private fun EInkStagePreview(text: String?, style: TextStyle, height: Dp) {
+    if (text.isNullOrBlank()) {
+        Spacer(Modifier.height(height))
+    } else {
+        Text(
+            text = text,
+            style = style,
+            color = Color.Black.copy(alpha = EInkContextAlpha),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+@Composable
+private fun EInkStageInterludeSlot(interlude: LyricInterlude?, height: Dp) {
+    Canvas(Modifier.fillMaxWidth().height(height)) {
+        if (interlude != null) drawInterludeDots(
+            interlude = interlude,
+            positionMs = interlude.startMs,
+            motionEnabled = false,
+            ink = Color.Black,
+            centered = true,
+            baseRadiusDp = 3.2f,
+            centerY = size.height * 0.5f,
+            eInk = true,
+        )
+    }
+}
+
+@Composable
+private fun EInkStageProgress(position: State<Long>, durationMs: Long, baseStyle: TextStyle, largeStage: Boolean) {
+    if (durationMs > 0L) {
+        val progress = rememberImmersiveProgress(position, durationMs)
+        Canvas(Modifier.fillMaxWidth(0.64f).height(2.dp)) {
+            drawRect(Color.Black.copy(alpha = 0.16f))
+            drawRect(Color.Black, size = size.copy(width = size.width * progress.value))
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+    val seconds by remember(position) { derivedStateOf(structuralEqualityPolicy()) { position.value / 1_000L } }
+    val elapsed = formatClock(seconds * 1_000L)
+    Text(
+        text = if (durationMs > 0L) "$elapsed / ${formatClock(durationMs)}" else elapsed,
+        style = baseStyle.copy(
+            fontSize = if (largeStage) 13.sp else 12.sp,
+            fontFeatureSettings = "tnum",
+            textAlign = TextAlign.Center,
+        ),
+        color = Color.Black.copy(alpha = 0.72f),
+        maxLines = 1,
+    )
 }

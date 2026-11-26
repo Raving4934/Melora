@@ -6,6 +6,7 @@ import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -46,23 +47,25 @@ fun ShimmerBox(
     baseColor: Color? = null,
     highlightColor: Color? = null,
 ) {
-    val transition = rememberInfiniteTransition(label = "skeleton")
-    val pulse by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 900, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "pulse",
-    )
     val base = baseColor ?: MeloraAppearance.skeleton
-    val highlight = highlightColor ?: lerp(base, MeloraAppearance.card, 0.55f)
-    Column(
+    val fill = if (MeloraAppearance.isEInk) base else {
+        val transition = rememberInfiniteTransition(label = "skeleton")
+        val pulse by transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 900, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "pulse",
+        )
+        lerp(base, highlightColor ?: lerp(base, MeloraAppearance.card, 0.55f), pulse)
+    }
+    Box(
         modifier = modifier
             .clip(RoundedCornerShape(cornerRadius))
-            .background(lerp(base, highlight, pulse)),
-    ) {}
+            .background(fill),
+    )
 }
 
 /** 以真实字体度量占位，仅将可见部分绘制为微光条，兼容系统字体缩放。 */
@@ -104,7 +107,7 @@ fun SkeletonCrossfade(
 ) {
     Crossfade(
         targetState = visible,
-        animationSpec = tween(durationMillis = 220),
+        animationSpec = if (MeloraAppearance.isEInk) snap() else tween(durationMillis = 220),
         label = "skeletonSwap",
         modifier = modifier,
     ) { showSkeleton ->

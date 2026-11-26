@@ -2,8 +2,10 @@ package com.leyu.melora.ui.player
 
 import com.leyu.melora.playback.LyricFrame
 import com.leyu.melora.playback.LyricLine
+import com.leyu.melora.playback.LyricTimeline
 import com.leyu.melora.playback.LyricWord
 import com.leyu.melora.playback.PlayerLyric
+import com.leyu.melora.playback.PlayerUiState
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -121,6 +123,37 @@ class LyricsPresentationTest {
         val nearEnd = requireNotNull(interludeDotVisuals(interlude, 7_950L, motionEnabled = true))
         assertTrue(nearStart[0].alpha < steady[0].alpha)
         assertTrue(nearEnd[2].scale < steady[2].scale)
+    }
+
+    @Test
+    fun eInkClockWaitsForTheNextLineGapOrWholeSecondAtPlaybackSpeed() {
+        val timeline = LyricTimeline(listOf(
+            LyricLine(startMs = 1_375L, text = "第一句", endMs = 1_810L),
+            LyricLine(startMs = 2_980L, text = "长间奏前"),
+            LyricLine(startMs = 16_000L, text = "长间奏后"),
+        ))
+        val state = PlayerUiState(
+            positionMs = 1_000L, positionSampleRealtimeMs = 5_000L, positionAdvancing = true,
+            durationMs = 25_000L, speed = 1.25f,
+        )
+        assertEquals(300L, eInkLyricRefreshDelay(timeline, state, nowMs = 5_000L))
+        assertEquals(348L, eInkLyricRefreshDelay(timeline, state, nowMs = 5_300L))
+        assertEquals(648L, eInkLyricRefreshDelay(timeline, state.copy(lyricPositionFloorMs = 1_460L), nowMs = 5_000L))
+        assertEquals(56L, eInkLyricRefreshDelay(timeline, state.copy(positionMs = 7_910L), nowMs = 5_000L))
+        assertEquals(799L, eInkLyricRefreshDelay(timeline, state.copy(positionMs = 10_002L), nowMs = 5_000L))
+        assertEquals(8L, eInkLyricRefreshDelay(timeline, state.copy(positionMs = 15_950L, durationMs = 15_960L), nowMs = 5_000L))
+        assertNull(eInkLyricRefreshDelay(timeline, state.copy(positionMs = 25_000L), nowMs = 5_000L))
+        assertNull(eInkLyricRefreshDelay(timeline, state.copy(buffering = true), nowMs = 5_000L))
+    }
+
+    @Test
+    fun eInkInterludeDotsStayStaticUntilTheNextLyric() {
+        val interlude = LyricInterlude(anchorIndex = 0, beforeFirst = false, startMs = 2_000L, endMs = 8_000L)
+        val start = interludeDotVisuals(interlude, 2_000L, motionEnabled = false, eInk = true)
+        assertEquals(3, start?.size)
+        assertEquals(start, interludeDotVisuals(interlude, 7_999L, motionEnabled = false, eInk = true))
+        assertNull(interludeDotVisuals(interlude, 1_999L, motionEnabled = false, eInk = true))
+        assertNull(interludeDotVisuals(interlude, 8_000L, motionEnabled = false, eInk = true))
     }
 
     @Test

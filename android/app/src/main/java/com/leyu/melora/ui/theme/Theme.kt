@@ -3,8 +3,23 @@ package com.leyu.melora.ui.theme
 import android.app.Activity
 import android.os.Build
 import android.view.ViewTreeObserver
+import androidx.compose.animation.core.FiniteAnimationSpec
+import androidx.compose.animation.core.snap
+import androidx.compose.foundation.IndicationNodeFactory
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.FocusInteraction
+import androidx.compose.foundation.interaction.InteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material.ripple.RippleAlpha
+import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.LocalRippleConfiguration
+import androidx.compose.material3.LocalRippleThemeConfiguration
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MotionScheme
+import androidx.compose.material3.RippleConfiguration
+import androidx.compose.material3.RippleDefaults
 import androidx.compose.material3.SwitchColors
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.darkColorScheme
@@ -19,16 +34,25 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.ContentDrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.inset
+import androidx.compose.ui.node.DelegatableNode
+import androidx.compose.ui.node.DrawModifierNode
+import androidx.compose.ui.node.invalidateDraw
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogWindowProvider
 import com.leyu.melora.playback.ComponentBlurMode
 import com.leyu.melora.playback.MeloraSettings
+import kotlinx.coroutines.launch
 
 private val LightColors = lightColorScheme(
     primary = MeloraBlue,
@@ -86,6 +110,130 @@ private val DarkColors = darkColorScheme(
     scrim = Color.Black,
 )
 
+private val EInkColors = lightColorScheme(
+    primary = Color.Black,
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFE8E8E8),
+    onPrimaryContainer = Color.Black,
+    secondary = Color.Black,
+    onSecondary = Color.White,
+    secondaryContainer = Color(0xFFEEEEEE),
+    onSecondaryContainer = Color.Black,
+    tertiary = Color.Black,
+    onTertiary = Color.White,
+    tertiaryContainer = Color(0xFFE8E8E8),
+    onTertiaryContainer = Color.Black,
+    background = Color.White,
+    onBackground = Color.Black,
+    surface = Color.White,
+    onSurface = Color.Black,
+    surfaceTint = Color.Black,
+    surfaceVariant = Color(0xFFF2F2F2),
+    onSurfaceVariant = Color(0xFF222222),
+    inverseSurface = Color.Black,
+    inverseOnSurface = Color.White,
+    inversePrimary = Color.White,
+    surfaceDim = Color(0xFFF2F2F2),
+    surfaceBright = Color.White,
+    surfaceContainerLowest = Color.White,
+    surfaceContainerLow = Color.White,
+    surfaceContainer = Color.White,
+    surfaceContainerHigh = Color(0xFFF2F2F2),
+    surfaceContainerHighest = Color(0xFFE5E5E5),
+    outline = Color.Black,
+    outlineVariant = Color(0xFF4A4A4A),
+    error = Color.Black,
+    onError = Color.White,
+    errorContainer = Color(0xFFE8E8E8),
+    onErrorContainer = Color.Black,
+    scrim = Color.Black,
+)
+
+/** 墨水屏按压与键盘焦点都以静态状态显示。 */
+private object EInkIndication : IndicationNodeFactory {
+    override fun create(interactionSource: InteractionSource): DelegatableNode = Node(interactionSource)
+    override fun hashCode(): Int = System.identityHashCode(this)
+    override fun equals(other: Any?): Boolean = other === this
+
+    private class Node(private val interactionSource: InteractionSource) : Modifier.Node(), DrawModifierNode {
+        private var press: PressInteraction.Press? = null
+        private var focus: FocusInteraction.Focus? = null
+
+        override fun onAttach() {
+            coroutineScope.launch {
+                interactionSource.interactions.collect { interaction ->
+                    val wasPressed = press != null
+                    val wasFocused = focus != null
+                    when (interaction) {
+                        is PressInteraction.Press -> press = interaction
+                        is PressInteraction.Release -> if (press == interaction.press) press = null
+                        is PressInteraction.Cancel -> if (press == interaction.press) press = null
+                        is FocusInteraction.Focus -> focus = interaction
+                        is FocusInteraction.Unfocus -> if (focus == interaction.focus) focus = null
+                    }
+                    if (wasPressed != (press != null) || wasFocused != (focus != null)) {
+                        invalidateDraw()
+                    }
+                }
+            }
+        }
+
+        override fun onDetach() {
+            press = null
+            focus = null
+        }
+
+        override fun ContentDrawScope.draw() {
+            drawContent()
+            if (press != null) drawRect(Color.Gray.copy(alpha = 0.20f))
+            if (focus != null) {
+                val stroke = minOf(2.dp.toPx(), size.minDimension / 4)
+                inset(stroke) {
+                    drawRect(Color.White, style = Stroke(stroke * 2))
+                    drawRect(Color.Black, style = Stroke(stroke))
+                }
+            }
+        }
+    }
+}
+
+private object EInkMotionScheme : MotionScheme {
+    override fun <T> defaultSpatialSpec(): FiniteAnimationSpec<T> = snap()
+    override fun <T> fastSpatialSpec(): FiniteAnimationSpec<T> = snap()
+    override fun <T> slowSpatialSpec(): FiniteAnimationSpec<T> = snap()
+    override fun <T> defaultEffectsSpec(): FiniteAnimationSpec<T> = snap()
+    override fun <T> fastEffectsSpec(): FiniteAnimationSpec<T> = snap()
+    override fun <T> slowEffectsSpec(): FiniteAnimationSpec<T> = snap()
+}
+
+// Material3 控件内部自带波纹。将按压和拖动的不透明度设为零，同时保留独立的焦点描边。
+@OptIn(ExperimentalMaterial3Api::class)
+@Suppress("DEPRECATION")
+private val EInkRipple = RippleConfiguration(
+    rippleAlpha = RippleAlpha(draggedAlpha = 0f, focusedAlpha = 0f, hoveredAlpha = 0f, pressedAlpha = 0f),
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MeloraMaterialTheme(
+    colorScheme: ColorScheme,
+    eInk: Boolean,
+    content: @Composable () -> Unit,
+) {
+    MaterialTheme(
+        colorScheme = colorScheme,
+        motionScheme = if (eInk) EInkMotionScheme else MaterialTheme.motionScheme,
+    ) {
+        CompositionLocalProvider(
+            LocalIndication provides if (eInk) EInkIndication else LocalIndication.current,
+            LocalRippleConfiguration provides if (eInk) EInkRipple else LocalRippleConfiguration.current,
+            LocalRippleThemeConfiguration provides
+                if (eInk) RippleDefaults.InsetFocusRingThemeConfiguration else LocalRippleThemeConfiguration.current,
+            content = content,
+        )
+    }
+}
+
 internal val componentBlurSupported: Boolean get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
 internal val LocalComponentBlurMode = compositionLocalOf { ComponentBlurMode.Off }
 
@@ -95,9 +243,11 @@ fun MeloraTheme(
     content: @Composable () -> Unit,
 ) {
     val themeMode by MeloraSettings.themeMode.collectAsStateWithLifecycle()
-    val darkTheme = themeMode.isDark(isSystemInDarkTheme())
+    val eInkMode by MeloraSettings.eInkMode.collectAsStateWithLifecycle()
+    val darkTheme = !eInkMode && themeMode.isDark(isSystemInDarkTheme())
 
     val colorScheme = when {
+        eInkMode -> EInkColors
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
@@ -107,11 +257,16 @@ fun MeloraTheme(
     }
 
     // 同步全局外观调色板，使硬编码设计令牌随主题切换。
-    SideEffect { MeloraAppearance.isDark = darkTheme }
+    SideEffect {
+        MeloraAppearance.isDark = darkTheme
+        MeloraAppearance.isEInk = eInkMode
+    }
 
     val blurMode by MeloraSettings.componentBlurMode.collectAsStateWithLifecycle()
-    CompositionLocalProvider(LocalComponentBlurMode provides if (componentBlurSupported) blurMode else ComponentBlurMode.Off) {
-        MaterialTheme(colorScheme = colorScheme, content = content)
+    CompositionLocalProvider(
+        LocalComponentBlurMode provides if (!eInkMode && componentBlurSupported) blurMode else ComponentBlurMode.Off,
+    ) {
+        MeloraMaterialTheme(colorScheme, eInkMode, content)
     }
 }
 
@@ -124,9 +279,16 @@ internal fun currentMeloraSheetPalette(): MeloraThemePalette =
 
 @Composable
 internal fun WithMeloraSheetTheme(darkTheme: Boolean, content: @Composable () -> Unit) {
-    CompositionLocalProvider(LocalSheetDarkOverride provides darkTheme) {
-        MaterialTheme(
-            colorScheme = if (darkTheme) DarkColors else LightColors,
+    val eInk = MeloraAppearance.isEInk
+    val resolvedDark = !eInk && darkTheme
+    CompositionLocalProvider(LocalSheetDarkOverride provides resolvedDark) {
+        MeloraMaterialTheme(
+            colorScheme = when {
+                eInk -> EInkColors
+                resolvedDark -> DarkColors
+                else -> LightColors
+            },
+            eInk = eInk,
             content = content,
         )
     }

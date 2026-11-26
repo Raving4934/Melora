@@ -418,9 +418,10 @@ class DesktopLyricService : Service() {
         val (x, y) = geometry().panelOffset(layoutParams.x, layoutParams.y, panelParams.width, panelParams.height,
             (8 * resources.displayMetrics.density).roundToInt())
         panelParams.x = x; panelParams.y = y
-        panel.alpha = 0f
+        val animate = !MeloraSettings.eInkMode.value
+        panel.alpha = if (animate) 0f else 1f
         if (runCatching { windowManager.addView(panel, panelParams) }.isSuccess) {
-            panel.animate().alpha(1f).setDuration(150L).start()
+            if (animate) panel.animate().alpha(1f).setDuration(150L).start()
             lyricView?.postDelayed(hidePanelRunnable, 6000L)
         } else panel.visibility = View.GONE
     }
@@ -430,7 +431,7 @@ class DesktopLyricService : Service() {
             combine(MeloraSettings.lockLyrics, MeloraSettings.singleLineLyric, MeloraSettings.lyricFontSize,
                 MeloraSettings.lyricMaxLines, MeloraSettings.lyricAlpha, MeloraSettings.lyricHAlign,
                 MeloraSettings.lyricVAlign, MeloraSettings.lyricColorIndex, MeloraSettings.lyricBackground,
-                MeloraSettings.desktopLyricPosition) { Unit }.collect { applyVisualSettings() }
+                MeloraSettings.desktopLyricPosition, MeloraSettings.eInkMode) { Unit }.collect { applyVisualSettings() }
         }
     }
 
@@ -443,7 +444,8 @@ class DesktopLyricService : Service() {
                 0 -> Gravity.START or Gravity.CENTER_VERTICAL
                 2 -> Gravity.END or Gravity.CENTER_VERTICAL
                 else -> Gravity.CENTER
-            }, themeColors[MeloraSettings.lyricColorIndex.value.coerceIn(themeColors.indices)])
+            }, themeColors[MeloraSettings.lyricColorIndex.value.coerceIn(themeColors.indices)],
+            eInk = MeloraSettings.eInkMode.value)
         view.alpha = (MeloraSettings.lyricAlpha.value / 100f).coerceIn(0.2f, 1f)
         val density = resources.displayMetrics.density
         // 仅保留原来的半透明底板，不启用系统窗口模糊。

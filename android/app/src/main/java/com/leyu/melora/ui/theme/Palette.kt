@@ -7,40 +7,120 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
-internal class MeloraThemePalette(val isDark: Boolean) {
-    val canvas: Color = if (isDark) MeloraSurfaceDark else Color(0xFFF4F5F7)
-    val card: Color = if (isDark) MeloraCardDark else Color.White
-    internal val sheet: Color = if (isDark) Color(0xFF141416) else canvas
-    internal val sheetCard: Color = if (isDark) Color(0xFF1E1E21) else card
-    val textMain: Color = if (isDark) Color(0xFFEBEBEF) else Color(0xFF111827)
-    val textSub: Color = if (isDark) Color(0xFF9898A0) else Color(0xFF6B7280)
-    val textMuted: Color = if (isDark) Color(0xFF63636B) else Color(0xFF9CA3AF)
-    val divider: Color = if (isDark) Color(0x0FFFFFFF) else Color(0xFFF3F4F6)
-    val brand: Color = if (isDark) MeloraBlueDark else MeloraBlue
-    val accent: Color = if (isDark) Color(0xFFF2635C) else Color(0xFFE53935)
-    val segmentTrack: Color = if (isDark) Color(0xFF1A1A1D) else Color(0xFFE5E7EB)
-    val segmentThumb: Color = if (isDark) Color(0xFF2A2A2E) else Color.White
-    val softFill: Color = if (isDark) Color(0xFF1E1E22) else Color(0xFFF1F3F6)
+internal class MeloraThemePalette(val isDark: Boolean, val isEInk: Boolean = false) {
+    val canvas: Color = when {
+        isEInk -> Color.White
+        isDark -> MeloraSurfaceDark
+        else -> Color(0xFFF4F5F7)
+    }
+    val card: Color = when {
+        isEInk -> Color.White
+        isDark -> MeloraCardDark
+        else -> Color.White
+    }
+    internal val sheet: Color = when {
+        isEInk -> Color.White
+        isDark -> Color(0xFF141416)
+        else -> canvas
+    }
+    internal val sheetCard: Color = when {
+        isEInk -> Color.White
+        isDark -> Color(0xFF1E1E21)
+        else -> card
+    }
+    val textMain: Color = when {
+        isEInk -> Color.Black
+        isDark -> Color(0xFFEBEBEF)
+        else -> Color(0xFF111827)
+    }
+    val textSub: Color = when {
+        isEInk -> Color(0xFF222222)
+        isDark -> Color(0xFF9898A0)
+        else -> Color(0xFF6B7280)
+    }
+    val textMuted: Color = when {
+        isEInk -> Color(0xFF4A4A4A)
+        isDark -> Color(0xFF63636B)
+        else -> Color(0xFF9CA3AF)
+    }
+    val divider: Color = when {
+        isEInk -> Color(0xFFCCCCCC)
+        isDark -> Color(0x0FFFFFFF)
+        else -> Color(0xFFF3F4F6)
+    }
+    val brand: Color = when {
+        isEInk -> Color.Black
+        isDark -> MeloraBlueDark
+        else -> MeloraBlue
+    }
+    val accent: Color = when {
+        isEInk -> Color.Black
+        isDark -> Color(0xFFF2635C)
+        else -> Color(0xFFE53935)
+    }
+    val segmentTrack: Color = when {
+        isEInk -> Color(0xFFE5E5E5)
+        isDark -> Color(0xFF1A1A1D)
+        else -> Color(0xFFE5E7EB)
+    }
+    val segmentThumb: Color = when {
+        isEInk -> Color.White
+        isDark -> Color(0xFF2A2A2E)
+        else -> Color.White
+    }
+    val softFill: Color = when {
+        isEInk -> Color(0xFFF2F2F2)
+        isDark -> Color(0xFF1E1E22)
+        else -> Color(0xFFF1F3F6)
+    }
     // 骨架屏底色：需同时与画布和卡片拉开对比，softFill 放画布上几乎不可见
-    val skeleton: Color = if (isDark) Color(0xFF242428) else Color(0xFFE6E9EF)
-    val tintBlue: Color = if (isDark) Color(0xFF1C2536) else Color(0xFFEFF4FE)
-    val tintRed: Color = if (isDark) Color(0xFF2D191D) else Color(0xFFFEE2E2)
+    val skeleton: Color = when {
+        isEInk -> Color(0xFFE0E0E0)
+        isDark -> Color(0xFF242428)
+        else -> Color(0xFFE6E9EF)
+    }
+    val tintBlue: Color = when {
+        isEInk -> Color(0xFFE8E8E8)
+        isDark -> Color(0xFF1C2536)
+        else -> Color(0xFFEFF4FE)
+    }
+    val tintRed: Color = when {
+        isEInk -> Color(0xFFE8E8E8)
+        isDark -> Color(0xFF2D191D)
+        else -> Color(0xFFFEE2E2)
+    }
 
     // 现代化极简卡片微描边：替代发脏的不对称单向阴影，深浅统一半透明细边
-    val cardBorderColor: Color = if (isDark) Color(0x08FFFFFF) else Color(0x0D000000)
-    val cardBorder: BorderStroke = BorderStroke(0.6.dp, cardBorderColor)
-    val chipBorderColor: Color = if (isDark) Color(0x0AFFFFFF) else Color(0x0A000000)
-    val chipBorder: BorderStroke = BorderStroke(0.5.dp, chipBorderColor)
+    val cardBorderColor: Color = when {
+        isEInk -> Color(0xFF1F1F1F)
+        isDark -> Color(0x08FFFFFF)
+        else -> Color(0x0D000000)
+    }
+    val cardBorder: BorderStroke = BorderStroke(if (isEInk) 1.dp else 0.6.dp, cardBorderColor)
+    val chipBorderColor: Color = when {
+        isEInk -> Color(0xFF2B2B2B)
+        isDark -> Color(0x0AFFFFFF)
+        else -> Color(0x0A000000)
+    }
+    val chipBorder: BorderStroke = BorderStroke(if (isEInk) 0.9.dp else 0.5.dp, chipBorderColor)
 }
 
 object MeloraAppearance {
     private val lightPalette = MeloraThemePalette(isDark = false)
     private val darkPalette = MeloraThemePalette(isDark = true)
+    private val eInkPalette = MeloraThemePalette(isDark = false, isEInk = true)
 
     var isDark: Boolean by mutableStateOf(false)
         internal set
 
-    internal fun palette(dark: Boolean): MeloraThemePalette = if (dark) darkPalette else lightPalette
+    var isEInk: Boolean by mutableStateOf(false)
+        internal set
+
+    internal fun palette(dark: Boolean): MeloraThemePalette = when {
+        isEInk -> eInkPalette
+        dark -> darkPalette
+        else -> lightPalette
+    }
 
     private val current: MeloraThemePalette get() = palette(isDark)
 

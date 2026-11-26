@@ -33,6 +33,7 @@ internal object BackupSettings {
         field("lastTab", MeloraSettings.KEY_LAST_TAB, MeloraSettings.lastTab, { backupNumber("lastTab", it).toInt() }),
         field("showExitButton", MeloraSettings.KEY_SHOW_EXIT, MeloraSettings.showExitButton, ::backupBoolean),
         field("themeMode", THEME_MODE_PREFERENCE, MeloraSettings.themeMode, { ThemeMode.restore(it as? String, null, MeloraSettings.themeMode.value) }, ThemeMode::storageValue),
+        field("eInkMode", MeloraSettings.KEY_EINK_MODE, MeloraSettings.eInkMode, ::backupBoolean),
         field("hideStatusBar", MeloraSettings.KEY_HIDE_STATUS_BAR, MeloraSettings.hideStatusBar, ::backupBoolean),
         field("componentBlurMode", MeloraSettings.KEY_COMPONENT_BLUR_MODE, MeloraSettings.componentBlurMode,
             { ComponentBlurMode.restore(backupString(it), MeloraSettings.componentBlurMode.value) }, ComponentBlurMode::storageValue),

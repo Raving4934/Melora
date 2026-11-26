@@ -54,6 +54,7 @@ object MeloraSettings {
     val lastTab = MutableStateFlow(5)
     val showExitButton = MutableStateFlow(true)
     val themeMode = MutableStateFlow(ThemeMode.Auto)
+    val eInkMode = MutableStateFlow(false)
     val hideStatusBar = MutableStateFlow(false)
     val componentBlurMode = MutableStateFlow(ComponentBlurMode.Off)
     val showSongCovers = MutableStateFlow(false)
@@ -135,6 +136,7 @@ object MeloraSettings {
         lastTab.value = prefs.getInt(KEY_LAST_TAB, 5)
         showExitButton.value = prefs.getBoolean(KEY_SHOW_EXIT, true)
         themeMode.value = loadThemeMode(prefs)
+        eInkMode.value = prefs.getBoolean(KEY_EINK_MODE, false)
         hideStatusBar.value = prefs.getBoolean(KEY_HIDE_STATUS_BAR, false)
         componentBlurMode.value = loadComponentBlurMode(prefs)
         showSongCovers.value = prefs.getBoolean(KEY_SHOW_SONG_COVERS, false)
@@ -215,6 +217,7 @@ object MeloraSettings {
     fun updateLastTab(value: Int) = update { lastTab.value = value; persist { putInt(KEY_LAST_TAB, value) } }
     fun updateShowExit(value: Boolean) = update { showExitButton.value = value; persist { putBoolean(KEY_SHOW_EXIT, value) } }
     fun updateThemeMode(value: ThemeMode) = update { themeMode.value = value; persist { putString(THEME_MODE_PREFERENCE, value.storageValue) } }
+    fun updateEInkMode(value: Boolean) = update { eInkMode.value = value; persist { putBoolean(KEY_EINK_MODE, value) } }
     fun updateHideStatusBar(value: Boolean) = update { hideStatusBar.value = value; persist { putBoolean(KEY_HIDE_STATUS_BAR, value) } }
     fun updateComponentBlurMode(value: ComponentBlurMode) = update {
         componentBlurMode.value = value
@@ -334,6 +337,7 @@ object MeloraSettings {
     internal const val KEY_STARTUP_TAB = "basic.startupTab"
     internal const val KEY_LAST_TAB = "basic.lastTab"
     internal const val KEY_SHOW_EXIT = "basic.showExitButton"
+    internal const val KEY_EINK_MODE = "basic.einkMode"
     internal const val KEY_HIDE_STATUS_BAR = "basic.hideStatusBar"
     internal const val KEY_COMPONENT_BLUR_MODE = "basic.componentBlurMode"
     internal const val KEY_SHOW_SONG_COVERS = "basic.showSongCovers"

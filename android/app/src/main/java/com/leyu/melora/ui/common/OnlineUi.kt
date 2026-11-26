@@ -712,13 +712,23 @@ fun SongMoreSheet(
                             closeSheet { onDismiss(); onOpenBookAlbum(book) }
                         }
                     }
-                    if (book != null) SheetAction(if (isBookFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                        if (isBookFavorite) sheetAccent else sheetBrand, if (isBookFavorite) "取消收藏专辑" else "收藏专辑") {
-                        closeSheet { UserLibrary.toggleFavoritePlaylist(book); onDismiss() }
+                    if (book != null) {
+                        SheetAction(
+                            icon = if (isBookFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                            tint = if (isBookFavorite) sheetAccent else sheetBrand,
+                            label = if (isBookFavorite) "取消收藏专辑" else "收藏专辑",
+                            destructive = isBookFavorite,
+                        ) {
+                            closeSheet { UserLibrary.toggleFavoritePlaylist(book); onDismiss() }
+                        }
                     }
                     if (onResumeBook == null || isFavorite) {
-                        SheetAction(if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                            if (isFavorite) sheetAccent else sheetBrand, if (isFavorite) "取消收藏本集" else "收藏本集") {
+                        SheetAction(
+                            icon = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                            tint = if (isFavorite) sheetAccent else sheetBrand,
+                            label = if (isFavorite) "取消收藏本集" else "收藏本集",
+                            destructive = isFavorite,
+                        ) {
                             closeSheet { UserLibrary.toggleFavorite(song); onDismiss() }
                         }
                     }
@@ -728,6 +738,7 @@ fun SongMoreSheet(
                         tint = if (isFavorite) sheetAccent else sheetBrand,
                         label = if (isFavorite) "取消收藏" else "收藏到我的列表",
                         subtitle = if (isFavorite) "从「我的列表」收藏夹中移除" else "保存到「我的列表」收藏夹",
+                        destructive = isFavorite,
                     ) {
                         closeSheet {
                             UserLibrary.toggleFavorite(song)
@@ -761,6 +772,7 @@ fun SongMoreSheet(
                         tint = sheetAccent,
                         label = "从歌单移除",
                         subtitle = "仅从此歌单列表中移除该歌曲",
+                        destructive = true,
                     ) {
                         closeSheet {
                             onRemoveFromPlaylist()
@@ -795,7 +807,7 @@ fun SongMoreSheet(
                     }
                 }
                 if (isBook && onRemoveRecentProgram != null) {
-                    SheetAction(Icons.Rounded.RemoveCircleOutline, sheetAccent, "移除播放记录") {
+                    SheetAction(Icons.Rounded.RemoveCircleOutline, sheetAccent, "移除播放记录", destructive = true) {
                         closeSheet { onRemoveRecentProgram(); onDismiss() }
                     }
                 }
@@ -805,6 +817,7 @@ fun SongMoreSheet(
                         tint = sheetAccent,
                         label = "永久删除",
                         subtitle = "从设备中删除该音频文件，无法恢复",
+                        destructive = true,
                     ) {
                         closeSheet {
                             onDeleteLocal()
@@ -825,17 +838,21 @@ internal fun SheetAction(
     subtitle: String? = null,
     iconBg: Color? = null,
     showArrow: Boolean = false,
+    destructive: Boolean = false,
     onClick: () -> Unit,
 ) {
     val palette = currentMeloraSheetPalette()
-    val dark = palette.isDark
-    val destructive = tint == AccentRed || tint == palette.accent
     val iconBackground = when {
+        palette.isEInk -> if (destructive) palette.textMain else palette.softFill
         destructive -> palette.tintRed
-        dark -> Color(0xFF222226)
+        palette.isDark -> Color(0xFF222226)
         else -> iconBg ?: tint.copy(alpha = 0.10f)
     }
-    val resolvedIconTint = if (dark && !destructive) palette.textMain.copy(alpha = 0.86f) else tint
+    val resolvedIconTint = when {
+        palette.isEInk -> if (destructive) palette.card else palette.textMain
+        palette.isDark && !destructive -> palette.textMain.copy(alpha = 0.86f)
+        else -> tint
+    }
     val labelColor = if (destructive) MaterialTheme.colorScheme.error else palette.textMain
 
     Surface(

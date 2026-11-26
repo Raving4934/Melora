@@ -5,6 +5,7 @@ import androidx.compose.runtime.setValue
 
 import com.leyu.melora.ui.common.BadgePill
 import com.leyu.melora.ui.common.QualityBadgeHeight
+import com.leyu.melora.ui.theme.MeloraAppearance
 
 import android.os.SystemClock
 import androidx.compose.foundation.background
@@ -154,6 +155,7 @@ internal fun AudioInfoCard(
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = FullPlayerCardSurface,
+        border = if (MeloraAppearance.isEInk) MeloraAppearance.cardBorder else null,
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -215,6 +217,7 @@ internal fun AlbumInfoCard(
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = FullPlayerCardSurface,
+        border = if (MeloraAppearance.isEInk) MeloraAppearance.cardBorder else null,
         modifier = modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -287,6 +290,7 @@ internal fun ArtistInfoCard(
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = FullPlayerCardSurface,
+        border = if (MeloraAppearance.isEInk) MeloraAppearance.cardBorder else null,
         modifier = modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.padding(16.dp)) {

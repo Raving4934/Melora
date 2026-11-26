@@ -598,6 +598,7 @@ internal fun OtherSettingsSubPage(onBack: () -> Unit) {
     val context = LocalContext.current
     val updatePlaylists by PlaylistAutoUpdate.enabled.collectAsStateWithLifecycle()
     val checkAppUpdates by MeloraSettings.autoCheckAppUpdates.collectAsStateWithLifecycle()
+    val eInkMode by MeloraSettings.eInkMode.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var cacheStats by remember { mutableStateOf(CacheManager.cachedStats ?: CacheStats(0L, 0L, 0L, 0L)) }
     var cacheBusy by remember { mutableStateOf(true) }
@@ -647,6 +648,14 @@ internal fun OtherSettingsSubPage(onBack: () -> Unit) {
     }
 
     SettingsSubPageScaffold(title = "其他设置", onBack = onBack) {
+        item { SectionCaption("显示适配") }
+        item {
+            SettingsCard(contentPadding = PaddingValues(vertical = 4.dp)) {
+                SwitchItem("墨水屏模式", "黑白高对比界面，减少动效，关闭模糊与逐字刷新", eInkMode) {
+                    MeloraSettings.updateEInkMode(it)
+                }
+            }
+        }
         item { SectionCaption("自动更新") }
         item {
             SettingsCard(contentPadding = PaddingValues(vertical = 4.dp)) {

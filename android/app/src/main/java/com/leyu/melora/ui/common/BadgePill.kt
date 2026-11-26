@@ -48,17 +48,20 @@ internal fun BadgePill(
     height: Dp = QualityBadgeHeight,
     outlined: Boolean = false,
 ) {
+    val eInk = MeloraAppearance.isEInk
     val resolvedMode = mode ?: MeloraSettings.qualityBadgeMode.collectAsStateWithLifecycle().value
-    val dark = LocalBadgeThemeDark.current ?: MeloraAppearance.isDark
+    val dark = !eInk && (LocalBadgeThemeDark.current ?: MeloraAppearance.isDark)
     val compact = resolvedMode == QualityBadgeMode.Compact
     // 同一音轨的各个样式共用档位颜色；图文模式的图标仍取自实际编码。
     val palette = audioBadgeAppearance(badge.compactTier).palette
-    val ink = if (dark) palette.dark else palette.light
-    val badgeSurface = if (outlined) {
-        Modifier.border(1.dp, ink.copy(alpha = 0.55f), BadgeShape)
-    } else {
-        val alpha = if (dark) palette.darkFillAlpha else palette.lightFillAlpha
-        Modifier.background(ink.copy(alpha = alpha), BadgeShape)
+    val ink = if (eInk) Color.Black else if (dark) palette.dark else palette.light
+    val badgeSurface = when {
+        eInk -> Modifier.background(Color.White, BadgeShape).border(1.dp, Color.Black, BadgeShape)
+        outlined -> Modifier.border(1.dp, ink.copy(alpha = 0.55f), BadgeShape)
+        else -> {
+            val alpha = if (dark) palette.darkFillAlpha else palette.lightFillAlpha
+            Modifier.background(ink.copy(alpha = alpha), BadgeShape)
+        }
     }
     if (compact) {
         val description = buildList {
@@ -103,13 +106,19 @@ internal fun BadgePill(
 
 @Composable
 internal fun LocalBadgePill(modifier: Modifier = Modifier) {
-    val dark = LocalBadgeThemeDark.current ?: MeloraAppearance.isDark
-    val ink = if (dark) Color(0xFFADB5C3) else Color(0xFF586273)
+    val eInk = MeloraAppearance.isEInk
+    val dark = !eInk && (LocalBadgeThemeDark.current ?: MeloraAppearance.isDark)
+    val ink = if (eInk) Color.Black else if (dark) Color(0xFFADB5C3) else Color(0xFF586273)
+    val surfaceModifier = if (eInk) {
+        Modifier.background(Color.White, BadgeShape).border(1.dp, Color.Black, BadgeShape)
+    } else {
+        Modifier.background(ink.copy(alpha = if (dark) 0.105f else 0.085f), BadgeShape)
+    }
     Box(
         modifier = modifier
             .clearAndSetSemantics { contentDescription = "本地" }
             .height(QualityBadgeHeight)
-            .background(ink.copy(alpha = if (dark) 0.105f else 0.085f), BadgeShape)
+            .then(surfaceModifier)
             .padding(horizontal = 5.5.dp),
         contentAlignment = Alignment.Center,
     ) {

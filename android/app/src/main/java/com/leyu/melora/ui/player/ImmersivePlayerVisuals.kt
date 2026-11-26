@@ -17,7 +17,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.structuralEqualityPolicy
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithCache
@@ -43,6 +45,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.leyu.melora.ui.theme.MeloraAppearance
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.min
@@ -67,6 +70,24 @@ private const val ImmersiveProgressCornerRadiusDp = 22f
 internal fun immersiveProgressFraction(positionMs: Long, durationMs: Long): Float {
     if (durationMs <= 0L) return 0f
     return (positionMs.toDouble() / durationMs.toDouble()).toFloat().coerceIn(0f, 1f)
+}
+
+/** 墨水屏按整秒绘制进度，结尾仍显示为完整的一圈。 */
+@Composable
+internal fun rememberImmersiveProgress(
+    position: State<Long>,
+    durationMs: Long,
+): State<Float> {
+    val eInk = MeloraAppearance.isEInk
+    return remember(position, durationMs, eInk) {
+        derivedStateOf(structuralEqualityPolicy()) {
+            val positionMs = position.value
+            val displayedMs = if (eInk && positionMs < durationMs) {
+                positionMs - positionMs % 1_000L
+            } else positionMs
+            immersiveProgressFraction(displayedMs, durationMs)
+        }
+    }
 }
 
 /**
@@ -267,6 +288,7 @@ internal fun ImmersiveCoverProgress(
     val colors = LocalPlayerColors.current
     val trackColor = colors.textPrimary
     val activeColor = colors.progressActive
+    val progress = rememberImmersiveProgress(position, durationMs)
 
     Box(
         modifier = modifier
@@ -314,9 +336,7 @@ internal fun ImmersiveCoverProgress(
                     drawIntoCanvas { canvas ->
                         canvas.nativeCanvas.drawPath(path, trackPaint)
 
-                        if (durationMs <= 0L) return@drawIntoCanvas
-                        val progress = immersiveProgressFraction(position.value, durationMs)
-                        val stopDistance = pathLength * progress
+                        val stopDistance = pathLength * progress.value
                         if (stopDistance <= 0f) return@drawIntoCanvas
 
                         progressPath.rewind()

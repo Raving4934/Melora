@@ -32,11 +32,13 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.leyu.melora.playback.LyricLine
+import com.leyu.melora.ui.theme.MeloraAppearance
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -228,6 +230,90 @@ class ImmersiveLyricsTest {
         assertTrue("center must remain opaque", centerAlpha > 240)
         assertTrue("lower fade must retain a measurable buffer", lowerBufferAlpha in 64..192)
         assertTrue("bottom edge must be transparent", bottomAlpha < 32)
+    }
+
+    @Test
+    fun eInkLyricsPreserveContrastAndRemoveTheEdgeMask() {
+        val previousMode = MeloraAppearance.isEInk
+        val upcoming = "下一句仍应清晰可读"
+        val position = mutableLongStateOf(1_000L)
+        try {
+            MeloraAppearance.isEInk = true
+            composeRule.setContent {
+                CompositionLocalProvider(LocalDensity provides Density(1f)) {
+                    PlayerAppearanceProvider(dark = false, eInk = true) {
+                        Box(Modifier.size(320.dp, 240.dp).background(Color.Black).testTag(FADE_TAG)) {
+                            LyricsViewport(
+                                lines = listOf(LyricLine(0L, "当前句"), LyricLine(2_000L, upcoming)),
+                                position = position,
+                                config = LyricsUiConfig(fontSizeSp = 24f),
+                                modifier = Modifier.fillMaxSize().lyricViewportFade().background(Color.White),
+                                onLineClick = {},
+                            )
+                        }
+                    }
+                }
+            }
+            val viewport = composeRule.onNodeWithTag(FADE_TAG).captureToImage().asAndroidBitmap()
+            assertEquals(255, fadeLevelAt(viewport, 0f))
+            assertEquals(255, fadeLevelAt(viewport, 1f))
+            val bitmap = composeRule.onNodeWithText(upcoming, useUnmergedTree = true).captureToImage().asAndroidBitmap()
+            val darkest = (0 until bitmap.height).minOf { y ->
+                (0 until bitmap.width).minOf { x -> AndroidColor.red(bitmap.getPixel(x, y)) }
+            }
+            assertTrue("墨水屏非当前歌词叠加透明度后会过浅，最深的字形为 $darkest", darkest < 116)
+        } finally {
+            MeloraAppearance.isEInk = previousMode
+        }
+    }
+
+    @Test
+    fun eInkStageInAShortWindowWrapsFullLyricsAndCanScrollToRomanization() {
+        val previousMode = MeloraAppearance.isEInk
+        val lyric = "再长的歌词都应保持完整，阅读区能够滚动。".repeat(5)
+        val translation = "The full translation stays available in the reading area. ".repeat(4)
+        val romanization = "zài cháng de gē cí dōu yīng bǎo chí wán zhěng ".repeat(5)
+        val lines = listOf(
+            LyricLine(0L, "上一句"),
+            LyricLine(2_000L, lyric, translation = translation, romanization = romanization),
+            LyricLine(5_000L, "下一句"),
+        )
+        val position = mutableLongStateOf(2_750L)
+        val durationMs = 5_500L
+        lateinit var progress: State<Float>
+        try {
+            MeloraAppearance.isEInk = true
+            composeRule.setContent {
+                CompositionLocalProvider(LocalDensity provides Density(1f)) {
+                    Box(Modifier.size(420.dp, 180.dp)) {
+                        progress = rememberImmersiveProgress(position, durationMs)
+                        ImmersiveStageLyrics(
+                            track = null, durationMs = durationMs, playing = true, isVisible = true,
+                            lines = lines, position = position, frameState = rememberLyricFrame(lines, position),
+                            config = LyricsUiConfig(), motionEnabled = false, modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+            }
+            composeRule.onNodeWithText("上一句").assertDoesNotExist()
+            composeRule.onNodeWithText("下一句").assertDoesNotExist()
+            assertTrue(textLayout(lyric).lineCount > 2)
+            assertTrue(textLayout(translation).lineCount > 1)
+            assertTrue(textLayout(romanization).lineCount > 1)
+            assertTrue(!textLayout(romanization).hasVisualOverflow)
+            composeRule.onNodeWithText(romanization).performScrollTo().assertIsDisplayed()
+
+            composeRule.runOnIdle {
+                val initialProgress = 2_000f / durationMs
+                assertEquals(initialProgress, progress.value, 0.001f)
+                position.longValue = 2_999L
+                assertEquals(initialProgress, progress.value, 0.001f)
+                position.longValue = durationMs
+                assertEquals(1f, progress.value, 0.001f)
+            }
+        } finally {
+            MeloraAppearance.isEInk = previousMode
+        }
     }
 
     @Test

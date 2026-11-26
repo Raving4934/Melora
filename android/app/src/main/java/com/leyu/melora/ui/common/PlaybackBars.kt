@@ -36,6 +36,7 @@ internal fun SongPlaybackPrefix(isCurrent: Boolean) {
             advancing = LocalSongListState.current.advancing.value,
             color = BrandBlue,
             modifier = Modifier.padding(end = 5.dp),
+            motionEnabled = !com.leyu.melora.ui.theme.MeloraAppearance.isEInk,
         )
     }
 }

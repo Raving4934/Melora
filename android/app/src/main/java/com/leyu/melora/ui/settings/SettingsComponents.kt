@@ -52,6 +52,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -180,7 +181,7 @@ internal fun SettingsMainMenu(
     val secondaryEntries = listOf(
         SettingsMenuEntry(Icons.Outlined.MusicNote, Color(0xFF16A34A), "本地歌曲", "媒体库扫描、自定义文件夹与排除规则", SettingsSubPage.LocalMusic),
         SettingsMenuEntry(Icons.Outlined.Sync, SettingsBrandBlue, "同步与备份", "本地与网络备份、恢复与多设备记录同步", SettingsSubPage.Sync),
-        SettingsMenuEntry(Icons.Outlined.CleaningServices, Color(0xFF0284C7), "其他设置", "歌单自动更新、软件更新检查与缓存管理", SettingsSubPage.Others),
+        SettingsMenuEntry(Icons.Outlined.CleaningServices, Color(0xFF0284C7), "其他设置", "墨水屏模式、自动更新与缓存管理", SettingsSubPage.Others),
         SettingsMenuEntry(Icons.Outlined.Info, Color(0xFF4B5563), "关于乐屿", "版本 v${BuildConfig.VERSION_NAME} · Media3 播放引擎", SettingsSubPage.About),
     )
 
@@ -263,10 +264,7 @@ internal fun SettingsEntryItem(
     enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
-    val dark = MeloraAppearance.isDark
-    val resolvedIconBg = if (dark) MeloraAppearance.softFill else iconTint.copy(alpha = 0.12f)
-    val resolvedIconTint = if (dark) MeloraAppearance.textMain.copy(alpha = 0.85f) else iconTint
-    val chevronTint = if (dark) MeloraAppearance.textMuted else SettingsTextSub
+    val chevronTint = if (MeloraAppearance.isDark) MeloraAppearance.textMuted else SettingsTextSub
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -274,15 +272,7 @@ internal fun SettingsEntryItem(
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier
-                .size(36.dp)
-                .clip(CircleShape)
-                .background(resolvedIconBg),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(icon, contentDescription = null, tint = resolvedIconTint, modifier = Modifier.size(20.dp))
-        }
+        SettingsRowIcon(icon, iconTint, containerSize = 36.dp, iconSize = 20.dp, shape = CircleShape)
         androidx.compose.foundation.layout.Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(title, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = SettingsTextMain)
@@ -291,6 +281,24 @@ internal fun SettingsEntryItem(
             }
         }
         Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null, tint = chevronTint, modifier = Modifier.size(20.dp))
+    }
+}
+
+@Composable
+private fun SettingsRowIcon(icon: ImageVector, tint: Color, containerSize: Dp, iconSize: Dp, shape: Shape) {
+    val dark = MeloraAppearance.isDark
+    val eInk = MeloraAppearance.isEInk
+    val background = if (dark || eInk) MeloraAppearance.softFill else tint.copy(alpha = 0.12f)
+    val foreground = when {
+        eInk -> SettingsTextMain
+        dark -> SettingsTextMain.copy(alpha = 0.85f)
+        else -> tint
+    }
+    Box(
+        modifier = Modifier.size(containerSize).background(background, shape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, contentDescription = null, tint = foreground, modifier = Modifier.size(iconSize))
     }
 }
 
@@ -387,24 +395,13 @@ internal fun CacheClearRow(
     enabled: Boolean = true,
     onClear: () -> Unit,
 ) {
-    val dark = MeloraAppearance.isDark
-    val resolvedIconBg = if (dark) MeloraAppearance.softFill else iconTint.copy(alpha = 0.12f)
-    val resolvedIconTint = if (dark) MeloraAppearance.textMain.copy(alpha = 0.85f) else iconTint
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(44.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier
-                .size(30.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(resolvedIconBg),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(icon, contentDescription = null, tint = resolvedIconTint, modifier = Modifier.size(16.dp))
-        }
+        SettingsRowIcon(icon, iconTint, containerSize = 30.dp, iconSize = 16.dp, shape = RoundedCornerShape(8.dp))
         Spacer(Modifier.width(12.dp))
         Text(
             text = label,

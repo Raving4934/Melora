@@ -30,6 +30,7 @@ internal class DesktopLyricViewport(context: Context) : ViewGroup(context) {
     private var lineLimit = 1
     private var alignment = Gravity.CENTER
     private var color = Color.WHITE
+    private var eInk = false
     private var positionMs = 0L
     private var scrollAnimator: ValueAnimator? = null
     private var animateLayout = false
@@ -49,13 +50,15 @@ internal class DesktopLyricViewport(context: Context) : ViewGroup(context) {
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
     }
 
-    fun configure(fontSize: Float, lineLimit: Int, alignment: Int, color: Int) {
-        if (this.fontSize == fontSize && this.lineLimit == lineLimit && this.alignment == alignment && this.color == color) return
+    fun configure(fontSize: Float, lineLimit: Int, alignment: Int, color: Int, eInk: Boolean = false) {
+        if (this.fontSize == fontSize && this.lineLimit == lineLimit && this.alignment == alignment &&
+            this.color == color && this.eInk == eInk) return
         if (this.fontSize != fontSize || this.lineLimit != lineLimit) preferredWidth = 0
         this.fontSize = fontSize
         this.lineLimit = lineLimit
         this.alignment = alignment
         this.color = color
+        this.eInk = eInk
         stopScrolling()
         bindRows()
     }
@@ -63,7 +66,7 @@ internal class DesktopLyricViewport(context: Context) : ViewGroup(context) {
     fun submit(lines: List<LyricLine>, index: Int, fallback: String, animate: Boolean) {
         if (this.lines === lines && currentIndex == index && this.fallback == fallback) return
         val sameSong = this.lines === lines
-        animateLayout = animate && sameSong && currentIndex >= 0 && index >= 0 &&
+        animateLayout = !eInk && animate && sameSong && currentIndex >= 0 && index >= 0 &&
             index != currentIndex && index in rows && lineLimit > 1 && isLaidOut
         scrollAnimator?.cancel()
         scrollAnimator = null
@@ -103,7 +106,7 @@ internal class DesktopLyricViewport(context: Context) : ViewGroup(context) {
             val translationStart = line?.takeIf { lineLimit > 1 && !it.translation.isNullOrBlank() }
                 ?.let { if (it.text.isBlank()) 0 else it.text.length + 1 }
             row.setLyricContent(text, translationStart?.let { it until text.length },
-                line?.words.orEmpty(), color)
+                if (eInk) emptyList() else line?.words.orEmpty(), color)
             row.renderPosition(positionMs)
         }
         contentDescription = lines.getOrNull(currentIndex)?.let { desktopLyricRowText(it, lineLimit) } ?: fallback
@@ -112,6 +115,7 @@ internal class DesktopLyricViewport(context: Context) : ViewGroup(context) {
 
     /** 活动词返回当前位置供逐帧播放；否则返回可见行中最近未来的起点供定时唤醒。 */
     fun nextWordChangeAt(positionMs: Long): Long? {
+        if (eInk) return null
         var next: Long? = null
         for (index in rows.keys) {
             val words = lines.getOrNull(index)?.words ?: continue
@@ -127,6 +131,7 @@ internal class DesktopLyricViewport(context: Context) : ViewGroup(context) {
 
     fun renderPosition(positionMs: Long) {
         this.positionMs = positionMs
+        if (eInk) return
         // 保留相邻句的逐字底色，焦点转移时不替换整行样式；无进度变化的行不会重绘。
         for (row in rows.values) row.renderPosition(positionMs)
     }
@@ -255,7 +260,7 @@ internal class DesktopLyricViewport(context: Context) : ViewGroup(context) {
     }
 
     override fun dispatchDraw(canvas: Canvas) {
-        if (lineLimit == 1) { super.dispatchDraw(canvas); return }
+        if (lineLimit == 1 || eInk) { super.dispatchDraw(canvas); return }
         val save = canvas.saveLayer(0f, 0f, width.toFloat(), height.toFloat(), null)
         super.dispatchDraw(canvas)
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), fadePaint)

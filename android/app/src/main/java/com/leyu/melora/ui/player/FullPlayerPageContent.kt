@@ -5,6 +5,8 @@ import com.leyu.melora.ui.common.LocalPageActive
 import com.leyu.melora.playback.LyricsUiConfig
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.snap
@@ -86,6 +88,8 @@ import android.os.Build
 import android.provider.Settings
 import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.fadeIn
@@ -212,6 +216,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -420,7 +425,7 @@ internal fun FullPlayerPageContent(
             if (motionEnabled) spring(dampingRatio = 1f, stiffness = 220f) else snap(), label = "playerTopInset",
         )
         // 竖屏保持纯净；横屏普通页和封面沉浸展示歌名纹理，滑到第3页剧场歌词时平滑让位给两侧流动大字。
-        if (t > 0f && maxWidth > maxHeight) ImmersiveTitleWatermark(
+        if (!MeloraAppearance.isEInk && t > 0f && maxWidth > maxHeight) ImmersiveTitleWatermark(
             title = track?.title.orEmpty(), immersion = immersion,
             playing = state.positionAdvancing, motionEnabled = motionEnabled && isVisible,
             modifier = Modifier.fillMaxSize()
@@ -434,6 +439,7 @@ internal fun FullPlayerPageContent(
             else -> playerPaneContentPadding(twoPanes = false, controls = false)
         }
         val controlsPadding = playerPaneContentPadding(twoPanes, controls = true)
+        val eInk = MeloraAppearance.isEInk
         val heading: @Composable (Modifier) -> Unit = { headingModifier ->
             Row(
                 modifier = headingModifier
@@ -455,10 +461,7 @@ internal fun FullPlayerPageContent(
                         .graphicsLayer { alpha = topTitleAlpha }
                         .then(if (posterMode && awayFromCover < 0.5f) Modifier.clearAndSetSemantics {} else Modifier),
                     transitionSpec = {
-                        ((slideInHorizontally(tween(320, easing = LinearOutSlowInEasing)) { it } +
-                            fadeIn(tween(160))) togetherWith
-                            (slideOutHorizontally(tween(220, easing = LinearOutSlowInEasing)) { -it } +
-                                fadeOut(tween(120)))).using(null)
+                        playerHeadingTransition(eInk)
                     },
                     label = "playerHeading",
                 ) { headingTrack ->
@@ -620,7 +623,8 @@ internal fun FullPlayerPageContent(
                                             frameState = lyricFrame,
                                             motionEnabled = motionEnabled,
                                             immersive = true,
-                                            modifier = Modifier.fillMaxSize().testTag("player-full-lyrics").lyricViewportFade(),
+                                            modifier = Modifier.fillMaxSize().testTag("player-full-lyrics")
+                                                .lyricViewportFade(),
                                             onLineClick = { if (lyricLines.isNotEmpty()) PlaybackController.seekTo(it.startMs) },
                                         )
                                     }
@@ -1922,6 +1926,14 @@ internal fun landscapeImmersiveLayout(widthDp: Float, heightDp: Float): Landscap
     )
 }
 
+private fun AnimatedContentTransitionScope<UiTrack?>.playerHeadingTransition(eInk: Boolean): ContentTransform {
+    val enter = if (eInk) EnterTransition.None else
+        slideInHorizontally(tween(320, easing = LinearOutSlowInEasing)) { it } + fadeIn(tween(160))
+    val exit = if (eInk) ExitTransition.None else
+        slideOutHorizontally(tween(220, easing = LinearOutSlowInEasing)) { -it } + fadeOut(tween(120))
+    return (enter togetherWith exit).using(null)
+}
+
 private data class PortraitCoverSpace(val normal: Dp, val immersive: Dp)
 
 // 播放页 Page 1：默认封面歌词对齐左边沿，圆形/黑胶歌词居中。
@@ -2038,13 +2050,20 @@ private fun PlayerCoverPage(
                         .onGloballyPositioned(onArtworkPositioned)
                         .graphicsLayer {
                             // 黑胶外圈透明且自带径向投影，不叠加 HWUI 阴影；其余样式用透明度淡出阴影并维持足够海拔，避免 Skia 低海拔圆形阴影退化为八边形切角。
-                            val shadowAlpha = if (coverStyle == PlayerCoverStyle.Vinyl) 0f else immersion.value.coerceIn(0f, 1f)
+                            val shadowAlpha = if (coverStyle == PlayerCoverStyle.Vinyl || MeloraAppearance.isEInk) 0f else immersion.value.coerceIn(0f, 1f)
                             shadowElevation = if (shadowAlpha > 0.005f) 14.dp.toPx() * (0.35f + 0.65f * shadowAlpha) else 0f
                             ambientShadowColor = Color.Black.copy(alpha = shadowAlpha)
                             spotShadowColor = Color.Black.copy(alpha = shadowAlpha)
                             shape = if (c >= 0.999f) CircleShape
                                 else RoundedCornerShape((18f * (1f - c) + size.minDimension / (2f * density) * c).dp)
                         }
+                        .then(
+                            if (MeloraAppearance.isEInk && coverStyle != PlayerCoverStyle.Vinyl) {
+                                Modifier.border(1.dp, Color.Black, if (centered) CircleShape else RoundedCornerShape(18.dp))
+                            } else {
+                                Modifier
+                            },
+                        )
                         .combinedClickable(
                             interactionSource = remember { MutableInteractionSource() }, indication = null,
                             onLongClickLabel = "选择封面类型",
@@ -2057,9 +2076,11 @@ private fun PlayerCoverPage(
                     recordChange = recordChange,
                 )
             }
-            androidx.compose.animation.AnimatedVisibility(
+            val eInk = MeloraAppearance.isEInk
+            AnimatedVisibility(
                 visible = controlsVisible && immersive && isVisible,
-                enter = fadeIn(tween(120)), exit = fadeOut(tween(160)),
+                enter = if (eInk) EnterTransition.None else fadeIn(tween(120)),
+                exit = if (eInk) ExitTransition.None else fadeOut(tween(160)),
                 modifier = Modifier.align(Alignment.Center).wrapContentWidth(unbounded = true),
             ) {
                 ImmersivePlaybackControls(
@@ -2138,10 +2159,7 @@ private fun PlayerCoverPage(
                             contentKey = { it?.uid },
                             modifier = Modifier.fillMaxWidth().clipToBounds().testTag("player-poster-heading"),
                             transitionSpec = {
-                                ((slideInHorizontally(tween(320, easing = LinearOutSlowInEasing)) { it } +
-                                    fadeIn(tween(160))) togetherWith
-                                    (slideOutHorizontally(tween(220, easing = LinearOutSlowInEasing)) { -it } +
-                                        fadeOut(tween(120)))).using(null)
+                                playerHeadingTransition(MeloraAppearance.isEInk)
                             },
                             label = "playerPosterHeading",
                         ) { posterTrack ->
@@ -2213,6 +2231,7 @@ private fun LyricsPage(
     // 后台只补词时间时保留浏览/滚动状态；仅歌词正文或行时间改变才重新定位视口。
     val contentKey = remember(lines) { lines.map { it.startMs to it.text } }
     if (stageMode) {
+        val eInk = MeloraAppearance.isEInk
         var controlsVisible by remember(stageMode) { mutableStateOf(false) }
         var controlInteraction by remember { mutableIntStateOf(0) }
         LaunchedEffect(stageMode, isVisible, controlsVisible, controlInteraction, track?.uid) {
@@ -2244,8 +2263,8 @@ private fun LyricsPage(
             }
             AnimatedVisibility(
                 visible = controlsVisible && isVisible,
-                enter = fadeIn(tween(120)),
-                exit = fadeOut(tween(160)),
+                enter = if (eInk) EnterTransition.None else fadeIn(tween(120)),
+                exit = if (eInk) ExitTransition.None else fadeOut(tween(160)),
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 36.dp),
             ) {
                 ImmersivePlaybackControls(
@@ -2361,10 +2380,14 @@ internal fun LyricsToolsPanel(
     desktopLyricsEnabled: Boolean,
     onDesktopLyricsChanged: (Boolean) -> Unit,
 ) {
+    val eInk = MeloraAppearance.isEInk
+    val disabledEffects = "墨水屏模式下关闭".takeIf { eInk }
     AnimatedVisibility(
         visible = expanded,
-        enter = expandHorizontally(tween(220, easing = LinearOutSlowInEasing), expandFrom = Alignment.Start) + fadeIn(tween(140)),
-        exit = shrinkHorizontally(tween(180), shrinkTowards = Alignment.Start) + fadeOut(tween(120)),
+        enter = if (eInk) EnterTransition.None
+            else expandHorizontally(tween(220, easing = LinearOutSlowInEasing), expandFrom = Alignment.Start) + fadeIn(tween(140)),
+        exit = if (eInk) ExitTransition.None
+            else shrinkHorizontally(tween(180), shrinkTowards = Alignment.Start) + fadeOut(tween(120)),
     ) {
         Row(
             Modifier.height(36.dp).horizontalScroll(rememberScrollState()).padding(end = 4.dp),
@@ -2398,10 +2421,16 @@ internal fun LyricsToolsPanel(
                 onConfigChange(config.copy(isBold = !config.isBold))
             }
             LyricsToolDivider()
-            LyricsToolButton(Icons.Rounded.BlurOn, "虚化非当前歌词", iconSize = 20.dp, isSelected = config.isBlurEnabled) {
+            LyricsToolButton(
+                Icons.Rounded.BlurOn, "虚化非当前歌词", iconSize = 20.dp,
+                isSelected = !eInk && config.isBlurEnabled, disabledReason = disabledEffects,
+            ) {
                 onConfigChange(config.copy(isBlurEnabled = !config.isBlurEnabled))
             }
-            LyricsToolButton(Icons.Rounded.Animation, "逐字微浮起", iconSize = 20.dp, isSelected = config.isWordLiftEnabled) {
+            LyricsToolButton(
+                Icons.Rounded.Animation, "逐字微浮起", iconSize = 20.dp,
+                isSelected = !eInk && config.isWordLiftEnabled, disabledReason = disabledEffects,
+            ) {
                 onConfigChange(config.copy(isWordLiftEnabled = !config.isWordLiftEnabled))
             }
         }
@@ -2420,28 +2449,31 @@ private fun LyricsToolButton(
     iconSize: Dp = 20.dp,
     enabled: Boolean = true,
     isSelected: Boolean? = null,
+    disabledReason: String? = null,
     onClick: () -> Unit,
 ) {
     val accent = FullPlayerSheetPrimaryBlue
     val haptics = LocalHapticFeedback.current
+    val canClick = enabled && disabledReason == null
     Box(
         modifier = Modifier
             .size(30.dp)
             .clip(CircleShape)
-            .clickable(enabled = enabled, role = Role.Button) {
+            .clickable(enabled = canClick, role = Role.Button) {
                 haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                 onClick()
             }
             .semantics {
                 contentDescription = label
                 isSelected?.let { selected = it }
+                disabledReason?.let { stateDescription = it }
             },
         contentAlignment = Alignment.Center,
     ) {
         Icon(
             icon, contentDescription = null,
             tint = when {
-                !enabled -> FullPlayerTextMuted.copy(alpha = 0.35f)
+                !canClick -> FullPlayerTextMuted.copy(alpha = 0.35f)
                 isSelected == true -> accent
                 else -> FullPlayerTextMuted
             },
@@ -2691,7 +2723,12 @@ private fun AudioEffectsBottomSheet(
     val effectState by AudioEffects.state.collectAsStateWithLifecycle()
     val playerState by PlaybackController.state.collectAsStateWithLifecycle()
     val colors = LocalPlayerColors.current
-    val accent = if (colors.isDark) DarkGlass.selectedText else LightSheetFrost.blue
+    val eInk = MeloraAppearance.isEInk
+    val accent = when {
+        eInk -> Color.Black
+        colors.isDark -> DarkGlass.selectedText
+        else -> LightSheetFrost.blue
+    }
 
     MeloraBottomSheet(
         onDismissRequest = onDismiss,
@@ -2726,8 +2763,16 @@ private fun AudioEffectsBottomSheet(
                     Spacer(Modifier.width(8.dp))
                     Surface(
                         shape = RoundedCornerShape(7.dp),
-                        color = if (colors.isDark) DarkGlass.selectedFill.copy(alpha = 0.18f) else accent.copy(alpha = 0.11f),
-                        border = if (colors.isDark) BorderStroke(0.5.dp, DarkGlass.selectedEdge.copy(alpha = 0.28f)) else null,
+                        color = when {
+                            eInk -> Color(0xFFE8E8E8)
+                            colors.isDark -> DarkGlass.selectedFill.copy(alpha = 0.18f)
+                            else -> accent.copy(alpha = 0.11f)
+                        },
+                        border = when {
+                            eInk -> BorderStroke(1.dp, Color.Black)
+                            colors.isDark -> BorderStroke(0.5.dp, DarkGlass.selectedEdge.copy(alpha = 0.28f))
+                            else -> null
+                        },
                     ) {
                         Text(
                             text = selectedPreset.label,
@@ -2770,8 +2815,9 @@ private fun AudioEffectsBottomSheet(
                     ) {
                         rowItems.forEach { item ->
                             val isSelected = current == item.id
-                            val selectedDark = colors.isDark && isSelected
+                            val selectedDark = !eInk && colors.isDark && isSelected
                             val labelColor = when {
+                                eInk -> Color.Black
                                 selectedDark -> Color(0xFFC7DBFF)
                                 isSelected -> LightSheetFrost.activeText
                                 else -> colors.sheetText
@@ -2781,12 +2827,14 @@ private fun AudioEffectsBottomSheet(
                                 onClick = { onToggle(item.id) },
                                 shape = RoundedCornerShape(17.dp),
                                 color = when {
+                                    eInk -> if (isSelected) Color(0xFFE8E8E8) else Color.White
                                     selectedDark -> DarkGlass.selectedFill
                                     colors.isDark -> DarkGlass.card
                                     isSelected -> LightSheetFrost.activeCard
                                     else -> LightSheetFrost.card
                                 },
                                 border = when {
+                                    eInk -> BorderStroke(if (isSelected) 1.5.dp else 1.dp, Color.Black)
                                     selectedDark -> BorderStroke(0.5.dp, DarkGlass.selectedEdge.copy(alpha = 0.36f))
                                     colors.isDark -> BorderStroke(0.5.dp, DarkGlass.border)
                                     isSelected -> LightSheetFrost.activeBorder
@@ -2813,6 +2861,7 @@ private fun AudioEffectsBottomSheet(
                                                 .clip(RoundedCornerShape(9.dp))
                                                 .background(
                                                     when {
+                                                        eInk -> if (isSelected) Color.Black else Color(0xFFF2F2F2)
                                                         selectedDark -> DarkGlass.selectedEdge.copy(alpha = 0.22f)
                                                         colors.isDark -> DarkGlass.icon
                                                         isSelected -> LightSheetFrost.blue
@@ -2825,6 +2874,7 @@ private fun AudioEffectsBottomSheet(
                                                 imageVector = audioEffectIcon(item.id),
                                                 contentDescription = null,
                                                 tint = when {
+                                                    eInk -> if (isSelected) Color.White else Color.Black
                                                     selectedDark -> Color(0xFFB4CEFF)
                                                     isSelected -> Color.White
                                                     else -> colors.sheetText
@@ -2873,22 +2923,24 @@ private fun AudioEffectsBottomSheet(
 
 @Composable
 private fun AudioVisualizerBars(active: Boolean, color: Color) {
-    val transition = rememberInfiniteTransition(label = "audio-visualizer")
-    val animatedHeights = List(6) { index ->
-        transition.animateFloat(
-            initialValue = 6f + (index % 3) * 2f,
-            targetValue = 19f - kotlin.math.abs(index - 2.5f) * 2.2f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(
-                    durationMillis = 360 + index * 45,
-                    easing = FastOutSlowInEasing,
+    val animatedHeights = if (active && !MeloraAppearance.isEInk) {
+        val transition = rememberInfiniteTransition(label = "audio-visualizer")
+        List(6) { index ->
+            transition.animateFloat(
+                initialValue = 6f + (index % 3) * 2f,
+                targetValue = 19f - kotlin.math.abs(index - 2.5f) * 2.2f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(
+                        durationMillis = 360 + index * 45,
+                        easing = FastOutSlowInEasing,
+                    ),
+                    repeatMode = RepeatMode.Reverse,
+                    initialStartOffset = StartOffset(index * 55, StartOffsetType.Delay),
                 ),
-                repeatMode = RepeatMode.Reverse,
-                initialStartOffset = StartOffset(index * 55, StartOffsetType.Delay),
-            ),
-            label = "bar-$index",
-        )
-    }
+                label = "bar-$index",
+            )
+        }
+    } else null
     Row(
         modifier = Modifier
             .width(42.dp)
@@ -2896,11 +2948,12 @@ private fun AudioVisualizerBars(active: Boolean, color: Color) {
         horizontalArrangement = Arrangement.spacedBy(3.dp),
         verticalAlignment = Alignment.Bottom,
     ) {
-        animatedHeights.forEachIndexed { index, height ->
+        for (index in 0 until 6) {
+            val h = animatedHeights?.get(index)?.value ?: (6f + (index % 3) * 2f)
             Box(
                 modifier = Modifier
                     .width(4.dp)
-                    .height((if (active) height.value else 6f + (index % 3) * 2f).dp)
+                    .height(h.dp)
                     .clip(RoundedCornerShape(2.dp))
                     .background(color),
             )
@@ -2953,8 +3006,10 @@ internal fun ImmersivePlaybackControls(
     onNext: () -> Unit,
     onExit: () -> Unit,
 ) {
+    val eInk = MeloraAppearance.isEInk
     Row(Modifier.clip(RoundedCornerShape(24.dp))
-        .background(LocalPlayerColors.current.cardSurface.copy(alpha = 0.92f))
+        .background(if (eInk) Color.White else LocalPlayerColors.current.cardSurface.copy(alpha = 0.92f))
+        .then(if (eInk) Modifier.border(1.dp, Color.Black, RoundedCornerShape(24.dp)) else Modifier)
         .padding(horizontal = 4.dp).testTag("immersive-playback-controls"),
         verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onPrevious) { Icon(Icons.Rounded.SkipPrevious, "上一首", tint = FullPlayerTextPrimary) }

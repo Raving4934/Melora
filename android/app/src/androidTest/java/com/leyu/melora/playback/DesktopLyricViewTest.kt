@@ -167,6 +167,33 @@ class DesktopLyricViewTest {
     }
 
     @Test
+    fun eInkChangesOnlyAtSentenceBoundariesAndRestoresWordTiming() = onMain {
+        val viewport = DesktopLyricViewport(testContext())
+        val lines = listOf(
+            LyricLine(0, "first", words = listOf(LyricWord("first", 0, 1000))),
+            LyricLine(1000, "next", words = listOf(LyricWord("next", 1000, 2000))),
+        )
+        viewport.configure(24f, 3, Gravity.CENTER, Color.WHITE)
+        viewport.submit(lines, 0, "", animate = false)
+        assertEquals(300L, viewport.nextWordChangeAt(300))
+
+        viewport.configure(24f, 3, Gravity.CENTER, Color.WHITE, eInk = true)
+        layoutViewport(viewport)
+        assertEquals(null, viewport.nextWordChangeAt(300))
+        assertEquals(null, viewport.nextWordChangeAt(900))
+        assertEquals(0, changedPixels(drawViewportAt(viewport, 300), drawViewportAt(viewport, 900)))
+        viewport.submit(lines, 1, "", animate = true)
+        layoutViewport(viewport)
+        assertEquals("next", viewport.contentDescription)
+        assertEquals(1f, row(viewport, "next").alpha, 0f)
+
+        viewport.configure(24f, 3, Gravity.CENTER, Color.WHITE)
+        layoutViewport(viewport)
+        assertEquals(1500L, viewport.nextWordChangeAt(1500))
+        assertTrue(changedPixels(drawViewportAt(viewport, 1200), drawViewportAt(viewport, 1800)) > 20)
+    }
+
+    @Test
     fun viewportReportsOneNextChangeForVisibleWordsIncludingInstantWords() = onMain {
         val viewport = DesktopLyricViewport(testContext())
         val lines = listOf(

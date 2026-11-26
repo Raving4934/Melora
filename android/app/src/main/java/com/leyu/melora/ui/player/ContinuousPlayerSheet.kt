@@ -72,6 +72,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.leyu.melora.playback.LyricTimeline
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlayMode
 import com.leyu.melora.playback.PlaybackController
@@ -81,6 +82,7 @@ import com.leyu.melora.playback.UserLibrary
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.ui.common.AccentRed
 import com.leyu.melora.ui.common.LocalPageActive
+import com.leyu.melora.ui.theme.MeloraAppearance
 import com.leyu.melora.ui.theme.MeloraCardDark
 import com.leyu.melora.ui.theme.SystemBarsAppearance
 import com.leyu.melora.ui.theme.LocalForceHideStatusBar
@@ -111,10 +113,12 @@ internal fun ContinuousPlayerSheet(
     var immersive by rememberSaveable { mutableStateOf(false) }
     val rootThemeMode by MeloraSettings.themeMode.collectAsStateWithLifecycle()
     val playerThemeMode by MeloraSettings.playerThemeMode.collectAsStateWithLifecycle()
+    val eInkMode by MeloraSettings.eInkMode.collectAsStateWithLifecycle()
     val keepScreenAwake by MeloraSettings.keepScreenAwake.collectAsStateWithLifecycle()
     val playerCoverStyle by MeloraSettings.playerCoverStyle.collectAsStateWithLifecycle()
-    val vinylRotation = rememberVinylRotation(state.playing, playerCoverStyle)
-    val playerIsDark = playerThemeMode.isDark(rootThemeMode.isDark(isSystemInDarkTheme()))
+    val playerMotionEnabled = rememberPlayerMotionEnabled(isVisible = true)
+    val vinylRotation = rememberVinylRotation(state.playing && playerMotionEnabled, playerCoverStyle)
+    val playerIsDark = !eInkMode && playerThemeMode.isDark(rootThemeMode.isDark(isSystemInDarkTheme()))
     // 迷你条属于普通页面，全屏页面主题不能改变其底色、前景和系统栏。
     val miniColors = MaterialTheme.colorScheme
     val context = LocalContext.current
@@ -122,12 +126,16 @@ internal fun ContinuousPlayerSheet(
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
     val haptics = LocalHapticFeedback.current
-    val playerMotionEnabled = rememberPlayerMotionEnabled(isVisible = true)
     val playerLyric by PlaybackController.lyric.collectAsStateWithLifecycle()
     val lyricLines = playerLyricLines(track.uid, playerLyric)
-    val lyricPosition = rememberLyricPosition(state, visible = lyricLines.isNotEmpty())
-    val displayLyricLines = remember(state.current, lyricLines) { fullPlayerLyricsOrFallback(state.current, lyricLines) }
-    val lyricFrameState = rememberLyricFrame(displayLyricLines, lyricPosition)
+    val displayLyricLines = remember(track, lyricLines) { fullPlayerLyricsOrFallback(track, lyricLines) }
+    val timeline = remember(displayLyricLines) { LyricTimeline(displayLyricLines) }
+    val lyricPosition = rememberLyricPosition(
+        state,
+        visible = eInkMode || lyricLines.isNotEmpty(),
+        eInkTimeline = timeline.takeIf { eInkMode },
+    )
+    val lyricFrameState = rememberLyricFrame(displayLyricLines, lyricPosition, timeline)
     val lyricFrame by lyricFrameState
     val sheetState = backState.sheet
     val swipeOffset = remember(track.uid) { mutableFloatStateOf(0f) }
@@ -346,6 +354,7 @@ internal fun ContinuousPlayerSheet(
                     PlayerAppearanceProvider(
                         dark = playerIsDark,
                         artworkColor = playerBackdropEntry?.representativeColor,
+                        eInk = eInkMode,
                     ) {
                         PlayerBackdrop(
                             artwork = track.artwork,
@@ -535,8 +544,8 @@ internal fun ContinuousPlayerSheet(
                                 .navigationBarsPadding(),
                         ) {
                             HorizontalDivider(
-                                thickness = 0.8.dp,
-                                color = miniColors.outlineVariant.copy(alpha = 0.45f),
+                                thickness = if (eInkMode) 1.dp else 0.8.dp,
+                                color = if (eInkMode) MeloraAppearance.cardBorderColor else miniColors.outlineVariant.copy(alpha = 0.45f),
                             )
                             Row(
                                 modifier = Modifier
@@ -759,7 +768,10 @@ internal fun ContinuousPlayerSheet(
                                 .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
                                 .navigationBarsPadding(),
                         ) {
-                            HorizontalDivider(color = miniColors.outlineVariant.copy(alpha = 0.4f))
+                            HorizontalDivider(
+                                thickness = if (eInkMode) 1.dp else Dp.Hairline,
+                                color = if (eInkMode) MeloraAppearance.cardBorderColor else miniColors.outlineVariant.copy(alpha = 0.4f),
+                            )
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()

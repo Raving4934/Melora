@@ -2053,6 +2053,7 @@ private fun DownloadRecordSheet(
                             tint = AccentRed,
                             label = "删除下载任务",
                             subtitle = "停止传输并清理未完成任务",
+                            destructive = true,
                         ) {
                             closeSheet(onDeleteFile)
                         }
@@ -2071,6 +2072,7 @@ private fun DownloadRecordSheet(
                             tint = AccentRed,
                             label = "删除下载任务",
                             subtitle = "清理暂停的下载任务",
+                            destructive = true,
                         ) {
                             closeSheet(onDeleteFile)
                         }
@@ -2098,6 +2100,7 @@ private fun DownloadRecordSheet(
                                 tint = AccentRed,
                                 label = "删除本地文件",
                                 subtitle = "删除真实音频文件并同步清理下载记录",
+                                destructive = true,
                             ) { closeSheet(onDeleteFile) }
                         }
                         SheetAction(
@@ -2122,6 +2125,7 @@ private fun DownloadRecordSheet(
                                 tint = AccentRed,
                                 label = "删除本地文件",
                                 subtitle = "删除仍保留的真实音频文件并清理记录",
+                                destructive = true,
                             ) { closeSheet(onDeleteFile) }
                         }
                         SheetAction(
@@ -2143,6 +2147,7 @@ private fun DownloadRecordSheet(
                         tint = if (isFavorite) AccentRed else BrandBlue,
                         label = if (isFavorite) "取消收藏" else "收藏到我的列表",
                         subtitle = if (isFavorite) "从「我的列表」收藏夹中移除" else "保存到「我的列表」收藏夹",
+                        destructive = isFavorite,
                     ) {
                         closeSheet {
                             UserLibrary.toggleFavorite(song)
@@ -2449,6 +2454,7 @@ internal fun PlaylistMoreSheet(
                     tint = AccentRed,
                     label = "删除歌单",
                     subtitle = "彻底删除此歌单及其收录记录",
+                    destructive = true,
                     onClick = { closeSheet { onDismiss(); onDelete() } },
                 )
             }

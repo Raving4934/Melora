@@ -73,13 +73,7 @@ internal class LyricTimeline(val lines: List<LyricLine>) {
                 index--
             }
             matches.asReversed().forEach(active::add)
-            var low = 0
-            var high = events.size
-            while (low < high) {
-                val middle = (low + high) ushr 1
-                if (events[middle].time <= timeMs) low = middle + 1 else high = middle
-            }
-            cursor = low
+            cursor = eventIndexAfter(timeMs)
             frame = snapshot(timeMs)
         } else if (cursor < events.size && events[cursor].time <= timeMs) {
             while (cursor < events.size && events[cursor].time <= timeMs) {
@@ -90,6 +84,19 @@ internal class LyricTimeline(val lines: List<LyricLine>) {
         }
         lastTime = timeMs
         return frame
+    }
+
+    fun nextBoundaryAfter(timeMs: Long): Long? =
+        events.getOrNull(eventIndexAfter(timeMs))?.time?.takeUnless { it == Long.MAX_VALUE }
+
+    private fun eventIndexAfter(timeMs: Long): Int {
+        var low = 0
+        var high = events.size
+        while (low < high) {
+            val middle = (low + high) ushr 1
+            if (events[middle].time <= timeMs) low = middle + 1 else high = middle
+        }
+        return low
     }
 
     private fun snapshot(timeMs: Long): LyricFrame {

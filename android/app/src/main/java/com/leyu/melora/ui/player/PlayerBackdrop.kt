@@ -42,6 +42,7 @@ import androidx.core.graphics.scale
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.SingletonImageLoader
 import coil3.request.CachePolicy
 import coil3.request.ImageRequest
@@ -49,6 +50,7 @@ import coil3.request.SuccessResult
 import coil3.request.allowConversionToBitmap
 import coil3.request.allowHardware
 import coil3.toBitmap
+import com.leyu.melora.playback.MeloraSettings
 import java.util.LinkedHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -146,11 +148,13 @@ internal fun rememberPlayerMotionEnabled(isVisible: Boolean): Boolean {
         }
     }
 
+    val eInkMode by MeloraSettings.eInkMode.collectAsStateWithLifecycle()
     return playerMotionEnabled(
         isVisible = isVisible,
         lifecycleResumed = lifecycleResumed.value,
         powerSaveMode = powerSaveMode.value,
         animationsEnabled = animationsEnabled.value,
+        eInkMode = eInkMode,
     )
 }
 
@@ -160,7 +164,8 @@ internal fun playerMotionEnabled(
     lifecycleResumed: Boolean,
     powerSaveMode: Boolean,
     animationsEnabled: Boolean,
-): Boolean = isVisible && lifecycleResumed && !powerSaveMode && animationsEnabled
+    eInkMode: Boolean = false,
+): Boolean = isVisible && lifecycleResumed && !powerSaveMode && animationsEnabled && !eInkMode
 
 /** API 33+ 的背景动态时钟还需满足播放中且已有可用封面；暂停不卸载 shader。 */
 internal fun playerBackdropClockEnabled(
@@ -186,6 +191,11 @@ internal fun PlayerBackdrop(
     playing: Boolean = false,
     motionEnabled: Boolean = rememberPlayerMotionEnabled(isVisible),
 ) {
+    val overlay = LocalPlayerColors.current.backdrop
+    if (overlay.artworkAlpha <= 0f) {
+        Box(modifier = modifier.background(overlay.baseColor))
+        return
+    }
     val context = LocalContext.current
     val source = remember(artwork) { normalizePlayerBackdropUri(artwork) }
     // 请求身份包含重开重试；A→B→A 时旧 A 也不能发布到新请求。
@@ -231,7 +241,6 @@ internal fun PlayerBackdrop(
         if (next !== displayedEntry) currentOnEntryReady(next)
     }
 
-    val overlay = LocalPlayerColors.current.backdrop
     val scrim = remember(overlay) { Brush.verticalGradient(*overlay.scrimStops.toTypedArray()) }
     val clockEnabled = playerBackdropClockEnabled(
         apiLevel = Build.VERSION.SDK_INT,
