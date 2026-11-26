@@ -3,12 +3,12 @@
 // https://github.com/Binaryify/NeteaseCloudMusicApi/blob/master/module/top_playlist.js
 // https://github.com/Binaryify/NeteaseCloudMusicApi/blob/master/module/playlist_detail.js
 
-import { weapi, linuxapi } from './utils/crypto'
+import { weapi } from './utils/crypto'
 import { httpFetch } from '../../request'
-import { formatPlayTime, sizeFormate, dateFormat, formatPlayCount } from '../../index'
-import musicDetailApi from './musicDetail'
+import { dateFormat, formatPlayCount } from '../../index'
+import musicDetailApi, { formatTrackDetails } from './musicDetail'
 import { eapiRequest } from './utils/index'
-import { formatSingerName, parseMusicUrl } from '../utils'
+import { parseMusicUrl } from '../utils'
 
 const queryId = query => /(?:^|&)id=(\d+)(?:&|$)/.exec(query)?.[1] || null
 
@@ -29,11 +29,26 @@ const parsePlaylistId = value => {
   return null
 }
 
+const orderPlaylistSongs = (songs, trackIds) => {
+  const byId = new Map()
+  for (let index = songs.length - 1; index >= 0; index--) {
+    const song = songs[index]
+    const id = String(song.songmid)
+    const matches = byId.get(id)
+    if (matches) matches.push(song)
+    else byId.set(id, [song])
+  }
+  const ordered = []
+  for (const id of trackIds) {
+    const song = byId.get(String(id))?.pop()
+    if (song) ordered.push(song)
+  }
+  return ordered
+}
+
 export default {
   limit_list: 30,
-  limit_song: 100000,
   successCode: 200,
-  cookie: 'MUSIC_U=',
   sortList: [
     {
       name: '最热',
@@ -70,159 +85,64 @@ export default {
     }
     return { id, cookie }
   },
-  async getListDetail(rawId, page = 1, tryNum = 0) { // 获取歌单内一页歌曲
-    if (tryNum > 2) return Promise.reject(new Error('try max num'))
-
+  async getListDetail(rawId, page = 1) {
     const { id, cookie } = await this.getListId(rawId)
-    if (cookie) this.cookie = cookie
-
-    const requestObj = httpFetch('https://music.163.com/api/linux/forward', {
-      method: 'post',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.90 Safari/537.36',
-        Cookie: this.cookie,
-      },
-      credentials: 'omit',
-      cache: 'default',
-      form: linuxapi({
-        method: 'POST',
-        url: 'https://music.163.com/api/v3/playlist/detail',
-        params: {
-          id,
-          n: this.limit_song,
-          s: 8,
-        },
-      }),
-    })
-    const { statusCode, body } = await requestObj
-    if (statusCode !== 200 || body.code !== this.successCode) return this.getListDetail(id, page, tryNum + 1)
-
-    const trackIds = Array.isArray(body.playlist?.trackIds) ? body.playlist.trackIds : []
-    const total = trackIds.length
+    const headers = { Referer: 'https://music.163.com/' }
+    if (cookie) headers.Cookie = cookie
+    const detailUrl = `https://music.163.com/api/v6/playlist/detail?id=${encodeURIComponent(id)}&n=100&s=0`
     const limit = 1000
     const start = (page - 1) * limit
-    const selectedIds = trackIds.slice(start, start + limit)
-    const tracks = Array.isArray(body.playlist?.tracks) ? body.playlist.tracks : []
-    const privileges = Array.isArray(body.privileges) ? body.privileges : []
-    let list
-    let rawCount
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const { statusCode, body } = await httpFetch(detailUrl, { headers })
+      if (statusCode !== 200 || body?.code !== this.successCode || !body.playlist) continue
 
-    if (selectedIds.length === 0) {
-      list = []
-      rawCount = 0
-    } else if (tracks.length === total && privileges.length === total) {
-      const selectedTracks = tracks.slice(start, start + limit)
-      const selectedPrivileges = privileges.slice(start, start + limit)
-      list = this.filterListDetail({ playlist: { tracks: selectedTracks }, privileges: selectedPrivileges })
-      rawCount = selectedTracks.length
-    } else {
-      try {
-        const detail = await musicDetailApi.getList(selectedIds.map(trackId => trackId.id))
-        list = detail.list
-        rawCount = detail.rawCount
-      } catch (err) {
-        console.log(err)
-        if (err.message == 'try max num') throw err
-        return this.getListDetail(id, page, tryNum + 1)
-      }
-    }
+      const { playlist } = body
+      const trackIds = Array.isArray(playlist.trackIds) ? playlist.trackIds : []
+      const total = trackIds.length
+      const selectedIds = trackIds.slice(start, start + limit).map(track => track.id)
+      const tracks = Array.isArray(playlist.tracks) ? playlist.tracks : []
+      const privileges = Array.isArray(body.privileges) ? body.privileges : []
+      let list = []
+      let rawCount = 0
 
-    return {
-      list,
-      rawCount,
-      page,
-      limit,
-      total,
-      allPage: total ? Math.ceil(total / limit) : 0,
-      source: 'wy',
-      info: {
-        play_count: formatPlayCount(body.playlist.playCount),
-        name: body.playlist.name,
-        img: body.playlist.coverImgUrl,
-        desc: body.playlist.description,
-        author: body.playlist.creator.nickname,
-      },
-    }
-  },
-  filterListDetail({ playlist: { tracks }, privileges }) {
-    // console.log(tracks, privileges)
-    const list = []
-    tracks.forEach((item, index) => {
-      const types = []
-      const _types = {}
-      let size
-      let privilege = privileges[index]
-      if (privilege.id !== item.id) privilege = privileges.find(p => p.id === item.id)
-      if (!privilege) return
-
-      if (privilege.maxBrLevel == 'hires') {
-        size = item.hr ? sizeFormate(item.hr.size) : null
-        types.push({ type: 'flac24bit', size })
-        _types.flac24bit = {
-          size,
+      // v6 返回全部 trackIds，tracks 只有预览。按轨道 ID 选页，不能用预览长度推断总数。
+      if (selectedIds.length > 0) {
+        if (tracks.length === total && privileges.length === total &&
+          selectedIds.every((trackId, index) => String(tracks[start + index]?.id) === String(trackId))) {
+          const selectedTracks = tracks.slice(start, start + limit)
+          list = formatTrackDetails(selectedTracks, privileges, { playlistOffset: start })
+          rawCount = selectedTracks.length
+        } else {
+          try {
+            const detail = await musicDetailApi.getList(selectedIds, { cookie })
+            list = orderPlaylistSongs(detail.list, selectedIds)
+            rawCount = detail.rawCount
+          } catch (error) {
+            console.log(error)
+            continue
+          }
         }
       }
-      switch (privilege.maxbr) {
-        case 999000:
-          size = null
-          types.push({ type: 'flac', size })
-          _types.flac = {
-            size,
-          }
-        case 320000:
-          size = item.h ? sizeFormate(item.h.size) : null
-          types.push({ type: '320k', size })
-          _types['320k'] = {
-            size,
-          }
-        case 192000:
-        case 128000:
-          size = item.l ? sizeFormate(item.l.size) : null
-          types.push({ type: '128k', size })
-          _types['128k'] = {
-            size,
-          }
-      }
 
-      types.reverse()
-
-      if (item.pc) {
-        list.push({
-          singer: item.pc.ar ?? '',
-          name: item.pc.sn ?? '',
-          albumName: item.pc.alb ?? '',
-          albumId: item.al?.id,
-          source: 'wy',
-          interval: formatPlayTime(item.dt / 1000),
-          songmid: item.id,
-          img: item.al?.picUrl ?? '',
-          lrc: null,
-          otherSource: null,
-          types,
-          _types,
-          typeUrl: {},
-        })
-      } else {
-        list.push({
-          singer: formatSingerName(item.ar, 'name'),
-          name: item.name ?? '',
-          albumName: item.al?.name,
-          albumId: item.al?.id,
-          source: 'wy',
-          interval: formatPlayTime(item.dt / 1000),
-          songmid: item.id,
-          img: item.al?.picUrl,
-          lrc: null,
-          otherSource: null,
-          types,
-          _types,
-          typeUrl: {},
-        })
+      return {
+        list,
+        rawCount,
+        page,
+        limit,
+        total,
+        allPage: Math.ceil(total / limit),
+        source: 'wy',
+        info: {
+          play_count: formatPlayCount(playlist.playCount),
+          name: playlist.name,
+          img: playlist.coverImgUrl,
+          desc: playlist.description,
+          author: playlist.creator?.nickname,
+        },
       }
-    })
-    return list
+    }
+    throw new Error('try max num')
   },
-
   // 获取列表数据
   getList(sortId, tagId, page, tryNum = 0) {
     if (tryNum > 2) return Promise.reject(new Error('try max num'))

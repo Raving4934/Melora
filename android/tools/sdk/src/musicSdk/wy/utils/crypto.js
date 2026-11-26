@@ -4,7 +4,6 @@ import { aesEncryptSync, aesDecryptSync, rsaEncryptSync, AES_MODE, RSA_PADDING }
 import { toMD5 } from '../../utils'
 const iv = btoa('0102030405060708')
 const presetKey = btoa('0CoJUm6Qyw8W8jud')
-const linuxapiKey = btoa('rFgB&h#%2?^eDg:Q')
 // const base62 = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
 const publicKey = '-----BEGIN PUBLIC KEY-----\nMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDgtQn2JZ34ZC28NWYpAUd98iZ37BUrX/aKzmFbt7clFSs6sXqHauqKWqdtLkF2KexO40H1YTX8z2lSgBBOAxLsvaklV8k4cBFK9snQXE9/DDaFt6Rr7iVZMldczhC0JNgTz+SHXT6CBHuX3e9SdB1Ua44oncaTWz7OBGLbCiK45wIDAQAB\n-----END PUBLIC KEY-----'
 const eapiKey = btoa('e82ckenh8dichen8')
@@ -39,14 +38,6 @@ export const weapi = object => {
     encSecKey: rsaEncrypt(Buffer.from(secretKey).reverse(), publicKey).toString('hex'),
   }
 }
-
-export const linuxapi = object => {
-  const text = JSON.stringify(object)
-  return {
-    eparams: Buffer.from(aesEncrypt(Buffer.from(text).toString('base64'), AES_MODE.ECB_128_NoPadding, linuxapiKey, ''), 'base64').toString('hex').toUpperCase(),
-  }
-}
-
 
 export const eapi = (url, object) => {
   const text = typeof object === 'object' ? JSON.stringify(object) : object

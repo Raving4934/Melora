@@ -85,18 +85,187 @@ test('Migu desktop, mobile and current hash links reuse one detail path', async 
   assert.deepEqual(requests, [['42', 2], ['42', 2], ['42', 2]])
 })
 
-test('Netease complete track data still slices pages over 1000 rather than repeating page one', async () => {
-  const tracks = Array.from({ length: 2005 }, (_, i) => ({ id: i + 1 }))
-  const api = await platform('wy', () => ({ code: 200,
-    playlist: { trackIds: tracks, tracks, name: 'fixture', creator: {} }, privileges: tracks }))
-  api.filterListDetail = body => body.playlist.tracks
+const neteaseTrack = id => ({ id, name: `歌曲 ${id}`, dt: 210_000 })
+const neteasePrivilege = ({ id }) => ({ id, maxbr: 128000 })
+const neteasePlaylist = (tracks, preview = tracks) => ({
+  code: 200,
+  playlist: {
+    trackIds: tracks.map(({ id }) => ({ id })),
+    tracks: preview,
+    name: 'fixture',
+    coverImgUrl: 'https://example.test/cover.jpg',
+    creator: { nickname: 'fixture author' },
+  },
+  privileges: preview.map(neteasePrivilege),
+})
+const neteaseDetailPath = '/api/v6/playlist/detail'
+const neteaseSongPath = '/weapi/v3/song/detail'
+
+test('Netease v6 complete metadata preserves the page size and final partial page', async () => {
+  const tracks = Array.from({ length: 2005 }, (_, i) => neteaseTrack(i + 1))
+  const requests = []
+  const api = await platform('wy', request => {
+    requests.push(request)
+    return neteasePlaylist(tracks)
+  })
   const first = await api.getListDetail('42', 1)
   const third = await api.getListDetail('42', 3)
+  const afterLastPage = await api.getListDetail('42', 4)
+  assert.equal(requests.length, 3)
+  for (const request of requests) {
+    assert.equal(request.method, 'GET')
+    assert.equal(request.url, 'https://music.163.com/api/v6/playlist/detail?id=42&n=100&s=0')
+    assert.equal(request.headers.Referer, 'https://music.163.com/')
+    assert.equal(request.headers.Cookie, undefined)
+  }
   assert.equal(first.list.length, 1000)
   assert.equal(third.list.length, 5)
-  assert.equal(third.list[0].id, 2001)
+  assert.equal(third.list[0].songmid, 2001)
   assert.equal(third.total, 2005)
   assert.equal(third.allPage, 3)
+  assert.equal(third.rawCount, 5)
+  assert.equal(third.info.name, 'fixture')
+  assert.equal(third.info.img, 'https://example.test/cover.jpg')
+  assert.equal(afterLastPage.rawCount, 0)
+  assert.deepEqual(afterLastPage.list, [])
+})
+
+test('Netease v6 matches complete privileges by song ID across page boundaries', async () => {
+  const tracks = Array.from({ length: 1002 }, (_, i) => neteaseTrack(i + 1))
+  const response = neteasePlaylist(tracks)
+  const privileges = response.privileges
+  privileges[1000].maxbr = 999000
+  const firstPrivilege = privileges[0]
+  privileges[0] = privileges[1000]
+  privileges[1000] = firstPrivilege
+  const api = await platform('wy', request => {
+    assert.equal(new URL(request.url).pathname, neteaseDetailPath)
+    return response
+  })
+
+  const result = await api.getListDetail('42', 2)
+  assert.deepEqual(result.list.map(song => song.songmid), [1001, 1002])
+  assert.deepEqual(result.list[0].types.map(entry => entry.type), ['128k', '320k', 'flac'])
+  assert.equal(result.rawCount, 2)
+})
+
+test('Netease v6 preview and song detail keep their respective artist and quality metadata', async () => {
+  const tracks = [
+    {
+      ...neteaseTrack(1),
+      ar: [{ name: 'A &amp; B' }, { name: '' }, { name: 'C' }],
+      al: { id: 7, name: 'Album', picUrl: 'https://example.test/album.jpg' },
+      l: { size: 1024 },
+      h: { size: 2048 },
+      sq: { size: 4096 },
+      hr: { size: 8192 },
+    },
+    {
+      ...neteaseTrack(2),
+      pc: { ar: 'Cloud artist', sn: 'Cloud track', alb: 'Cloud album' },
+    },
+  ]
+  const privileges = [
+    { id: 1, maxbr: 999000, maxBrLevel: 'hires' },
+    { id: 2, maxbr: 192000 },
+  ]
+  const api = await platform('wy', request => {
+    const url = new URL(request.url)
+    if (url.pathname === neteaseDetailPath) {
+      if (url.searchParams.get('id') === '42') return { ...neteasePlaylist(tracks), privileges }
+      return neteasePlaylist(tracks, [])
+    }
+    assert.equal(url.pathname, neteaseSongPath)
+    return { code: 200, songs: tracks, privileges }
+  })
+
+  const preview = await api.getListDetail('42')
+  const completed = await api.getListDetail('43')
+  const sizes = ['1.00 KiB', '2.00 KiB', '4.00 KiB', '8.00 KiB']
+  assert.equal(preview.list[0].singer, 'A & B、C')
+  assert.equal(completed.list[0].singer, 'A &amp; B、、C')
+  assert.deepEqual(preview.list[0].types.map(entry => entry.size), [sizes[0], sizes[1], null, sizes[3]])
+  assert.deepEqual(completed.list[0].types.map(entry => entry.size), sizes)
+  assert.deepEqual(preview.list[0]._types.flac, { size: null })
+  assert.deepEqual(completed.list[0]._types.flac, { size: sizes[2] })
+  assert.deepEqual(preview.list[1], completed.list[1])
+  assert.equal(completed.list[1].name, 'Cloud track')
+  assert.equal(completed.list[1].albumName, 'Cloud album')
+  assert.equal(completed.list[1].img, '')
+})
+
+test('Netease v6 preview completes only the requested page in playlist order and counts filtered songs', async () => {
+  const tracks = Array.from({ length: 1003 }, (_, i) => neteaseTrack(i + 1))
+  const requests = []
+  const requestedIds = []
+  const api = await platform('wy', request => {
+    const path = new URL(request.url).pathname
+    requests.push(path)
+    if (path === neteaseDetailPath) return neteasePlaylist(tracks, tracks.slice(0, 100))
+    assert.equal(path, neteaseSongPath)
+    const songs = [tracks[1002], tracks[1000], tracks[1001]]
+    return { code: 200, songs, privileges: [songs[1], songs[0]].map(neteasePrivilege) }
+  })
+  const native = globalThis.__lxNative
+  const aes = native.aes
+  native.aes = (action, mode, key, iv, payload) => {
+    const input = Buffer.from(payload, 'base64').toString()
+    if (action === 'encrypt' && input.startsWith('{')) {
+      const { ids } = JSON.parse(input)
+      requestedIds.push(...JSON.parse(ids))
+    }
+    return aes(action, mode, key, iv, payload)
+  }
+
+  const second = await api.getListDetail('42', 2).finally(() => { native.aes = aes })
+  assert.deepEqual(requests, [neteaseDetailPath, neteaseSongPath])
+  assert.deepEqual(requestedIds, [1001, 1002, 1003])
+  assert.deepEqual(second.list.map(song => song.songmid), [1001, 1003])
+  assert.equal(second.rawCount, 3)
+  assert.equal(second.total, 1003)
+  assert.equal(second.page, 2)
+  assert.equal(second.limit, 1000)
+  assert.equal(second.allPage, 2)
+})
+
+test('Netease provider retries authorized detail and song completion without leaking the cookie', async () => {
+  const tracks = [neteaseTrack(1), neteaseTrack(2)]
+  const requests = []
+  let detailCalls = 0
+  let songCalls = 0
+  const api = await platform('wy', request => {
+    const url = new URL(request.url)
+    requests.push([url.pathname, url.searchParams.get('id'), request.headers.Cookie])
+    if (url.pathname === neteaseDetailPath) {
+      return ++detailCalls === 1 ? { code: 502 } : neteasePlaylist(tracks, [])
+    }
+    assert.equal(url.pathname, neteaseSongPath)
+    return ++songCalls === 1 ? { code: 502 } : { code: 200, songs: tracks, privileges: tracks.map(neteasePrivilege) }
+  })
+
+  const authorized = await api.getListDetail('https://music.163.com/#/playlist?id=42###test-token')
+  assert.equal(authorized.list.length, 2)
+  const publicResult = await api.getListDetail('42')
+  assert.equal(publicResult.list.length, 2)
+  assert.deepEqual(requests, [
+    [neteaseDetailPath, '42', 'MUSIC_U=test-token'],
+    [neteaseDetailPath, '42', 'MUSIC_U=test-token'],
+    [neteaseSongPath, null, 'MUSIC_U=test-token'],
+    [neteaseDetailPath, '42', 'MUSIC_U=test-token'],
+    [neteaseSongPath, null, 'MUSIC_U=test-token'],
+    [neteaseDetailPath, '42', undefined],
+    [neteaseSongPath, null, undefined],
+  ])
+})
+
+test('Netease detail stops after three rejected responses', async () => {
+  const requests = []
+  const api = await platform('wy', request => {
+    requests.push(new URL(request.url).pathname)
+    return { code: 405 }
+  })
+  await assert.rejects(api.getListDetail('42'), /^Error: try max num$/)
+  assert.deepEqual(requests, Array(3).fill(neteaseDetailPath))
 })
 
 test('Kugou personal collection uses a stable 300-item page size and propagates the cursor', async () => {

@@ -220,37 +220,6 @@ const parseTools = {
   },
 }
 
-
-// https://github.com/Binaryify/NeteaseCloudMusicApi/pull/1523/files
-// export default songmid => {
-//   let requestObj = httpFetch('https://music.163.com/api/linux/forward', {
-//     method: 'post',
-//     'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.90 Safari/537.36',
-//     form: linuxapi({
-//       method: 'POST',
-//       url: 'https://music.163.com/api/song/lyric?_nmclfl=1',
-//       params: {
-//         id: songmid,
-//         tv: -1,
-//         lv: -1,
-//         rv: -1,
-//         kv: -1,
-//       },
-//     }),
-//   })
-//   requestObj = requestObj.then(({ body }) => {
-//     if (body.code !== 200 || !body?.lrc?.lyric) return Promise.reject(new Error('Get lyric failed'))
-//     // console.log(body)
-//     return {
-//       lyric: body.lrc.lyric,
-//       tlyric: body.tlyric?.lyric ?? '',
-//       rlyric: body.romalrc?.lyric ?? '',
-//       // lxlyric: parseLyric(body.klyric.lyric),
-//     }
-//   })
-//   return requestObj
-// }
-
 // https://github.com/lyswhut/lx-music-mobile/issues/370
 const fixTimeLabel = (lrc, tlrc, romalrc) => {
   if (lrc) {

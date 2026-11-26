@@ -13635,7 +13635,6 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
   // src/musicSdk/wy/utils/crypto.js
   var iv = btoa("0102030405060708");
   var presetKey = btoa("0CoJUm6Qyw8W8jud");
-  var linuxapiKey = btoa("rFgB&h#%2?^eDg:Q");
   var publicKey = "-----BEGIN PUBLIC KEY-----\nMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDgtQn2JZ34ZC28NWYpAUd98iZ37BUrX/aKzmFbt7clFSs6sXqHauqKWqdtLkF2KexO40H1YTX8z2lSgBBOAxLsvaklV8k4cBFK9snQXE9/DDaFt6Rr7iVZMldczhC0JNgTz+SHXT6CBHuX3e9SdB1Ua44oncaTWz7OBGLbCiK45wIDAQAB\n-----END PUBLIC KEY-----";
   var eapiKey = btoa("e82ckenh8dichen8");
   var aesEncrypt = (b64, mode, key, iv2) => {
@@ -13653,12 +13652,6 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
     return {
       params: aesEncrypt(btoa(aesEncrypt(Buffer.from(text).toString("base64"), AES_MODE.CBC_128_PKCS7Padding, presetKey, iv)), AES_MODE.CBC_128_PKCS7Padding, btoa(secretKey), iv),
       encSecKey: rsaEncrypt(Buffer.from(secretKey).reverse(), publicKey).toString("hex")
-    };
-  };
-  var linuxapi = (object) => {
-    const text = JSON.stringify(object);
-    return {
-      eparams: Buffer.from(aesEncrypt(Buffer.from(text).toString("base64"), AES_MODE.ECB_128_NoPadding, linuxapiKey, ""), "base64").toString("hex").toUpperCase()
     };
   };
   var eapi = (url, object) => {
@@ -13783,105 +13776,74 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
   };
 
   // src/musicSdk/wy/musicDetail.js
+  var formatTrackDetails = (songs, privileges, { playlistOffset = null } = {}) => {
+    const fromPlaylist = playlistOffset !== null;
+    const offset = playlistOffset ?? 0;
+    const privilegeById = /* @__PURE__ */ new Map();
+    for (const privilege of privileges) {
+      if (privilege && !privilegeById.has(privilege.id)) privilegeById.set(privilege.id, privilege);
+    }
+    const list = [];
+    for (const [index, item] of songs.entries()) {
+      const alignedPrivilege = privileges[offset + index];
+      const privilege = alignedPrivilege?.id === item.id ? alignedPrivilege : privilegeById.get(item.id);
+      if (!privilege) continue;
+      const types = [];
+      if (privilege.maxBrLevel === "hires") {
+        types.push({ type: "flac24bit", size: item.hr ? sizeFormate(item.hr.size) : null });
+      }
+      switch (privilege.maxbr) {
+        case 999e3:
+          types.push({ type: "flac", size: !fromPlaylist && item.sq ? sizeFormate(item.sq.size) : null });
+        case 32e4:
+          types.push({ type: "320k", size: item.h ? sizeFormate(item.h.size) : null });
+        case 192e3:
+        case 128e3:
+          types.push({ type: "128k", size: item.l ? sizeFormate(item.l.size) : null });
+      }
+      const _types = {};
+      for (const { type, size } of types) _types[type] = { size };
+      const cloud = item.pc;
+      let singer;
+      if (cloud) singer = cloud.ar ?? "";
+      else if (fromPlaylist) singer = formatSingerName(item.ar);
+      else singer = item.ar?.map((artist) => artist.name).join("、") ?? "";
+      list.push({
+        singer,
+        name: cloud ? cloud.sn ?? "" : item.name ?? "",
+        albumName: cloud ? cloud.alb ?? "" : item.al?.name,
+        albumId: item.al?.id,
+        source: "wy",
+        interval: formatPlayTime(item.dt / 1e3),
+        songmid: item.id,
+        img: cloud ? item.al?.picUrl ?? "" : item.al?.picUrl,
+        lrc: null,
+        otherSource: null,
+        types: types.reverse(),
+        _types,
+        typeUrl: {}
+      });
+    }
+    return list;
+  };
   var musicDetail_default = {
-    getSinger(singers) {
-      let arr = [];
-      singers?.forEach((singer) => {
-        arr.push(singer.name);
-      });
-      return arr.join("、");
-    },
-    filterList({ songs, privileges }) {
-      const list = [];
-      songs.forEach((item, index) => {
-        const types = [];
-        const _types = {};
-        let size;
-        let privilege = privileges[index];
-        if (privilege.id !== item.id) privilege = privileges.find((p) => p.id === item.id);
-        if (!privilege) return;
-        if (privilege.maxBrLevel == "hires") {
-          size = item.hr ? sizeFormate(item.hr.size) : null;
-          types.push({ type: "flac24bit", size });
-          _types.flac24bit = {
-            size
-          };
-        }
-        switch (privilege.maxbr) {
-          case 999e3:
-            size = item.sq ? sizeFormate(item.sq.size) : null;
-            types.push({ type: "flac", size });
-            _types.flac = {
-              size
-            };
-          case 32e4:
-            size = item.h ? sizeFormate(item.h.size) : null;
-            types.push({ type: "320k", size });
-            _types["320k"] = {
-              size
-            };
-          case 192e3:
-          case 128e3:
-            size = item.l ? sizeFormate(item.l.size) : null;
-            types.push({ type: "128k", size });
-            _types["128k"] = {
-              size
-            };
-        }
-        types.reverse();
-        if (item.pc) {
-          list.push({
-            singer: item.pc.ar ?? "",
-            name: item.pc.sn ?? "",
-            albumName: item.pc.alb ?? "",
-            albumId: item.al?.id,
-            source: "wy",
-            interval: formatPlayTime(item.dt / 1e3),
-            songmid: item.id,
-            img: item.al?.picUrl ?? "",
-            lrc: null,
-            otherSource: null,
-            types,
-            _types,
-            typeUrl: {}
-          });
-        } else {
-          list.push({
-            singer: this.getSinger(item.ar),
-            name: item.name ?? "",
-            albumName: item.al?.name,
-            albumId: item.al?.id,
-            source: "wy",
-            interval: formatPlayTime(item.dt / 1e3),
-            songmid: item.id,
-            img: item.al?.picUrl,
-            lrc: null,
-            otherSource: null,
-            types,
-            _types,
-            typeUrl: {}
-          });
-        }
-      });
-      return list;
-    },
-    async getList(ids = [], retryNum = 0) {
-      if (retryNum > 2) return Promise.reject(new Error("try max num"));
-      const requestObj = httpFetch("https://music.163.com/weapi/v3/song/detail", {
+    async getList(ids = [], { cookie } = {}) {
+      const { body, statusCode } = await httpFetch("https://music.163.com/weapi/v3/song/detail", {
         method: "post",
         headers: {
           "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.90 Safari/537.36",
-          origin: "https://music.163.com"
+          origin: "https://music.163.com",
+          ...cookie && { Cookie: cookie }
         },
         form: weapi({
           c: "[" + ids.map((id) => '{"id":' + id + "}").join(",") + "]",
           ids: "[" + ids.join(",") + "]"
         })
       });
-      const { body, statusCode } = await requestObj;
-      if (statusCode != 200 || body.code !== 200) throw new Error("获取歌曲详情失败");
-      const rawCount = Array.isArray(body.songs) ? body.songs.length : 0;
-      return { source: "wy", list: this.filterList(body), rawCount };
+      if (statusCode !== 200 || body?.code !== 200 || !Array.isArray(body.songs)) throw new Error("获取歌曲详情失败");
+      const { songs } = body;
+      const privileges = Array.isArray(body.privileges) ? body.privileges : [];
+      return { source: "wy", list: formatTrackDetails(songs, privileges), rawCount: songs.length };
     }
   };
 
@@ -13902,11 +13864,25 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
     }
     return null;
   };
+  var orderPlaylistSongs = (songs, trackIds) => {
+    const byId = /* @__PURE__ */ new Map();
+    for (let index = songs.length - 1; index >= 0; index--) {
+      const song = songs[index];
+      const id = String(song.songmid);
+      const matches = byId.get(id);
+      if (matches) matches.push(song);
+      else byId.set(id, [song]);
+    }
+    const ordered = [];
+    for (const id of trackIds) {
+      const song = byId.get(String(id))?.pop();
+      if (song) ordered.push(song);
+    }
+    return ordered;
+  };
   var songList_default4 = {
     limit_list: 30,
-    limit_song: 1e5,
     successCode: 200,
-    cookie: "MUSIC_U=",
     sortList: [
       {
         name: "最热",
@@ -13940,148 +13916,58 @@ ${lrclist ? lrclist.map((l) => `[${l.time}]${l.text}
       }
       return { id, cookie };
     },
-    async getListDetail(rawId, page = 1, tryNum = 0) {
-      if (tryNum > 2) return Promise.reject(new Error("try max num"));
+    async getListDetail(rawId, page = 1) {
       const { id, cookie } = await this.getListId(rawId);
-      if (cookie) this.cookie = cookie;
-      const requestObj = httpFetch("https://music.163.com/api/linux/forward", {
-        method: "post",
-        headers: {
-          "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.90 Safari/537.36",
-          Cookie: this.cookie
-        },
-        credentials: "omit",
-        cache: "default",
-        form: linuxapi({
-          method: "POST",
-          url: "https://music.163.com/api/v3/playlist/detail",
-          params: {
-            id,
-            n: this.limit_song,
-            s: 8
-          }
-        })
-      });
-      const { statusCode, body } = await requestObj;
-      if (statusCode !== 200 || body.code !== this.successCode) return this.getListDetail(id, page, tryNum + 1);
-      const trackIds = Array.isArray(body.playlist?.trackIds) ? body.playlist.trackIds : [];
-      const total = trackIds.length;
+      const headers = { Referer: "https://music.163.com/" };
+      if (cookie) headers.Cookie = cookie;
+      const detailUrl = `https://music.163.com/api/v6/playlist/detail?id=${encodeURIComponent(id)}&n=100&s=0`;
       const limit = 1e3;
       const start = (page - 1) * limit;
-      const selectedIds = trackIds.slice(start, start + limit);
-      const tracks = Array.isArray(body.playlist?.tracks) ? body.playlist.tracks : [];
-      const privileges = Array.isArray(body.privileges) ? body.privileges : [];
-      let list;
-      let rawCount;
-      if (selectedIds.length === 0) {
-        list = [];
-        rawCount = 0;
-      } else if (tracks.length === total && privileges.length === total) {
-        const selectedTracks = tracks.slice(start, start + limit);
-        const selectedPrivileges = privileges.slice(start, start + limit);
-        list = this.filterListDetail({ playlist: { tracks: selectedTracks }, privileges: selectedPrivileges });
-        rawCount = selectedTracks.length;
-      } else {
-        try {
-          const detail = await musicDetail_default.getList(selectedIds.map((trackId) => trackId.id));
-          list = detail.list;
-          rawCount = detail.rawCount;
-        } catch (err) {
-          console.log(err);
-          if (err.message == "try max num") throw err;
-          return this.getListDetail(id, page, tryNum + 1);
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const { statusCode, body } = await httpFetch(detailUrl, { headers });
+        if (statusCode !== 200 || body?.code !== this.successCode || !body.playlist) continue;
+        const { playlist } = body;
+        const trackIds = Array.isArray(playlist.trackIds) ? playlist.trackIds : [];
+        const total = trackIds.length;
+        const selectedIds = trackIds.slice(start, start + limit).map((track) => track.id);
+        const tracks = Array.isArray(playlist.tracks) ? playlist.tracks : [];
+        const privileges = Array.isArray(body.privileges) ? body.privileges : [];
+        let list = [];
+        let rawCount = 0;
+        if (selectedIds.length > 0) {
+          if (tracks.length === total && privileges.length === total && selectedIds.every((trackId, index) => String(tracks[start + index]?.id) === String(trackId))) {
+            const selectedTracks = tracks.slice(start, start + limit);
+            list = formatTrackDetails(selectedTracks, privileges, { playlistOffset: start });
+            rawCount = selectedTracks.length;
+          } else {
+            try {
+              const detail = await musicDetail_default.getList(selectedIds, { cookie });
+              list = orderPlaylistSongs(detail.list, selectedIds);
+              rawCount = detail.rawCount;
+            } catch (error) {
+              console.log(error);
+              continue;
+            }
+          }
         }
+        return {
+          list,
+          rawCount,
+          page,
+          limit,
+          total,
+          allPage: Math.ceil(total / limit),
+          source: "wy",
+          info: {
+            play_count: formatPlayCount(playlist.playCount),
+            name: playlist.name,
+            img: playlist.coverImgUrl,
+            desc: playlist.description,
+            author: playlist.creator?.nickname
+          }
+        };
       }
-      return {
-        list,
-        rawCount,
-        page,
-        limit,
-        total,
-        allPage: total ? Math.ceil(total / limit) : 0,
-        source: "wy",
-        info: {
-          play_count: formatPlayCount(body.playlist.playCount),
-          name: body.playlist.name,
-          img: body.playlist.coverImgUrl,
-          desc: body.playlist.description,
-          author: body.playlist.creator.nickname
-        }
-      };
-    },
-    filterListDetail({ playlist: { tracks }, privileges }) {
-      const list = [];
-      tracks.forEach((item, index) => {
-        const types = [];
-        const _types = {};
-        let size;
-        let privilege = privileges[index];
-        if (privilege.id !== item.id) privilege = privileges.find((p) => p.id === item.id);
-        if (!privilege) return;
-        if (privilege.maxBrLevel == "hires") {
-          size = item.hr ? sizeFormate(item.hr.size) : null;
-          types.push({ type: "flac24bit", size });
-          _types.flac24bit = {
-            size
-          };
-        }
-        switch (privilege.maxbr) {
-          case 999e3:
-            size = null;
-            types.push({ type: "flac", size });
-            _types.flac = {
-              size
-            };
-          case 32e4:
-            size = item.h ? sizeFormate(item.h.size) : null;
-            types.push({ type: "320k", size });
-            _types["320k"] = {
-              size
-            };
-          case 192e3:
-          case 128e3:
-            size = item.l ? sizeFormate(item.l.size) : null;
-            types.push({ type: "128k", size });
-            _types["128k"] = {
-              size
-            };
-        }
-        types.reverse();
-        if (item.pc) {
-          list.push({
-            singer: item.pc.ar ?? "",
-            name: item.pc.sn ?? "",
-            albumName: item.pc.alb ?? "",
-            albumId: item.al?.id,
-            source: "wy",
-            interval: formatPlayTime(item.dt / 1e3),
-            songmid: item.id,
-            img: item.al?.picUrl ?? "",
-            lrc: null,
-            otherSource: null,
-            types,
-            _types,
-            typeUrl: {}
-          });
-        } else {
-          list.push({
-            singer: formatSingerName(item.ar, "name"),
-            name: item.name ?? "",
-            albumName: item.al?.name,
-            albumId: item.al?.id,
-            source: "wy",
-            interval: formatPlayTime(item.dt / 1e3),
-            songmid: item.id,
-            img: item.al?.picUrl,
-            lrc: null,
-            otherSource: null,
-            types,
-            _types,
-            typeUrl: {}
-          });
-        }
-      });
-      return list;
+      throw new Error("try max num");
     },
     // 获取列表数据
     getList(sortId, tagId, page, tryNum = 0) {
