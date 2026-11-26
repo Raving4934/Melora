@@ -23,8 +23,8 @@ android {
         applicationId = "com.leyu.melora"
         minSdk = 26
         targetSdk = 37
-        versionCode = 26
-        versionName = "0.2.6"
+        versionCode = 27
+        versionName = "0.2.7"
         testInstrumentationRunner = "com.leyu.melora.IsolatedTestRunner"
     }
 
