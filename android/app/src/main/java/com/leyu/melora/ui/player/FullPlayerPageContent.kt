@@ -154,7 +154,6 @@ import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.PagerState
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -384,9 +383,10 @@ internal fun FullPlayerPageContent(
         val landscapeImmersivePager = twoPanes && immersive
         val splitTwoPages = expandedNormal || compactLandscapeNormal
         val pages = remember(splitTwoPages) { if (splitTwoPages) listOf(2, 0) else listOf(0, 1, 2) }
-        val coverPagerState = key(splitTwoPages) {
+        // 只保存 selectedPage；分页索引与页数只在当前布局中有效。
+        val coverPagerState = remember(pages) {
             val targetPage = if (landscapeImmersivePager) 1 else selectedPage
-            rememberPagerState(initialPage = pages.indexOf(targetPage).coerceAtLeast(0), pageCount = { pages.size })
+            PagerState(currentPage = pages.indexOf(targetPage).coerceAtLeast(0), pageCount = { pages.size })
         }
         val currentPage = pages[coverPagerState.currentPage]
         val compactQueueOpen = compactLandscape && queuePagerState.targetPage == 1
@@ -620,36 +620,27 @@ internal fun FullPlayerPageContent(
             )
         }
         val cover = remember { movableContentOf { currentCover() } }
-        val paneContent: @Composable (Modifier) -> Unit = { paneModifier ->
-            HorizontalPager(
-                state = coverPagerState,
-                flingBehavior = PagerDefaults.flingBehavior(coverPagerState, snapAnimationSpec = PlayerPageSnapSpec),
-                modifier = paneModifier.testTag("player-pages"),
-                // PageSize.Fill必须取得完整视口，非零contentPadding会让相邻页在静止时露出。
-                contentPadding = PaddingValues(0.dp),
-                key = { pages[it] },
-            ) { index ->
-                val pageIndex = pages[index]
-                val selfInsetPage = (pageIndex == 2 && stageLyricsMode) || (pageIndex == 1 && expandedLayout && immersive)
-                val pageInsetsModifier = if (landscapeImmersivePager && !selfInsetPage) {
-                    Modifier.windowInsetsPadding(playerInsets)
-                } else Modifier
-                // 先按整页边界裁切，再留正文内距：不串页，也不在屏幕内侧提前硬切。
+        val drawPage by rememberUpdatedState<@Composable (Int) -> Unit> { pageIndex ->
+            val selfInsetPage = (pageIndex == 2 && stageLyricsMode) || (pageIndex == 1 && expandedLayout && immersive)
+            val pageInsetsModifier = if (landscapeImmersivePager && !selfInsetPage) {
+                Modifier.windowInsetsPadding(playerInsets)
+            } else Modifier
+            // 先按整页边界裁切，再留正文内距：不串页，也不在屏幕内侧提前硬切。
+            Box(
+                Modifier.fillMaxSize().testTag("player-page-$pageIndex").clipToBounds()
+                    .then(if (landscapeImmersivePager && pageIndex == 1) Modifier.onPlaced { anchors.page = it } else Modifier),
+                contentAlignment = Alignment.TopCenter,
+            ) {
                 Box(
-                    Modifier.fillMaxSize().testTag("player-page-$pageIndex").clipToBounds()
-                        .then(if (landscapeImmersivePager && pageIndex == 1) Modifier.onPlaced { anchors.page = it } else Modifier),
-                    contentAlignment = Alignment.TopCenter,
+                    Modifier.fillMaxHeight().then(portraitStageModifier).fillMaxWidth()
+                        .then(pageInsetsModifier)
+                        .padding(if (selfInsetPage) PaddingValues(0.dp) else pagePadding),
                 ) {
-                    Box(
-                        Modifier.fillMaxHeight().then(portraitStageModifier).fillMaxWidth()
-                            .then(pageInsetsModifier)
-                            .padding(if (selfInsetPage) PaddingValues(0.dp) else pagePadding),
-                    ) {
-                        when (pageIndex) {
-                            0 -> AudioInfoPage(
-                                immersive = immersive,
-                                compactSpacing = compactLandscapeNormal,
-                                largePortrait = largePortrait,
+                    when (pageIndex) {
+                        0 -> AudioInfoPage(
+                            immersive = immersive,
+                            compactSpacing = compactLandscapeNormal,
+                            largePortrait = largePortrait,
                             track = track,
                             audioSpec = state.audioSpec,
                             sourceLabel = playbackSourceLabel(state, autoSwitch),
@@ -745,16 +736,19 @@ internal fun FullPlayerPageContent(
                             compactLandscape = compactLandscapeNormal,
                             lyricsTestTag = if (expandedLayout && immersive) "player-stage-lyrics" else "player-full-lyrics",
                         )
-                        }
                     }
                 }
             }
-
         }
-        // 阅读区可移动；两页和三页布局各自持有与 PagerState 匹配的页面内容和 key。
-        val pane = key(coverPagerState) {
-            val currentPane by rememberUpdatedState(paneContent)
-            remember { movableContentOf<Modifier> { currentPane(it) } }
+        // 同一分页实例始终使用自己的页数和索引映射；页面正文按业务 ID 更新。
+        val pane = remember(coverPagerState) {
+            movableContentOf<Modifier> { paneModifier ->
+                HorizontalPager(
+                    state = coverPagerState,
+                    flingBehavior = PagerDefaults.flingBehavior(coverPagerState, snapAnimationSpec = PlayerPageSnapSpec),
+                    modifier = paneModifier.testTag("player-pages"),
+                ) { index -> drawPage(pages[index]) }
+            }
         }
         val transport: @Composable () -> Unit = {
             // 曲目切换必须一起销毁 Slider 内部拖动和预览，不能只清空外部数值。
