@@ -359,7 +359,8 @@ internal fun SystemBarsVisibility(forceHideStatusBar: Boolean = LocalForceHideSt
     DisposableEffect(window, view, hideStatusBar, hideNavBar) {
         val controller = WindowCompat.getInsetsController(window, window.decorView)
         fun applyVisibility() {
-            controller.systemBarsBehavior = if (hideStatusBar || hideNavBar) {
+            // 隐藏导航栏时用默认行为，让系统仍能把侧边滑动交给返回手势。
+            controller.systemBarsBehavior = if (hideStatusBar && !hideNavBar) {
                 WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             } else WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
             if (hideStatusBar) controller.hide(WindowInsetsCompat.Type.statusBars())

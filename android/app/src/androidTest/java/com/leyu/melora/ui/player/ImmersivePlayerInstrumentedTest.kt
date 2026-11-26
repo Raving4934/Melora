@@ -4,6 +4,7 @@ import com.leyu.melora.ui.awaitStable
 import com.leyu.melora.ui.boundsInSameFrame
 
 import android.view.View
+import android.view.WindowInsetsController
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -159,6 +160,26 @@ class ImmersivePlayerInstrumentedTest {
                 !MeloraSettings.hideStatusBar.value && kotlin.math.abs(normal.height - restored.height) <= 1f
         }
         assertEquals(normal.height, compose.onNodeWithTag("player-pages").fetchSemanticsNode().boundsInRoot.height, 1f)
+    }
+
+    @SdkSuppress(minSdkVersion = 31)
+    @Test
+    fun immersiveNavigationAllowsBackWhileSystemBarsAreHidden() {
+        showPlayer()
+        compose.runOnIdle { immersive.value = true }
+        compose.waitUntil(5_000) {
+            val insets = ViewCompat.getRootWindowInsets(view)
+            insets != null && !insets.isVisible(WindowInsetsCompat.Type.statusBars()) &&
+                !insets.isVisible(WindowInsetsCompat.Type.navigationBars())
+        }
+        compose.runOnIdle {
+            assertEquals(WindowInsetsController.BEHAVIOR_DEFAULT, view.windowInsetsController?.systemBarsBehavior)
+        }
+        Espresso.pressBack()
+        compose.runOnIdle { assertFalse(immersive.value) }
+        compose.waitUntil(5_000) {
+            ViewCompat.getRootWindowInsets(view)?.isVisible(WindowInsetsCompat.Type.navigationBars()) == true
+        }
     }
 
     @Test
