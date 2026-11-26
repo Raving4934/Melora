@@ -303,14 +303,16 @@ class ImmersiveLyricsTest {
             assertTrue(!textLayout(romanization).hasVisualOverflow)
             composeRule.onNodeWithText(romanization).performScrollTo().assertIsDisplayed()
 
+            val initialProgress = 2_000f / durationMs
             composeRule.runOnIdle {
-                val initialProgress = 2_000f / durationMs
                 assertEquals(initialProgress, progress.value, 0.001f)
                 position.longValue = 2_999L
+            }
+            composeRule.runOnIdle {
                 assertEquals(initialProgress, progress.value, 0.001f)
                 position.longValue = durationMs
-                assertEquals(1f, progress.value, 0.001f)
             }
+            composeRule.runOnIdle { assertEquals(1f, progress.value, 0.001f) }
         } finally {
             MeloraAppearance.isEInk = previousMode
         }
