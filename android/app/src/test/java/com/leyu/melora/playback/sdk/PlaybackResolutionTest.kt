@@ -52,6 +52,38 @@ class PlaybackResolutionTest {
         assertEquals("flac", result.quality)
     }
 
+    @Test fun playbackReservesTimeForLowestQualityWithinOneDeadline() = runBlocking {
+        val attempts = mutableListOf<String>()
+        val deadline = System.nanoTime() + 600_000_000L
+        val result = withTimeout(1000) {
+            SourceResolver.resolveTiers("flac24bit", SourceResolver.Purpose.PLAYBACK,
+                playbackDeadlineNanos = deadline) { quality ->
+                attempts += quality
+                if (quality == "128k") resolved(quality) else awaitCancellation()
+            }
+        }
+        assertEquals(listOf("flac24bit", "flac", "320k", "128k"), attempts)
+        assertEquals("128k", result.quality)
+    }
+
+    @Test fun usableBackupDowngradeAfterPrimaryFailureDoesNotWaitForBackupTimeout() = runBlocking {
+        val ready = CompletableDeferred<Unit>()
+        val stopped = CompletableDeferred<Unit>()
+        var candidate: String? = null
+        val result = withTimeout(1000) { SourceResolver.preferFirst(10,
+            primary = { null },
+            fallback = {
+                try {
+                    candidate = "backup-hq"
+                    ready.complete(Unit)
+                    awaitCancellation()
+                } finally { stopped.complete(Unit) }
+            },
+            available = { candidate }, availableSignal = ready) }
+        assertEquals("backup-hq", result)
+        stopped.await()
+    }
+
     @Test fun reportedDowngradeIsNotAcceptedAsTheRequestedHighTier() = runBlocking {
         val attempts = mutableListOf<String>()
         val result = SourceResolver.resolveTiers("flac24bit", SourceResolver.Purpose.PLAYBACK) { quality ->

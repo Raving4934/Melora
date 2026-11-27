@@ -91,6 +91,7 @@ object SourceResolver {
     private const val ALT_SEARCH_REQUEST_TIMEOUT_MS = 20_000L
     private const val ALT_SEARCH_TOTAL_BUDGET_MS = 35_000L
     private const val PLAYBACK_TIER_BUDGET_MS = 6_000L
+    private const val PLAYBACK_TOTAL_BUDGET_MS = 12_000L
     private const val DOWNLOAD_TIER_BUDGET_MS = 20_000L
     private const val SOURCE_REQUEST_TIMEOUT_MS = 4_500L
     private const val BACKUP_START_DELAY_MS = 600L
@@ -249,7 +250,7 @@ object SourceResolver {
             } else emptyList()
             val alternativeSlots = Semaphore(2)
             val lowerResults = ScriptScope.entries.associateWith { ConcurrentHashMap<String, Resolved>() }
-            val primaryReady = CompletableDeferred<Unit>()
+            val lowerReady = CompletableDeferred<Unit>()
             val rejectedPrimary = AtomicBoolean()
             fun usable(result: Resolved): Boolean = result.resourceId !in excludedResources && !isRejected(result.resourceId)
             fun candidate(quality: String, scope: ScriptScope): Resolved? {
@@ -276,7 +277,7 @@ object SourceResolver {
                 // 分开保存主源、同平台备用与跨平台候选；后到的同档备用不能覆盖主源。
                 if (qualityRank(actual.quality) >= 0) {
                     lowerResults.getValue(scope).compute(actual.quality) { _, previous -> previous?.takeIf(::usable) ?: actual }
-                    if (scope == ScriptScope.ENABLED) primaryReady.complete(Unit)
+                    lowerReady.complete(Unit)
                 }
                 return null
             }
@@ -287,6 +288,7 @@ object SourceResolver {
                     ?.let { it.copy(switched = it.song.uid != song.uid, fromPrimary = scope == ScriptScope.ENABLED) }
             suspend fun chain(scope: ScriptScope): Resolved = resolveTiers(key.preferredQuality, purpose,
                 // 已失败的资源应尝试同档备用，不把故障当作“不支持此音质”继续向下探测。
+                playbackDeadlineNanos = startedAt + PLAYBACK_TOTAL_BUDGET_MS * 1_000_000L,
                 stopAfterFailure = { scope == ScriptScope.ENABLED && purpose == Purpose.PLAYBACK && key.allowSwitch && rejectedPrimary.get() },
             ) { quality ->
                 candidate(quality, scope) ?: if (scope == ScriptScope.ENABLED) {
@@ -306,19 +308,17 @@ object SourceResolver {
                         }
                     })
             }
+            fun playableFallback() = candidate("128k", ScriptScope.ENABLED) ?: candidate("128k", ScriptScope.DISABLED)
             try {
-                when {
-                    !key.allowSwitch -> chain(ScriptScope.ENABLED)
-                    purpose != Purpose.PLAYBACK -> chain(ScriptScope.ALL)
-                    else -> withTimeoutOrNull(PLAYBACK_TIER_BUDGET_MS * qualityAttempts(key.preferredQuality).size) {
-                        // 把宽限放在整条主源阶梯外，而不是每一档都先等待备用。
+                if (purpose == Purpose.PLAYBACK) {
+                    withTimeoutOrNull(PLAYBACK_TOTAL_BUDGET_MS) {
                         preferFirst(BACKUP_START_DELAY_MS,
                             primary = { chain(ScriptScope.ENABLED) },
-                            fallback = { chain(ScriptScope.DISABLED) },
-                            available = { candidate("128k", ScriptScope.ENABLED) },
-                            availableSignal = primaryReady)
-                    } ?: error("各档播放音质均不可用，请检查网络或音源")
-                }
+                            fallback = { if (key.allowSwitch) chain(ScriptScope.DISABLED) else null },
+                            available = ::playableFallback,
+                            availableSignal = lowerReady)
+                    } ?: playableFallback() ?: error("各档播放音质均不可用，请检查网络或音源")
+                } else chain(if (key.allowSwitch) ScriptScope.ALL else ScriptScope.ENABLED)
             } finally {
                 matches.forEach { it.cancel() }
                 searchPlatforms.cancel()
@@ -330,18 +330,27 @@ object SourceResolver {
         return resolved
     }
 
-    /** 播放/下载/补齐共用唯一阶梯；各档完整尝试同档源，低档不能竞速抢占高档。 */
+    /** 共用音质阶梯。播放在预算内给后续档位留出时间；下载与补齐保留逐档完整尝试。 */
     internal suspend fun resolveTiers(
         preferredQuality: String,
         purpose: Purpose,
         tierBudgetMs: Long = if (purpose == Purpose.DOWNLOAD || purpose == Purpose.CACHE_FILL) DOWNLOAD_TIER_BUDGET_MS else PLAYBACK_TIER_BUDGET_MS,
+        playbackDeadlineNanos: Long = System.nanoTime() + PLAYBACK_TOTAL_BUDGET_MS * 1_000_000L,
         stopAfterFailure: () -> Boolean = { false },
         resolve: suspend (String) -> Resolved?,
     ): Resolved {
         val qualities = if (purpose == Purpose.REBUFFER) listOf(normalizedQuality(preferredQuality))
             else qualityAttempts(preferredQuality)
         for ((index, quality) in qualities.withIndex()) {
-            val budget = if (index == 0) tierBudgetMs else minOf(tierBudgetMs, 12_000L)
+            val budget = if (purpose == Purpose.PLAYBACK) {
+                // 首选和最后兜底档权重较高；前一档快速失败后，余下时间自动归还给后续档位。
+                val remaining = (playbackDeadlineNanos - System.nanoTime()) / 1_000_000L
+                if (remaining <= 0) break
+                val tiersLeft = qualities.size - index
+                val weight = if (index == 0 || tiersLeft == 1) 2 else 1
+                val weightsLeft = tiersLeft + 1 + (if (index == 0 && tiersLeft > 1) 1 else 0)
+                minOf(tierBudgetMs, remaining * weight / weightsLeft)
+            } else if (index == 0) tierBudgetMs else minOf(tierBudgetMs, 12_000L)
             attempt { withTimeoutOrNull(budget) { resolve(quality) } }
                 ?.takeIf {
                     if (purpose == Purpose.REBUFFER) sameQualityTier(quality, it.quality)
@@ -492,17 +501,18 @@ object SourceResolver {
         try {
             withTimeoutOrNull(delayMs) { first.await() }?.let { return@supervisorScope it }
             available()?.let { return@supervisorScope it }
-            if (first.isCompleted) return@supervisorScope first.await() ?: fallback()
-            val attempts = mutableListOf<suspend () -> T?>({ first.await() }, fallback)
-            if (availableSignal != null) attempts += {
-                // 主源已经有低档结果时不必等备用；主源彻底失败也必须结束等待。
-                select<Unit> { availableSignal.onAwait { }; first.onAwait { } }
-                available()
+            val race = async {
+                if (first.isCompleted) first.await() ?: attempt { fallback() }
+                else firstSuccessful(listOf<suspend () -> T?>({ first.await() }, fallback)) { it() }
             }
-            val winner = firstSuccessful(attempts) { it() }
-            // 已完成的主源结果优先，不能用此前低档候选覆盖刚返回的高档。
-            if (first.isCompleted) first.await()?.let { return@supervisorScope it }
-            available() ?: winner
+            try {
+                val winner = if (availableSignal == null) race.await() else select {
+                    race.onAwait { it }
+                    availableSignal.onAwait { available() ?: race.await() }
+                }
+                if (first.isCompleted) first.await()?.let { return@supervisorScope it }
+                winner ?: available()
+            } finally { race.cancel() }
         } finally { first.cancel() }
     }
 
