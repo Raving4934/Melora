@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leyu.melora.playback.RecordConflict
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.MeloraSheetActionBar
 import com.leyu.melora.ui.common.rememberMeloraBottomSheetState
 import com.leyu.melora.ui.common.rememberSheetDismiss
 import com.leyu.melora.ui.common.runCatchingCancellable
@@ -117,26 +118,30 @@ internal fun RecordConflictSheet(
                 color = if (failure == null) SettingsTextSub else MaterialTheme.colorScheme.error,
                 fontSize = 12.sp, lineHeight = 18.sp, minLines = 2,
             )
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                SyncSettingsSheetAction("稍后处理", enabled, working = false, primary = false,
-                    modifier = Modifier.weight(1f), onClick = { close(onDismiss) })
-                SyncSettingsSheetAction("应用选择", enabled && selected.isNotEmpty(), working, primary = true,
-                    modifier = Modifier.weight(1f), onClick = {
-                        if (!working && selected.isNotEmpty() && sheet.targetValue != SheetValue.Hidden) {
-                            working = true
-                            failure = null
-                            scope.launch {
-                                try {
-                                    runCatchingCancellable { onResolve(selected) }
-                                        .onSuccess { choices = choices - selected.keys }
-                                        .onFailure { failure = it.localizedMessage ?: "无法应用选择，请重试" }
-                                } finally {
-                                    working = false
-                                }
+            MeloraSheetActionBar(
+                secondaryText = "稍后处理",
+                onSecondary = { close(onDismiss) },
+                primaryText = "应用选择",
+                onPrimary = {
+                    if (!working && selected.isNotEmpty() && sheet.targetValue != SheetValue.Hidden) {
+                        working = true
+                        failure = null
+                        scope.launch {
+                            try {
+                                runCatchingCancellable { onResolve(selected) }
+                                    .onSuccess { choices = choices - selected.keys }
+                                    .onFailure { failure = it.localizedMessage ?: "无法应用选择，请重试" }
+                            } finally {
+                                working = false
                             }
                         }
-                    })
-            }
+                    }
+                },
+                secondaryEnabled = enabled,
+                primaryEnabled = enabled && selected.isNotEmpty(),
+                primaryWorking = working,
+                minHeight = 48.dp,
+            )
         }
     }
 }

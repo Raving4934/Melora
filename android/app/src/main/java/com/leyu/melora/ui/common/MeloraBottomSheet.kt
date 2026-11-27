@@ -6,17 +6,28 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.rememberScrollableState
 import androidx.compose.foundation.gestures.scrollable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.SheetValue
@@ -36,6 +47,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -54,6 +66,9 @@ import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.Dp
@@ -69,6 +84,7 @@ import com.leyu.melora.ui.theme.SystemBarsVisibility
 import com.leyu.melora.ui.theme.currentMeloraSheetPalette
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
 /** 保留同一个状态与档位，手势阈值和业务确认回调始终读取最新值。 */
@@ -342,5 +358,158 @@ internal fun SheetTagChip(
             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
         )
+    }
+}
+
+private val SheetButtonHorizontalPadding = 12.dp
+private val SheetActionSpacing = 12.dp
+private const val SHEET_BUTTON_MAX_LINES = 2
+
+@Composable
+private fun sheetButtonTextStyle(primary: Boolean) = LocalTextStyle.current.copy(
+    fontSize = 14.sp,
+    lineHeight = 18.sp,
+    fontWeight = if (primary) FontWeight.SemiBold else FontWeight.Medium,
+)
+
+/** 抽屉主/次胶囊按钮，统一亮暗色、毛玻璃与墨水屏语义配色。 */
+@Composable
+internal fun MeloraSheetButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    primary: Boolean = false,
+    enabled: Boolean = true,
+    working: Boolean = false,
+    minHeight: Dp = 44.dp,
+    maxLines: Int = SHEET_BUTTON_MAX_LINES,
+) {
+    val palette = currentMeloraSheetPalette()
+    val colors = MaterialTheme.colorScheme
+    val accented = primary && (enabled || working)
+    val fill = when {
+        accented -> colors.primary
+        primary -> palette.softFill
+        palette.isEInk -> Color.White
+        else -> palette.softFill
+    }
+    val content = when {
+        accented -> colors.onPrimary
+        primary -> palette.textSub
+        enabled || working -> palette.textMain
+        else -> palette.textMuted
+    }
+    val border = when {
+        accented -> null
+        primary && !palette.isEInk -> null
+        palette.isEInk -> BorderStroke(1.dp, if (enabled || working) Color.Black else palette.divider)
+        else -> palette.chipBorder
+    }
+    Surface(
+        onClick = onClick,
+        enabled = enabled && !working,
+        shape = CircleShape,
+        color = fill,
+        contentColor = content,
+        border = border,
+        modifier = modifier.heightIn(min = minHeight),
+    ) {
+        Box(Modifier.padding(horizontal = SheetButtonHorizontalPadding, vertical = 8.dp), contentAlignment = Alignment.Center) {
+            Text(
+                text = text,
+                modifier = Modifier.alpha(if (working) 0f else 1f),
+                style = sheetButtonTextStyle(primary),
+                maxLines = maxLines,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (working) {
+                CircularProgressIndicator(
+                    color = content,
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp,
+                )
+            }
+        }
+    }
+}
+
+/** 抽屉底部双操作栏。歌单操作等含动态长文案的场景可在横排放不下时改为纵排。 */
+@Composable
+internal fun MeloraSheetActionBar(
+    secondaryText: String,
+    onSecondary: () -> Unit,
+    primaryText: String,
+    onPrimary: () -> Unit,
+    modifier: Modifier = Modifier,
+    secondaryEnabled: Boolean = true,
+    secondaryWorking: Boolean = false,
+    primaryEnabled: Boolean = true,
+    primaryWorking: Boolean = false,
+    secondaryWeight: Float = 1f,
+    primaryWeight: Float = 1f,
+    minHeight: Dp = 44.dp,
+    secondaryModifier: Modifier = Modifier,
+    primaryModifier: Modifier = Modifier,
+    stackWhenLabelsOverflow: Boolean = false,
+) {
+    val buttons: @Composable (Modifier, Modifier, Int) -> Unit = { secondary, primary, maxLines ->
+        MeloraSheetButton(
+            text = secondaryText,
+            onClick = onSecondary,
+            enabled = secondaryEnabled,
+            working = secondaryWorking,
+            minHeight = minHeight,
+            maxLines = maxLines,
+            modifier = secondary.then(secondaryModifier),
+        )
+        MeloraSheetButton(
+            text = primaryText,
+            onClick = onPrimary,
+            primary = true,
+            enabled = primaryEnabled,
+            working = primaryWorking,
+            minHeight = minHeight,
+            maxLines = maxLines,
+            modifier = primary.then(primaryModifier),
+        )
+    }
+    val row: @Composable (Modifier) -> Unit = { rowModifier ->
+        Row(
+            modifier = rowModifier.fillMaxWidth().height(IntrinsicSize.Max).heightIn(min = minHeight),
+            horizontalArrangement = Arrangement.spacedBy(SheetActionSpacing),
+        ) {
+            buttons(Modifier.weight(secondaryWeight).fillMaxHeight(), Modifier.weight(primaryWeight).fillMaxHeight(), SHEET_BUTTON_MAX_LINES)
+        }
+    }
+    if (!stackWhenLabelsOverflow) {
+        row(modifier)
+        return
+    }
+
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+        val measurer = rememberTextMeasurer()
+        val density = LocalDensity.current
+        val spacingPx = with(density) { SheetActionSpacing.roundToPx() }
+        val paddingPx = with(density) { SheetButtonHorizontalPadding.roundToPx() } * 2
+        val buttonWidth = (constraints.maxWidth - spacingPx).coerceAtLeast(0)
+        val primaryWidth = (buttonWidth * primaryWeight / (secondaryWeight + primaryWeight)).roundToInt()
+        val secondaryWidth = buttonWidth - primaryWidth
+        val secondaryStyle = sheetButtonTextStyle(primary = false)
+        val primaryStyle = sheetButtonTextStyle(primary = true)
+        val secondaryOverflows = measurer.measure(
+            secondaryText, secondaryStyle, overflow = TextOverflow.Ellipsis, maxLines = SHEET_BUTTON_MAX_LINES,
+            constraints = Constraints(maxWidth = (secondaryWidth - paddingPx).coerceAtLeast(0)),
+        ).hasVisualOverflow
+        val primaryOverflows = measurer.measure(
+            primaryText, primaryStyle, overflow = TextOverflow.Ellipsis, maxLines = SHEET_BUTTON_MAX_LINES,
+            constraints = Constraints(maxWidth = (primaryWidth - paddingPx).coerceAtLeast(0)),
+        ).hasVisualOverflow
+        if (secondaryOverflows || primaryOverflows) {
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(SheetActionSpacing)) {
+                buttons(Modifier.fillMaxWidth(), Modifier.fillMaxWidth(), Int.MAX_VALUE)
+            }
+        } else {
+            row(Modifier)
+        }
     }
 }

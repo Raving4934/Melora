@@ -593,7 +593,7 @@ private fun CrashLogContent() {
                         logText = null
                         PlaybackController.postMessage(context, "已清空崩溃日志")
                     },
-                    shape = RoundedCornerShape(12.dp),
+                    shape = CircleShape,
                     modifier = Modifier.weight(1f).height(44.dp),
                 ) {
                     Icon(Icons.Rounded.DeleteOutline, contentDescription = null, modifier = Modifier.size(17.dp))
@@ -607,7 +607,7 @@ private fun CrashLogContent() {
                             PlaybackController.postMessage(context, "已复制崩溃日志到剪贴板")
                         }
                     },
-                    shape = RoundedCornerShape(12.dp),
+                    shape = CircleShape,
                     colors = ButtonDefaults.buttonColors(containerColor = SettingsBrandBlue),
                     modifier = Modifier.weight(1f).height(44.dp),
                 ) {
@@ -657,7 +657,7 @@ private fun CrashLogContent() {
                             PlaybackController.postMessage(context, "已复制设备信息到剪贴板")
                         }
                     },
-                    shape = RoundedCornerShape(12.dp),
+                    shape = CircleShape,
                     modifier = Modifier.fillMaxWidth().height(44.dp),
                 ) {
                     Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))

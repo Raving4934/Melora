@@ -54,6 +54,7 @@ import com.leyu.melora.playback.sdk.PlaylistImportResult
 import com.leyu.melora.playback.sdk.PlaylistImporter
 import com.leyu.melora.ui.common.BrandBlue
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.MeloraSheetActionBar
 import com.leyu.melora.ui.common.MeloraSheetHandle
 import com.leyu.melora.ui.common.rememberMeloraBottomSheetState
 import com.leyu.melora.ui.common.rememberSheetDismiss
@@ -458,29 +459,20 @@ internal fun PlaylistSheetActions(
     submitTag: String = "playlist-import-submit",
     secondaryTag: String = "playlist-import-cancel",
 ) {
-    val submitEnabled = confirmEnabled && !busy
-    val colors = MaterialTheme.colorScheme
-    Row(
-        modifier = modifier.fillMaxWidth().height(IntrinsicSize.Max).heightIn(min = 48.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Surface(onClick = onSecondary, enabled = secondaryEnabled, shape = RoundedCornerShape(24.dp),
-            color = Color.Transparent, border = MeloraAppearance.chipBorder,
-            modifier = Modifier.weight(1f).fillMaxHeight().testTag(secondaryTag)) {
-            Box(contentAlignment = Alignment.Center) {
-                Text(secondaryText, color = if (secondaryEnabled) TextMain else MeloraAppearance.textMuted, fontSize = 14.sp, lineHeight = 18.sp, maxLines = 2,
-                    overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
-            }
-        }
-        Surface(onClick = onConfirm, enabled = submitEnabled, shape = RoundedCornerShape(24.dp),
-            color = if (submitEnabled) colors.primary else MeloraAppearance.softFill,
-            contentColor = if (submitEnabled) colors.onPrimary else TextSub,
-            modifier = Modifier.weight(1.6f).fillMaxHeight().testTag(submitTag)) {
-            Box(contentAlignment = Alignment.Center) {
-                Text(confirmText, fontSize = 14.sp,
-                    lineHeight = 18.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
-            }
-        }
-    }
+    MeloraSheetActionBar(
+        secondaryText = secondaryText,
+        onSecondary = onSecondary,
+        primaryText = confirmText,
+        onPrimary = onConfirm,
+        modifier = modifier,
+        secondaryEnabled = secondaryEnabled,
+        primaryEnabled = confirmEnabled && !busy,
+        primaryWorking = false,
+        secondaryWeight = 1f,
+        primaryWeight = 1.6f,
+        minHeight = 48.dp,
+        secondaryModifier = Modifier.testTag(secondaryTag),
+        primaryModifier = Modifier.testTag(submitTag),
+        stackWhenLabelsOverflow = true,
+    )
 }

@@ -8,8 +8,13 @@ import com.leyu.melora.ui.awaitIme
 import com.leyu.melora.ui.awaitStable
 import com.leyu.melora.ui.boundsInSameFrame
 import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.unit.Density
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.leyu.melora.playback.*
 import com.leyu.melora.playback.sdk.*
@@ -46,33 +51,46 @@ class PlaylistImportDuplicateSheetTest {
             .outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 
-    private fun show(race: Boolean = false, warning: String? = null) {
+    private fun show(
+        race: Boolean = false,
+        warning: String? = null,
+        sheetWidthDp: Int? = null,
+        fontScale: Float = 1f,
+    ) {
         if (race) library.value = emptyList()
         compose.setContent {
             var open by remember { mutableStateOf(true) }
-            MeloraTheme {
-                if (open) PlaylistImportSheet(
-                    onDismiss = { open = false },
-                    onImported = { imports.incrementAndGet(); open = false },
-                    onUpdated = { updates.incrementAndGet(); updatedId = it.id; open = false },
-                    library = library,
-                    readPlaylist = { _, text, _ -> loaded.copy(importSource = PlaylistImportLink.parse(text), warning = warning) },
-                    savePlaylist = { name, result, copy ->
-                        creates.incrementAndGet()
-                        if (race && !copy) {
-                            library.value = listOf(original)
-                            throw PlaylistAlreadyImportedException(listOf(original))
-                        }
-                        savedAsCopy = copy; savedName = name
-                        UserLibrary.UserPlaylist("copy", name, result.songs, result.importSource)
-                    },
-                    commitUpdate = { preview ->
-                        commits.incrementAndGet()
-                        assertEquals(source, preview.updated.importSource)
-                        assertEquals("手改名称", preview.updated.name)
-                        preview.updated
-                    },
-                )
+            val density = sheetWidthDp?.let {
+                Density((LocalWindowInfo.current.containerSize.width.toFloat() / it).coerceAtLeast(0.1f), fontScale)
+            } ?: LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides density) {
+                MeloraTheme {
+                    if (open) PlaylistImportSheet(
+                        onDismiss = { open = false },
+                        onImported = { imports.incrementAndGet(); open = false },
+                        onUpdated = { updates.incrementAndGet(); updatedId = it.id; open = false },
+                        library = library,
+                        readPlaylist = { _, text, _ ->
+                            loaded.copy(importSource = PlaylistImportLink.parse(text), warning = warning)
+                        },
+                        savePlaylist = { name, result, copy ->
+                            creates.incrementAndGet()
+                            if (race && !copy) {
+                                library.value = listOf(original)
+                                throw PlaylistAlreadyImportedException(listOf(original))
+                            }
+                            savedAsCopy = copy
+                            savedName = name
+                            UserLibrary.UserPlaylist("copy", name, result.songs, result.importSource)
+                        },
+                        commitUpdate = { preview ->
+                            commits.incrementAndGet()
+                            assertEquals(source, preview.updated.importSource)
+                            assertEquals("手改名称", preview.updated.name)
+                            preview.updated
+                        },
+                    )
+                }
             }
         }
         compose.awaitStable("playlist-import-link")
@@ -215,13 +233,48 @@ class PlaylistImportDuplicateSheetTest {
     }
 
     @Test fun partialCopyIsExplicitAndDuplicateUpdateStillRejectsPartialReads() {
-        show(warning = "分页未完整")
-        compose.onNodeWithTag("playlist-import-copy").assertTextContains("另存已获取的 1 首")
+        show(warning = "分页未完整", sheetWidthDp = 420)
+        val copy = compose.onNodeWithTag("playlist-import-copy")
+        val update = compose.onNodeWithTag("playlist-import-submit")
+        compose.awaitStable(copy)
+        val (copyBounds, updateBounds) = compose.boundsInSameFrame(copy, update)
+        assertEquals(copyBounds.top, updateBounds.top, 1f)
+        assertActionTextFits("另存已获取的 1 首")
         compose.onNodeWithTag("playlist-import-submit").performClick()
         compose.awaitStable("playlist-sync-submit")
         compose.onNodeWithTag("playlist-sync-submit").performClick()
         compose.waitUntil(5_000) { compose.onAllNodesWithTag("playlist-sync-error").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("playlist-sync-preview").assertDoesNotExist()
         assertEquals(0, commits.get()); assertEquals(0, creates.get())
+    }
+
+    @Test fun narrowPartialCopyStacksActionsAndKeepsTheSongCountReadable() {
+        show(warning = "分页未完整", sheetWidthDp = 336, fontScale = 1.5f)
+        val copy = compose.onNodeWithTag("playlist-import-copy")
+        val update = compose.onNodeWithTag("playlist-import-submit")
+        compose.awaitStable(copy)
+        compose.awaitStable(update)
+        val (copyBounds, updateBounds) = compose.boundsInSameFrame(copy, update)
+        assertTrue("空间不足时次按钮应在主按钮上方", copyBounds.bottom < updateBounds.top)
+        assertEquals(copyBounds.width, updateBounds.width, 1f)
+        assertActionTextFits("另存已获取的 1 首")
+        assertActionTextFits("更新已有歌单")
+        copy.assertIsEnabled().performClick()
+        compose.waitUntil(5_000) { imports.get() == 1 }
+        assertTrue(savedAsCopy)
+        assertEquals(0, commits.get())
+    }
+
+    private fun assertActionTextFits(text: String) {
+        val layouts = mutableListOf<TextLayoutResult>()
+        compose.onNodeWithText(text, useUnmergedTree = true).assertIsDisplayed()
+            .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        val layout = layouts.single()
+        val lastLine = layout.lineCount - 1
+        assertFalse("按钮文案被省略：$text", layout.isLineEllipsized(lastLine))
+        assertEquals(text.length, layout.getLineEnd(lastLine, visibleEnd = true))
+        val finalGlyph = layout.getBoundingBox(text.lastIndex)
+        assertTrue("按钮末字应完整可见：$text", finalGlyph.right <= layout.size.width + 1f &&
+            finalGlyph.bottom <= layout.size.height + 1f)
     }
 }

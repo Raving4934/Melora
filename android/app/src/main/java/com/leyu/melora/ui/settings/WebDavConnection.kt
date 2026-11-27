@@ -74,6 +74,7 @@ import com.leyu.melora.playback.WebDavBackup
 import com.leyu.melora.playback.WebDavConfig
 import com.leyu.melora.playback.WebDavSync
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.MeloraSheetActionBar
 import com.leyu.melora.ui.common.rememberMeloraBottomSheetState
 import com.leyu.melora.ui.common.rememberSheetDismiss
 import com.leyu.melora.ui.common.runCatchingCancellable
@@ -264,33 +265,26 @@ private fun WebDavConnectionEditor(
                 }
             }
             WebDavFeedback(draftFeedback, action)
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                val canSubmit = !busy && draft.server.isNotBlank()
-                SyncSettingsSheetAction(
-                    title = "测试配置",
-                    enabled = canSubmit,
-                    working = action == ConnectionAction.Test,
-                    primary = false,
-                    modifier = Modifier.weight(1f),
-                    onClick = {
-                        focusManager.clearFocus()
-                        keyboard?.hide()
-                        runAction(ConnectionAction.Test)
-                    },
-                )
-                SyncSettingsSheetAction(
-                    title = "保存配置",
-                    enabled = canSubmit && draft != config,
-                    working = action == ConnectionAction.Save,
-                    primary = true,
-                    modifier = Modifier.weight(1f),
-                    onClick = {
-                        focusManager.clearFocus()
-                        keyboard?.hide()
-                        runAction(ConnectionAction.Save)
-                    },
-                )
-            }
+            val canSubmit = !busy && draft.server.isNotBlank()
+            MeloraSheetActionBar(
+                secondaryText = "测试配置",
+                onSecondary = {
+                    focusManager.clearFocus()
+                    keyboard?.hide()
+                    runAction(ConnectionAction.Test)
+                },
+                secondaryEnabled = canSubmit,
+                secondaryWorking = action == ConnectionAction.Test,
+                primaryText = "保存配置",
+                onPrimary = {
+                    focusManager.clearFocus()
+                    keyboard?.hide()
+                    runAction(ConnectionAction.Save)
+                },
+                primaryEnabled = canSubmit && draft != config,
+                primaryWorking = action == ConnectionAction.Save,
+                minHeight = 48.dp,
+            )
         }
     }
 }
@@ -424,41 +418,5 @@ private fun WebDavFeedback(feedback: ConnectionFeedback?, action: ConnectionActi
             )
         }
         Text(message, color = color, fontSize = 12.sp, lineHeight = 18.sp)
-    }
-}
-
-@Composable
-internal fun SyncSettingsSheetAction(
-    title: String,
-    enabled: Boolean,
-    working: Boolean,
-    primary: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val accented = primary && (enabled || working)
-    val fill = if (accented) SettingsBrandBlue else MeloraAppearance.softFill
-    val content = when {
-        accented -> MaterialTheme.colorScheme.onPrimary
-        enabled || working -> SettingsTextMain
-        else -> SettingsTextSub
-    }
-    Surface(
-        onClick = onClick,
-        enabled = enabled,
-        shape = RoundedCornerShape(12.dp),
-        color = fill,
-        contentColor = content,
-        modifier = modifier.heightIn(min = 48.dp),
-    ) {
-        Box(Modifier.padding(horizontal = 8.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
-            Text(
-                title,
-                modifier = Modifier.alpha(if (working) 0f else 1f),
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
-            if (working) CircularProgressIndicator(color = content, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-        }
     }
 }
