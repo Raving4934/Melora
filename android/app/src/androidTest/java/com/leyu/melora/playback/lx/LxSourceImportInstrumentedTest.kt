@@ -176,6 +176,87 @@ class LxSourceImportInstrumentedTest {
     }
 
     @Test
+    fun linkedScriptExportReimportsAtTheSizeLimitAndStillFollowsItsOriginalLink() = runBlocking<Unit> {
+        val originalCode = "// @version 1\nconst original = true;".padEnd(MAX_IMPORTED_SCRIPT_BYTES, ' ')
+        val updatedCode = "// @version 2\nconst updated = true;"
+        ScriptServer(originalCode).use { server ->
+            val sourceImporter = importer()
+            val linked = sourceImporter.importUrl(server.url).single()
+            val exported = store.exportScript(linked.id)
+            assertTrue(exported.toByteArray(Charsets.UTF_8).size > MAX_IMPORTED_SCRIPT_BYTES)
+            store.remove(linked.id)
+
+            val restored = sourceImporter.importLocal(sourceInput(exported), "renamed.js").single()
+            assertEquals(linked.id, restored.id)
+            assertEquals(server.url, restored.originUrl)
+            assertEquals(originalCode, store.code(restored.id))
+            assertEquals(1, server.requestCount.get())
+
+            server.body.set(exported)
+            assertNull(sourceImporter.checkUpdate(restored))
+            val reportedOrigin = "https://other.example.test/source.js"
+            server.body.set(LxSourcePayload("other-name.js", updatedCode, reportedOrigin).scriptExport())
+            val update = requireNotNull(sourceImporter.checkUpdate(restored))
+            val updated = sourceImporter.applyUpdate(update)
+            assertEquals(linked.id, updated.id)
+            assertEquals(server.url, updated.originUrl)
+            assertEquals(updatedCode, store.code(updated.id))
+            assertNull(sourceImporter.checkUpdate(updated))
+            assertEquals(updated, sourceImporter.importUrl(server.url).single())
+        }
+    }
+
+    @Test
+    fun exportedBundleRestoresEachOriginAndKeepsLocalSourcesLocal() = runBlocking<Unit> {
+        val original = "// @version 1\nconst fixture = true;"
+        val updated = "// @version 2\nconst fixture = false;"
+        val localCode = "// @homepage https://example.test\nconst local = true;"
+        ScriptServer(original).use { firstServer ->
+            ScriptServer(original).use { secondServer ->
+                val sourceImporter = importer()
+                val first = sourceImporter.importUrl(firstServer.url).single()
+                val second = sourceImporter.importUrl(secondServer.url).single()
+                val local = sourceImporter.importLocal(sourceInput(localCode), "local.js").single()
+                val ids = listOf(first.id, second.id, local.id)
+                val exported = store.exportBundle(ids)
+                ids.forEach(store::remove)
+                val restored = sourceImporter.importLocal(sourceInput(exported), "backup.json").associateBy { it.id }
+
+                assertEquals(ids.toSet(), restored.keys)
+                assertEquals(firstServer.url, restored.getValue(first.id).originUrl)
+                assertEquals(secondServer.url, restored.getValue(second.id).originUrl)
+                assertNull(restored.getValue(local.id).originUrl)
+                assertEquals(localCode, store.exportScript(local.id))
+                assertEquals(1, firstServer.requestCount.get())
+                assertEquals(1, secondServer.requestCount.get())
+
+                firstServer.body.set(updated)
+                val update = requireNotNull(sourceImporter.checkUpdate(restored.getValue(first.id)))
+                sourceImporter.applyUpdate(update)
+                assertEquals(updated, store.code(first.id))
+                assertNull(sourceImporter.checkUpdate(restored.getValue(second.id)))
+                assertEquals(original, store.code(second.id))
+            }
+        }
+    }
+
+    @Test
+    fun legacySourceFilesKeepOnlyAnAlreadyKnownOriginForTheIdenticalScript() = runBlocking<Unit> {
+        val code = "// @homepage https://example.test/help\nconst fixture = true;"
+        val origin = "https://example.test/source.js"
+        val sourceImporter = importer()
+        val installed = store.import("linked.js", code, origin)
+        val oldBundle = """{"app":"melora","type":"lx-sources","scripts":[{"name":"linked.js","code":${JSONObject.quote(code)}}]}"""
+        assertEquals(origin, sourceImporter.importLocal(sourceInput(code), installed.id).single().originUrl)
+        assertEquals(origin, sourceImporter.importLocal(sourceInput(oldBundle), "backup.json").single().originUrl)
+
+        val replaced = sourceImporter.importLocal(sourceInput("$code\n// changed"), installed.id).single()
+        assertNull(replaced.originUrl)
+        store.remove(installed.id)
+        assertNull(sourceImporter.importLocal(sourceInput(oldBundle), "backup.json").single().originUrl)
+    }
+
+    @Test
     fun urlUpdateAppliesCheckedContentAndRejectsHtml() = runBlocking<Unit> {
         val throwingCode = "// @version 1\nthrow new Error('remote import must not execute');"
         ScriptServer(throwingCode).use { server ->

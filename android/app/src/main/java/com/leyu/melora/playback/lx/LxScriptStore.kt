@@ -54,6 +54,25 @@ class LxScriptStore(context: Context) {
 
     fun code(id: String): String? = content(id)?.first
 
+    internal fun exportScript(id: String): String = synchronized(enabledStateLock) {
+        exportPayload(requireScriptFile(id)).scriptExport()
+    }
+
+    internal fun exportBundle(ids: List<String>): String = synchronized(enabledStateLock) {
+        validateSourceBundleCount(ids.size)
+        val files = ids.map(::requireScriptFile)
+        requireLxSourceContentLength(files.sumOf { it.length() }, MAX_LOCAL_SOURCE_DOCUMENT_BYTES)
+        sourceBundleExport(files.map(::exportPayload))
+    }
+
+    private fun requireScriptFile(id: String): File =
+        dir.resolve(id).takeIf { it.isFile } ?: error("脚本不存在：$id")
+
+    private fun exportPayload(file: File): LxSourcePayload {
+        requireLxSourceContentLength(file.length(), MAX_IMPORTED_SCRIPT_BYTES)
+        return LxSourcePayload(file.name, validateImportedScriptCode(file.readText()), prefs.getString(originKey(file.name), null))
+    }
+
     /** 查询不读脚本正文；删除后重导入也不能复用旧revision。 */
     internal fun revision(id: String): Long? = synchronized(enabledStateLock) {
         dir.resolve(id).takeIf { it.isFile }?.let { revisionOf(it).number }
@@ -84,13 +103,15 @@ class LxScriptStore(context: Context) {
             val file = File(dir, backupScriptId(name))
             if (expectedRevision != null) requireUpdateBase(file.name, normalizedOriginUrl, expectedRevision)
             val currentCode = file.takeIf { it.isFile }?.readText()
+            // 旧导出缺少来源字段。同名且内容完全相同时，沿用该文件已有的链接。
+            val savedOrigin = normalizedOriginUrl ?: prefs.getString(originKey(file.name), null).takeIf { currentCode == code }
             if (currentCode != code) {
                 writeTextAtomically(file, code)
                 contentChanged(file, code)
             }
             prefs.edit {
                 if (!prefs.contains(file.name)) putBoolean(file.name, false)
-                if (normalizedOriginUrl == null) remove(originKey(file.name)) else putString(originKey(file.name), normalizedOriginUrl)
+                if (savedOrigin == null) remove(originKey(file.name)) else putString(originKey(file.name), savedOrigin)
             }
             script(file)
         }

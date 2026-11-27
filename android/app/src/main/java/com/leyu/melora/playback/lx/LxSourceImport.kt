@@ -1,5 +1,6 @@
 package com.leyu.melora.playback.lx
 
+import com.leyu.melora.playback.BACKUP_ORIGIN_KEY
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -29,12 +30,37 @@ internal const val MAX_LOCAL_SOURCE_DOCUMENT_BYTES = 4 * 1024 * 1024
 internal const val MAX_IMPORTED_SOURCE_COUNT = 128
 
 internal const val MAX_SOURCE_REDIRECTS = 5
+private const val SOURCE_EXPORT_FOOTER = "// melora:lx-source "
+private const val MAX_SOURCE_EXPORT_METADATA_BYTES = 16 * 1024
+private const val MAX_DOWNLOADED_SOURCE_DOCUMENT_BYTES = MAX_IMPORTED_SCRIPT_BYTES + MAX_SOURCE_EXPORT_METADATA_BYTES
 
 internal data class LxSourcePayload(
     val fileName: String,
     val code: String,
-    val originUrl: String,
+    val originUrl: String? = null,
 )
+
+/** 附注放在结尾，保留脚本原有头部及其他 LX 客户端可执行性。 */
+internal fun LxSourcePayload.scriptExport(): String {
+    val origin = originUrl ?: return code
+    val footer = "\n$SOURCE_EXPORT_FOOTER" + JSONObject().put("name", fileName).put("originUrl", origin)
+    require(footer.toByteArray(Charsets.UTF_8).size <= MAX_SOURCE_EXPORT_METADATA_BYTES) { "音源来源链接过长" }
+    return code + footer
+}
+
+internal fun sourceBundleExport(sources: List<LxSourcePayload>): String {
+    val entries = JSONArray()
+    sources.forEach { script ->
+        entries.put(JSONObject().put("name", script.fileName).put("code", script.code).put("originUrl", script.originUrl))
+    }
+    val document = JSONObject().put("app", "melora").put("type", "lx-sources").put("scripts", entries).toString(2)
+    requireLxSourceContentLength(document.toByteArray(Charsets.UTF_8).size.toLong(), MAX_LOCAL_SOURCE_DOCUMENT_BYTES)
+    return document
+}
+
+internal fun validateSourceBundleCount(count: Int) {
+    require(count in 1..MAX_IMPORTED_SOURCE_COUNT) { "音源合集须包含 1 至 $MAX_IMPORTED_SOURCE_COUNT 个脚本" }
+}
 
 internal class LxSourceUpdate(
     val scriptId: String,
@@ -96,11 +122,10 @@ internal class LxSourceDownloader(
                 require(response.isSuccessful) { "读取音源脚本失败（HTTP ${response.code}）" }
                 rejectHtmlContentType(response.header("Content-Type"))
                 val body = response.body
-                requireLxSourceContentLength(body.contentLength(), MAX_IMPORTED_SCRIPT_BYTES)
+                requireLxSourceContentLength(body.contentLength(), MAX_DOWNLOADED_SOURCE_DOCUMENT_BYTES)
                 val code = body.byteStream().use { input ->
-                    input.readBoundedLxSourceText(MAX_IMPORTED_SCRIPT_BYTES)
+                    input.readBoundedLxSourceText(MAX_DOWNLOADED_SOURCE_DOCUMENT_BYTES)
                 }
-                validateImportedScriptCode(code)
                 return LxSourcePayload(
                     fileName = onlineSourceFileName(sourceUrl),
                     code = code,
@@ -146,8 +171,8 @@ internal class LxSourceImporter(
         val (currentCode, revision) = store.content(script.id) ?: error("本地音源已删除")
         store.requireUpdateBase(script.id, originUrl, revision)
         val payload = downloader.download(originUrl)
-        val entries = parseLxSourceDocument(payload.code, script.id, MAX_IMPORTED_SCRIPT_BYTES)
-        val (_, remoteCode) = entries.firstOrNull { (name, _) -> name == script.id }
+        val entries = parseLxSourceDocument(payload.code, script.id, MAX_IMPORTED_SCRIPT_BYTES, originUrl)
+        val remoteCode = entries.firstOrNull { it.fileName == script.id }?.code
             ?: error("远端音源包中未找到「${script.name}」")
         currentCoroutineContext().ensureActive()
         store.requireUpdateBase(script.id, originUrl, revision)
@@ -172,10 +197,10 @@ internal class LxSourceImporter(
         maxDocumentBytes: Int,
         originUrl: String?,
     ): List<LxScript> {
-        val entries = parseLxSourceDocument(text, fallbackName, maxDocumentBytes)
+        val entries = parseLxSourceDocument(text, fallbackName, maxDocumentBytes, originUrl)
         // 整包轻量校验通过才开始写盘，避免无效条目导致半导入状态。
         currentCoroutineContext().ensureActive()
-        return entries.map { (name, code) -> store.import(name, code, originUrl) }
+        return entries.map { store.import(it.fileName, it.code, it.originUrl) }
     }
 }
 
@@ -184,7 +209,23 @@ internal fun parseLxSourceDocument(
     text: String,
     fallbackName: String?,
     maxDocumentBytes: Int,
-): List<Pair<String, String>> {
+    downloadedFrom: String? = null,
+): List<LxSourcePayload> {
+    val footerEnd = text.indexOfLast { it != '\n' && it != '\r' } + 1
+    val footerStart = text.lastIndexOf('\n', footerEnd - 1)
+    if (footerStart >= 0 && text.startsWith(SOURCE_EXPORT_FOOTER, footerStart + 1)) {
+        val limit = if (downloadedFrom == null) maxDocumentBytes else MAX_DOWNLOADED_SOURCE_DOCUMENT_BYTES
+        validateLxSourceDocument(text, limit)
+        val metadata = text.substring(footerStart, footerEnd)
+        require(metadata.toByteArray(Charsets.UTF_8).size <= MAX_SOURCE_EXPORT_METADATA_BYTES) { "音源来源链接过长" }
+        val trailer = JSONObject(metadata.removePrefix("\n$SOURCE_EXPORT_FOOTER"))
+        val code = validateImportedScriptCode(text.substring(0, footerStart))
+        val name = if (downloadedFrom != null) fallbackName else {
+            requireNotNull((trailer.opt("name") as? String)?.takeIf(String::isNotBlank)) { "音源导出文件缺少脚本名称" }
+        }
+        val origin = downloadedFrom ?: requireNotNull(trailer.sourceOriginUrl()) { "音源导出文件缺少来源链接" }
+        return listOf(LxSourcePayload(backupScriptId(name ?: "imported.js"), code, origin))
+    }
     validateLxSourceDocument(text, maxDocumentBytes)
     // 仅把完整JSON当文档；以对象/数组表达式开头的JavaScript不能被截断误判。
     val json = runCatching {
@@ -196,24 +237,34 @@ internal fun parseLxSourceDocument(
     if (json != null) {
         require(json is JSONObject && json.opt("scripts") is JSONArray) { "所选JSON不是音源合集" }
         val array = json.getJSONArray("scripts")
-        require(array.length() in 1..MAX_IMPORTED_SOURCE_COUNT) {
-            "音源合集须包含 1 至 $MAX_IMPORTED_SOURCE_COUNT 个脚本"
-        }
+        validateSourceBundleCount(array.length())
+        val isMeloraBundle = json.optString("app") == "melora" && json.optString("type") == "lx-sources"
+        val isAppBackup = downloadedFrom == null && json.optInt("version") == 1 &&
+            (json.has(BACKUP_ORIGIN_KEY) || json.has("settings") || json.has("library"))
         val ids = hashSetOf<String>()
         return buildList {
             for (index in 0 until array.length()) {
                 val node = requireNotNull(array.optJSONObject(index)) { "音源合集第 ${index + 1} 项格式无效" }
                 val code = requireNotNull(node.opt("code") as? String) { "音源合集第 ${index + 1} 项缺少脚本内容" }
-                require(!node.has("name") || node.opt("name") is String) { "音源合集第 ${index + 1} 项名称格式无效" }
-                val id = backupScriptId(node.optString("name").ifBlank { "source-$index.js" })
+                val nameKey = if (isAppBackup && node.has("fileName")) "fileName" else "name"
+                require(!node.has(nameKey) || node.opt(nameKey) is String) { "音源合集第 ${index + 1} 项名称格式无效" }
+                val name = node.optString(nameKey)
+                val id = backupScriptId(name.ifBlank { "source-$index.js" })
                 validateImportedScriptCode(code)
                 require(ids.add(id)) { "音源合集包含重名脚本: $id" }
-                add(id to code)
+                val origin = downloadedFrom ?: if (isMeloraBundle || isAppBackup) node.sourceOriginUrl() else null
+                add(LxSourcePayload(id, code, origin))
             }
         }
     }
     validateImportedScriptCode(text)
-    return listOf(backupScriptId(fallbackName ?: "imported.js") to text)
+    return listOf(LxSourcePayload(backupScriptId(fallbackName ?: "imported.js"), text, downloadedFrom))
+}
+
+private fun JSONObject.sourceOriginUrl(): String? = when (val origin = opt("originUrl")) {
+    null, JSONObject.NULL -> null
+    is String -> LxSourceUrlPolicy.validate(origin).toString()
+    else -> error("音源来源链接格式无效")
 }
 
 internal fun validateImportedScriptCode(code: String): String {

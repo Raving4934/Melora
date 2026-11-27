@@ -1,5 +1,6 @@
 package com.leyu.melora.playback.lx
 
+import com.leyu.melora.playback.BACKUP_ORIGIN_KEY
 import java.io.ByteArrayInputStream
 import java.nio.charset.CharacterCodingException
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -121,11 +122,11 @@ class LxSourceImportTest {
         val bundle = JSONObject().put("scripts", JSONArray()
             .put(JSONObject().put("name", "nested/source name").put("code", "// bundle")))
         assertEquals(
-            listOf("source_name.js" to "// bundle"),
+            listOf(LxSourcePayload("source_name.js", "// bundle")),
             parseLxSourceDocument(bundle.toString(), "ignored.json", MAX_LOCAL_SOURCE_DOCUMENT_BYTES),
         )
         assertEquals(
-            listOf("single_name.js" to "// source"),
+            listOf(LxSourcePayload("single_name.js", "// source")),
             parseLxSourceDocument("// source", "nested/single name", MAX_IMPORTED_SCRIPT_BYTES),
         )
     }
@@ -165,7 +166,7 @@ class LxSourceImportTest {
         ).forEach(::assertRejectedDocument)
 
         assertEquals(
-            listOf("source-0.js" to "// missing", "source-1.js" to "// empty"),
+            listOf(LxSourcePayload("source-0.js", "// missing"), LxSourcePayload("source-1.js", "// empty")),
             parseLxSourceDocument(
                 "{\"scripts\":[{\"code\":\"// missing\"},{\"name\":\"\",\"code\":\"// empty\"}]}",
                 "ignored.json",
@@ -200,15 +201,15 @@ class LxSourceImportTest {
             "{\"scripts\":[{\"code\":\"// bundle\"}]}\nconst marker = true;"
 
         assertEquals(
-            listOf("object.js" to rawObjectBlock),
+            listOf(LxSourcePayload("object.js", rawObjectBlock)),
             parseLxSourceDocument(rawObjectBlock, "object.js", MAX_IMPORTED_SCRIPT_BYTES),
         )
         assertEquals(
-            listOf("array.js" to rawArrayExpression),
+            listOf(LxSourcePayload("array.js", rawArrayExpression)),
             parseLxSourceDocument(rawArrayExpression, "array.js", MAX_IMPORTED_SCRIPT_BYTES),
         )
         assertEquals(
-            listOf("bundle.js" to bundleJsonFollowedByJs),
+            listOf(LxSourcePayload("bundle.js", bundleJsonFollowedByJs)),
             parseLxSourceDocument(bundleJsonFollowedByJs, "bundle.js", MAX_IMPORTED_SCRIPT_BYTES),
         )
     }
@@ -221,7 +222,7 @@ class LxSourceImportTest {
             .readBoundedLxSourceText(MAX_LOCAL_SOURCE_DOCUMENT_BYTES)
 
         assertEquals(
-            listOf("source-0.js" to "// source"),
+            listOf(LxSourcePayload("source-0.js", "// source")),
             parseLxSourceDocument(text, "bundle.json", MAX_LOCAL_SOURCE_DOCUMENT_BYTES),
         )
     }
@@ -229,7 +230,64 @@ class LxSourceImportTest {
     @Test
     fun unquotedJavaScriptIsNotMisclassifiedByLenientJsonTokener() {
         val code = "globalThis.loadSource()"
-        assertEquals(listOf("source.js" to code), parseLxSourceDocument(code, "source.js", MAX_IMPORTED_SCRIPT_BYTES))
+        assertEquals(listOf(LxSourcePayload("source.js", code)), parseLxSourceDocument(code, "source.js", MAX_IMPORTED_SCRIPT_BYTES))
+    }
+
+    @Test
+    fun linkedScriptKeepsNameOriginAndExactCodeWithoutChangingItsHeader() {
+        val code = "#!/usr/bin/env node\r\n// @name LX Script\r\n// @homepage https://example.test\n"
+        val original = LxSourcePayload("source-from-link.js", code, "https://example.test/original.js")
+        val exported = original.scriptExport()
+        assertTrue(exported.startsWith(code))
+        assertEquals(listOf(original), parseLxSourceDocument(exported + "\r\n", "renamed.js", MAX_LOCAL_SOURCE_DOCUMENT_BYTES))
+        assertEquals(code, original.copy(originUrl = null).scriptExport())
+    }
+
+    @Test
+    fun sourceBundlesKeepExplicitOriginsWhileOrdinaryDocumentsDoNotInventThem() {
+        val linked = LxSourcePayload("linked.js", "// @homepage https://example.test/help", "https://example.test/s.js")
+        val local = LxSourcePayload("local.js", "// @homepage https://example.test/help")
+        val bundle = sourceBundleExport(listOf(linked, local))
+        val parse = { text: String -> parseLxSourceDocument(text, "backup.json", MAX_LOCAL_SOURCE_DOCUMENT_BYTES) }
+
+        assertEquals(listOf(linked, local), parse(bundle))
+        assertEquals(listOf(linked.copy(originUrl = null), local), parse(JSONObject(bundle).apply { remove("type") }.toString()))
+        assertEquals(listOf(local), parseLxSourceDocument(local.code, local.fileName, MAX_LOCAL_SOURCE_DOCUMENT_BYTES))
+
+        val unsafe = JSONObject(bundle).apply {
+            getJSONArray("scripts").getJSONObject(1).put("originUrl", "https://user:password@example.test/source.js")
+        }
+        assertThrows(IllegalArgumentException::class.java) { parse(unsafe.toString()) }
+    }
+
+    @Test
+    fun appBackupOpenedAsASourceDocumentKeepsItsScriptNameAndLink() {
+        val origin = "https://example.test/linked.js"
+        val script = JSONObject().put("fileName", "linked.js").put("code", "// source").put("originUrl", origin)
+        val backup = JSONObject().put("version", 1)
+            .put(BACKUP_ORIGIN_KEY, JSONObject().put("model", "fixture"))
+            .put("scripts", JSONArray().put(script))
+
+        assertEquals(
+            listOf(LxSourcePayload("linked.js", "// source", origin)),
+            parseLxSourceDocument(backup.toString(), "backup.json", MAX_LOCAL_SOURCE_DOCUMENT_BYTES),
+        )
+        script.remove("originUrl")
+        backup.remove(BACKUP_ORIGIN_KEY)
+        backup.put("settings", JSONObject())
+        assertEquals(
+            listOf(LxSourcePayload("linked.js", "// source")),
+            parseLxSourceDocument(backup.toString(), "legacy.json", MAX_LOCAL_SOURCE_DOCUMENT_BYTES),
+        )
+    }
+
+    @Test
+    fun oversizedEncodedBundleIsRejectedEvenWhenTheScriptBytesFit() {
+        val code = "// fixture".padEnd(MAX_IMPORTED_SCRIPT_BYTES, ' ')
+        val sources = List(MAX_LOCAL_SOURCE_DOCUMENT_BYTES / MAX_IMPORTED_SCRIPT_BYTES) { index ->
+            LxSourcePayload("source-$index.js", code)
+        }
+        assertThrows(IllegalArgumentException::class.java) { sourceBundleExport(sources) }
     }
 
     private fun assertRejectedDocument(document: String) {

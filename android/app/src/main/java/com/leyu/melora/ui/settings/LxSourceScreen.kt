@@ -115,8 +115,6 @@ import com.leyu.melora.ui.player.playerSpecificationLabel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import org.json.JSONObject
 
 private val TextMain: Color get() = MeloraAppearance.textMain
 private val TextSub: Color get() = MeloraAppearance.textSub
@@ -259,7 +257,7 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
         pendingExportId = null
         if (uri != null && id != null) {
             val name = scripts.firstOrNull { it.id == id }?.name ?: id
-            writeExport(uri, "已导出「$name」", "导出「$name」失败") { store.code(id) ?: error("脚本不存在") }
+            writeExport(uri, "已导出「$name」", "导出「$name」失败") { store.exportScript(id) }
         }
     }
 
@@ -267,14 +265,9 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
         ActivityResultContracts.CreateDocument("application/json"),
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        val selected = scripts
+        val selected = scripts.map { it.id }
         writeExport(uri, "已导出 ${selected.size} 个音源脚本", "导出失败") {
-            val entries = JSONArray()
-            selected.forEach { script ->
-                val code = store.code(script.id) ?: error("脚本不存在：${script.name}")
-                entries.put(JSONObject().put("name", script.id).put("code", code))
-            }
-            JSONObject().put("app", "melora").put("type", "lx-sources").put("scripts", entries).toString(2)
+            store.exportBundle(selected)
         }
     }
 
@@ -450,7 +443,7 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
                 ActionRow(
                     icon = Icons.Rounded.Upload,
                     label = if (scripts.isEmpty()) "导出全部音源" else "导出全部音源（${scripts.size} 个）",
-                    subtitle = "将当前已安装音源打包为 .json 备份",
+                    subtitle = "导出 .json 合集，保留音源更新链接",
                     tint = Color(0xFF7C3AED),
                     enabled = scripts.isNotEmpty() && !busy,
                 ) { bundleExporter.launch("melora-sources.json") }
@@ -1010,7 +1003,7 @@ private fun SourceRow(
                                 iconTint = TextMain.copy(alpha = 0.78f),
                                 iconBg = MeloraAppearance.softFill,
                                 title = "导出此源",
-                                subtitle = "导出为独立 .js 脚本文件到本地存储",
+                                subtitle = if (script.originUrl != null) "导出 .js 文件，包含原更新链接" else "导出为独立 .js 脚本文件到本地存储",
                                 titleColor = TextMain,
                                 enabled = !actionBusy,
                             ) {
