@@ -132,6 +132,26 @@ class PlaybackResolutionTest {
         stopped.await()
     }
 
+    @Test fun zeroDelayRunsBothBranchesAndKeepsTheSamePlatformCandidate() = runBlocking {
+        val samePlatformStarted = CompletableDeferred<Unit>()
+        val alternativeStarted = CompletableDeferred<Unit>()
+        val result = withTimeout(1000) {
+            SourceResolver.preferFirst(0,
+                primary = {
+                    samePlatformStarted.complete(Unit)
+                    alternativeStarted.await()
+                    "same-platform"
+                },
+                fallback = {
+                    assertTrue(samePlatformStarted.isCompleted)
+                    alternativeStarted.complete(Unit)
+                    null
+                },
+            )
+        }
+        assertEquals("same-platform", result)
+    }
+
     @Test fun knownPrimaryFallbackSkipsBackupAfterGraceAndCancelsHigherTier() = runBlocking {
         val ready = CompletableDeferred<Unit>()
         val stopped = CompletableDeferred<Unit>()

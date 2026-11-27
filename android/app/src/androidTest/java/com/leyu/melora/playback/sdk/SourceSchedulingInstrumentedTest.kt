@@ -8,6 +8,9 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.leyu.melora.playback.lx.LxScriptStore
 import java.io.File
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.net.SocketException
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -15,6 +18,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
@@ -30,7 +34,7 @@ import kotlin.math.ceil
 
 /**
  * Controlled on-device measurements of the real SourceResolver -> LxScriptPool -> QuickJS path.
- * This uses synthetic `example.test` URLs only; fixture delays are not network/server measurements.
+ * Synthetic scripts use fixture URLs and timings to test source scheduling.
  */
 @RunWith(AndroidJUnit4::class)
 class SourceSchedulingInstrumentedTest {
@@ -86,6 +90,70 @@ class SourceSchedulingInstrumentedTest {
             }
         }
         finishScenario("foreground-baseline", samples)
+    }
+
+    @Test
+    fun playbackDoesNotWaitForTheSamePlatformAgainOnTheNextQualityTier() = runBlocking {
+        val bytes = InstrumentationRegistry.getInstrumentation().context.assets
+            .open("audio/fixture-128.mp3").use { it.readBytes() }
+        ServerSocket(0, 4, InetAddress.getByName("127.0.0.1")).use { server ->
+            val serveAudio = launch(Dispatchers.IO) {
+                while (!server.isClosed) {
+                    val peer = try { server.accept() } catch (closed: SocketException) {
+                        if (server.isClosed) break else throw closed
+                    }
+                    peer.use {
+                        it.soTimeout = 2_000
+                        val request = it.getInputStream().bufferedReader()
+                        while (!request.readLine().isNullOrEmpty()) Unit
+                        it.getOutputStream().apply {
+                            write(("HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\n" +
+                                "Content-Length: ${bytes.size}\r\nConnection: close\r\n\r\n").toByteArray(Charsets.US_ASCII))
+                            write(bytes)
+                        }
+                    }
+                }
+            }
+            val baseUrl = "http://127.0.0.1:${server.localPort}"
+            val samePlatform = "same-platform-$runId.js"
+            val crossPlatform = "cross-platform-$runId.js"
+            fun script(platform: String, highDelay: Int, lowDelay: Int, lowUrl: String?) = """
+                lx.send('inited', {sources: {$platform: {actions: ['musicUrl'], qualitys: ['320k', '128k']}}});
+                lx.on('request', ({info}) => new Promise((resolve, reject) => {
+                    const high = info.type === '320k';
+                    const url = ${JSONObject.quote(lowUrl.orEmpty())};
+                    setTimeout(() => {
+                        if (!high && url) resolve(url);
+                        else reject(Object.assign(new Error('fixture has no result'), {code: 'MUSIC_UNAVAILABLE'}));
+                    }, high ? $highDelay : $lowDelay);
+                }));
+            """.trimIndent()
+            try {
+                store.import(scriptId, script("kw", 0, 0, null))
+                store.import(samePlatform, script("kw", 1_500, 900, "$baseUrl/kw"))
+                store.import(crossPlatform, script("wy", 0, 0, "$baseUrl/wy"))
+                assertEquals(3, LxScriptPool.reload(context))
+
+                val song = fixtureSong("$runId-downgrade")
+                val matched = OnlineSong(JSONObject(song.raw.toString())
+                    .put("source", "wy").put("songmid", "$runId-matched"))
+                OnlineCache.put(SourceResolver.matchingCacheKey(song, "wy"), listOf(matched))
+
+                val result = withTimeout(CALL_TIMEOUT_MS) {
+                    SourceResolver.resolve(context, song, "320k", allowSwitch = true)
+                }
+                assertEquals("128k", result.quality)
+                // A second 1.2s window would let the 900ms same-platform script win this tier.
+                assertEquals("$baseUrl/wy", result.url)
+                assertTrue(result.switched)
+            } finally {
+                store.remove(samePlatform)
+                store.remove(crossPlatform)
+                SourceResolver.clearCache()
+                server.close()
+                serveAudio.cancelAndJoin()
+            }
+        }
     }
 
     @Test

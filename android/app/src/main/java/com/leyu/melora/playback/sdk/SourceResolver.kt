@@ -286,20 +286,22 @@ object SourceResolver {
             suspend fun scripts(candidate: OnlineSong, scope: ScriptScope, quality: String): Resolved? =
                 resolveOnScripts(context, candidate, quality, scope, requestTimeout, tierBudget, resolutionAttempt) { accept(it, quality, scope) != null }
                     ?.let { it.copy(switched = it.song.uid != song.uid, fromPrimary = scope == ScriptScope.ENABLED) }
+            suspend fun samePlatform(scope: ScriptScope, quality: String): Resolved? =
+                if (scope == ScriptScope.ALL) preferFirst(BACKUP_START_DELAY_MS,
+                    primary = { scripts(song, ScriptScope.ENABLED, quality) },
+                    fallback = { scripts(song, ScriptScope.DISABLED, quality) })
+                else scripts(song, scope, quality)
             suspend fun chain(scope: ScriptScope): Resolved = resolveTiers(key.preferredQuality, purpose,
                 // 已失败的资源应尝试同档备用，不把故障当作“不支持此音质”继续向下探测。
                 playbackDeadlineNanos = startedAt + PLAYBACK_TOTAL_BUDGET_MS * 1_000_000L,
                 stopAfterFailure = { scope == ScriptScope.ENABLED && purpose == Purpose.PLAYBACK && key.allowSwitch && rejectedPrimary.get() },
             ) { quality ->
-                candidate(quality, scope) ?: if (scope == ScriptScope.ENABLED) {
-                    scripts(song, scope, quality)
-                } else preferFirst(ALTERNATIVE_START_DELAY_MS,
-                    primary = {
-                        if (scope == ScriptScope.DISABLED) scripts(song, scope, quality)
-                        else preferFirst(BACKUP_START_DELAY_MS,
-                            primary = { scripts(song, ScriptScope.ENABLED, quality) },
-                            fallback = { scripts(song, ScriptScope.DISABLED, quality) })
-                    },
+                candidate(quality, scope) ?: if (scope == ScriptScope.ENABLED || matches.isEmpty()) {
+                    samePlatform(scope, quality)
+                } else preferFirst(
+                    // 播放只在首档给原平台备用源留独占时间，降档时直接与跨平台源竞速。
+                    delayMs = if (purpose == Purpose.PLAYBACK && quality != key.preferredQuality) 0L else ALTERNATIVE_START_DELAY_MS,
+                    primary = { samePlatform(scope, quality) },
                     fallback = {
                         firstSuccessful(matches) { match ->
                             match.await().take(3).firstNotNullOfOrNull { matched ->
@@ -497,9 +499,12 @@ object SourceResolver {
         available: () -> T? = { null },
         availableSignal: Deferred<Unit>? = null,
     ): T? = supervisorScope {
-        val first = async { attempt { primary() } }
+        val first = async(start = if (delayMs > 0) CoroutineStart.DEFAULT else CoroutineStart.UNDISPATCHED) {
+            attempt { primary() }
+        }
         try {
-            withTimeoutOrNull(delayMs) { first.await() }?.let { return@supervisorScope it }
+            val preferred = if (first.isCompleted) first.await() else withTimeoutOrNull(delayMs) { first.await() }
+            if (preferred != null) return@supervisorScope preferred
             available()?.let { return@supervisorScope it }
             val race = async {
                 if (first.isCompleted) first.await() ?: attempt { fallback() }
