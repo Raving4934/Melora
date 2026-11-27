@@ -3,6 +3,7 @@ package com.leyu.melora.ui
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.test.*
@@ -16,9 +17,12 @@ import com.leyu.melora.playback.UserLibrary
 import com.leyu.melora.playback.UiTrack
 import kotlinx.coroutines.flow.MutableStateFlow
 import com.leyu.melora.playback.MeloraSettings
+import com.leyu.melora.playback.ThemeMode
 import com.leyu.melora.ui.common.SongListStateProvider
+import com.leyu.melora.ui.theme.MeloraAppearance
 import com.leyu.melora.ui.theme.MeloraTheme
 import org.junit.After
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -209,5 +213,57 @@ class AdaptiveNavigationInstrumentedTest {
         compose.onNodeWithTag("main-navigation-exit").assertIsDisplayed()
         compose.runOnIdle { MeloraSettings.showExitButton.value = false }
         compose.onNodeWithTag("main-navigation-exit").assertDoesNotExist()
+    }
+
+    @Test fun eInkNavigationItemsUseNeutralColorsInBothDrawerLayouts() {
+        val previousTheme = MeloraSettings.themeMode.value
+        val previousEInk = MeloraSettings.eInkMode.value
+        val search = compose.onNodeWithTag("main-navigation-item-0")
+        val local = compose.onNodeWithTag("main-navigation-item-5")
+
+        fun highestColorDifference(item: SemanticsNodeInteraction): Float {
+            item.performScrollTo()
+            compose.awaitStable(item)
+            val pixels = item.captureToImage().toPixelMap()
+            var difference = 0f
+            for (y in 0 until pixels.height) {
+                for (x in 0 until pixels.width) {
+                    val pixel = pixels[x, y]
+                    val brightest = maxOf(pixel.red, pixel.green, pixel.blue)
+                    val darkest = minOf(pixel.red, pixel.green, pixel.blue)
+                    difference = maxOf(difference, brightest - darkest)
+                }
+            }
+            return difference
+        }
+
+        try {
+            MeloraSettings.themeMode.value = ThemeMode.Light
+            MeloraSettings.eInkMode.value = false
+            showApp()
+            assertTrue("浅色侧栏应显示蓝色搜索图标", highestColorDifference(search) > 0.20f)
+
+            compose.runOnIdle { MeloraSettings.eInkMode.value = true }
+            compose.waitUntil(5_000) { MeloraAppearance.isEInk }
+            local.assertIsSelected()
+            assertTrue("常驻侧栏中未选中项应为灰阶", highestColorDifference(search) < 0.02f)
+            assertTrue("常驻侧栏中选中项应为灰阶", highestColorDifference(local) < 0.02f)
+
+            compose.runOnIdle { compactWindow.value = true }
+            val openDrawer = compose.onNodeWithContentDescription("打开侧栏")
+            compose.awaitStable(openDrawer)
+            openDrawer.performClick()
+            compose.awaitStable(compose.onNodeWithText("乐屿 · Melora"))
+            local.assertIsSelected()
+            assertTrue("窄屏侧栏中未选中项应为灰阶", highestColorDifference(search) < 0.02f)
+            assertTrue("窄屏侧栏中选中项应为灰阶", highestColorDifference(local) < 0.02f)
+
+            compose.runOnIdle { MeloraSettings.eInkMode.value = false }
+            compose.waitUntil(5_000) { !MeloraAppearance.isEInk }
+            assertTrue("退出墨水屏模式后应恢复彩色图标", highestColorDifference(search) > 0.20f)
+        } finally {
+            MeloraSettings.eInkMode.value = previousEInk
+            MeloraSettings.themeMode.value = previousTheme
+        }
     }
 }

@@ -17,6 +17,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
@@ -31,7 +32,9 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.unit.dp
 import androidx.core.graphics.ColorUtils
+import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.SourceAlias
@@ -39,6 +42,7 @@ import com.leyu.melora.playback.ThemeMode
 import com.leyu.melora.playback.lx.LxScriptStore
 import com.leyu.melora.playback.lx.LxSourceImporter
 import com.leyu.melora.ui.awaitStable
+import com.leyu.melora.ui.theme.MeloraAppearance
 import com.leyu.melora.ui.theme.MeloraTheme
 import java.io.Closeable
 import java.io.File
@@ -183,6 +187,46 @@ class LxSourceActionsInstrumentedTest {
     }
 
     @Test
+    fun sourceActionIconsAndFillsFollowEInkMode() {
+        val previousMode = MeloraSettings.themeMode.value
+        val previousEInk = MeloraSettings.eInkMode.value
+        try {
+            MeloraSettings.themeMode.value = ThemeMode.Light
+            MeloraSettings.eInkMode.value = false
+            store.import("lyrics.js", lyricSource("1"))
+            showSourceScreen()
+
+            for (eInk in listOf(false, true)) {
+                compose.runOnIdle { MeloraSettings.eInkMode.value = eInk }
+                compose.waitUntil(5_000) { MeloraAppearance.isEInk == eInk }
+
+                val list = compose.onNode(hasScrollAction())
+                for (label in listOf("导入音源脚本", "导出全部音源（1 个）", "重新加载音源")) {
+                    list.performScrollToNode(hasText(label))
+                    assertActionIconColors(label, eInk)
+                }
+
+                list.performScrollToNode(hasText("导入音源脚本"))
+                val importer = compose.onNodeWithText("导入音源脚本")
+                compose.awaitStable(importer)
+                importer.performClick()
+                for (label in listOf("选择 JS 文件", "从链接导入", "恢复音源备份")) {
+                    assertActionIconColors(label, eInk)
+                }
+                dismissSourceSheet()
+
+                openSourceMenu()
+                assertActionIconColors("有效性测试", eInk)
+                assertActionIconColors("删除此源", eInk)
+                dismissSourceSheet()
+            }
+        } finally {
+            MeloraSettings.themeMode.value = previousMode
+            MeloraSettings.eInkMode.value = previousEInk
+        }
+    }
+
+    @Test
     fun linkedSourceChangesOnlyWhenTheCheckedUpdateIsApplied() {
         val installed = lyricSource("1")
         val remote = lyricSource("2")
@@ -208,17 +252,53 @@ class LxSourceActionsInstrumentedTest {
     }
 
     private fun showSourceMenu() {
+        showSourceScreen()
+        openSourceMenu()
+    }
+
+    private fun showSourceScreen() {
         val context = FixtureContext(compose.activity, files)
         compose.setContent {
             CompositionLocalProvider(LocalContext provides context) {
                 MeloraTheme { LxSourceScreen() }
             }
         }
+    }
+
+    private fun openSourceMenu() {
         compose.onNode(hasScrollAction()).performScrollToNode(hasContentDescription("更多操作"))
         val more = compose.onNodeWithContentDescription("更多操作")
         compose.awaitStable(more)
         more.performClick()
         compose.awaitStable(compose.onNodeWithText("有效性测试"))
+    }
+
+    private fun dismissSourceSheet() {
+        Espresso.pressBack()
+        compose.waitUntil(5_000) { compose.onAllNodes(isDialog()).fetchSemanticsNodes().isEmpty() }
+    }
+
+    private fun assertActionIconColors(label: String, eInk: Boolean) {
+        val row = compose.onNode(hasClickAction() and hasText(label))
+        compose.awaitStable(row)
+        val pixels = row.captureToImage().toPixelMap()
+        // 中央区域同时包含图标与底色，避开卡片圆角和标题文字。
+        val left = with(compose.density) { 20.dp.roundToPx() }
+        val right = with(compose.density) { 48.dp.roundToPx() }
+        val halfHeight = with(compose.density) { 12.dp.roundToPx() }
+        var hasChromaticPixel = false
+        var hasDarkPixel = false
+        for (x in left until right) {
+            for (y in pixels.height / 2 - halfHeight until pixels.height / 2 + halfHeight) {
+                val color = pixels[x, y]
+                val brightest = maxOf(color.red, color.green, color.blue)
+                val darkest = minOf(color.red, color.green, color.blue)
+                if (brightest - darkest > 0.02f) hasChromaticPixel = true
+                if (brightest < 0.4f) hasDarkPixel = true
+            }
+        }
+        assertEquals("$label 图标及底色的彩色状态", !eInk, hasChromaticPixel)
+        if (eInk) assertTrue("$label 的图标在墨水屏上应清晰可见", hasDarkPixel)
     }
 
     private fun statusColor(label: String): Color {

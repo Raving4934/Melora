@@ -34,7 +34,6 @@ import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -52,10 +51,10 @@ import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.clearText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Refresh
@@ -519,44 +518,35 @@ private fun SourceModalSheet(
     MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        dragHandle = { MeloraSheetHandle(color = MeloraAppearance.divider) },
+        dragHandle = { MeloraSheetHandle() },
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 28.dp),
+                .padding(bottom = 24.dp),
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 8.dp),
+                    .padding(horizontal = 20.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(46.dp)
-                        .clip(RoundedCornerShape(13.dp))
-                        .background(if (MeloraAppearance.isDark) Color(0xFF222226) else BrandBlue.copy(alpha = 0.12f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        icon,
-                        contentDescription = null,
-                        tint = BrandBlue,
-                        modifier = Modifier.size(24.dp),
-                    )
-                }
-                Spacer(Modifier.width(14.dp))
+                SourceIcon(
+                    icon = icon, tint = BrandBlue,
+                    background = if (MeloraAppearance.isDark) Color(0xFF222226) else BrandBlue.copy(alpha = 0.12f),
+                    size = 44.dp, iconSize = 22.dp, radius = 12.dp,
+                )
+                Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = title,
                         fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium,
+                        fontWeight = FontWeight.SemiBold,
                         color = TextMain,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(3.dp))
                     Text(
                         text = subtitle,
                         fontSize = 12.sp,
@@ -566,7 +556,7 @@ private fun SourceModalSheet(
                     )
                 }
             }
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(14.dp))
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -839,20 +829,7 @@ private fun SourceRow(
             .padding(start = 16.dp, end = 6.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(BrandBlue.copy(alpha = 0.12f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                Icons.Rounded.Extension,
-                contentDescription = null,
-                tint = BrandBlue,
-                modifier = Modifier.size(22.dp),
-            )
-        }
+        SourceIcon(Icons.Rounded.Extension, BrandBlue, size = 40.dp, iconSize = 22.dp, radius = 12.dp)
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -904,43 +881,41 @@ private fun SourceRow(
         val closeSheet = rememberSheetDismiss(sheetState)
         val actionBusy = actionStatus?.busy == true
         val metrics = LxScriptPool.metrics(script.id)
+        val eInk = MeloraAppearance.isEInk
+        val dark = MeloraAppearance.isDark
+        val deleteColor = when {
+            eInk -> TextMain
+            dark -> MeloraAppearance.accent
+            else -> Color(0xFFD14343)
+        }
         MeloraBottomSheet(
             onDismissRequest = { sheetOpen = false },
             sheetState = sheetState,
-            dragHandle = { MeloraSheetHandle(color = MeloraAppearance.divider) },
+            dragHandle = { MeloraSheetHandle() },
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 32.dp),
+                    .padding(bottom = 24.dp),
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 8.dp),
+                        .padding(horizontal = 20.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(46.dp)
-                            .clip(RoundedCornerShape(13.dp))
-                            .background(BrandBlue.copy(alpha = 0.12f)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            Icons.Rounded.Extension,
-                            contentDescription = null,
-                            tint = BrandBlue,
-                            modifier = Modifier.size(24.dp),
-                        )
-                    }
-                    Spacer(Modifier.width(14.dp))
+                    SourceIcon(
+                        icon = Icons.Rounded.Extension, tint = BrandBlue,
+                        background = if (MeloraAppearance.isDark) Color(0xFF222226) else BrandBlue.copy(alpha = 0.12f),
+                        size = 44.dp, iconSize = 22.dp, radius = 12.dp,
+                    )
+                    Spacer(Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 text = script.name,
                                 fontSize = 16.sp,
-                                fontWeight = FontWeight.Medium,
+                                fontWeight = FontWeight.SemiBold,
                                 color = TextMain,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
@@ -949,18 +924,29 @@ private fun SourceRow(
                             Spacer(Modifier.width(8.dp))
                             Surface(
                                 shape = RoundedCornerShape(6.dp),
-                                color = if (script.enabled) Color(0xFFE8F5E9) else MeloraAppearance.softFill,
+                                color = when {
+                                    eInk -> Color.White
+                                    script.enabled && dark -> Color(0xFF193022)
+                                    script.enabled -> Color(0xFFE8F5E9)
+                                    else -> MeloraAppearance.softFill
+                                },
+                                border = if (eInk) MeloraAppearance.chipBorder else null,
                             ) {
                                 Text(
                                     text = if (script.enabled) "已启用" else "已停用",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = if (script.enabled) Color(0xFF2E7D32) else TextSub,
+                                    color = when {
+                                        eInk -> if (script.enabled) TextMain else TextSub
+                                        script.enabled && dark -> Color(0xFF73D69A)
+                                        script.enabled -> Color(0xFF2E7D32)
+                                        else -> TextSub
+                                    },
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                 )
                             }
                         }
-                        Spacer(Modifier.height(4.dp))
+                        Spacer(Modifier.height(3.dp))
                         Text(
                             text = listOfNotNull(
                                 script.version.takeIf { it.isNotBlank() }?.let {
@@ -976,61 +962,88 @@ private fun SourceRow(
                     }
                 }
 
+                Spacer(Modifier.height(8.dp))
                 SourceStatusSummary(actionStatus = actionStatus, metrics = metrics)
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(10.dp))
 
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                        .padding(horizontal = 16.dp),
                 ) {
-                    SourceSheetAction(
-                        icon = Icons.Rounded.Build,
-                        iconTint = BrandBlue,
-                        iconBg = BrandBlue.copy(alpha = 0.10f),
-                        title = "有效性测试",
-                        subtitle = "检查脚本协议，逐平台验证播放链接",
-                        titleColor = TextMain,
-                        enabled = !actionBusy,
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = CardBg,
+                        border = MeloraAppearance.cardBorder,
+                        modifier = Modifier.fillMaxWidth(),
                     ) {
-                        closeSheet {
-                            sheetOpen = false
-                            onTestValidity()
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            SourceGroupActionRow(
+                                icon = Icons.Rounded.Build,
+                                iconTint = BrandBlue,
+                                iconBg = if (dark) Color(0xFF222226) else BrandBlue.copy(alpha = 0.10f),
+                                title = "有效性测试",
+                                subtitle = "检查脚本协议，逐平台验证播放链接",
+                                titleColor = TextMain,
+                                enabled = !actionBusy,
+                            ) {
+                                closeSheet {
+                                    sheetOpen = false
+                                    onTestValidity()
+                                }
+                            }
+                            HorizontalDivider(
+                                color = MeloraAppearance.divider,
+                                thickness = 0.6.dp,
+                                modifier = Modifier.padding(start = 64.dp, end = 14.dp),
+                            )
+                            if (checkUpdate != null) {
+                                LinkedSourceUpdateAction(script, !actionBusy, checkUpdate, onApplyUpdate)
+                                HorizontalDivider(
+                                    color = MeloraAppearance.divider,
+                                    thickness = 0.6.dp,
+                                    modifier = Modifier.padding(start = 64.dp, end = 14.dp),
+                                )
+                            }
+                            SourceGroupActionRow(
+                                icon = Icons.Rounded.Upload,
+                                iconTint = TextMain.copy(alpha = 0.78f),
+                                iconBg = MeloraAppearance.softFill,
+                                title = "导出此源",
+                                subtitle = "导出为独立 .js 脚本文件到本地存储",
+                                titleColor = TextMain,
+                                enabled = !actionBusy,
+                            ) {
+                                closeSheet {
+                                    sheetOpen = false
+                                    onExport()
+                                }
+                            }
                         }
                     }
 
-                    if (checkUpdate != null) {
-                        LinkedSourceUpdateAction(script, !actionBusy, checkUpdate, onApplyUpdate)
-                    }
+                    Spacer(Modifier.height(10.dp))
 
-                    SourceSheetAction(
-                        icon = Icons.Rounded.Upload,
-                        iconTint = Color(0xFF7C3AED),
-                        iconBg = Color(0xFF7C3AED).copy(alpha = 0.10f),
-                        title = "导出此源",
-                        subtitle = "导出为独立 .js 脚本文件到本地存储",
-                        titleColor = TextMain,
-                        enabled = !actionBusy,
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = CardBg,
+                        border = MeloraAppearance.cardBorder,
+                        modifier = Modifier.fillMaxWidth(),
                     ) {
-                        closeSheet {
-                            sheetOpen = false
-                            onExport()
-                        }
-                    }
-
-                    SourceSheetAction(
-                        icon = Icons.Rounded.Delete,
-                        iconTint = Color(0xFFD1606A),
-                        iconBg = Color(0xFFD1606A).copy(alpha = 0.10f),
-                        title = "删除此源",
-                        subtitle = "从本地沙箱完全移除此音源脚本",
-                        titleColor = Color(0xFFD1606A),
-                        enabled = !actionBusy,
-                    ) {
-                        closeSheet {
-                            sheetOpen = false
-                            onDelete()
+                        SourceGroupActionRow(
+                            icon = Icons.Outlined.DeleteOutline,
+                            iconTint = deleteColor,
+                            iconBg = MeloraAppearance.tintRed,
+                            destructive = true,
+                            title = "删除此源",
+                            subtitle = "从本地沙箱完全移除此音源脚本",
+                            titleColor = deleteColor,
+                            enabled = !actionBusy,
+                        ) {
+                            closeSheet {
+                                sheetOpen = false
+                                onDelete()
+                            }
                         }
                     }
                 }
@@ -1063,10 +1076,10 @@ private fun LinkedSourceUpdateAction(
         script.originUrl.orEmpty().startsWith("http://", ignoreCase = true) -> "从原 HTTP 明文链接检查更新"
         else -> "与导入链接中的脚本比较"
     }
-    SourceSheetAction(
+    SourceGroupActionRow(
         icon = Icons.Rounded.Refresh,
         iconTint = BrandBlue,
-        iconBg = BrandBlue.copy(alpha = 0.10f),
+        iconBg = if (MeloraAppearance.isDark) Color(0xFF222226) else BrandBlue.copy(alpha = 0.10f),
         title = if (update == null) "检查更新" else "应用更新",
         subtitle = subtitle,
         titleColor = TextMain,
@@ -1496,35 +1509,44 @@ private fun SourceStatusSummary(
     actionStatus: SourceActionStatus?,
     metrics: LxScriptPool.ScriptMetrics?,
 ) {
-    val statusColor = if (actionStatus?.busy == true) BrandBlue else actionStatus?.result.textColor
+    val busy = actionStatus?.busy == true
+    val eInk = MeloraAppearance.isEInk
+    val statusColor = if (busy) (if (eInk) TextMain else BrandBlue) else actionStatus?.result.textColor
     Surface(
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(16.dp),
         color = CardBg,
         border = MeloraAppearance.cardBorder,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp),
+            .padding(horizontal = 16.dp),
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
         ) {
-            Row(
-                modifier = Modifier.heightIn(min = 32.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
-                    modifier = Modifier.size(12.dp),
+                    modifier = Modifier.size(16.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (actionStatus?.busy == true) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(12.dp),
-                            strokeWidth = 1.6.dp,
-                            color = BrandBlue,
+                    when {
+                        busy -> CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 1.8.dp,
+                            color = statusColor,
                         )
-                    } else {
-                        Box(
+                        actionStatus?.result == LinkStatus.VALID -> Icon(
+                            Icons.Rounded.CheckCircle,
+                            contentDescription = null,
+                            tint = statusColor,
+                            modifier = Modifier.size(15.dp),
+                        )
+                        actionStatus?.result == LinkStatus.INVALID -> Icon(
+                            Icons.Outlined.ErrorOutline,
+                            contentDescription = null,
+                            tint = statusColor,
+                            modifier = Modifier.size(15.dp),
+                        )
+                        else -> Box(
                             modifier = Modifier
                                 .size(7.dp)
                                 .clip(CircleShape)
@@ -1535,26 +1557,114 @@ private fun SourceStatusSummary(
                 Spacer(Modifier.width(8.dp))
                 Text(
                     text = actionStatus?.message ?: "尚未运行有效性测试",
-                    fontSize = 12.sp,
+                    fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
                     color = if (actionStatus?.result != null) statusColor else TextMain,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            Spacer(Modifier.height(4.dp))
             Text(
                 text = metrics?.let {
                     "本次运行命中 ${it.hitCount} 次 · 平均延迟 ${it.averageLatencyMs} ms"
                 } ?: "本次运行暂无播放命中",
-                fontSize = 11.sp,
+                fontSize = 12.sp,
                 color = TextSub,
-                modifier = Modifier.padding(start = 15.dp),
+                modifier = Modifier.padding(start = 24.dp),
             )
         }
     }
 }
 
-// 音源操作面板行：现代化圆角卡片式动作行，支持图标底色容器与副标题说明
+@Composable
+private fun SourceIcon(
+    icon: ImageVector,
+    tint: Color,
+    size: Dp,
+    iconSize: Dp,
+    radius: Dp,
+    background: Color = tint.copy(alpha = 0.12f),
+    enabled: Boolean = true,
+    destructive: Boolean = false,
+) {
+    val ink = MeloraAppearance.isEInk
+    val reverse = ink && destructive && enabled
+    val fill = when {
+        reverse -> TextMain
+        ink -> MeloraAppearance.softFill
+        else -> background
+    }
+    val foreground = when {
+        !enabled -> if (ink) MeloraAppearance.textMuted else TextSub
+        reverse -> CardBg
+        ink -> TextMain
+        else -> tint
+    }
+    Box(
+        modifier = Modifier.size(size).background(fill, RoundedCornerShape(radius)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, contentDescription = null, tint = foreground, modifier = Modifier.size(iconSize))
+    }
+}
+
+@Composable
+private fun SourceGroupActionRow(
+    icon: ImageVector,
+    iconTint: Color,
+    iconBg: Color,
+    title: String,
+    subtitle: String,
+    titleColor: Color,
+    enabled: Boolean = true,
+    destructive: Boolean = false,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        color = Color.Transparent,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SourceIcon(
+                icon, iconTint, size = 36.dp, iconSize = 19.dp, radius = 10.dp,
+                background = iconBg, enabled = enabled, destructive = destructive,
+            )
+            Spacer(Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = if (enabled) titleColor else TextSub,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = subtitle,
+                    fontSize = 12.sp,
+                    color = TextSub,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Icon(
+                Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                contentDescription = null,
+                tint = TextSub.copy(alpha = 0.45f),
+                modifier = Modifier.size(18.dp),
+            )
+        }
+    }
+}
+
+// 音源操作面板行：共用分组动作行并套用独立卡片边框（供导入选择抽屉使用）
 @Composable
 private fun SourceSheetAction(
     icon: ImageVector,
@@ -1567,61 +1677,24 @@ private fun SourceSheetAction(
     onClick: () -> Unit,
 ) {
     val dark = MeloraAppearance.isDark
-    val destructive = titleColor == Color(0xFFD1606A)
-    val warning = iconTint == MeloraAppearance.accent
-    val resolvedIconBg = when {
-        !dark -> iconBg
-        destructive || warning -> MeloraAppearance.tintRed
-        else -> Color(0xFF222226)
-    }
-    val resolvedIconTint = when {
-        !dark -> iconTint
-        destructive || warning -> MeloraAppearance.accent
-        else -> MeloraAppearance.textMain.copy(alpha = 0.86f)
-    }
-    val resolvedTitleColor = if (dark && destructive) MeloraAppearance.accent else titleColor
+    val resolvedIconBg = if (dark) Color(0xFF222226) else iconBg
+    val resolvedIconTint = if (dark) MeloraAppearance.textMain.copy(alpha = 0.86f) else iconTint
     Surface(
-        onClick = onClick,
-        enabled = enabled,
         shape = RoundedCornerShape(14.dp),
         color = CardBg,
         border = MeloraAppearance.cardBorder,
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(11.dp))
-                    .background(resolvedIconBg),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(icon, contentDescription = null, tint = resolvedIconTint, modifier = Modifier.size(20.dp))
-            }
-            Spacer(Modifier.width(14.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(title, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = resolvedTitleColor)
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    subtitle,
-                    fontSize = 12.sp,
-                    color = if (destructive) resolvedTitleColor.copy(alpha = 0.78f) else TextSub,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Icon(
-                Icons.AutoMirrored.Outlined.KeyboardArrowRight,
-                contentDescription = null,
-                tint = TextSub.copy(alpha = 0.45f),
-                modifier = Modifier.size(18.dp),
-            )
-        }
+        SourceGroupActionRow(
+            icon = icon,
+            iconTint = resolvedIconTint,
+            iconBg = resolvedIconBg,
+            title = title,
+            subtitle = subtitle,
+            titleColor = titleColor,
+            enabled = enabled,
+            onClick = onClick,
+        )
     }
 }
 
@@ -1646,20 +1719,10 @@ private fun ActionRow(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .clip(RoundedCornerShape(11.dp))
-                    .background((if (enabled) tint else TextSub).copy(alpha = 0.12f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    icon,
-                    contentDescription = null,
-                    tint = if (enabled) tint else TextSub,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
+            SourceIcon(
+                icon, tint = if (enabled) tint else TextSub,
+                size = 38.dp, iconSize = 20.dp, radius = 11.dp, enabled = enabled,
+            )
             Spacer(Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(

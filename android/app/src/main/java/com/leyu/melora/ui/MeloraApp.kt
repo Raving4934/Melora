@@ -852,13 +852,16 @@ private fun LeaderboardPlatformFilter(onOpenPlatformPicker: () -> Unit) {
 // 侧栏列表项：精致微徽标设计
 @Composable
 private fun DrawerItemEntry(item: MainTabItem, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val eInk = MeloraAppearance.isEInk
     val dark = MeloraAppearance.isDark
     val iconBg = when {
+        eInk -> if (selected) MeloraAppearance.segmentTrack else MeloraAppearance.softFill
         dark && selected -> MeloraAppearance.brand.copy(alpha = 0.16f)
         dark -> Color(0xFF222226)
         else -> item.color.copy(alpha = 0.12f)
     }
     val iconTint = when {
+        eInk -> TextDark
         dark && selected -> MeloraAppearance.brand
         dark -> MeloraAppearance.textSub
         else -> item.color
