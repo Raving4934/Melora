@@ -1,10 +1,13 @@
 package com.leyu.melora.playback.sdk
 
+import android.content.ContextWrapper
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import android.util.Log
+import com.leyu.melora.playback.lx.LxInspector
 import com.leyu.melora.playback.lx.LxScriptEngine
 import com.leyu.melora.playback.lx.LxScriptRequestException
+import com.leyu.melora.playback.lx.LxScriptStore
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -13,6 +16,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.single
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -21,10 +25,12 @@ import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.Closeable
+import java.io.File
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
@@ -310,6 +316,32 @@ class ScriptRuntimeContractTest {
 
             engine.load("lx.send(lx.EVENT_NAMES.inited, {status:true, sources:{}});", "after-init-timeout.js")
             assertNotNull(engine.inited())
+        }
+    }
+
+    @Test(timeout = 5_000)
+    fun validityTestPreservesProtocolPassForScriptsWithoutOnlinePlayback() = runBlocking {
+        val targetContext = InstrumentationRegistry.getInstrumentation().targetContext
+        val root = Files.createTempDirectory(targetContext.cacheDir.toPath(), "lx-validity-").toFile()
+        val context = object : ContextWrapper(targetContext) {
+            override fun getFilesDir() = root
+        }
+        val scriptDirectory = File(root, LxScriptStore.DIRECTORY)
+        try {
+            val store = LxScriptStore(context)
+            scriptDirectory.resolve("fixture.js").writeText("""
+                lx.send(lx.EVENT_NAMES.inited, {status:true, sources:{
+                  kw:{actions:['lyric']}, local:{actions:['musicUrl']}
+                }});
+                lx.on(lx.EVENT_NAMES.request, () => Promise.resolve('fixture'));
+            """.trimIndent())
+            val report = LxInspector.testValidity(context, store, store.list().single()).single()
+
+            assertEquals(setOf("kw", "local"), report.declaredPlatforms.toSet())
+            assertTrue(report.platforms.isEmpty())
+        } finally {
+            LxScriptStore.invalidateDirectoryRevisions(scriptDirectory)
+            root.deleteRecursively()
         }
     }
 

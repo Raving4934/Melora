@@ -360,7 +360,7 @@ class MainActivity : ComponentActivity() {
         }
         // 开发调试：adb shell am start -n com.leyu.melora/.MainActivity --es lxInspect <脚本关键字>
         intent?.getStringExtra("lxInspect")?.let { keyword ->
-            val testPlayback = intent?.getBooleanExtra("lxResolve", false) == true
+            val includePlayback = intent?.getBooleanExtra("lxResolve", false) == true
             lifecycleScope.launch(Dispatchers.IO) {
                 val store = LxScriptStore(applicationContext)
                 val script = store.list().firstOrNull { it.id.contains(keyword) || it.name.contains(keyword) }
@@ -368,13 +368,15 @@ class MainActivity : ComponentActivity() {
                     "未找到匹配脚本 · $keyword"
                 } else {
                     runCatchingCancellable {
-                        if (testPlayback) {
-                            LxInspector.testPlayback(applicationContext, store, script).last().joinToString("\n") {
-                                "${it.source}/${it.requestedQuality.orEmpty()} ${it.elapsedMs}ms ${it.result?.message.orEmpty()}"
+                        val report = LxInspector.testValidity(applicationContext, store, script, includePlayback).last()
+                        buildString {
+                            append("脚本协议检查通过 · ${report.declaredPlatforms.joinToString("、")}")
+                            if (includePlayback && report.platforms.isEmpty()) {
+                                append("\n脚本未声明在线平台的播放能力")
                             }
-                        } else {
-                            val sources = LxInspector.inspectProtocol(applicationContext, store, script)
-                            "脚本协议检查通过 · ${sources.joinToString("、")}"
+                            for (test in report.platforms) {
+                                append("\n${test.source}/${test.requestedQuality.orEmpty()} ${test.elapsedMs}ms ${test.result?.message.orEmpty()}")
+                            }
                         }
                     }.getOrElse { "检查失败 · ${it.message.orEmpty()}" }
                 }

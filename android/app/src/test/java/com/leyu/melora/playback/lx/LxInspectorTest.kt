@@ -1,13 +1,12 @@
 package com.leyu.melora.playback.lx
 
+import com.leyu.melora.playback.lx.LxInspector.LinkStatus
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.sun.net.httpserver.HttpServer
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.net.InetSocketAddress
 import java.nio.ByteBuffer
@@ -32,7 +31,7 @@ class LxInspectorTest {
     fun successfulHttpResponseWithDisguisedHtmlIsRejected() {
         val probe = probe("audio/mpeg", "\uFEFF\n<!DOCTYPE html><html>Unavailable</html>".toByteArray())
 
-        assertTrue(probe.failed)
+        assertEquals(LinkStatus.INVALID, probe.status)
         assertNull(probe.spec)
         assertEquals("链接返回网页", probe.message)
     }
@@ -48,19 +47,41 @@ class LxInspectorTest {
         val probe = probe("application/octet-stream", stream, range)
 
         assertEquals("bytes=0-131071", range.get())
-        assertFalse(probe.failed)
+        assertEquals(LinkStatus.VALID, probe.status)
         assertEquals("FLAC", probe.spec?.codecLabel)
         assertEquals(24, probe.spec?.bitDepth)
         assertEquals(48_000, probe.spec?.sampleRate)
     }
 
-    private fun probe(type: String, bytes: ByteArray, range: AtomicReference<String>? = null): LxInspector.LinkProbe {
+    @Test
+    fun temporaryHttpFailureIsInconclusiveButExpiredLinkIsInvalid() {
+        val unavailable = probe("text/html", byteArrayOf(), responseCode = 503)
+        val expired = probe("text/html", byteArrayOf(), responseCode = 410)
+
+        assertEquals(LinkStatus.INCONCLUSIVE, unavailable.status)
+        assertEquals(LinkStatus.INVALID, expired.status)
+    }
+
+    @Test
+    fun playlistWithoutVerifiedAudioIsInconclusive() {
+        val playlist = probe("application/vnd.apple.mpegurl", "#EXTM3U\n#EXTINF:5,\nsegment.aac\n".toByteArray())
+
+        assertEquals(LinkStatus.INCONCLUSIVE, playlist.status)
+        assertNull(playlist.spec)
+    }
+
+    private fun probe(
+        type: String,
+        bytes: ByteArray,
+        range: AtomicReference<String>? = null,
+        responseCode: Int = 200,
+    ): LxInspector.LinkProbe {
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         server.createContext("/") { exchange ->
             exchange.use {
                 range?.set(exchange.requestHeaders.getFirst("Range"))
                 exchange.responseHeaders.set("Content-Type", type)
-                exchange.sendResponseHeaders(200, bytes.size.toLong())
+                exchange.sendResponseHeaders(responseCode, bytes.size.toLong())
                 exchange.responseBody.write(bytes)
             }
         }

@@ -54,7 +54,6 @@ import androidx.compose.material.icons.rounded.Build
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.MoreVert
-import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Upload
 import androidx.compose.material3.DropdownMenu
@@ -97,6 +96,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.lx.LxInspector
+import com.leyu.melora.playback.lx.LxInspector.LinkStatus
 import com.leyu.melora.playback.lx.LxScript
 import com.leyu.melora.playback.lx.LxSourceImporter
 import com.leyu.melora.playback.lx.LxScriptStore
@@ -122,7 +122,7 @@ private val BrandBlue: Color get() = MeloraAppearance.brand
 private data class SourceActionStatus(
     val message: String,
     val busy: Boolean = false,
-    val failed: Boolean = false,
+    val result: LinkStatus? = null,
 )
 
 private data class SourceImportFailure(val draft: String, val message: String)
@@ -140,7 +140,7 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
     var pendingExportId by rememberSaveable { mutableStateOf<String?>(null) }
     var importChooserOpen by remember { mutableStateOf(false) }
     var onlineImportOpen by remember { mutableStateOf(false) }
-    var playbackTestScript by remember { mutableStateOf<LxScript?>(null) }
+    var validityTestScript by remember { mutableStateOf<LxScript?>(null) }
     val sourceImporter = remember(context, store) { LxSourceImporter(store) }
     val sourceAlias by MeloraSettings.sourceAliasEnabled.collectAsStateWithLifecycle()
     val autoSwitch by MeloraSettings.autoSwitchSource.collectAsStateWithLifecycle()
@@ -192,6 +192,7 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
     fun completeSourceImport(imported: List<LxScript>, onSuccess: () -> Unit = {}) {
         busy = false
         scripts = store.list()
+        sourceStatuses = sourceStatuses - imported.map { it.id }.toSet()
         onSuccess()
         val message = "已导入 ${imported.joinToString("、") { it.name }}"
         refreshChangedSources(imported.mapTo(linkedSetOf()) { it.id }, message)
@@ -273,23 +274,6 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
         }
     }
 
-    fun inspectScript(target: LxScript) {
-        if (sourceStatuses[target.id]?.busy == true) return
-        updateSourceStatus(target.id, SourceActionStatus("正在检查脚本协议…", busy = true))
-        scope.launch {
-            val outcome = runCatchingCancellable { LxInspector.inspectProtocol(context, store, target) }
-            updateSourceStatus(
-                target.id,
-                outcome.fold(
-                    onSuccess = { names -> SourceActionStatus("脚本协议检查通过 · 声明 ${names.joinToString("、")}") },
-                    onFailure = { error ->
-                        SourceActionStatus("脚本协议检查失败 · ${error.message ?: error.javaClass.simpleName}", failed = true)
-                    },
-                ),
-            )
-        }
-    }
-
     fun updateLinkedSource(target: LxScript) {
         if (sourceStatuses[target.id]?.busy == true) return
         updateSourceStatus(target.id, SourceActionStatus("正在检查远端更新…", busy = true))
@@ -313,12 +297,12 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
                             refreshError == null -> "发现更新，已下载并重新加载"
                             else -> "已下载更新，但重新加载失败：${refreshError.message ?: "未知错误"}"
                         }
-                        updateSourceStatus(target.id, SourceActionStatus(message, failed = refreshError != null))
+                        updateSourceStatus(target.id, SourceActionStatus(message, result = if (refreshError == null) null else LinkStatus.INVALID))
                     },
                     onFailure = { error ->
                         updateSourceStatus(
                             target.id,
-                            SourceActionStatus("检查更新失败 · ${error.message ?: error.javaClass.simpleName}", failed = true),
+                            SourceActionStatus("检查更新失败 · ${error.message ?: error.javaClass.simpleName}", result = LinkStatus.INVALID),
                         )
                     },
                 )
@@ -413,8 +397,7 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
                                     }
                                     SourceResolver.clearCache()
                                 },
-                                onInspect = { inspectScript(script) },
-                                onTestPlayback = { playbackTestScript = script },
+                                onTestValidity = { validityTestScript = script },
                                 onUpdate = if (script.originUrl != null) ({ updateLinkedSource(script) }) else null,
                                 onExport = {
                                     pendingExportId = script.id
@@ -521,8 +504,12 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
             },
         )
     }
-    playbackTestScript?.let { script ->
-        PlaybackTestSheet(store, script, onDismiss = { playbackTestScript = null })
+    validityTestScript?.let { script ->
+        ValidityTestSheet(
+            store, script,
+            onFinished = { updateSourceStatus(script.id, it) },
+            onDismiss = { validityTestScript = null },
+        )
     }
 }
 
@@ -846,8 +833,7 @@ private fun SourceRow(
     enabled: Boolean,
     actionStatus: SourceActionStatus?,
     onToggle: (Boolean) -> Unit,
-    onInspect: () -> Unit,
-    onTestPlayback: () -> Unit,
+    onTestValidity: () -> Unit,
     onUpdate: (() -> Unit)?,
     onExport: () -> Unit,
     onDelete: () -> Unit,
@@ -1008,27 +994,16 @@ private fun SourceRow(
                 ) {
                     SourceSheetAction(
                         icon = Icons.Rounded.Build,
-                        iconTint = Color(0xFF1E88E5),
-                        iconBg = Color(0xFF1E88E5).copy(alpha = 0.10f),
-                        title = "检查脚本协议",
-                        subtitle = "核对脚本初始化、平台与请求声明",
-                        titleColor = TextMain,
-                        enabled = !actionBusy,
-                        onClick = onInspect,
-                    )
-
-                    SourceSheetAction(
-                        icon = Icons.Rounded.PlayArrow,
                         iconTint = BrandBlue,
                         iconBg = BrandBlue.copy(alpha = 0.10f),
-                        title = "测试播放链接",
-                        subtitle = "用同一首歌实测各平台返回的音频",
+                        title = "有效性测试",
+                        subtitle = "检查脚本协议，逐平台验证播放链接",
                         titleColor = TextMain,
                         enabled = !actionBusy,
                     ) {
                         closeSheet {
                             sheetOpen = false
-                            onTestPlayback()
+                            onTestValidity()
                         }
                     }
 
@@ -1092,59 +1067,102 @@ private fun SourceRow(
     }
 }
 
+private val LinkStatus?.textColor: Color
+    get() = when {
+        this == null || this == LinkStatus.INCONCLUSIVE -> TextSub
+        MeloraAppearance.isEInk -> TextMain
+        this == LinkStatus.INVALID -> if (MeloraAppearance.isDark) MeloraAppearance.accent else Color(0xFFB42318)
+        MeloraAppearance.isDark -> Color(0xFF73D69A)
+        else -> Color(0xFF187241)
+    }
+
+private fun LxInspector.ValidityTest.summary(): SourceActionStatus {
+    if (platforms.isEmpty()) return SourceActionStatus("脚本协议通过 · 未声明在线播放", result = LinkStatus.VALID)
+    val valid = platforms.count { it.result?.status == LinkStatus.VALID }
+    val invalid = platforms.count { it.result?.status == LinkStatus.INVALID }
+    val unknown = platforms.size - valid - invalid
+    val counts = listOfNotNull(
+        "有效 ${valid} 项".takeIf { valid > 0 },
+        "失效 ${invalid} 项".takeIf { invalid > 0 },
+        "待确认 ${unknown} 项".takeIf { unknown > 0 },
+    )
+    val status = when (platforms.size) {
+        valid -> LinkStatus.VALID
+        invalid -> LinkStatus.INVALID
+        else -> LinkStatus.INCONCLUSIVE
+    }
+    return SourceActionStatus("测试链接 · ${counts.joinToString("，")}", result = status)
+}
+
 @Composable
-private fun PlaybackTestSheet(store: LxScriptStore, script: LxScript, onDismiss: () -> Unit) {
+private fun ValidityTestSheet(
+    store: LxScriptStore,
+    script: LxScript,
+    onFinished: (SourceActionStatus) -> Unit,
+    onDismiss: () -> Unit,
+) {
     val context = LocalContext.current
     SourceModalSheet(
         onDismiss = onDismiss,
-        icon = Icons.Rounded.PlayArrow,
-        title = "测试播放链接",
+        icon = Icons.Rounded.Build,
+        title = "有效性测试",
         subtitle = script.name,
     ) { closeSheet ->
         var attempt by remember { mutableIntStateOf(0) }
-        var running by remember { mutableStateOf(true) }
-        var failure by remember { mutableStateOf<String?>(null) }
-        var tests by remember { mutableStateOf<List<LxInspector.PlatformTest>>(emptyList()) }
+        var running by remember(attempt) { mutableStateOf(true) }
+        var failure by remember(attempt) { mutableStateOf<String?>(null) }
+        var report by remember(attempt) { mutableStateOf<LxInspector.ValidityTest?>(null) }
         LaunchedEffect(script.id, attempt) {
-            running = true
-            failure = null
             val outcome = runCatchingCancellable {
-                LxInspector.testPlayback(context, store, script).collect { tests = it }
+                LxInspector.testValidity(context, store, script).collect { report = it }
             }
-            failure = outcome.exceptionOrNull()?.message
+            failure = outcome.exceptionOrNull()?.let { it.message ?: "未知错误" }
             running = false
-        }
-        Column(modifier = Modifier.fillMaxWidth().height(392.dp)) {
-            Text(
-                text = "测试曲目 · ${LxInspector.sampleLabel}",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                color = TextMain,
-            )
-            Row(
-                modifier = Modifier.heightIn(min = 42.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                if (running) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
-                Text(
-                    text = failure ?: when {
-                        running && tests.isEmpty() -> "正在读取脚本能力…"
-                        running -> "正在检测各平台播放链接…"
-                        else -> "本次结果仅适用于样本歌曲和所测音质"
-                    },
-                    fontSize = 12.sp,
-                    color = if (failure == null) TextSub else MeloraAppearance.accent,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            val message = failure
+            if (message != null) {
+                val status = if (report == null) LinkStatus.INVALID else LinkStatus.INCONCLUSIVE
+                val label = if (report == null) "脚本协议未通过" else "测试中断"
+                onFinished(SourceActionStatus("$label · $message", result = status))
+            } else {
+                report?.let { onFinished(it.summary()) }
             }
+        }
+        val snapshot = report
+        val tests = snapshot?.platforms.orEmpty()
+        val current = tests.firstOrNull { it.result == null }?.source
+        Column(modifier = Modifier.fillMaxWidth().height(392.dp)) {
             LazyColumn(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                items(tests, key = { it.source }) { test ->
-                    PlaybackTestRow(test)
+                item {
+                    val status = when {
+                        snapshot != null -> LinkStatus.VALID
+                        failure != null -> LinkStatus.INVALID
+                        else -> null
+                    }
+                    Text(
+                        text = when (status) {
+                            LinkStatus.VALID -> "脚本协议通过 · 声明 ${snapshot?.declaredPlatforms.orEmpty().joinToString("、")}"
+                            LinkStatus.INVALID -> "脚本协议未通过 · $failure"
+                            else -> "正在检查脚本协议…"
+                        },
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = status.textColor,
+                        modifier = Modifier.padding(vertical = 4.dp),
+                    )
+                }
+                if (tests.isNotEmpty()) {
+                    item { Text("测试曲目 · ${LxInspector.sampleLabel}", fontSize = 12.sp, color = TextSub) }
+                    items(tests, key = { it.source }) { test ->
+                        PlaybackTestRow(test, running && test.source == current)
+                    }
+                } else if (snapshot != null) {
+                    item { Text("未声明在线平台的播放能力", fontSize = 12.sp, color = TextSub) }
+                }
+                if (snapshot != null && failure != null) {
+                    item { Text("测试中断 · $failure", fontSize = 12.sp, color = TextSub) }
                 }
             }
             Row(
@@ -1159,14 +1177,20 @@ private fun PlaybackTestSheet(store: LxScriptStore, script: LxScript, onDismiss:
 }
 
 @Composable
-private fun PlaybackTestRow(test: LxInspector.PlatformTest) {
+private fun PlaybackTestRow(test: LxInspector.PlatformTest, active: Boolean) {
     val result = test.result
     val request = listOfNotNull(
         test.requestedQuality?.let { "档位 $it" },
         test.elapsedMs?.let { "$it ms" },
     ).joinToString(" · ")
     val outcome = listOfNotNull(
-        result?.message ?: "等待测试",
+        when (result?.status) {
+            LinkStatus.VALID -> "链接有效"
+            LinkStatus.INVALID -> "链接无效"
+            LinkStatus.INCONCLUSIVE -> "待确认"
+            null -> if (active) "正在测试…" else "等待测试"
+        },
+        result?.message,
         result?.spec?.playerSpecificationLabel()?.takeIf(String::isNotBlank),
     ).joinToString(" · ")
     Surface(
@@ -1192,7 +1216,7 @@ private fun PlaybackTestRow(test: LxInspector.PlatformTest) {
             Text(
                 text = outcome,
                 fontSize = 12.sp,
-                color = if (result?.failed == true) MeloraAppearance.accent else TextSub,
+                color = result?.status.textColor,
             )
         }
     }
@@ -1203,11 +1227,7 @@ private fun SourceStatusSummary(
     actionStatus: SourceActionStatus?,
     metrics: LxScriptPool.ScriptMetrics?,
 ) {
-    val statusColor = when {
-        actionStatus?.failed == true -> Color(0xFFD1606A)
-        actionStatus != null -> BrandBlue
-        else -> TextSub
-    }
+    val statusColor = if (actionStatus?.busy == true) BrandBlue else actionStatus?.result.textColor
     Surface(
         shape = RoundedCornerShape(14.dp),
         color = CardBg,
@@ -1245,10 +1265,10 @@ private fun SourceStatusSummary(
                 }
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = actionStatus?.message ?: "尚未检查脚本协议",
+                    text = actionStatus?.message ?: "尚未运行有效性测试",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
-                    color = if (actionStatus?.failed == true) statusColor else TextMain,
+                    color = if (actionStatus?.result != null) statusColor else TextMain,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
