@@ -99,9 +99,12 @@ class PlaybackResolutionInstrumentedTest {
                 request = { script, _ -> LxScriptPool.ScriptRequest("flac24bit", script.id, "kw", "musicUrl",
                     JSONObject().put("type", "flac24bit"), 900) }, accept = { false })
         }
-        val health = LxScriptPool.javaClass.getDeclaredField("scriptHealth").apply { isAccessible = true }
-            .get(LxScriptPool) as Map<*, *>
-        assertFalse(health.containsKey("primary.js"))
+        store.import("backup.js", source("backup"))
+        val result = LxScriptPool.race(context, "kw", LxScriptPool.ScriptScope.ALL, 2_000,
+            request = { script, _ -> LxScriptPool.ScriptRequest("128k", script.id, "kw", "musicUrl",
+                JSONObject().put("type", "128k"), 1_000) },
+            accept = { it.scriptId == "primary.js" })
+        assertEquals("primary.js", result?.scriptId)
     }
 
     @Test fun cancellingColdSourceInitializationAfterGcCanReleaseAndReloadRuntimes() = runBlocking<Unit> {

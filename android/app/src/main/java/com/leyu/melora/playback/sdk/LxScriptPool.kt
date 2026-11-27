@@ -52,6 +52,7 @@ object LxScriptPool {
         val revision: Long,
         val lock: Mutex = Mutex(),
     ) {
+        val health = ConcurrentHashMap<String, PlatformHealth>()
         @Volatile var retired = false
     }
 
@@ -92,33 +93,30 @@ object LxScriptPool {
     // 只在dispatcher读写：前台可订阅预热/重载已完成的单个源，不等待整批加载锁。
     private val readyListeners = linkedSetOf<(Entry) -> Unit>()
 
-    // 脚本熔断：连续失败达到阈值后短暂拉黑，避免坏源反复拖慢整条解析链
-    private class Health {
-        val failures = java.util.concurrent.atomic.AtomicInteger(0)
-        @Volatile var blockedUntil = 0L
-    }
+    // 同一首歌的一次解析（含各档、主备和跨平台候选）在一个接口上最多记一次失败。
+    internal class ResolutionAttempt
 
-    private val scriptHealth = ConcurrentHashMap<String, Health>()
-    private val scriptMetrics = ConcurrentHashMap<String, MutableMetrics>()
-    private const val FAILURE_THRESHOLD = 3
-    private const val BLOCK_MS = 5 * 60 * 1000L
-    private const val LOAD_RETRY_DELAY_MS = 30_000L
+    private class PlatformHealth {
+        private val failedAttempts = mutableSetOf<ResolutionAttempt>()
+        private var blockedUntilMs = 0L
 
-    private fun isBlocked(scriptId: String): Boolean =
-        (scriptHealth[scriptId]?.blockedUntil ?: 0L) > System.currentTimeMillis()
+        @Synchronized fun isBlocked(): Boolean = android.os.SystemClock.elapsedRealtime() < blockedUntilMs
 
-    private fun markSuccess(scriptId: String) {
-        scriptHealth.remove(scriptId)
-    }
+        @Synchronized fun succeeded() {
+            failedAttempts.clear()
+            blockedUntilMs = 0L
+        }
 
-    private fun markFailure(scriptId: String) {
-        val health = scriptHealth.getOrPut(scriptId) { Health() }
-        if (health.failures.incrementAndGet() >= FAILURE_THRESHOLD) {
-            health.failures.set(0)
-            health.blockedUntil = System.currentTimeMillis() + BLOCK_MS
-            Log.w(TAG, "脚本「$scriptId」连续失败已熔断 ${BLOCK_MS / 60_000} 分钟")
+        @Synchronized fun failed(attempt: ResolutionAttempt): Boolean {
+            if (isBlocked() || !failedAttempts.add(attempt) || failedAttempts.size < 3) return false
+            failedAttempts.clear()
+            blockedUntilMs = android.os.SystemClock.elapsedRealtime() + 5 * 60_000L
+            return true
         }
     }
+
+    private val scriptMetrics = ConcurrentHashMap<String, MutableMetrics>()
+    private const val LOAD_RETRY_DELAY_MS = 30_000L
 
     private fun recordHit(scriptId: String, elapsedMs: Long) {
         val metrics = scriptMetrics.getOrPut(scriptId) { MutableMetrics() }
@@ -141,6 +139,27 @@ object LxScriptPool {
     /** 读取已安装的启用状态，不等待脚本初始化，也不为判断是否有源发起网络请求。 */
     fun hasEnabledScripts(context: Context): Boolean = store(context).hasEnabledScripts()
 
+    internal fun declaredPlatforms(sources: JSONObject?): Map<String, PlatformSupport> = buildMap {
+        sources?.keys()?.forEach { id ->
+            val node = sources.optJSONObject(id) ?: return@forEach
+            fun strings(key: String): List<String> = node.optJSONArray(key)?.let { array ->
+                (0 until array.length()).mapNotNull { array.optString(it).takeIf(String::isNotBlank) }
+            }.orEmpty()
+            put(id, PlatformSupport(node.optString("name", id), strings("actions").toSet(), strings("qualitys")))
+        }
+    }
+
+    /** 冷源或刚被替换的源仍有机会参与；只有所有已安装版本都明确不支持才跳过搜索。 */
+    internal suspend fun audioSearchPlatforms(context: Context, candidates: List<String>): List<String> =
+        withContext(dispatcher) {
+            val sourceStore = store(context)
+            val known = sourceStore.list().map { script ->
+                entries[script.id]?.takeIf { !it.retired && it.revision == sourceStore.revision(script.id) }
+                    ?: return@withContext candidates
+            }
+            candidates.filter { platform -> known.any { it.sources[platform]?.actions?.contains("musicUrl") == true } }
+        }
+
     private suspend fun loadEntry(
         context: Context,
         sourceStore: LxScriptStore,
@@ -152,23 +171,7 @@ object LxScriptPool {
         return try {
             val inited = engine.initialize(code, script.id, initTimeoutMs)
             currentCoroutineContext().ensureActive()
-            val supports = linkedMapOf<String, PlatformSupport>()
-            inited?.optJSONObject("sources")?.let { sources ->
-                sources.keys().forEach { id ->
-                    val node = sources.optJSONObject(id) ?: return@forEach
-                    val actions = node.optJSONArray("actions")?.let { array ->
-                        (0 until array.length()).mapNotNull {
-                            array.optString(it).takeIf(String::isNotBlank)
-                        }.toSet()
-                    }.orEmpty()
-                    val qualitys = node.optJSONArray("qualitys")?.let { array ->
-                        (0 until array.length()).mapNotNull {
-                            array.optString(it).takeIf(String::isNotBlank)
-                        }
-                    }.orEmpty()
-                    supports[id] = PlatformSupport(node.optString("name", id), actions, qualitys)
-                }
-            }
+            val supports = declaredPlatforms(inited?.optJSONObject("sources"))
             if (supports.isEmpty()) {
                 engine.close()
                 Log.w(TAG, "脚本「${script.id}」初始化未完成或未声明音源，已跳过")
@@ -297,8 +300,6 @@ object LxScriptPool {
                 entry.lock.withLock { entry.engine.close() }
             } catch (error: Throwable) {
                 Log.w(TAG, "关闭脚本「${entry.script.id}」失败：${error.message ?: error.javaClass.simpleName}")
-            } finally {
-                scriptHealth.remove(entry.script.id)
             }
         }
     }
@@ -308,7 +309,6 @@ object LxScriptPool {
         entries = linkedMapOf()
         loadFailures.clear()
         closeEntries(snapshot)
-        scriptHealth.clear()
         scriptMetrics.clear()
     }
 
@@ -473,18 +473,17 @@ object LxScriptPool {
     }
 
     /** 同档音源竞速：初始化一项就投递一项；不创建低码率对冲引擎。 */
-    suspend fun race(
+    internal suspend fun race(
         context: Context,
         source: String,
         scope: ScriptScope,
         timeoutMs: Long,
+        resolutionAttempt: ResolutionAttempt = ResolutionAttempt(),
         request: (LxScript, PlatformSupport) -> ScriptRequest?,
         accept: (ScriptResult) -> Boolean,
     ): ScriptResult? = coroutineScope {
         val results = Channel<ScriptResult>(Channel.UNLIMITED)
-        val attempted = ConcurrentHashMap.newKeySet<String>()
-        val healthy = ConcurrentHashMap.newKeySet<String>()
-        val failed = ConcurrentHashMap.newKeySet<String>()
+        val attempted = mutableSetOf<String>()
         val producer = launch {
             try {
                 coroutineScope {
@@ -497,6 +496,10 @@ object LxScriptPool {
                         var hasHealthyCandidate = false
                         fun dispatch(entry: Entry, spec: ScriptRequest) {
                             if (!attempted.add(entry.script.id)) return
+                            val health = entry.health.getOrPut(source) { PlatformHealth() }
+                            fun failed() {
+                                if (health.failed(resolutionAttempt)) Log.w(TAG, "音源接口连续失败，暂停优先使用：${entry.script.id}/$source")
+                            }
                             requestsScope.launch(Dispatchers.IO) {
                                 try {
                                     val startedAt = System.nanoTime()
@@ -510,14 +513,14 @@ object LxScriptPool {
                                     currentCoroutineContext().ensureActive()
                                     val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L
                                     val result = ScriptResult(spec.requestId, entry.script.id, data, elapsedMs)
-                                    if (SourceResolver.extractUrl(data) != null) healthy.add(entry.script.id)
-                                    else failed.add(entry.script.id)
+                                    if (SourceResolver.extractUrl(data) != null) health.succeeded() else failed()
                                     if (accept(result)) results.trySend(result)
                                 } catch (cancelled: CancellationException) {
                                     throw cancelled
                                 } catch (error: Throwable) {
+                                    currentCoroutineContext().ensureActive()
                                     if (error !is LxScriptRequestException || !error.isMediaUnavailable) {
-                                        failed.add(entry.script.id)
+                                        failed()
                                     }
                                     Log.d(TAG, "音源未果(${entry.script.id}/${spec.requestId}): ${error.javaClass.simpleName}")
                                 }
@@ -530,7 +533,7 @@ object LxScriptPool {
                             if ("musicUrl" !in support.actions) return
                             val spec = request(entry.script, support) ?: return
                             // 先确认平台、动作和档位可用；无关平台的健康脚本不能阻止兜底。
-                            if (isBlocked(entry.script.id)) {
+                            if (entry.health[source]?.isBlocked() == true) {
                                 blocked[entry.script.id] = entry to spec
                             } else {
                                 hasHealthyCandidate = true
@@ -555,10 +558,7 @@ object LxScriptPool {
         }
         try {
             withTimeoutOrNull(timeoutMs) { results.receiveCatching().getOrNull() }.also { winner ->
-                healthy.forEach(::markSuccess)
                 winner?.let { recordHit(it.scriptId, it.elapsedMs) }
-                // 只统计实际返回的故障；还在排队或被竞速取消的请求不能被推断为坏源。
-                if (winner == null) failed.forEach(::markFailure)
             }
         } finally {
             producer.cancel()

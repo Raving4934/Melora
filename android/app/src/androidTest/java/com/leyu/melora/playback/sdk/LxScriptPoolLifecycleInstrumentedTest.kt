@@ -161,6 +161,35 @@ class LxScriptPoolLifecycleInstrumentedTest {
         assertNull(healthRace(fail = false))
     }
 
+    @Test(timeout = 10_000) fun qualityRetriesInOneResolutionCountAsOneFailure() = runBlocking {
+        prepareHealthFixture("UNEXPECTED_ERROR")
+        val attempt = LxScriptPool.ResolutionAttempt()
+        repeat(4) { assertNull(healthRace(fail = true, attempt = attempt)) }
+        assertEquals("a.js", healthRace(fail = false)?.scriptId)
+    }
+
+    @Test(timeout = 10_000) fun circuitIsScopedToPlatformAndScriptContentRevision() = runBlocking {
+        prepareHealthFixture("UNEXPECTED_ERROR")
+        for (id in listOf("a.js", "b.js")) {
+            val code = store.code(id)!!.replace("sources:{", "sources:{wy:{actions:['musicUrl'],qualitys:['320k']},")
+            store.import(id, code)
+        }
+        repeat(3) { assertNull(healthRace(fail = true)) }
+        assertEquals("a.js", healthRace(fail = false, source = "wy")?.scriptId)
+        assertNull(healthRace(fail = false))
+        store.import("a.js", store.code("a.js")!! + "\n// new revision")
+        assertEquals("a.js", healthRace(fail = false)?.scriptId)
+    }
+
+    @Test(timeout = 10_000) fun platformSearchPrunesOnlyWhenAllScriptRevisionsAreKnown() = runBlocking {
+        val candidates = listOf("kw", "wy")
+        assertEquals(listOf("kw"), LxScriptPool.audioSearchPlatforms(context, candidates))
+        store.import("b.js", script("updated").replace("sources:{kw", "sources:{wy"))
+        assertEquals(candidates, LxScriptPool.audioSearchPlatforms(context, candidates))
+        LxScriptPool.scriptsFor(context, "wy", scope = LxScriptPool.ScriptScope.DISABLED)
+        assertEquals(candidates, LxScriptPool.audioSearchPlatforms(context, candidates))
+    }
+
     @Test(timeout = 10_000) fun queuedRequestsCancelledByTheRaceDoNotTripTheCircuitBreaker() = runBlocking {
         prepareHealthFixture("UNEXPECTED_ERROR")
         val lock = withContext(dispatcher) { field(entries().getValue("a.js"), "lock") as Mutex }
@@ -211,11 +240,16 @@ class LxScriptPoolLifecycleInstrumentedTest {
         LxScriptPool.reload(context)
     }
 
-    private suspend fun healthRace(fail: Boolean, timeoutMs: Long = 2_000) = LxScriptPool.race(
-        context, "kw", LxScriptPool.ScriptScope.ALL, timeoutMs,
+    private suspend fun healthRace(
+        fail: Boolean,
+        timeoutMs: Long = 2_000,
+        source: String = "kw",
+        attempt: LxScriptPool.ResolutionAttempt = LxScriptPool.ResolutionAttempt(),
+    ) = LxScriptPool.race(
+        context, source, LxScriptPool.ScriptScope.ALL, timeoutMs, attempt,
         request = { script, support ->
             SourceResolver.selectQuality("320k", support.qualitys)?.let { quality ->
-                LxScriptPool.ScriptRequest(quality, script.id, "kw", "musicUrl", JSONObject().put("fail", fail), 1_000)
+                LxScriptPool.ScriptRequest(quality, script.id, source, "musicUrl", JSONObject().put("fail", fail), 1_000)
             }
         },
         accept = { it.scriptId == "a.js" },

@@ -231,9 +231,14 @@ object SourceResolver {
         val startedAt = System.nanoTime()
         val resolved = supervisorScope {
             // 匹配任务跨音质档复用，按需启动；一个慢平台不再阻塞其它平台的有效候选。
+            val resolutionAttempt = LxScriptPool.ResolutionAttempt()
+            val searchPlatforms = async(start = CoroutineStart.LAZY) {
+                LxScriptPool.audioSearchPlatforms(context, SWITCH_SOURCES)
+            }
             val matches = if (key.allowSwitch && !song.isBookChapter) {
                 SWITCH_SOURCES.filterNot { it == song.source }.map { source ->
                     async(start = CoroutineStart.LAZY) {
+                        if (source !in searchPlatforms.await()) return@async emptyList()
                         findMatchedSongs(song, source, PLAYBACK_MATCH_TIMEOUT_MS) { keyword ->
                             OnlineRepository.search(context, source, keyword, limit = 25,
                                 background = purpose != Purpose.PLAYBACK,
@@ -278,7 +283,7 @@ object SourceResolver {
             val requestTimeout = if (purpose == Purpose.DOWNLOAD || purpose == Purpose.CACHE_FILL) 8_000L else SOURCE_REQUEST_TIMEOUT_MS
             val tierBudget = if (purpose == Purpose.DOWNLOAD || purpose == Purpose.CACHE_FILL) DOWNLOAD_TIER_BUDGET_MS else PLAYBACK_TIER_BUDGET_MS
             suspend fun scripts(candidate: OnlineSong, scope: ScriptScope, quality: String): Resolved? =
-                resolveOnScripts(context, candidate, quality, scope, requestTimeout, tierBudget) { accept(it, quality, scope) != null }
+                resolveOnScripts(context, candidate, quality, scope, requestTimeout, tierBudget, resolutionAttempt) { accept(it, quality, scope) != null }
                     ?.let { it.copy(switched = it.song.uid != song.uid, fromPrimary = scope == ScriptScope.ENABLED) }
             suspend fun chain(scope: ScriptScope): Resolved = resolveTiers(key.preferredQuality, purpose,
                 // 已失败的资源应尝试同档备用，不把故障当作“不支持此音质”继续向下探测。
@@ -314,7 +319,10 @@ object SourceResolver {
                             availableSignal = primaryReady)
                     } ?: error("各档播放音质均不可用，请检查网络或音源")
                 }
-            } finally { matches.forEach { it.cancel() } }
+            } finally {
+                matches.forEach { it.cancel() }
+                searchPlatforms.cancel()
+            }
         }
         // 恢复候选只有仍卡顿且用户仍想播放时才接管；不能提前污染正常解析缓存。
         if (purpose != Purpose.REBUFFER) cache(key, resolved, generation)
@@ -365,9 +373,10 @@ object SourceResolver {
         scope: ScriptScope,
         timeoutMs: Long,
         budgetMs: Long,
+        resolutionAttempt: LxScriptPool.ResolutionAttempt,
         accept: (Resolved) -> Boolean,
     ): Resolved? {
-        val winner = LxScriptPool.race(context, song.source, scope, budgetMs,
+        val winner = LxScriptPool.race(context, song.source, scope, budgetMs, resolutionAttempt,
             request = { script, support ->
                 selectQuality(quality, support.qualitys)?.let { parameter ->
                     LxScriptPool.ScriptRequest(parameter, script.id, song.source, "musicUrl",
