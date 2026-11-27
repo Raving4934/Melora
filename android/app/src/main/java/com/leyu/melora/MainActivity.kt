@@ -57,6 +57,7 @@ import com.leyu.melora.ui.common.LocalGlassBackdrop
 import com.leyu.melora.ui.common.SongListStateProvider
 import com.leyu.melora.ui.common.LocalResetRootBack
 import com.leyu.melora.ui.common.RootBackCallback
+import com.leyu.melora.ui.common.runCatchingCancellable
 import com.leyu.melora.ui.common.shouldResetRootBackOnKeyEvent
 import com.leyu.melora.ui.settings.AboutModal
 import com.leyu.melora.ui.settings.AboutModalSheet
@@ -64,7 +65,9 @@ import com.leyu.melora.ui.theme.MeloraTheme
 import com.leyu.melora.ui.theme.AdaptiveDisplay
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.last
 import kotlinx.coroutines.launch
 
 private const val DESKTOP_LYRIC_PERMISSION_PENDING = "desktopLyricPermissionPending"
@@ -357,16 +360,26 @@ class MainActivity : ComponentActivity() {
         }
         // 开发调试：adb shell am start -n com.leyu.melora/.MainActivity --es lxInspect <脚本关键字>
         intent?.getStringExtra("lxInspect")?.let { keyword ->
-            Thread {
-                val store = LxScriptStore(this)
+            val testPlayback = intent?.getBooleanExtra("lxResolve", false) == true
+            lifecycleScope.launch(Dispatchers.IO) {
+                val store = LxScriptStore(applicationContext)
                 val script = store.list().firstOrNull { it.id.contains(keyword) || it.name.contains(keyword) }
                 val message = if (script == null) {
-                    "未找到匹配脚本: $keyword"
+                    "未找到匹配脚本 · $keyword"
                 } else {
-                    LxInspector.inspect(this, store, script, resolveDemo = intent?.getBooleanExtra("lxResolve", false) == true).status
+                    runCatchingCancellable {
+                        if (testPlayback) {
+                            LxInspector.testPlayback(applicationContext, store, script).last().joinToString("\n") {
+                                "${it.source}/${it.requestedQuality.orEmpty()} ${it.elapsedMs}ms ${it.result?.message.orEmpty()}"
+                            }
+                        } else {
+                            val sources = LxInspector.inspectProtocol(applicationContext, store, script)
+                            "脚本协议检查通过 · ${sources.joinToString("、")}"
+                        }
+                    }.getOrElse { "检查失败 · ${it.message.orEmpty()}" }
                 }
                 Log.i("LxInspector", message)
-            }.start()
+            }
         }
     }
 

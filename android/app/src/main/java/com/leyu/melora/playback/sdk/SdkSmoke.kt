@@ -2,6 +2,7 @@ package com.leyu.melora.playback.sdk
 
 import android.content.Context
 import android.util.Log
+import com.leyu.melora.playback.lx.LxInspector
 import com.quickjs.QuickJS
 import org.json.JSONObject
 
@@ -142,16 +143,8 @@ object SdkSmoke {
     }
 
     private fun checkUrl(label: String, url: String) {
-        try {
-            val client = okhttp3.OkHttpClient()
-            val request = okhttp3.Request.Builder().url(url).header("Range", "bytes=0-2047").build()
-            client.newCall(request).execute().use { response ->
-                val bytes = response.body.bytes().size
-                Log.i(TAG, "[diag/$label] fetch code=${response.code} bytes=$bytes ct=${response.header("Content-Type")}")
-            }
-        } catch (error: Throwable) {
-            Log.w(TAG, "[diag/$label] fetch failed: ${error.message}")
-        }
+        val probe = kotlinx.coroutines.runBlocking { LxInspector.probeMedia(url) }
+        Log.i(TAG, "[diag/$label] ${probe.message} ${probe.spec?.codecLabel.orEmpty()}")
     }
 
     private fun probe(context: Context, label: String, musicInfo: JSONObject) {

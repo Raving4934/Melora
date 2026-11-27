@@ -1,32 +1,189 @@
 package com.leyu.melora.playback.lx
 
 import android.content.Context
+import com.leyu.melora.playback.AudioCacheStore
+import com.leyu.melora.playback.AudioSpecification
+import com.leyu.melora.playback.NetworkState
+import com.leyu.melora.playback.isNonAudioResponseContentType
+import com.leyu.melora.playback.probeDownloadUpgrade
+import com.leyu.melora.playback.readResponse
+import com.leyu.melora.playback.sdk.LxScriptPool
+import com.leyu.melora.playback.sdk.OnlineRepository
+import com.leyu.melora.playback.sdk.OnlineSong
+import com.leyu.melora.playback.sdk.SourceResolver
+import java.io.IOException
+import java.io.InterruptedIOException
+import java.util.Locale
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.Request
+import okhttp3.Response
 import org.json.JSONObject
 
-// 脚本自检：加载 → 读取声明音源 → 可选解析一条演示请求。
-object LxInspector {
-    data class Result(val status: String, val url: String? = null, val script: LxScript? = null)
+/** 用户主动检查时使用独立的脚本实例和有限的媒体前缀，不写入播放解析或磁盘音频缓存。 */
+internal object LxInspector {
+    private const val CATALOG_TIMEOUT_MS = 5_000L
+    private const val SCRIPT_TIMEOUT_MS = 6_000L
+    private const val MEDIA_TIMEOUT_MS = 4_000L
+    private const val MEDIA_PREFIX_LIMIT = 128 * 1024
+    private val platforms = listOf("kw", "kg", "tx", "wy", "mg")
+    private val sample = OnlineSong(JSONObject()
+        .put("source", "kw")
+        .put("songmid", "296504")
+        .put("name", "遇见")
+        .put("singer", "孙燕姿")
+        .put("albumName", "The Moment")
+        .put("interval", "03:30"))
+    val sampleLabel = "${sample.name} · ${sample.singer}"
 
-    fun inspect(context: Context, store: LxScriptStore, script: LxScript, resolveDemo: Boolean): Result {
-        return runCatching {
-            LxScriptEngine(context).use { engine ->
-                engine.load(store.code(script.id) ?: error("脚本文件不存在"), script.id)
-                val inited = engine.inited()
-                val sources = inited?.optJSONObject("sources")
-                val names = sources?.keys()?.asSequence()?.toList().orEmpty()
-                if (names.isEmpty()) error("脚本未声明音源")
-                if (!resolveDemo) {
-                    return@use Result("已加载「${script.name}」\n声明音源：${names.joinToString("、")}", null, script)
+    data class LinkProbe(
+        val message: String,
+        val spec: AudioSpecification? = null,
+        val failed: Boolean = true,
+    )
+
+    data class PlatformTest(
+        val source: String,
+        val requestedQuality: String?,
+        val result: LinkProbe? = null,
+        val elapsedMs: Long? = null,
+    )
+
+    suspend fun inspectProtocol(context: Context, store: LxScriptStore, script: LxScript): List<String> =
+        withContext(Dispatchers.IO) {
+            withInspectedScript(context, store, script) { _, sources -> sources.keys.toList() }
+        }
+
+    fun testPlayback(context: Context, store: LxScriptStore, script: LxScript): Flow<List<PlatformTest>> = flow {
+        withInspectedScript(context, store, script) { engine, sources ->
+            val preferred = NetworkState.playQuality(context)
+            val tests = platforms.mapNotNull { source ->
+                val support = sources[source]?.takeIf { "musicUrl" in it.actions } ?: return@mapNotNull null
+                val quality = SourceResolver.qualityAttempts(preferred).firstNotNullOfOrNull {
+                    SourceResolver.selectQuality(it, support.qualitys)
                 }
-                val url = engine.request(
-                    names.first(),
-                    "musicUrl",
-                    JSONObject().put("musicId", "tone_b").put("quality", "128k"),
-                ).toString()
-                Result("音源：${names.joinToString("、")}\n解析成功（${names.first()}）：$url", url, script)
+                PlatformTest(source, quality)
+            }.toMutableList()
+            check(tests.isNotEmpty()) { "脚本未声明在线平台的播放能力" }
+            emit(tests.toList())
+            for (index in tests.indices) {
+                tests[index] = testPlatform(context, engine, script.id, tests[index])
+                emit(tests.toList())
             }
-        }.getOrElse {
-            Result("「${script.name}」检查失败：${it.message ?: it.javaClass.simpleName}", null, script)
+        }
+    }.flowOn(Dispatchers.IO)
+
+    private suspend fun <T> withInspectedScript(
+        context: Context,
+        store: LxScriptStore,
+        script: LxScript,
+        block: suspend (LxScriptEngine, Map<String, LxScriptPool.PlatformSupport>) -> T,
+    ): T {
+        val code = store.code(script.id) ?: error("脚本文件不存在")
+        return LxScriptEngine(context.applicationContext).use { engine ->
+            val sources = LxScriptPool.declaredPlatforms(engine.inspectSource(code, script.id))
+            block(engine, sources)
+        }
+    }
+
+    private suspend fun testPlatform(
+        context: Context,
+        engine: LxScriptEngine,
+        scriptId: String,
+        test: PlatformTest,
+    ): PlatformTest {
+        val start = System.nanoTime()
+        fun finish(result: LinkProbe) = test.copy(
+            result = result,
+            elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start),
+        )
+        val quality = test.requestedQuality ?: return finish(LinkProbe("当前播放音质没有兼容档位"))
+        val page = try {
+            withTimeoutOrNull(CATALOG_TIMEOUT_MS) {
+                OnlineRepository.search(context, test.source, "${sample.name} ${sample.singer}", limit = 12, background = true)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            return finish(LinkProbe("目录查询失败"))
+        } ?: return finish(LinkProbe("目录查询超时"))
+        val song = pickCatalogSample(test.source, page.list)
+            ?: return finish(LinkProbe("目录中找不到这首测试录音"))
+
+        val info = JSONObject().put("type", quality).put("musicInfo", song.raw)
+        val data = try {
+            withTimeoutOrNull(SCRIPT_TIMEOUT_MS) {
+                engine.withCancellation { token ->
+                    engine.request(token, test.source, "musicUrl", info)
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: LxScriptRequestException) {
+            return finish(LinkProbe(if (error.isMediaUnavailable) "这首录音在该档位无资源" else "脚本解析失败"))
+        } catch (_: Exception) {
+            return finish(LinkProbe("脚本解析失败"))
+        } ?: return finish(LinkProbe("脚本解析超时"))
+        val resolved = SourceResolver.scriptResolution(song, LxScriptPool.ScriptResult(quality, scriptId, data))
+            ?: return finish(LinkProbe(
+                if (SourceResolver.extractUrl(data) == null) "脚本未返回播放链接" else "返回的录音与测试曲目不匹配",
+            ))
+        return finish(probeMedia(resolved.url))
+    }
+
+    internal fun pickCatalogSample(source: String, songs: List<OnlineSong>): OnlineSong? =
+        songs.asSequence().filter { it.source == source }
+            .mapNotNull { song -> SourceResolver.alternativeScore(sample, song)?.let { score -> song to score } }
+            .maxByOrNull { it.second }?.first
+
+    suspend fun probeMedia(url: String): LinkProbe {
+        val address = url.toHttpUrlOrNull() ?: return LinkProbe("播放链接格式错误")
+        val request = Request.Builder()
+            .url(address)
+            .header("User-Agent", AudioCacheStore.USER_AGENT)
+            .header("Range", "bytes=0-${MEDIA_PREFIX_LIMIT - 1}")
+            .build()
+        return try {
+            withTimeoutOrNull(MEDIA_TIMEOUT_MS) {
+                val call = AudioCacheStore.mediaHttpClient.newCall(request)
+                call.readResponse { response ->
+                    try {
+                        probeResponse(response)
+                    } finally {
+                        // 服务端忽略 Range 时，阻止连接复用前继续读取整个响应体。
+                        if (response.body.contentLength() !in 0L..MEDIA_PREFIX_LIMIT.toLong()) call.cancel()
+                    }
+                }
+            } ?: LinkProbe("链接读取超时")
+        } catch (_: InterruptedIOException) {
+            LinkProbe("链接读取超时")
+        } catch (_: IOException) {
+            LinkProbe("播放链接读取失败")
+        }
+    }
+
+    private fun probeResponse(response: Response): LinkProbe {
+        if (!response.isSuccessful) return LinkProbe("打开链接失败 · HTTP ${response.code}")
+        val type = response.header("Content-Type").orEmpty().substringBefore(';').trim().lowercase(Locale.ROOT)
+        if (type == "text/html" || type == "application/xhtml+xml") return LinkProbe("链接返回网页")
+        if (isNonAudioResponseContentType(type)) return LinkProbe("链接返回非音频内容")
+        val prefix = response.peekBody(512).string().trimStart { it.isWhitespace() || it == '\uFEFF' }
+        if (prefix.startsWith("<!doctype html", ignoreCase = true) || prefix.startsWith("<html", ignoreCase = true)) {
+            return LinkProbe("链接返回网页")
+        }
+        if (prefix.startsWith("#EXTM3U")) return LinkProbe("已识别播放列表", failed = false)
+        val probe = probeDownloadUpgrade(response.body.byteStream())
+        return when {
+            probe.spec != null -> LinkProbe("已识别音频", probe.spec, failed = false)
+            probe.prefix.isEmpty() -> LinkProbe("链接返回空内容")
+            else -> LinkProbe("链接已响应，暂无法确认音频格式")
         }
     }
 }

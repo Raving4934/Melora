@@ -44,6 +44,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withTimeoutOrNull
 
+/** 只拒绝明确的网页/API 响应；缺失 MIME、通用二进制和媒体清单仍交给解复用器。 */
+internal fun isNonAudioResponseContentType(contentType: String?): Boolean {
+    val mime = contentType?.substringBefore(';')?.trim()?.lowercase() ?: return false
+    return mime == "text/html" || mime == "application/xhtml+xml" || mime == "application/json" ||
+        mime == "text/json" || mime.endsWith("+json")
+}
+
 internal const val AUDIO_TRANSFER_BUFFER_BYTES = 64 * 1024
 
 private const val META_PREFIX = ContentMetadata.KEY_CUSTOM_PREFIX + "melora."
@@ -65,9 +72,9 @@ object AudioCacheStore {
     private const val TAG = "AudioCacheStore"
     private const val AUDIO_DIR = "audio_cache"
     private const val CACHE_FRAGMENT_BYTES = 1024L * 1024L
-    private const val USER_AGENT = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36"
+    internal const val USER_AGENT = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36"
 
-    private val mediaHttpClient = OkHttpClient.Builder()
+    internal val mediaHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .followSslRedirects(true)
@@ -422,7 +429,9 @@ object AudioCacheStore {
         val calls = if (transfer == null) mediaHttpClient else Call.Factory { request ->
             mediaHttpClient.newCall(request).also { call -> transfer.invokeOnCompletion { call.cancel() } }
         }
-        val http = OkHttpDataSource.Factory(calls).setUserAgent(USER_AGENT)
+        val http = OkHttpDataSource.Factory(calls)
+            .setUserAgent(USER_AGENT)
+            .setContentTypePredicate { !isNonAudioResponseContentType(it) }
         // 所有媒体网络读取走同一个边界：完整缓存被清理/淘汰后也不能绕过脚本使用历史直链。
         return DefaultDataSource.Factory(context, DataSource.Factory {
             val upstream = http.createDataSource()
