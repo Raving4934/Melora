@@ -38,6 +38,28 @@ import kotlin.concurrent.thread
 /** 只执行无网络的通用脚本，验证真实QuickJS桥接；不加载用户源/设置/播放队列。 */
 @RunWith(AndroidJUnit4::class)
 class ScriptRuntimeContractTest {
+    @Test fun standardLxUtilitiesUseTheQuickJsHostBridge() {
+        LxScriptEngine(InstrumentationRegistry.getInstrumentation().targetContext).use { engine ->
+            engine.load("""
+                const { buffer, crypto, md5 } = lx.utils;
+                lx.on('request', ({info}) => {
+                  const bytes = buffer.from(info.text, 'utf8');
+                  return {
+                    hash: crypto.md5(info.text), legacyHash: md5(info.text),
+                    text: buffer.bufToString(bytes), hex: buffer.bufToString(bytes, 'hex'),
+                    base64: buffer.bufToString(bytes, 'base64')
+                  };
+                });
+            """.trimIndent(), "standard-utils.js")
+            val result = engine.request("kw", "musicUrl", JSONObject().put("text", "乐屿🎵"), 2_000) as JSONObject
+            assertEquals("9b1911b2b940e48b6129c6ff0d5a049c", result.getString("hash"))
+            assertEquals(result.getString("hash"), result.getString("legacyHash"))
+            assertEquals("乐屿🎵", result.getString("text"))
+            assertEquals("e4b990e5b1bff09f8eb5", result.getString("hex"))
+            assertEquals("5LmQ5bG/8J+OtQ==", result.getString("base64"))
+        }
+    }
+
     @Test fun requestErrorCodesSurviveSyncAndAsyncQuickJsFailures() {
         LxScriptEngine(InstrumentationRegistry.getInstrumentation().targetContext).use { engine ->
             engine.load("""

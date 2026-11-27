@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import vm from 'node:vm'
+import { createNative } from '../native-node.mjs'
 
 const shim = await readFile(new URL('../../../app/src/main/assets/lx-shim.js', import.meta.url), 'utf8')
 const fixture = () => {
@@ -15,6 +16,30 @@ const fixture = () => {
   return context
 }
 const tick = () => new Promise(resolve => setImmediate(resolve))
+
+test('LX mobile exposes MD5 and buffer conversion through the standard utility paths', () => {
+  const context = vm.createContext({ __lxNative: createNative(), console })
+  vm.runInContext(shim, context)
+  const result = vm.runInContext(`
+    const { buffer, crypto, md5 } = lx.utils
+    const input = '乐屿🎵'
+    const bytes = buffer.from(input, 'utf8')
+    JSON.stringify({
+      md5: crypto.md5(input),
+      sameMd5: crypto.md5 === md5,
+      text: buffer.bufToString(bytes),
+      base64: buffer.bufToString(bytes, 'base64'),
+      hex: buffer.bufToString(new Uint8Array([0, 255, 42, 0]).subarray(1, 3), 'HEX'),
+    })
+  `, context)
+  assert.deepEqual(JSON.parse(result), {
+    md5: '9b1911b2b940e48b6129c6ff0d5a049c',
+    sameMd5: true,
+    text: '乐屿🎵',
+    base64: '5LmQ5bG/8J+OtQ==',
+    hex: 'ff2a',
+  })
+})
 
 test('LX preserves optional business error codes for synchronous and asynchronous failures', async () => {
   for (const async of [false, true]) {

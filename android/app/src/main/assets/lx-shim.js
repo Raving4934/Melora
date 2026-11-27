@@ -324,9 +324,15 @@
     return response
   }
 
+  const md5 = (text) => native.hash('md5', bytesToBase64(utf8Encode(String(text))))
+
   const utils = {
     buffer: {
       from: LxBuffer.from,
+      bufToString(value, format = 'utf8') {
+        const buffer = value instanceof LxBuffer ? value : LxBuffer.from(value)
+        return buffer.toString(String(format).toLowerCase())
+      },
       fromArrayBuffer: LxBuffer.fromArrayBuffer,
       toArrayBuffer: LxBuffer.toArrayBuffer,
       concat: LxBuffer.concat,
@@ -336,7 +342,7 @@
     b642str: (text) => utf8Decode(base64ToBytes(text)),
     buf2b64: (value) => toBase64(value),
     b642buf: (text) => LxBuffer.from(base64ToBytes(text)),
-    md5: (text) => native.hash('md5', bytesToBase64(utf8Encode(String(text)))),
+    md5,
     sha1: (text) => native.hash('sha1', bytesToBase64(utf8Encode(String(text)))),
     sha256: (text) => native.hash('sha256', bytesToBase64(utf8Encode(String(text)))),
     rand: (min, max, length, type = 'string') => {
@@ -358,6 +364,7 @@
       deflate: (value) => LxBuffer.from(base64ToBytes(native.zlibDeflate(toBase64(value)))),
     },
     crypto: {
+      md5,
       randomBytes: (length) => LxBuffer.from(base64ToBytes(native.randomBase64(Math.max(1, Number(length) || 16)))),
       aesEncrypt: (value, mode, key, iv) =>
         LxBuffer.from(
