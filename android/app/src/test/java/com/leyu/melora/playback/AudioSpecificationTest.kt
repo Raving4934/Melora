@@ -21,6 +21,16 @@ class AudioSpecificationTest {
     }
 
     @Test
+    fun knownLossyCodecRejectsMasterClaimEvenWithoutBitrate() {
+        for ((mime, expected) in mapOf("audio/mpeg" to "mp3", "audio/opus" to "opus", "audio/mp4a-latm" to "aac", "audio/vorbis" to "ogg")) {
+            val spec = AudioSpecification(mime, 48_000, -1)
+            assertEquals(expected, spec.verifiedStreamQuality("master"))
+            assertNull(spec.verifiedStreamQuality(null))
+        }
+        assertNull(AudioSpecification("audio/flac", 192_000, -1).verifiedStreamQuality("master"))
+    }
+
+    @Test
     fun losslessBadgeRequiresRealBitDepthEvenAtHighSampleRate() {
         for (mime in listOf("audio/flac", "audio/alac", "audio/raw", "audio/wav", "audio/x-wav", "audio/ape")) {
             for (rate in listOf(44100, 96000, 192000)) {

@@ -132,6 +132,59 @@ class SourceSchedulingInstrumentedTest {
     }
 
     @Test
+    fun masterPreferenceQueriesTheScriptAndReusesTheConfirmedResult() = runBlocking {
+        store.import(scriptId, """
+            lx.send('inited', {sources: {kw: {actions: ['musicUrl'], qualitys: ['flac24bit', 'master', '320k']}}});
+            let calls = 0;
+            lx.on('request', ({info}) => '$FIXTURE_URL_PREFIX' + (++calls) + '/' + info.type);
+        """.trimIndent())
+        assertEquals(1, LxScriptPool.reload(context))
+        val song = fixtureSong("$runId-master")
+        try {
+            val hires = SourceResolver.resolve(context, song, "flac24bit", allowSwitch = false)
+            assertEquals("${FIXTURE_URL_PREFIX}1/flac24bit", hires.url)
+
+            val master = SourceResolver.resolve(context, song, "master", allowSwitch = false)
+            assertEquals("${FIXTURE_URL_PREFIX}2/master", master.url)
+            assertEquals("master", master.sourceQuality)
+            SourceResolver.confirmQuality(master.resourceId, "flac24bit")
+            val repeated = SourceResolver.resolve(context, song, "master", allowSwitch = false)
+            assertEquals(master.url, repeated.url)
+            assertEquals("flac24bit", repeated.quality)
+            assertEquals("master", repeated.effectiveQuality)
+        } finally {
+            SourceResolver.clearCache()
+        }
+    }
+
+    @Test
+    fun masterPreferenceChecksEnabledAndBackupAtTheSameTierBeforeDowngrading() = runBlocking {
+        ResolutionMediaServer().use { server ->
+            val backupId = "backup-master-$runId.js"
+            fun source(quality: String) = """
+                lx.send('inited', {sources: {kw: {actions: ['musicUrl'], qualitys: ['$quality']}}});
+                lx.on('request', ({info}) => '${server.url}/' + info.type);
+            """.trimIndent()
+            store.import(scriptId, source("flac24bit"))
+            store.import(backupId, source("master"))
+            store.setEnabled(backupId, false)
+            assertEquals(2, LxScriptPool.reload(context))
+            val song = fixtureSong("$runId-backup-master")
+            try {
+                val master = SourceResolver.resolve(context, song, "master", allowSwitch = true)
+                assertEquals("master", master.sourceQuality)
+                assertEquals("${server.url}/master", master.url)
+                val fallback = SourceResolver.resolve(context, song, "master", allowSwitch = false)
+                assertEquals("flac24bit", fallback.quality)
+                assertEquals("${server.url}/flac24bit", fallback.url)
+            } finally {
+                store.remove(backupId)
+                SourceResolver.clearCache()
+            }
+        }
+    }
+
+    @Test
     fun foregroundDuringOneStartedBackgroundDownload() = runBlocking {
         val samples = withTimeout(SCENARIO_TIMEOUT_MS) {
             (0 until SAMPLE_COUNT).map { sampleIndex ->

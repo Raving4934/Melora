@@ -39,9 +39,12 @@ import java.util.Locale
  * 3. 歌词与封面由内置目录模块提供（音源脚本只负责播放解析）。
  */
 object SourceResolver {
+    private const val MASTER_QUALITY = "master"
+    private val HI_RES_QUALITIES = listOf("flac24bit", "hires", "flac32bit", MASTER_QUALITY)
+
     // 质量从高到低；用户偏好决定起始档位，失败时按既定阶梯降级以优先保证可播放。
     private val QUALITY_ORDER = listOf(
-        "master", "atmos_plus", "atmos", "hires", "flac24bit", "flac", "wav", "ape", "320k", "192k", "128k",
+        MASTER_QUALITY, "atmos_plus", "atmos", "hires", "flac24bit", "flac", "wav", "ape", "320k", "192k", "128k",
     )
     private val SWITCH_SOURCES = listOf("kw", "kg", "wy", "tx", "mg")
     // 本地媒体歌曲的 source；联网取封面/歌词前先按标题/歌手搜出真实在线条目
@@ -57,7 +60,11 @@ object SourceResolver {
         val resourceId: String,
         // 调度来源，不是音质证明；用于共享满足目标档位的主源 URL，隔离备用选优结果。
         val fromPrimary: Boolean = false,
-    )
+        // 脚本母带档与解码器测得的音频规格分别保存。
+        val sourceQuality: String? = null,
+    ) {
+        internal val effectiveQuality: String get() = SourceResolver.effectiveQuality(quality, sourceQuality)
+    }
 
     enum class Purpose { PLAYBACK, CACHE_FILL, DOWNLOAD, REBUFFER }
 
@@ -118,11 +125,13 @@ object SourceResolver {
         observedQualities[resourceId] = quality
         while (observedQualities.size > 256) observedQualities.remove(observedQualities.keys.first())
         urlCache.replaceAll { _, cached ->
-            if (cached.resolved.resourceId == resourceId) cached.copy(
-                resolved = cached.resolved.copy(quality = quality),
-                expireAt = if (cached.resolved.quality == quality) cached.expireAt
+            if (cached.resolved.resourceId != resourceId) return@replaceAll cached
+            val measured = cached.resolved.copy(quality = quality)
+            cached.copy(
+                resolved = measured,
+                expireAt = if (cached.resolved.effectiveQuality == measured.effectiveQuality) cached.expireAt
                     else minOf(cached.expireAt, System.currentTimeMillis() + DEGRADED_URL_TTL_MS),
-            ) else cached
+            )
         }
     }
 
@@ -170,20 +179,22 @@ object SourceResolver {
     }
 
     private fun cache(key: ResolveKey, resolved: Resolved, generation: Long) {
-        val ttlMs = when {
-            !sameQualityTier(key.preferredQuality, resolved.quality) -> DEGRADED_URL_TTL_MS
-            resolved.song.isBookChapter -> BOOK_URL_TTL_MS
-            else -> URL_TTL_MS
-        }
         synchronized(cacheLock) {
             if (generation != inFlight.currentGeneration() || isRejected(resolved.resourceId)) return
+            val measured = observedQualities[resolved.resourceId]?.let { resolved.copy(quality = it) } ?: resolved
+            val sameTier = sameQualityTier(key.preferredQuality, measured.effectiveQuality)
+            val ttlMs = when {
+                !sameTier -> DEGRADED_URL_TTL_MS
+                measured.song.isBookChapter -> BOOK_URL_TTL_MS
+                else -> URL_TTL_MS
+            }
             val expireAt = System.currentTimeMillis() + ttlMs
-            val keys = if (resolved.fromPrimary && sameQualityTier(key.preferredQuality, resolved.quality))
+            val keys = if (measured.fromPrimary && sameTier)
                 listOf(key, key.copy(preferPrimary = !key.preferPrimary)) else listOf(key)
             for (target in keys) {
-                urlCache[target] = CachedUrl(resolved, expireAt)
-                if (resolved.song.uid != target.songUid) {
-                    urlCache[target.copy(songUid = resolved.song.uid)] = CachedUrl(resolved.copy(switched = false), expireAt)
+                urlCache[target] = CachedUrl(measured, expireAt)
+                if (measured.song.uid != target.songUid) {
+                    urlCache[target.copy(songUid = measured.song.uid)] = CachedUrl(measured.copy(switched = false), expireAt)
                 }
             }
         }
@@ -207,7 +218,7 @@ object SourceResolver {
             val rejected = rejectedResources() + excludedResources
             val cached = if (isRefresh) null else peek(key)?.takeIf {
                 it.resourceId !in rejected &&
-                    (purpose == Purpose.PLAYBACK || sameQualityTier(key.preferredQuality, it.quality))
+                    (purpose == Purpose.PLAYBACK || sameQualityTier(key.preferredQuality, it.effectiveQuality))
             }
             val resolved = cached ?: try {
                 inFlight.run(InFlightKey(key, isRefresh, purpose, rejected), generation) {
@@ -239,9 +250,8 @@ object SourceResolver {
                 LxScriptPool.audioSearchPlatforms(context, SWITCH_SOURCES)
             }
             val matches = if (key.allowSwitch && !song.isBookChapter) {
-                SWITCH_SOURCES.filterNot { it == song.source }.map { source ->
+                SWITCH_SOURCES.filterNot { it == song.source }.associateWith { source ->
                     async(start = CoroutineStart.LAZY) {
-                        if (source !in searchPlatforms.await()) return@async emptyList()
                         findMatchedSongs(song, source, PLAYBACK_MATCH_TIMEOUT_MS) { keyword ->
                             OnlineRepository.search(context, source, keyword, limit = 25,
                                 background = purpose != Purpose.PLAYBACK,
@@ -249,7 +259,7 @@ object SourceResolver {
                         }
                     }
                 }
-            } else emptyList()
+            } else emptyMap()
             val alternativeSlots = Semaphore(2)
             val lowerResults = ScriptScope.entries.associateWith { ConcurrentHashMap<String, Resolved>() }
             val lowerReady = CompletableDeferred<Unit>()
@@ -268,9 +278,8 @@ object SourceResolver {
                     ScriptScope.ALL -> ScriptScope.entries
                 }
                 return origins.flatMap { lowerResults.getValue(it).values }.filter { value ->
-                    usable(value) && (if (purpose == Purpose.REBUFFER) sameQualityTier(quality, value.quality)
-                        else qualitySatisfies(quality, value.quality))
-                }.maxByOrNull { qualityRank(it.quality) }
+                    usable(value) && meetsTier(quality, value, purpose)
+                }.maxByOrNull { qualityRank(it.effectiveQuality) }
             }
             suspend fun accept(result: Resolved, quality: String, scope: ScriptScope): Resolved? {
                 if (!usable(result)) {
@@ -284,8 +293,7 @@ object SourceResolver {
                 }
                 val actual = result.copy(quality = observedQuality(result.resourceId) ?: result.quality,
                     switched = result.song.uid != song.uid, fromPrimary = scope == ScriptScope.ENABLED)
-                if (if (purpose == Purpose.REBUFFER) sameQualityTier(quality, actual.quality)
-                    else qualitySatisfies(quality, actual.quality)) return actual
+                if (meetsTier(quality, actual, purpose)) return actual
                 // 分开保存主源、同平台备用与跨平台候选；后到的同档备用不能覆盖主源。
                 if (qualityRank(actual.quality) >= 0) {
                     lowerResults.getValue(scope).compute(actual.quality) { _, previous -> previous?.takeIf(::usable) ?: actual }
@@ -296,7 +304,10 @@ object SourceResolver {
             val requestTimeout = if (purpose == Purpose.DOWNLOAD || purpose == Purpose.CACHE_FILL) 8_000L else SOURCE_REQUEST_TIMEOUT_MS
             val tierBudget = if (purpose == Purpose.DOWNLOAD || purpose == Purpose.CACHE_FILL) DOWNLOAD_TIER_BUDGET_MS else PLAYBACK_TIER_BUDGET_MS
             suspend fun scripts(candidate: OnlineSong, scope: ScriptScope, quality: String): Resolved? =
-                resolveOnScripts(context, candidate, quality, scope, requestTimeout, tierBudget, resolutionAttempt) { accept(it, quality, scope) != null }
+                resolveOnScripts(
+                    context, candidate, quality, scope, requestTimeout, tierBudget, resolutionAttempt,
+                    allowMasterAlias = key.preferredQuality != MASTER_QUALITY,
+                ) { accept(it, quality, scope) != null }
                     ?.let { it.copy(switched = it.song.uid != song.uid, fromPrimary = scope == ScriptScope.ENABLED) }
             suspend fun samePlatform(scope: ScriptScope, quality: String): Resolved? =
                 if (scope == ScriptScope.ALL) preferFirst(BACKUP_START_DELAY_MS,
@@ -315,7 +326,12 @@ object SourceResolver {
                     delayMs = if (purpose == Purpose.PLAYBACK && quality != key.preferredQuality) 0L else ALTERNATIVE_START_DELAY_MS,
                     primary = { samePlatform(scope, quality) },
                     fallback = {
-                        firstSuccessful(matches) { match ->
+                        val platforms = if (quality == MASTER_QUALITY) {
+                            LxScriptPool.audioSearchPlatforms(context, matches.keys.toList()) {
+                                selectQuality(MASTER_QUALITY, it.qualitys) != null
+                            }
+                        } else searchPlatforms.await()
+                        firstSuccessful(platforms.mapNotNull(matches::get)) { match ->
                             match.await().take(3).firstNotNullOfOrNull { matched ->
                                 alternativeSlots.withPermit { scripts(matched, ScriptScope.ALL, quality) }
                             }
@@ -323,25 +339,28 @@ object SourceResolver {
                     })
             }
             fun playableFallback() = candidate("128k", ScriptScope.ENABLED) ?: candidate("128k", ScriptScope.DISABLED)
+            val activeScope = if (key.allowSwitch) ScriptScope.ALL else ScriptScope.ENABLED
             try {
                 if (purpose == Purpose.PLAYBACK) {
                     withTimeoutOrNull(PLAYBACK_TOTAL_BUDGET_MS) {
-                        preferFirst(BACKUP_START_DELAY_MS,
+                        // 母带偏好在同档主源和备源间完成尝试，再开始降档。
+                        if (key.preferredQuality == MASTER_QUALITY) attempt { chain(activeScope) }
+                        else preferFirst(BACKUP_START_DELAY_MS,
                             primary = { chain(ScriptScope.ENABLED) },
                             fallback = { if (key.allowSwitch) chain(ScriptScope.DISABLED) else null },
                             available = ::playableFallback,
                             availableSignal = lowerReady)
                     } ?: playableFallback() ?: error("各档播放音质均不可用，请检查网络或音源")
-                } else chain(if (key.allowSwitch) ScriptScope.ALL else ScriptScope.ENABLED)
+                } else chain(activeScope)
             } finally {
                 competingSources.cancel()
-                matches.forEach { it.cancel() }
+                matches.values.forEach { it.cancel() }
                 searchPlatforms.cancel()
             }
         }
         // 恢复候选只有仍卡顿且用户仍想播放时才接管；不能提前污染正常解析缓存。
         if (purpose != Purpose.REBUFFER) cache(key, resolved, generation)
-        if (BuildConfig.DEBUG) Log.d("SourceResolver", "解析完成 ${song.source}: ${key.preferredQuality} → ${resolved.quality}, ${(System.nanoTime() - startedAt) / 1_000_000}ms")
+        if (BuildConfig.DEBUG) Log.d("SourceResolver", "解析完成 ${song.source}: ${key.preferredQuality} → ${resolved.effectiveQuality}, ${(System.nanoTime() - startedAt) / 1_000_000}ms")
         return resolved
     }
 
@@ -367,10 +386,7 @@ object SourceResolver {
                 minOf(tierBudgetMs, remaining * weight / weightsLeft)
             } else if (index == 0) tierBudgetMs else minOf(tierBudgetMs, 12_000L)
             attempt { withTimeoutOrNull(budget) { resolve(quality) } }
-                ?.takeIf {
-                    if (purpose == Purpose.REBUFFER) sameQualityTier(quality, it.quality)
-                    else qualitySatisfies(quality, it.quality)
-                }?.let { return it }
+                ?.takeIf { meetsTier(quality, it, purpose) }?.let { return it }
             if (stopAfterFailure()) break
         }
         if (purpose == Purpose.REBUFFER) throw IllegalStateException("同音质备用资源不可用")
@@ -381,6 +397,7 @@ object SourceResolver {
     internal fun qualityAttempts(preferred: String): List<String> {
         val normalized = normalizedQuality(preferred)
         val qualities = linkedSetOf(normalized)
+        if (normalized == MASTER_QUALITY) qualities.add("flac24bit")
         if (QUALITY_ORDER.indexOf(normalized) < QUALITY_ORDER.indexOf("flac")) qualities.add("flac")
         if (QUALITY_ORDER.indexOf(normalized) <= QUALITY_ORDER.indexOf("320k")) qualities.add("320k")
         qualities.add("128k")
@@ -398,11 +415,12 @@ object SourceResolver {
         timeoutMs: Long,
         budgetMs: Long,
         resolutionAttempt: LxScriptPool.ResolutionAttempt,
+        allowMasterAlias: Boolean,
         accept: suspend (Resolved) -> Boolean,
     ): Resolved? {
         val winner = LxScriptPool.race(context, song.source, scope, budgetMs, resolutionAttempt,
             request = { script, support ->
-                selectQuality(quality, support.qualitys)?.let { parameter ->
+                selectQuality(quality, support.qualitys, allowMasterAlias)?.let { parameter ->
                     LxScriptPool.ScriptRequest(parameter, script.id, song.source, "musicUrl",
                         JSONObject().put("type", parameter).put("musicInfo", song.raw), timeoutMs)
                 }
@@ -421,12 +439,16 @@ object SourceResolver {
             OnlineSong(JSONObject(raw.toString()).put("source", actualSource))
         } ?: song.takeIf { actualSource == song.source } ?: return null
         if (actualSong.uid != song.uid && alternativeScore(song, actualSong) == null) return null
-        val reported = payload?.optString("type")?.trim()?.lowercase(Locale.ROOT)
-        val quality = reported?.takeIf { qualityRank(it) >= 0 } ?: winner.requestId
+        val reported = payload?.optString("type")?.trim()?.lowercase(Locale.ROOT)?.takeIf { qualityRank(it) >= 0 }
+        val quality = reported ?: winner.requestId
+        val sourceQuality = MASTER_QUALITY.takeIf { winner.requestId == it && quality == it }
         val stableId = payload?.optString("resourceId")?.takeIf { it.isNotBlank() && it.length <= 1024 }
         // 物理资源标识由脚本命名空间、实际曲目和档位隔离，不能跨歌曲拼接缓存。
         val identity = stableId?.let { "${actualSong.uid}|$quality|$it" } ?: url
-        return Resolved(url, quality, actualSong, actualSong.uid != song.uid, scriptResourceId(winner.scriptId, identity))
+        return Resolved(
+            url, quality, actualSong, actualSong.uid != song.uid, scriptResourceId(winner.scriptId, identity),
+            sourceQuality = sourceQuality,
+        )
     }
 
     const val NO_SOURCE_MESSAGE = "当前未启用可用音源，无法解析在线音频。请前往设置 → 自定义源导入并启用音源。"
@@ -465,31 +487,44 @@ object SourceResolver {
         return null
     }
 
-    private fun equivalentQualities(quality: String): List<String> = when (quality) {
-        "flac24bit", "hires", "flac32bit", "master" -> listOf("flac24bit", "hires", "flac32bit", "master")
-        else -> listOf(quality)
-    }
+    private fun equivalentQualities(quality: String): List<String> =
+        if (quality != MASTER_QUALITY && quality in HI_RES_QUALITIES) HI_RES_QUALITIES else listOf(quality)
 
     /** 目录音质仅用于列表展示，不能否决脚本可提供的档位；脚本参数严格按其声明映射。 */
-    internal fun selectQuality(preferred: String, scriptQualitys: List<String>): String? {
+    internal fun selectQuality(preferred: String, scriptQualitys: List<String>, allowMasterAlias: Boolean = true): String? {
         val normalized = normalizedQuality(preferred)
         val supported = scriptQualitys.map { it.trim().lowercase(Locale.ROOT) }
+        if (normalized == MASTER_QUALITY) return normalized.takeIf(supported::contains)
         if (supported.isEmpty()) return normalized
-        return (listOf(normalized) + equivalentQualities(normalized)).firstOrNull(supported::contains)
+        if (normalized in supported) return normalized
+        return equivalentQualities(normalized).firstOrNull { it in supported && (allowMasterAlias || it != MASTER_QUALITY) }
     }
 
     internal fun sameQualityTier(requested: String, actual: String): Boolean =
         actual.trim().lowercase(Locale.ROOT) in equivalentQualities(normalizedQuality(requested))
 
-    internal fun qualitySatisfies(requested: String, actual: String): Boolean =
-        qualityRank(actual) >= qualityRank(normalizedQuality(requested))
+    internal fun qualitySatisfies(requested: String, actual: String): Boolean {
+        val normalized = normalizedQuality(requested)
+        return if (normalized == MASTER_QUALITY) sameQualityTier(normalized, actual)
+            else qualityRank(actual) >= qualityRank(normalized)
+    }
+
+    private fun meetsTier(requested: String, resolved: Resolved, purpose: Purpose): Boolean =
+        if (purpose == Purpose.REBUFFER) sameQualityTier(requested, resolved.effectiveQuality)
+        else qualitySatisfies(requested, resolved.effectiveQuality)
+
+    internal fun verifiedSourceQuality(quality: String, sourceQuality: String?): String? =
+        sourceQuality?.takeIf { it == MASTER_QUALITY && quality in HI_RES_QUALITIES }
+
+    internal fun effectiveQuality(quality: String, sourceQuality: String?): String =
+        verifiedSourceQuality(quality, sourceQuality) ?: quality
 
     internal fun qualityRank(quality: String): Int = when (quality.trim().lowercase(Locale.ROOT)) {
-        "master", "atmos_plus", "atmos", "hires", "flac24bit", "flac32bit" -> 4
+        MASTER_QUALITY, "atmos_plus", "atmos", "hires", "flac24bit", "flac32bit" -> 4
         "flac", "wav", "ape" -> 3
         "320k" -> 2
         "192k" -> 1
-        "128k", "mp3", "aac", "ogg" -> 0
+        "128k", "mp3", "aac", "ogg", "opus" -> 0
         // 编码专属标称码率不是MP3档位；只作为最低档兜底，仍保留原始AAC/OGG标签。
         else -> {
             val value = quality.lowercase(Locale.ROOT)

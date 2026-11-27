@@ -315,10 +315,13 @@ internal fun DownloadSettingsSubPage(onBack: () -> Unit) {
             SectionCaption("音质偏好")
         }
         item {
-            SettingsCard {
-                Text("下载音质", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = SettingsTextMain)
-                Text("优先使用所选音质；不可用时逐级降至 FLAC、320k 或 128k", fontSize = 12.sp, color = SettingsTextSub, modifier = Modifier.padding(top = 2.dp, bottom = 12.dp))
-                SettingsChoiceRow(QualityOptions, downloadQuality, { MeloraSettings.updateDownloadQuality(it) })
+            SettingsCard(contentPadding = PaddingValues(vertical = 4.dp)) {
+                AudioQualitySetting(
+                    title = "下载音质",
+                    subtitle = "所选档位不可用时自动降级",
+                    value = downloadQuality,
+                    onSelect = MeloraSettings::updateDownloadQuality,
+                )
             }
         }
 
@@ -436,16 +439,22 @@ internal fun PlaybackSettingsSubPage(onBack: () -> Unit) {
             SectionCaption("音质偏好")
         }
         item {
-            SettingsCard {
-                Text("WiFi 网络音质", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = SettingsTextMain)
-                Text("WiFi/以太网下的首选音质，不可用时自动降级", fontSize = 12.sp, color = SettingsTextSub, modifier = Modifier.padding(top = 2.dp, bottom = 12.dp))
-                SettingsChoiceRow(QualityOptions, wifiQuality, { MeloraSettings.updatePlayQualityWifi(it) })
+            SettingsCard(contentPadding = PaddingValues(vertical = 4.dp)) {
+                AudioQualitySetting(
+                    title = "WiFi 网络音质",
+                    subtitle = "WIFI/以太网首选音质，不可用时自动降级",
+                    value = wifiQuality,
+                    onSelect = MeloraSettings::updatePlayQualityWifi,
+                )
 
-                SettingsDivider(Modifier.padding(vertical = 14.dp))
+                SettingsDivider(Modifier.padding(horizontal = 14.dp))
 
-                Text("移动网络音质", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = SettingsTextMain)
-                Text("使用流量时优先选择的音质，建议 128k/320k 节省流量", fontSize = 12.sp, color = SettingsTextSub, modifier = Modifier.padding(top = 2.dp, bottom = 12.dp))
-                SettingsChoiceRow(QualityOptions, mobileQuality, { MeloraSettings.updatePlayQualityMobile(it) })
+                AudioQualitySetting(
+                    title = "移动网络音质",
+                    subtitle = "128k 或 320k 更节省流量",
+                    value = mobileQuality,
+                    onSelect = MeloraSettings::updatePlayQualityMobile,
+                )
             }
         }
 

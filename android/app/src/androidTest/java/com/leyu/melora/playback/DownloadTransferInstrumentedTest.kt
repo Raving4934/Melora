@@ -95,6 +95,104 @@ class DownloadTransferInstrumentedTest {
 
     @Test fun indexFailureAfterRecordCommitPreservesPublishedResource() = assertPublicationFailure(indexFailure = true)
 
+    @Test fun masterDownloadRequestsItsOwnTierDespiteAnExistingHiResFile() = runBlocking<Unit> {
+        requireValidatedNetworkForRetry()
+        LoopbackAudioServer(mapOf(
+            "/flac24bit" to HttpResponse(200, asset("audio/fixture-24.flac")),
+            "/master" to HttpResponse(200, asset("audio/fixture-master-24.flac")),
+        )).use { server ->
+            installMasterSource(server)
+            val song = song("transfer-master")
+            MeloraSettings.downloadSkipSameName.value = true
+            MeloraSettings.downloadQuality.value = "flac24bit"
+            download(song).getOrThrow()
+            val ordinary = requireNotNull(DownloadCenter.saved(song.uid))
+            assertEquals(48_000, ordinary.audioSpec?.sampleRate)
+            assertEquals(null, ordinary.sourceQuality)
+
+            MeloraSettings.downloadQuality.value = "master"
+            assertTrue(download(song).getOrThrow().contains("母带档"))
+            val master = requireNotNull(DownloadCenter.saved(song.uid))
+            assertTrue(ordinary.savedUri != master.savedUri)
+            assertEquals(192_000, master.audioSpec?.sampleRate)
+            assertEquals(24, master.audioSpec?.bitDepth)
+            assertEquals("flac24bit", master.audioSpec?.verifiedQuality)
+            assertEquals("master", master.sourceQuality)
+            assertEquals(2, listFiles().size)
+
+            releaseAudioCacheFixture()
+            SourceResolver.clearCache()
+            assertTrue(download(song).getOrThrow().contains("已跳过"))
+            assertEquals(master.savedUri, DownloadCenter.saved(song.uid)?.savedUri)
+            assertEquals(1, server.count("/flac24bit"))
+            assertEquals(1, server.count("/master"))
+            assertEquals(2, listFiles().size)
+            assertTemporaryFilesClean()
+        }
+    }
+
+    @Test fun masterDownloadStopsAtStreamInfoWhenTheSavedFileHasTheSamePcm() = runBlocking<Unit> {
+        requireValidatedNetworkForRetry()
+        val audio = asset("audio/fixture-24.flac")
+        LoopbackAudioServer(mapOf(
+            "/flac24bit" to HttpResponse(200, audio),
+            "/master" to HttpResponse(200, audio, bytesToSend = 42),
+        )).use { server ->
+            installMasterSource(server)
+            val song = song("transfer-master-same-pcm")
+            MeloraSettings.downloadSkipSameName.value = true
+            MeloraSettings.downloadQuality.value = "flac24bit"
+            download(song).getOrThrow()
+            val savedUri = requireNotNull(DownloadCenter.saved(song.uid)?.savedUri)
+
+            MeloraSettings.downloadQuality.value = "master"
+            assertTrue(download(song).getOrThrow().contains("已有相同音频"))
+            assertEquals(1, server.count("/master"))
+            assertEquals(1, listFiles().size)
+            assertEquals(savedUri, DownloadCenter.saved(song.uid)?.savedUri)
+            assertEquals("master", DownloadCenter.saved(song.uid)?.sourceQuality)
+            assertTemporaryFilesClean()
+        }
+    }
+
+    @Test fun masterDownloadContinuesWhenItsInitiallyMatchingFileDisappears() = runBlocking<Unit> {
+        requireValidatedNetworkForRetry()
+        val audio = asset("audio/fixture-24.flac")
+        val opened = CountDownLatch(1)
+        val sendBody = CountDownLatch(1)
+        LoopbackAudioServer(mapOf(
+            "/flac24bit" to HttpResponse(200, audio),
+            "/master" to HttpResponse(200, audio, headersSent = opened, waitBeforeBody = sendBody),
+        )).use { server ->
+            installMasterSource(server)
+            val song = song("transfer-master-file-disappears")
+            MeloraSettings.downloadSkipSameName.value = true
+            MeloraSettings.downloadQuality.value = "flac24bit"
+            download(song).getOrThrow()
+            val savedUri = Uri.parse(requireNotNull(DownloadCenter.saved(song.uid)?.savedUri))
+
+            MeloraSettings.downloadQuality.value = "master"
+            val task = async(Dispatchers.IO) { download(song) }
+            try {
+                assertTrue(opened.await(8, TimeUnit.SECONDS))
+                assertTrue(DocumentsContract.deleteDocument(context.contentResolver, savedUri))
+                assertTrue(listFiles().isEmpty())
+                sendBody.countDown()
+
+                assertTrue(withTimeout(15_000) { task.await() }.getOrThrow().startsWith("已下载"))
+                val replacement = requireNotNull(DownloadCenter.saved(song.uid))
+                assertNotNull(inspectDownloadAudio(context, Uri.parse(requireNotNull(replacement.savedUri))))
+                assertEquals("master", replacement.sourceQuality)
+                assertEquals(1, server.count("/master"))
+                assertEquals(1, listFiles().size)
+                assertTemporaryFilesClean()
+            } finally {
+                sendBody.countDown()
+                withTimeout(8_000) { task.join() }
+            }
+        }
+    }
+
     private fun assertPublicationFailure(indexFailure: Boolean) = runBlocking<Unit> {
         val headersSent = CountDownLatch(1)
         val resumeBody = CountDownLatch(1)
@@ -352,6 +450,19 @@ class DownloadTransferInstrumentedTest {
             scriptStore.import(source.name, script(source, server.port, gate))
         }
         scriptStore.setEnabled(imported.first().id, true)
+        LxScriptPool.reload(context)
+    }
+
+    private suspend fun installMasterSource(server: LoopbackAudioServer) {
+        val source = scriptStore.import("master fixture", """
+            lx.send('inited', {sources: {kw: {
+                actions: ['musicUrl'], qualitys: ['flac24bit', 'master']
+            }}});
+            lx.on('request', ({info}) => ({
+                url: 'http://127.0.0.1:${server.port}/' + info.type, type: info.type
+            }));
+        """.trimIndent())
+        scriptStore.setEnabled(source.id, true)
         LxScriptPool.reload(context)
     }
 

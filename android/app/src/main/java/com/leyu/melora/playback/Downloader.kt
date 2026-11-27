@@ -104,7 +104,9 @@ object Downloader {
         val quality: String, val path: String, val nameFormat: String,
         val skipExisting: Boolean, val autoSwitch: Boolean, val embedCover: Boolean, val embedLyric: Boolean,
         val upgradeFrom: LocalSong? = null,
-    )
+    ) {
+        val prefersMaster: Boolean get() = SourceResolver.normalizedQuality(quality) == "master"
+    }
     private data class ActiveDownload(
         val token: Long,
         val task: Deferred<Result<String>>,
@@ -286,7 +288,7 @@ object Downloader {
                 ?: inspectDownloadAudio(context, local.uri.toUri())?.spec
                 ?: error("无法识别本地歌曲音质，请重新扫描后再试")
             val quality = spec.verifiedQuality ?: error("本地歌曲音质未知，未开始升级")
-            if (SourceResolver.qualityRank(quality) >= SourceResolver.qualityRank(SourceResolver.normalizedQuality(request.quality))) {
+            if (SourceResolver.qualitySatisfies(request.quality, quality)) {
                 return@runCatching "本地已达到所选音质，无需升级"
             }
             spec
@@ -343,8 +345,15 @@ object Downloader {
     }
 
     private data class Target(val name: String, val uri: Uri, val size: Long, val modifiedAt: Long)
-    private data class VerifiedTarget(val target: Target, val audio: DownloadAudio)
-    private data class DownloadTransfer(val temporaryFile: File, val input: CachedAudioInput)
+    private data class VerifiedTarget(
+        val target: Target,
+        val audio: DownloadAudio,
+        val sourceQuality: String? = null,
+    )
+    private sealed interface DownloadTransfer {
+        data class Copied(val file: File, val input: CachedAudioInput) : DownloadTransfer
+        data class Reused(val description: String) : DownloadTransfer
+    }
 
     private suspend fun downloadToTarget(
         context: Context,
@@ -361,7 +370,10 @@ object Downloader {
             val audio = inspectDownloadAudio(context, target.uri) ?: return null
             val trusted = previous?.savedUri == target.uri.toString()
             if (!audio.matches(song, trusted)) return null
-            return VerifiedTarget(target, audio)
+            val knownSource = previous?.sourceQuality?.takeIf {
+                trusted && previous.audioSpec?.copy(bitrate = audio.spec.bitrate) == audio.spec
+            }
+            return VerifiedTarget(target, audio, knownSource)
         }
         fun register(verified: VerifiedTarget) {
             val (target, audio) = verified
@@ -371,7 +383,10 @@ object Downloader {
         fun finish(verified: VerifiedTarget, detail: String): String {
             // 同一令牌边界先提交记录，再注册本地索引与通知；持久化失败不得报告成功。
             if (!updateCurrent(recordId, token) {
-                    check(DownloadCenter.done(recordId, detail, verified.target.name, verified.target.uri.toString(), audioSpec = verified.audio.spec)) {
+                    check(DownloadCenter.done(
+                        recordId, detail, verified.target.name, verified.target.uri.toString(),
+                        audioSpec = verified.audio.spec, sourceQuality = verified.sourceQuality,
+                    )) {
                         "无法保存下载完成记录，请检查可用存储后重试"
                     }
                     register(verified)
@@ -387,26 +402,52 @@ object Downloader {
         val initialByTarget = initial.associateBy(VerifiedTarget::target)
         initial.forEach(::register) // 保留旧高版在本地候选中，随后下载低码率副本也不会抢占播放。
         val upgradeBaseline = localSpec?.let { baseline ->
-            (listOf(baseline) + initial.map { it.audio.spec }).maxBy { SourceResolver.qualityRank(it.verifiedQuality.orEmpty()) }
+            initial.fold(baseline) { best, target ->
+                target.audio.spec.takeIf { isBetterDownloadQuality(it, best, request.prefersMaster) == true } ?: best
+            }
         }
-        if (upgradeBaseline != null && SourceResolver.qualityRank(upgradeBaseline.verifiedQuality.orEmpty()) >=
-            SourceResolver.qualityRank(SourceResolver.normalizedQuality(request.quality))) {
+        val existingUpgrade = initial.firstOrNull { it.audio.spec == upgradeBaseline }
+        val upgradeQuality = upgradeBaseline?.verifiedQuality?.let { SourceResolver.effectiveQuality(it, existingUpgrade?.sourceQuality) }
+        if (upgradeQuality != null && SourceResolver.qualitySatisfies(request.quality, upgradeQuality)) {
             // 文件发布与完成记录之间可能发生进程中断；重试必须补齐同一个完成提交。
             if (DownloadCenter.records.value.any { it.id == recordId }) {
-                return finish(initial.first { it.audio.spec == upgradeBaseline }, "已恢复（已有升级文件）")
+                existingUpgrade?.let {
+                    return finish(it, "已恢复（已有升级文件）")
+                }
             }
             return "本地已达到所选音质，无需升级"
         }
         if (request.skipExisting && upgradeBaseline == null) {
-            initial.firstOrNull { downloadQualityMatches(it.audio.spec, request.quality) }?.let {
+            initial.firstOrNull { downloadQualityMatches(it.audio.spec, request.quality, it.sourceQuality) }?.let {
                 return finish(it, "已跳过（已有同版本、同音质文件）")
             }
         }
+        val existingMasterTargets = if (request.prefersMaster && request.skipExisting && upgradeBaseline == null) {
+            initial.filter { it.audio.flacPcmChecksum != null }
+        } else emptyList()
+        suspend fun reuseMaster(incoming: DownloadAudio, sourceQuality: String?): String? {
+            val matches = existingMasterTargets.filter { it.audio.sameFlacPcm(incoming) }
+            if (matches.isEmpty()) return null
+            return DownloadTargetLocks.withLock(targetLockKey(request.path, "")) {
+                val target = downloadTargets(context, request.path, baseName).asSequence()
+                    .filter { current -> matches.any { it.target.uri == current.uri } }
+                    .mapNotNull(::inspect)
+                    .firstOrNull { it.audio.sameFlacPcm(incoming) } ?: return@withLock null
+                val note = downloadQualityNote(request.quality, requireNotNull(target.audio.spec.verifiedQuality), sourceQuality)
+                val verified = target.copy(sourceQuality = sourceQuality ?: target.sourceQuality)
+                finish(verified, "已跳过（已有相同音频）$note")
+            }
+        }
         val tempDir = File(context.cacheDir, TEMP_DIRECTORY).apply { mkdirs() }
-        val transfer = downloadAudioTransfer(
+        val transfer = when (val result = downloadAudioTransfer(
             context, song, recordId, request, token, upgradeBaseline, tempDir, baseName, notificationId,
-        ) ?: return "当前可用音源暂无更优音质版本"
-        val temp = transfer.temporaryFile
+            reuseMaster = if (existingMasterTargets.isEmpty()) null else ::reuseMaster,
+        )) {
+            null -> return "当前可用音源暂无更优音质版本"
+            is DownloadTransfer.Reused -> return result.description
+            is DownloadTransfer.Copied -> result
+        }
+        val temp = transfer.file
         val input = transfer.input
         try {
             ensureCurrent(recordId, token)
@@ -414,7 +455,7 @@ object Downloader {
             check(audio.durationMs > 0 && (song.intervalSeconds <= 0 || audio.durationMs >= song.intervalSeconds * 650L)) {
                 "下载音频时长异常，可能是试听片段；原文件未修改"
             }
-            if (upgradeBaseline != null && isBetterDownloadQuality(audio.spec, upgradeBaseline) != true) {
+            if (upgradeBaseline != null && isBetterDownloadQuality(audio.spec, upgradeBaseline, request.prefersMaster) != true) {
                 updateCurrent(recordId, token) {
                     val active = tasks.getValue(recordId)
                     DownloadCenter.restoreRecord(recordId, active.previousRecord)
@@ -432,7 +473,8 @@ object Downloader {
                     AudioCacheStore.recordObservedQuality(context, resource, quality)
                 }
             }
-            val note = audio.spec.verifiedQuality?.let { downloadQualityNote(request.quality, it) } ?: "（实际音质尚未识别）"
+            val note = audio.spec.verifiedQuality?.let { downloadQualityNote(request.quality, it, input.sourceQuality) }
+                ?: "（实际音质尚未识别）"
             if (DownloadMetadataWriter.supports(extension)) {
                 val fallback = if (shouldLookupDownloadMetadata(input.completeCacheHit, song)) {
                     recoverableOrNull { SourceResolver.matchOnline(context, song) }
@@ -465,8 +507,11 @@ object Downloader {
                 val current = downloadTargets(context, request.path, baseName)
                 if (request.skipExisting) {
                     current.asSequence().mapNotNull { initialByTarget[it] ?: inspect(it) }
-                        .firstOrNull { sameDownloadedQuality(it.audio.spec, audio.spec) }?.let {
-                        return@withLock finish(it, "已跳过（实际下载音质已有同版本文件）$note")
+                        .firstOrNull { sameDownloadTarget(context, it, audio, temp, request.prefersMaster) }?.let {
+                        val verified = if (request.prefersMaster && audio.spec.isLossless) {
+                            it.copy(sourceQuality = input.sourceQuality ?: it.sourceQuality)
+                        } else it
+                        return@withLock finish(verified, "已跳过（实际下载音质已有同版本文件）$note")
                     }
                 }
                 val names = current.map { it.name }.toSet()
@@ -482,7 +527,7 @@ object Downloader {
                 }
                 try {
                     ensureCurrent(recordId, token)
-                    val saved = VerifiedTarget(Target(displayName, uri, temp.length(), 0L), audio)
+                    val saved = VerifiedTarget(Target(displayName, uri, temp.length(), 0L), audio, input.sourceQuality)
                     val label = if (input.completeCacheHit) "已从缓存导出" else "已下载"
                     finish(saved, "$label$note")
                 } catch (failure: Exception) {
@@ -500,6 +545,33 @@ object Downloader {
         } finally { runCatching { temp.delete() } }
     }
 
+    private fun sameDownloadTarget(
+        context: Context,
+        existing: VerifiedTarget,
+        audio: DownloadAudio,
+        downloaded: File,
+        preferMaster: Boolean,
+    ): Boolean {
+        val saved = existing.audio
+        if (!preferMaster || !saved.spec.isLossless && !audio.spec.isLossless) {
+            return sameDownloadedQuality(saved.spec, audio.spec)
+        }
+        if (!saved.sameFileFormat(audio)) return false
+        if (saved.flacPcmChecksum != null && audio.flacPcmChecksum != null) return saved.sameFlacPcm(audio)
+
+        // 有些 FLAC 没有 STREAMINFO 校验值，对比音频帧时略过可变的封面和标签。
+        val uri = existing.target.uri
+        return LocalMediaIoCoordinator.withRead(context, uri) {
+            runCatching {
+                context.contentResolver.openInputStream(uri)?.buffered()?.use { original ->
+                    downloaded.inputStream().buffered().use { candidate ->
+                        sameDownloadedBytes(original, candidate, audio.spec.mimeType == "audio/flac")
+                    }
+                } == true
+            }.getOrDefault(false)
+        }
+    }
+
     /** 每个资源独立落入临时文件；仅 HTTP upstream open/read 故障可排除资源并尝试换源。 */
     private suspend fun downloadAudioTransfer(
         context: Context,
@@ -511,6 +583,7 @@ object Downloader {
         tempDir: File,
         baseName: String,
         notificationId: Int,
+        reuseMaster: (suspend (DownloadAudio, String?) -> String?)?,
     ): DownloadTransfer? {
         val excludedResources = linkedSetOf<String>()
         var retryDeadlineNanos: Long? = null
@@ -523,12 +596,19 @@ object Downloader {
                 val opened = openDownloadInput(
                     context, song, request, baseline, recordId, token,
                     excludedResources, retryDeadlineNanos,
+                    probeExistingMaster = reuseMaster != null,
                 ) ?: return null
-                val (downloadInput, prefix) = opened
+                val (downloadInput, probe) = opened
                 input = downloadInput
+                val prefix = probe?.prefix ?: byteArrayOf()
                 val coroutine = currentCoroutineContext()
                 downloadInput.stream.use { stream ->
                     ensureCurrent(recordId, token)
+                    probe?.flac?.let { flac ->
+                        reuseMaster?.invoke(flac, downloadInput.sourceQuality)?.let {
+                            return DownloadTransfer.Reused(it)
+                        }
+                    }
                     if (baseline != null) updateCurrent(recordId, token) {
                         tasks.getValue(recordId).recordStarted = true
                         check(DownloadCenter.start(song, "已确认更高音质，开始下载…", id = recordId, upgradeFrom = request.upgradeFrom)) { "无法保存下载记录" }
@@ -559,7 +639,7 @@ object Downloader {
                     "音频下载不完整，原文件未修改"
                 }
                 keepTemporaryFile = true
-                return DownloadTransfer(temp, downloadInput)
+                return DownloadTransfer.Copied(temp, downloadInput)
             } catch (failure: Throwable) {
                 val transferFailure = findDownloadHttpTransferFailure(failure) ?: throw failure
                 currentCoroutineContext().ensureActive()
@@ -659,7 +739,8 @@ object Downloader {
     private suspend fun openDownloadInput(
         context: Context, song: OnlineSong, request: DownloadRequest, baseline: AudioSpecification?,
         recordId: String, token: Long, excludedResources: Set<String>, resolveDeadlineNanos: Long?,
-    ): Pair<CachedAudioInput, ByteArray>? {
+        probeExistingMaster: Boolean,
+    ): Pair<CachedAudioInput, DownloadUpgradeProbe?>? {
         repeat(minOf(if (baseline == null) 1 else 3, MAX_DOWNLOAD_TRANSFER_RESOURCES - excludedResources.size)) {
             val resolveTimeoutMs = resolveDeadlineNanos?.let { deadline ->
                 val remaining = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime())
@@ -673,19 +754,21 @@ object Downloader {
             )
             try {
                 ensureCurrent(recordId, token)
-                if (baseline == null) return input to byteArrayOf()
+                if (baseline == null && !probeExistingMaster) return input to null
                 val probe = probeDownloadUpgrade(input.stream)
                 currentCoroutineContext().ensureActive()
                 ensureCurrent(recordId, token)
-                val actual = probe.spec ?: error("无法确认音源的实际音质，未开始下载")
-                actual.verifiedQuality?.let { quality ->
+                val actual = probe.spec
+                actual?.verifiedQuality?.let { quality ->
                     audioResourceId(input.resourceKey)?.let { resource ->
                         SourceResolver.confirmQuality(resource, quality)
                         AudioCacheStore.recordObservedQuality(context, resource, quality)
                     }
                 }
-                when (isBetterDownloadQuality(actual, baseline)) {
-                    true -> return input to probe.prefix
+                if (baseline == null) return input to probe
+                checkNotNull(actual) { "无法确认音源的实际音质，未开始下载" }
+                when (isBetterDownloadQuality(actual, baseline, request.prefersMaster)) {
+                    true -> return input to probe
                     null -> error("无法确认音源的实际音质，未开始下载")
                     false -> {
                         input.stream.close()
@@ -1284,8 +1367,11 @@ internal fun matchesCurrentDownloadFileName(fileName: String?, baseName: String)
 
 internal fun isNonEmptyRegularFile(file: File): Boolean = file.isFile && file.length() > 0L
 
-internal fun downloadQualityNote(preferred: String, actual: String): String = when {
+internal fun downloadQualityNote(preferred: String, actual: String, sourceQuality: String? = null): String = when {
     preferred == actual -> ""
+    preferred == "master" && SourceResolver.verifiedSourceQuality(actual, sourceQuality) == "master" ->
+        "（母带档 · 实际音质 $actual）"
+    preferred == "master" -> "（母带档不可用，已使用 $actual）"
     SourceResolver.qualitySatisfies(preferred, actual) -> "（实际音质：$actual）"
     else -> "（$preferred 不可用，已使用 $actual）"
 }

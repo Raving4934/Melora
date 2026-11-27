@@ -2,6 +2,7 @@ package com.leyu.melora.playback
 
 import android.content.Context
 import com.leyu.melora.playback.sdk.OnlineSong
+import com.leyu.melora.playback.sdk.SourceResolver
 import com.leyu.melora.playback.local.LocalSong
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -29,6 +30,8 @@ object DownloadCenter {
         val audioSpec: AudioSpecification? = null,
         /** 升级任务重试仍以原本地文件为下限，不能悄悄退化为普通下载。 */
         val upgradeFrom: LocalSong? = null,
+        /** 音源实际提供的母带档位，和已保存文件的实测规格分别记录。 */
+        val sourceQuality: String? = null,
     ) {
         /** 封面只以歌曲快照为唯一数据源，避免记录字段与 song.img 长期不一致。 */
         val img: String? get() = song?.img
@@ -66,6 +69,7 @@ object DownloadCenter {
             hasSavedResource = saved != null,
             audioSpec = saved?.audioSpec,
             upgradeFrom = upgradeFrom,
+            sourceQuality = saved?.sourceQuality,
         )
         // 已在准备阶段且歌曲未变，避免仅因时钟推进而改写整个记录文件。
         if (record == previous) list
@@ -82,10 +86,21 @@ object DownloadCenter {
         list.map { current ->
             if (current.id == expected.id && current.hasSavedResource &&
                 sameResourceAddress(current.fileName, current.savedUri, expected.fileName, expected.savedUri) &&
-                current.audioSpec == expected.audioSpec
+                current.audioSpec == expected.audioSpec && current.sourceQuality == expected.sourceQuality
             ) {
-                val previousSpec = current.audioSpec.takeIf { current.savedUri == uri }
-                current.copy(savedUri = uri, audioSpec = spec?.withKnownFileFields(previousSpec) ?: previousSpec)
+                val sameFile = current.savedUri == uri
+                val previousSpec = current.audioSpec.takeIf { sameFile }
+                val measured = spec?.withKnownFileFields(previousSpec) ?: previousSpec
+                val origin = current.sourceQuality.takeIf {
+                    measured != null && previousSpec?.copy(bitrate = measured.bitrate) == measured
+                }
+                current.copy(
+                    savedUri = uri,
+                    audioSpec = measured,
+                    sourceQuality = measured?.verifiedQuality?.let {
+                        SourceResolver.verifiedSourceQuality(it, origin)
+                    },
+                )
             } else current
         }
     }
@@ -100,6 +115,7 @@ object DownloadCenter {
         fileName: String? = null,
         savedUri: String? = null,
         audioSpec: AudioSpecification? = null,
+        sourceQuality: String? = null,
     ) = update(persist = true, requireSaved = true) { list ->
         list.map {
             if (it.id == id) {
@@ -111,6 +127,7 @@ object DownloadCenter {
                     nextFileName,
                     nextSavedUri,
                 )
+                val measured = audioSpec ?: it.audioSpec.takeIf { sameSavedResource }
                 it.copy(
                     status = Status.Done,
                     percent = 100,
@@ -118,7 +135,13 @@ object DownloadCenter {
                     fileName = nextFileName,
                     savedUri = nextSavedUri,
                     hasSavedResource = hasResourceAddress(nextFileName, nextSavedUri),
-                    audioSpec = audioSpec ?: it.audioSpec.takeIf { sameSavedResource },
+                    audioSpec = measured,
+                    sourceQuality = measured?.verifiedQuality?.let { quality ->
+                        SourceResolver.verifiedSourceQuality(
+                            quality,
+                            sourceQuality ?: it.sourceQuality.takeIf { sameSavedResource && audioSpec == null },
+                        )
+                    },
                     updatedAt = System.currentTimeMillis(),
                 )
             } else {
@@ -157,6 +180,7 @@ object DownloadCenter {
                     savedUri = null,
                     hasSavedResource = false,
                     audioSpec = null,
+                    sourceQuality = null,
                     updatedAt = System.currentTimeMillis(),
                 )
             } else {
@@ -268,6 +292,7 @@ object DownloadCenter {
             legacyHasSavedResource
         }
         val keepResource = hasSavedResource && hasResourceAddress(rawFileName, rawSavedUri)
+        val audioSpec = node.optJSONObject("audioSpec")?.takeIf { keepResource }?.let(::audioSpecificationFromJson)
         return Record(
             id = id,
             name = node.optString("name"),
@@ -279,8 +304,11 @@ object DownloadCenter {
             updatedAt = node.optLong("updatedAt"),
             savedUri = rawSavedUri.takeIf { keepResource },
             hasSavedResource = keepResource,
-            audioSpec = node.optJSONObject("audioSpec")?.takeIf { keepResource }?.let(::audioSpecificationFromJson),
+            audioSpec = audioSpec,
             upgradeFrom = node.optJSONObject("upgradeFrom")?.let(LocalSong::fromJson),
+            sourceQuality = audioSpec?.verifiedQuality?.let {
+                SourceResolver.verifiedSourceQuality(it, node.opt("sourceQuality") as? String)
+            },
         )
     }
 
@@ -299,6 +327,7 @@ object DownloadCenter {
             put("hasSavedResource", keepResource)
             record.upgradeFrom?.let { put("upgradeFrom", it.toJson()) }
             if (keepResource) record.audioSpec?.let { put("audioSpec", audioSpecificationToJson(it)) }
+            if (keepResource) record.sourceQuality?.let { put("sourceQuality", it) }
         }
     }
 

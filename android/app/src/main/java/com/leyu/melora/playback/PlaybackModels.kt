@@ -108,6 +108,8 @@ data class PlayerUiState(
     val pendingQueueId: String? = null,
     /** 连续采样校正时的显示下界；实际positionMs和保存断点始终保留播放器原值。 */
     val lyricPositionFloorMs: Long = 0,
+    // 明确取得的音源档位，独立于解码器读出的实际规格。
+    val sourceQuality: String? = null,
 )
 
 /** 全屏歌词外观；由设置中心持久化，mini与桌面悬浮歌词保持各自字号。 */
@@ -224,6 +226,16 @@ data class AudioSpecification(
         normalizedMimeType == "audio/vorbis" -> bitrate.takeIf { it > 0 }?.let { "ogg${it / 1000}k" }
         else -> null
     }
+
+    /** 即使流没有平均码率，已识别的有损编码也足以否决脚本的母带声明。 */
+    internal fun verifiedStreamQuality(sourceQuality: String?): String? = verifiedQuality
+        ?: if (sourceQuality == "master") when (codecLabel) {
+            "MP3" -> "mp3"
+            "AAC" -> "aac"
+            "Vorbis" -> "ogg"
+            "Opus" -> "opus"
+            else -> null
+        } else null
 
     val codecLabel: String? get() = when (normalizedMimeType) {
         "audio/flac", "audio/x-flac" -> "FLAC"

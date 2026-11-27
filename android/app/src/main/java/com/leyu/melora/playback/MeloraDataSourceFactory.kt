@@ -30,6 +30,7 @@ object TrackRegistry {
         val fromCompleteCache: Boolean = false,
         val localFile: LocalSong? = null,
         val downloadUri: String? = null,
+        val sourceQuality: String? = null,
     )
     // 音质与解析器必须同一次更新，缓存命中/重解析不能留下另一条链路的旧来源。
     private val resolutions = ConcurrentHashMap<String, Resolution>()
@@ -83,8 +84,8 @@ object TrackRegistry {
         artworkListeners.forEach { it(uid, url) }
     }
 
-    fun notifyResolved(uid: String, quality: String, resourceId: String?, requestedQuality: String? = null, platform: String? = null, fromCompleteCache: Boolean = false, localFile: LocalSong? = null, downloadUri: String? = null) {
-        resolutions[uid] = Resolution(quality, resourceId, requestedQuality, platform, fromCompleteCache, localFile, downloadUri)
+    fun notifyResolved(uid: String, quality: String, resourceId: String?, requestedQuality: String? = null, platform: String? = null, fromCompleteCache: Boolean = false, localFile: LocalSong? = null, downloadUri: String? = null, sourceQuality: String? = null) {
+        resolutions[uid] = Resolution(quality, resourceId, requestedQuality, platform, fromCompleteCache, localFile, downloadUri, sourceQuality)
         resolvedListeners.forEach { it(uid) }
     }
 
@@ -148,7 +149,8 @@ class MeloraDataSourceFactory(context: Context, base: DataSource.Factory) : Data
                 DownloadCenter.failed(uid, message, expectedSaved = savedDownload)
                 throw FileNotFoundException("$message，请检查下载目录")
             }
-            TrackRegistry.notifyResolved(uid, "local", "local", localFile = LocalMediaStore.findByUri(local.toString()), downloadUri = local.toString())
+            TrackRegistry.notifyResolved(uid, "local", "local", localFile = LocalMediaStore.findByUri(local.toString()),
+                downloadUri = local.toString(), sourceQuality = savedDownload.sourceQuality.takeIf { local.toString() == savedDownload.savedUri })
             return dataSpec.buildUpon().setUri(local).setKey(null).build()
         }
         val song = OnlineSong.from(track.raw) ?: throw IOException("曲目信息缺失")
@@ -156,7 +158,8 @@ class MeloraDataSourceFactory(context: Context, base: DataSource.Factory) : Data
         val preferredQuality = NetworkState.playQuality(appContext)
 
         AudioCacheStore.cachedPlaybackResource(appContext, song, preferredQuality)?.let { cached ->
-            TrackRegistry.notifyResolved(uid, cached.actualQuality, audioResourceId(cached.key), preferredQuality, cached.sourceIdentity.substringBefore('_'), fromCompleteCache = true)
+            TrackRegistry.notifyResolved(uid, cached.actualQuality, audioResourceId(cached.key), preferredQuality,
+                cached.sourceIdentity.substringBefore('_'), fromCompleteCache = true, sourceQuality = cached.sourceQuality)
             return AudioCacheStore.applyToDataSpec(cached, dataSpec)
         }
 
@@ -171,8 +174,9 @@ class MeloraDataSourceFactory(context: Context, base: DataSource.Factory) : Data
                 allowSwitch = MeloraSettings.autoSwitchSource.value,
             )
         }
-        TrackRegistry.notifyResolved(uid, resolved.quality, resolved.resourceId, preferredQuality, resolved.song.source)
         val resource = AudioCacheStore.registerResolved(appContext, uid, preferredQuality, resolved)
+        TrackRegistry.notifyResolved(uid, resource.actualQuality, resolved.resourceId, preferredQuality,
+            resolved.song.source, sourceQuality = resource.sourceQuality)
         return AudioCacheStore.applyToDataSpec(resource, dataSpec)
     }
 }

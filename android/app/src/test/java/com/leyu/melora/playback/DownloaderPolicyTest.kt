@@ -26,6 +26,17 @@ class DownloaderPolicyTest {
     }
 
     @Test
+    fun masterPreferenceDoesNotTreatUnverifiedHiResAsAMasterDownload() {
+        val hr = AudioSpecification("audio/flac", 192_000, -1, 24)
+        val mp3 = AudioSpecification("audio/mpeg", 44_100, 320_000)
+        assertFalse(downloadQualityMatches(hr, "master"))
+        assertTrue(downloadQualityMatches(hr, "master", "master"))
+        assertFalse(downloadQualityMatches(mp3, "master", "master"))
+        assertEquals("（母带档 · 实际音质 flac24bit）", downloadQualityNote("master", "flac24bit", "master"))
+        assertEquals("（母带档不可用，已使用 flac24bit）", downloadQualityNote("master", "flac24bit"))
+    }
+
+    @Test
     fun actualQualityNotRequestedQualityControlsDuplicateAndFileName() {
         val low = AudioSpecification("audio/mpeg", 44100, 128000)
         val sq = AudioSpecification("audio/flac", 44100, -1, 16)

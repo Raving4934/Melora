@@ -405,6 +405,33 @@ class DownloadCenterTest {
     }
 
     @Test
+    fun masterSourceSurvivesRecordReloadAndClearsWhenSavedFileChanges() {
+        val song = OnlineSong(songJson(null).put("songmid", "master-source"))
+        val spec = AudioSpecification("audio/flac", 192_000, -1, 24, 2)
+        val uri = "content://media/master"
+        try {
+            DownloadCenter.start(song, "test")
+            DownloadCenter.done(song.uid, "done", "test.flac", uri, spec, sourceQuality = "master")
+            val saved = requireNotNull(DownloadCenter.saved(song.uid))
+            val restored = DownloadCenter.recordFromJson(DownloadCenter.recordToJson(saved))
+            assertEquals("master", restored?.sourceQuality)
+            assertEquals("flac24bit", restored?.audioSpec?.verifiedQuality)
+
+            DownloadCenter.start(song, "retry")
+            assertEquals("master", DownloadCenter.saved(song.uid)?.sourceQuality)
+            DownloadCenter.rememberSavedResource(
+                requireNotNull(DownloadCenter.saved(song.uid)),
+                "content://media/replacement",
+                spec,
+            )
+            assertNull(DownloadCenter.saved(song.uid)?.sourceQuality)
+            assertEquals(spec, DownloadCenter.saved(song.uid)?.audioSpec)
+        } finally {
+            DownloadCenter.remove(song.uid)
+        }
+    }
+
+    @Test
     fun savedResourceSurvivesRetryFailureAndIsClearedExplicitly() {
         val song = OnlineSong(songJson(null).put("songmid", "local-regression"))
         val spec = AudioSpecification("audio/flac", 96_000, -1, 24)

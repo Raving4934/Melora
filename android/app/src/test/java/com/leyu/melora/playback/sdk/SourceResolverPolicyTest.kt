@@ -121,6 +121,7 @@ class SourceResolverPolicyTest {
 
     @Test
     fun allPurposesShareTheFullDescendingQualityLadder() {
+        assertEquals(listOf("master", "flac24bit", "flac", "320k", "128k"), SourceResolver.qualityAttempts("master"))
         assertEquals(listOf("flac24bit", "flac", "320k", "128k"), SourceResolver.qualityAttempts("flac24bit"))
         assertEquals(listOf("flac", "320k", "128k"), SourceResolver.qualityAttempts("flac"))
         assertEquals(listOf("320k", "128k"), SourceResolver.qualityAttempts("320k"))
@@ -139,6 +140,10 @@ class SourceResolverPolicyTest {
             SourceResolver.selectQuality("flac24bit", listOf("master")),
         )
         assertNull(SourceResolver.selectQuality("flac24bit", listOf("flac", "320k")))
+        assertEquals("master", SourceResolver.selectQuality("master", listOf("hires", "master")))
+        assertNull(SourceResolver.selectQuality("master", listOf("hires")))
+        assertNull(SourceResolver.selectQuality("master", emptyList()))
+        assertNull(SourceResolver.selectQuality("flac24bit", listOf("master"), allowMasterAlias = false))
     }
 
     @Test
@@ -148,6 +153,36 @@ class SourceResolverPolicyTest {
         assertEquals(false, SourceResolver.qualitySatisfies("flac24bit", "flac"))
         assertEquals(true, SourceResolver.qualitySatisfies("flac", "flac24bit"))
         assertEquals(false, SourceResolver.qualitySatisfies("320k", "128k"))
+        assertFalse(SourceResolver.sameQualityTier("master", "flac24bit"))
+        assertFalse(SourceResolver.qualitySatisfies("master", "flac24bit"))
+    }
+
+    @Test
+    fun sourceMasterTierSurvivesHighResolutionConfirmationOnly() = runBlocking {
+        val url = "https://example.com/audio.flac"
+        val result = requireNotNull(SourceResolver.scriptResolution(
+            song(), LxScriptPool.ScriptResult("master", "source.js", url),
+        ))
+        val ordinary = requireNotNull(SourceResolver.scriptResolution(
+            song(), LxScriptPool.ScriptResult("flac24bit", "source.js", url),
+        ))
+        assertEquals(ordinary.resourceId, result.resourceId)
+        assertNull(ordinary.sourceQuality)
+        assertEquals("master", result.sourceQuality)
+        assertEquals("master", result.copy(quality = "flac24bit").effectiveQuality)
+        assertEquals("flac", result.copy(quality = "flac").effectiveQuality)
+        assertEquals("128k", result.copy(quality = "128k").effectiveQuality)
+
+        val attempts = mutableListOf<String>()
+        val downgraded = requireNotNull(SourceResolver.scriptResolution(
+            song(), LxScriptPool.ScriptResult("master", "source.js", JSONObject().put("url", url).put("type", "flac24bit")),
+        ))
+        assertNull(downgraded.sourceQuality)
+        assertEquals(downgraded, SourceResolver.resolveTiers("master", SourceResolver.Purpose.DOWNLOAD) { quality ->
+            attempts += quality
+            downgraded
+        })
+        assertEquals(listOf("master", "flac24bit"), attempts)
     }
 
     @Test

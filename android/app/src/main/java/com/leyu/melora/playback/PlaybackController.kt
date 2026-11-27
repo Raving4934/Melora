@@ -296,7 +296,7 @@ object PlaybackController {
             }
             return
         }
-        val verified = audioSpec?.verifiedQuality
+        val verified = audioSpec?.verifiedStreamQuality(resolution?.sourceQuality)
         if (resourceId != null && verified != null &&
             resourceId.startsWith("lx:") &&
             confirmedAudio != (resourceId to verified)
@@ -364,6 +364,9 @@ object PlaybackController {
             mode = player.playMode(),
             speed = player.playbackParameters.speed,
             quality = resolution?.quality,
+            sourceQuality = resolution?.let {
+                SourceResolver.verifiedSourceQuality(audioSpec?.verifiedStreamQuality(it.sourceQuality) ?: it.quality, it.sourceQuality)
+            },
             resolvedPlatform = resolution?.platform,
             resolvedBy = resolution?.resourceId,
             fromCompleteCache = resolution?.fromCompleteCache == true,
@@ -426,7 +429,8 @@ object PlaybackController {
                 val item = player.currentMediaItem ?: return
                 val song = TrackRegistry.get(item.mediaId)?.raw?.let(OnlineSong::from) ?: return
                 val previousResource = resolution?.resourceId ?: return
-                val quality = readAudioSpec(player)?.verifiedQuality ?: resolution.quality
+                val actual = readAudioSpec(player)?.verifiedStreamQuality(resolution.sourceQuality) ?: resolution.quality
+                val quality = SourceResolver.effectiveQuality(actual, resolution.sourceQuality)
                 val preference = NetworkState.playQuality(context)
                 val generation = recoveryGeneration
                 rebufferRecovery.attemptStarted(previousResource)

@@ -65,6 +65,9 @@ import androidx.compose.ui.unit.sp
 import com.leyu.melora.ui.common.ChromeScaffold
 import com.leyu.melora.ui.common.chromeContentPadding
 import com.leyu.melora.BuildConfig
+import com.leyu.melora.playback.QualityBadgeMode
+import com.leyu.melora.playback.sdk.qualityBadgeForCapabilities
+import com.leyu.melora.ui.common.BadgePill
 import com.leyu.melora.ui.theme.MeloraAppearance
 import com.leyu.melora.ui.theme.meloraSwitchColors
 
@@ -74,12 +77,35 @@ internal val SettingsCardBg: Color get() = MeloraAppearance.card
 internal val SettingsBrandBlue: Color get() = MeloraAppearance.brand
 internal val SettingsDividerSoft: Color get() = MeloraAppearance.divider
 
-internal val QualityOptions = listOf(
+private val AudioQualityOptions = mapOf(
     "128k" to "128k 标清",
     "320k" to "320k 高品",
     "flac" to "FLAC 无损",
     "flac24bit" to "Hi-Res 24bit",
+    "master" to "母带优先",
 )
+
+@Composable
+internal fun AudioQualitySetting(
+    title: String,
+    subtitle: String,
+    value: String,
+    onSelect: (String) -> Unit,
+) {
+    SettingsChoiceMenu(
+        title = title,
+        subtitle = subtitle,
+        value = value,
+        options = AudioQualityOptions.keys.toList(),
+        label = { AudioQualityOptions[it] ?: it },
+        onSelect = onSelect,
+        optionPreview = { quality ->
+            remember(quality) { qualityBadgeForCapabilities(listOf(quality)) }?.let { badge ->
+                BadgePill(badge, mode = QualityBadgeMode.Compact)
+            }
+        },
+    )
+}
 
 @Composable
 internal fun SettingsPageContent(

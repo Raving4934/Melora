@@ -153,14 +153,23 @@ object LxScriptPool {
     }
 
     /** 冷源或刚被替换的源仍有机会参与；只有所有已安装版本都明确不支持才跳过搜索。 */
-    internal suspend fun audioSearchPlatforms(context: Context, candidates: List<String>): List<String> =
+    internal suspend fun audioSearchPlatforms(
+        context: Context,
+        candidates: List<String>,
+        supportsQuality: (PlatformSupport) -> Boolean = { true },
+    ): List<String> =
         withContext(dispatcher) {
             val sourceStore = store(context)
             val known = sourceStore.list().map { script ->
                 entries[script.id]?.takeIf { !it.retired && it.revision == sourceStore.revision(script.id) }
                     ?: return@withContext candidates
             }
-            candidates.filter { platform -> known.any { it.sources[platform]?.actions?.contains("musicUrl") == true } }
+            candidates.filter { platform ->
+                known.any { script ->
+                    val support = script.sources[platform]
+                    support != null && "musicUrl" in support.actions && supportsQuality(support)
+                }
+            }
         }
 
     private suspend fun loadEntry(

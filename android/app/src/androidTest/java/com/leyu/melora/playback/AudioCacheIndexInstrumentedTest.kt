@@ -72,6 +72,34 @@ class AudioCacheIndexInstrumentedTest {
         assertNull(index.find(target, "128k", online = true))
     }
 
+    @Test fun measuredHiResAndMasterRemainDistinctAcrossCacheReopen() {
+        val track = song("wy")
+        val first = checkNotNull(cache)
+        val index = AudioCacheIndex(first)
+        val hiRes = resolved(track).copy(quality = "flac24bit")
+        val ordinary = index.register(track.uid, "flac24bit", hiRes)
+        val bytes = ByteArray(4096) { it.toByte() }
+        write(first, ordinary, bytes)
+        index.recordObservedQuality(hiRes.resourceId, "flac24bit")
+        assertNull(index.find(track, "master", online = true))
+        val master = hiRes.copy(quality = "master", sourceQuality = "master", resourceId = "fixture:master")
+        val selected = index.register(track.uid, "master", master)
+        write(first, selected, bytes)
+        index.recordObservedQuality(master.resourceId, "flac24bit")
+        first.release()
+        cache = null
+        SourceResolver.clearCache()
+        val reopened = SimpleCache(directory, NoOpCacheEvictor(), database).also { cache = it }
+        val restored = AudioCacheIndex(reopened)
+        assertEquals(ordinary.key, restored.find(track, "flac24bit", online = true)?.key)
+        val hit = checkNotNull(restored.find(track, "master", online = true))
+        assertEquals(selected.key, hit.key)
+        assertEquals("flac24bit", hit.actualQuality)
+        assertEquals("master", hit.sourceQuality)
+        assertEquals(selected.key, restored.find(track, "master", online = false)?.key)
+        assertEquals(ordinary.key, restored.find(track, "flac24bit", online = false)?.key)
+    }
+
     @Test fun rejectedSharedResourceCannotBeReusedThroughAnyUidOrReRegisteredAlias() {
         val current = checkNotNull(cache)
         val index = AudioCacheIndex(current)

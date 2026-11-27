@@ -17,6 +17,8 @@ import androidx.media3.extractor.SeekMap
 import androidx.media3.extractor.TrackOutput
 import androidx.media3.extractor.mp3.Mp3Extractor
 import java.io.ByteArrayInputStream
+import java.io.DataInputStream
+import java.io.EOFException
 import androidx.media3.extractor.FlacStreamMetadata
 import com.leyu.melora.playback.local.LocalMediaIoCoordinator
 import com.leyu.melora.playback.local.LocalTagReader
@@ -26,7 +28,20 @@ import java.io.InputStream
 import org.json.JSONObject
 
 /** 仅在下载任务IO线程检查单个候选/临时文件，不参与首播、列表或全库扫描。 */
-internal data class DownloadAudio(val spec: AudioSpecification, val durationMs: Long, val tag: LocalTagReader.Tag?) {
+internal data class DownloadAudio(
+    val spec: AudioSpecification,
+    val durationMs: Long,
+    val tag: LocalTagReader.Tag?,
+    val flacPcmChecksum: String? = null,
+) {
+    fun sameFlacPcm(other: DownloadAudio): Boolean =
+        flacPcmChecksum != null && flacPcmChecksum == other.flacPcmChecksum && sameFileFormat(other)
+
+    fun sameFileFormat(other: DownloadAudio): Boolean =
+        spec.mimeType == other.spec.mimeType && spec.sampleRate == other.spec.sampleRate &&
+            spec.bitDepth == other.spec.bitDepth && spec.channelCount == other.spec.channelCount &&
+            durationMs == other.durationMs
+
     fun matches(song: OnlineSong, trustedIdentity: Boolean): Boolean {
         val metadata = tag
         val candidate = OnlineSong(JSONObject().apply {
@@ -43,27 +58,81 @@ internal data class DownloadAudio(val spec: AudioSpecification, val durationMs: 
     }
 }
 
-internal fun downloadQualityMatches(spec: AudioSpecification?, requested: String): Boolean =
-    spec?.verifiedQuality?.let { SourceResolver.sameQualityTier(requested, it) } == true
+internal fun downloadQualityMatches(
+    spec: AudioSpecification?,
+    requested: String,
+    sourceQuality: String? = null,
+): Boolean = spec?.verifiedQuality?.let {
+    SourceResolver.sameQualityTier(requested, SourceResolver.effectiveQuality(it, sourceQuality))
+} == true
 
-internal fun sameDownloadedQuality(a: AudioSpecification, b: AudioSpecification): Boolean =
-    a.verifiedQuality != null && b.verifiedQuality != null &&
-        SourceResolver.sameQualityTier(a.verifiedQuality!!, b.verifiedQuality!!)
+internal fun sameDownloadedQuality(a: AudioSpecification, b: AudioSpecification): Boolean {
+    val first = a.verifiedQuality ?: return false
+    val second = b.verifiedQuality ?: return false
+    return SourceResolver.sameQualityTier(first, second) || SourceResolver.sameQualityTier(second, first)
+}
+
+/** 校验没有 PCM 摘要的文件时，流式比较音频，避免标签变化制造重复文件。 */
+internal fun sameDownloadedBytes(first: InputStream, second: InputStream, flac: Boolean): Boolean {
+    val a = DataInputStream(first)
+    val b = DataInputStream(second)
+    try {
+        if (flac && (!a.skipFlacMetadata() || !b.skipFlacMetadata())) return false
+
+        val left = ByteArray(AUDIO_TRANSFER_BUFFER_BYTES)
+        val right = ByteArray(AUDIO_TRANSFER_BUFFER_BYTES)
+        var hasAudio = false
+        while (true) {
+            val count = a.read(left)
+            if (count < 0) return hasAudio && b.read() < 0
+            b.readFully(right, 0, count)
+            for (index in 0 until count) {
+                if (left[index] != right[index]) return false
+            }
+            hasAudio = true
+        }
+    } catch (_: EOFException) {
+        return false
+    }
+}
+
+private fun DataInputStream.skipFlacMetadata(): Boolean {
+    if (readInt() != 0x664C6143) return false
+    do {
+        val header = readInt()
+        val length = header and 0x00FFFFFF
+        if (skipBytes(length) != length) return false
+    } while (header >= 0)
+    return true
+}
 
 /**
- * 只在两边都有可归档的实测音质时判断是否值得升级；同一严格档位（包括HR别名）不是升级。
+ * 母带优先时可按无损文件的实测位深与采样率比较同档规格。
  * qualityRank 由SourceResolver统一维护，避免本地预检复制或误归一化质量表。
  */
-internal fun isBetterDownloadQuality(candidate: AudioSpecification, local: AudioSpecification): Boolean? {
+internal fun isBetterDownloadQuality(
+    candidate: AudioSpecification,
+    local: AudioSpecification,
+    preferMaster: Boolean = false,
+): Boolean? {
     val candidateRank = candidate.verifiedQuality?.let { SourceResolver.qualityRank(it) } ?: return null
     val localRank = local.verifiedQuality?.let { SourceResolver.qualityRank(it) } ?: return null
     if (candidateRank < 0 || localRank < 0) return null
-    return candidateRank > localRank
+    if (candidateRank != localRank) return candidateRank > localRank
+    if (!preferMaster) return false
+    if (candidate.isDsd) return !local.isDsd
+    return candidate.isLossless && local.isLossless && local.sampleRate > 0 &&
+        candidate.bitDepth >= local.bitDepth && candidate.sampleRate >= local.sampleRate &&
+        (candidate.bitDepth > local.bitDepth || candidate.sampleRate > local.sampleRate)
 }
 
 private const val DOWNLOAD_UPGRADE_PREFIX_LIMIT = 128 * 1024
 
-internal data class DownloadUpgradeProbe(val prefix: ByteArray, val spec: AudioSpecification?)
+internal data class DownloadUpgradeProbe(
+    val prefix: ByteArray,
+    val spec: AudioSpecification?,
+    val flac: DownloadAudio? = null,
+)
 
 /**
  * 从下载器已经打开的同一个流读取有限前缀；前缀必须原样回写，不能让预检吞掉正文。
@@ -72,8 +141,10 @@ internal data class DownloadUpgradeProbe(val prefix: ByteArray, val spec: AudioS
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 internal fun probeDownloadUpgrade(input: InputStream): DownloadUpgradeProbe {
     var prefix = readDownloadUpgradePrefix(input, limit = 8 * 1024)
-    val flacSpec = flacUpgradeSpec(prefix)
-    if (flacSpec != null || hasFlacSignature(prefix)) return DownloadUpgradeProbe(prefix, flacSpec)
+    if (hasFlacSignature(prefix)) {
+        val flac = flacDownloadAudio(prefix)
+        return DownloadUpgradeProbe(prefix, flac?.spec, flac)
+    }
     var spec = mp3PrefixAudioSpec(prefix) ?: mediaPrefixAudioSpec(prefix)
     if (spec?.verifiedQuality == null && prefix.size == 8 * 1024) {
         prefix = readDownloadUpgradePrefix(input, prefix)
@@ -107,15 +178,6 @@ internal fun readDownloadUpgradePrefix(input: InputStream, initial: ByteArray = 
 private fun hasFlacSignature(prefix: ByteArray): Boolean =
     prefix.size >= 4 && prefix[0] == 102.toByte() && prefix[1] == 76.toByte() &&
         prefix[2] == 97.toByte() && prefix[3] == 67.toByte()
-
-private fun flacUpgradeSpec(prefix: ByteArray): AudioSpecification? {
-    if (!hasFlacSignature(prefix)) return null
-    return try {
-        flacDownloadAudio(prefix.copyOf(minOf(prefix.size, 42)))?.spec
-    } catch (_: RuntimeException) {
-        null
-    }
-}
 
 /** 复用Media3的CBR/Xing/VBRI识别和平均码率，不用MP3首帧码率代替VBR全曲规格。 */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -249,7 +311,7 @@ internal fun inspectDownloadAudio(context: Context, uri: Uri): DownloadAudio? = 
         ?: extracted ?: tag?.let { AudioSpecification(it.mimeType, it.sampleRate, it.bitrate, it.bitDepth) }
     if (spec?.mimeType?.startsWith("audio/") != true) return@withRead null
     val duration = flac?.durationMs?.takeIf { it > 0 } ?: tag?.durationMs ?: 0L
-    DownloadAudio(spec, duration, tag)
+    DownloadAudio(spec, duration, tag, flac?.flacPcmChecksum)
 }
 
 /** 从真实STREAMINFO读位深/采样率，兼容无法回传位深的旧系统，不从文件名或请求推断。 */
@@ -259,6 +321,11 @@ internal fun flacDownloadAudio(header: ByteArray): DownloadAudio? {
         header[4].toInt() and 0x7f != 0 || header[5] != 0.toByte() || header[6] != 0.toByte() || header[7] != 34.toByte()) return null
     val metadata = FlacStreamMetadata(header, 8)
     if (metadata.sampleRate <= 0 || metadata.bitsPerSample !in 4..32) return null
-    return DownloadAudio(AudioSpecification("audio/flac", metadata.sampleRate, -1, metadata.bitsPerSample, metadata.channels),
-        metadata.totalSamples * 1000 / metadata.sampleRate, null)
+    val checksum = header.copyOfRange(26, 42).takeIf { bytes -> bytes.any { it != 0.toByte() } }?.toHexString()
+    return DownloadAudio(
+        AudioSpecification("audio/flac", metadata.sampleRate, -1, metadata.bitsPerSample, metadata.channels),
+        metadata.totalSamples * 1000 / metadata.sampleRate,
+        null,
+        checksum,
+    )
 }

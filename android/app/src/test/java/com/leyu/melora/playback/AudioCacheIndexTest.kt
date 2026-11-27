@@ -79,7 +79,36 @@ class AudioCacheIndexTest {
         val highQualitySong = song(source = "kg", id = "high-quality")
         val highQuality = registerComplete(highQualityIndex, highQualityCache, highQualitySong, quality = "flac24bit")
         assertSameResource(highQuality, highQualityIndex.find(requestedCopy, "hires", online = false))
-        assertSameResource(highQuality, highQualityIndex.find(requestedCopy, "master", online = true))
+        assertNull(highQualityIndex.find(requestedCopy, "master", online = true))
+        assertNull(highQualityIndex.find(highQualitySong, "master", online = true))
+        assertSameResource(highQuality, highQualityIndex.find(highQualitySong, "master", online = false))
+    }
+
+    @Test
+    fun masterOriginSurvivesMeasuredHiResAndCacheReopenButCannotOverrideMeasuredLossyAudio() {
+        val cache = CacheFixture()
+        val index = AudioCacheIndex(cache.cache)
+        val track = song("wy", "original")
+        val copy = song("kg", "matching")
+        val candidate = resolved(track, "master").copy(sourceQuality = "master")
+        val stored = index.register(track.uid, "master", candidate)
+        cache.complete(stored.key, 100L, 0L to 100L)
+        index.recordObservedQuality(candidate.resourceId, "flac24bit")
+        SourceResolver.clearCache()
+
+        val reopened = AudioCacheIndex(cache.cache)
+        for (song in listOf(track, copy)) {
+            val hit = reopened.find(song, "master", online = true)
+            assertSameResource(stored, hit)
+            assertEquals("flac24bit", hit?.actualQuality)
+            assertEquals("master", hit?.sourceQuality)
+        }
+        // 用普通 HR 偏好再次取得同一物理文件，不应丢失它已有的来源证据。
+        assertSameResource(stored, reopened.register(track.uid, "flac24bit", candidate.copy(quality = "flac24bit", sourceQuality = null)))
+        assertSameResource(stored, reopened.find(track, "master", online = true))
+        SourceResolver.confirmQuality(candidate.resourceId, "320k")
+        assertNull(reopened.find(track, "master", online = true))
+        assertNull(reopened.find(track, "320k", online = true)?.sourceQuality)
     }
 
     @Test

@@ -200,6 +200,7 @@ class QualityBadgeTest {
 
     @Test fun playerAudioInfoCardShowsAFixedOutlinedSpecification() {
         val specification = mutableStateOf(AudioSpecification("audio/flac", 192_000, 4_812_000, bitDepth = 24))
+        val sourceQuality = mutableStateOf<String?>("master")
         val dark = mutableStateOf(false)
         val original = MeloraSettings.qualityBadgeMode.value
         val badgeDescription = "HI-RES · 192 kHz"
@@ -209,7 +210,7 @@ class QualityBadgeTest {
                 val background = if (dark.value) Color(0xFF18222C) else Color(0xFFF0E9DE)
                 Box(Modifier.background(background).testTag("audio-info-card")) {
                     PlayerAppearanceProvider(dark = dark.value) {
-                        AudioInfoCard("本地音频", specification.value, "播放源：本地媒体")
+                        AudioInfoCard("网易云音乐", specification.value, "播放源：缓存", sourceQuality.value)
                     }
                 }
             }
@@ -222,6 +223,7 @@ class QualityBadgeTest {
                     val badge = compose.onNodeWithContentDescription(badgeDescription).assertIsDisplayed()
                         .assertHeightIsEqualTo(18.dp)
                     compose.onNodeWithText(fullSpecification).assertIsDisplayed()
+                    compose.onNodeWithText("音源档位：母带").assertIsDisplayed()
 
                     val bounds = badge.fetchSemanticsNode().boundsInRoot
                     val cardTop = card.fetchSemanticsNode().boundsInRoot.top
@@ -251,6 +253,11 @@ class QualityBadgeTest {
                 }
                 assertEquals("the global badge mode should leave the player badge size stable", 1, badgeWidths.distinct().size)
             }
+
+            compose.runOnIdle { sourceQuality.value = null }
+            compose.onNodeWithText("音源档位：母带").assertDoesNotExist()
+            compose.onNodeWithText(fullSpecification).assertIsDisplayed()
+            compose.onNodeWithContentDescription(badgeDescription).assertIsDisplayed()
 
             compose.runOnIdle { specification.value = AudioSpecification("audio/flac", 96_000, -1) }
             compose.onNodeWithText("96 kHz · FLAC").assertIsDisplayed()

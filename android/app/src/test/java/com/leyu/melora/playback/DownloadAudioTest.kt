@@ -109,6 +109,40 @@ class DownloadAudioTest {
         )
     }
 
+    @Test
+    fun masterUpgradeComparesMeasuredLosslessSampleRateWithoutSacrificingBitDepth() {
+        val ordinary = AudioSpecification("audio/flac", 48_000, -1, 24)
+        val master = ordinary.copy(sampleRate = 192_000)
+        assertEquals(false, isBetterDownloadQuality(master, ordinary))
+        assertEquals(true, isBetterDownloadQuality(master, ordinary, preferMaster = true))
+        assertEquals(false, isBetterDownloadQuality(ordinary, master, preferMaster = true))
+        assertEquals(false, isBetterDownloadQuality(master.copy(bitDepth = 16), ordinary, preferMaster = true))
+    }
+
+    @Test
+    fun flacWithoutPcmChecksumCanCompareFramesWithoutComparingTags() {
+        val info = flacHeader(24)
+        assertNull(flacDownloadAudio(info)?.flacPcmChecksum)
+        val withPadding = info.copyOf().apply { this[4] = 0 }
+            .plus(byteArrayOf(0x81.toByte(), 0, 0, 2, 0, 0))
+        val frames = byteArrayOf(1, 2, 3)
+        assertTrue(sameDownloadedBytes(
+            ByteArrayInputStream(info + frames),
+            ByteArrayInputStream(withPadding + frames),
+            flac = true,
+        ))
+        assertFalse(sameDownloadedBytes(
+            ByteArrayInputStream(info + frames),
+            ByteArrayInputStream(withPadding + byteArrayOf(1, 2, 4)),
+            flac = true,
+        ))
+        assertFalse(sameDownloadedBytes(
+            ByteArrayInputStream(info + frames),
+            ByteArrayInputStream(withPadding + frames.copyOf(2)),
+            flac = true,
+        ))
+    }
+
     @Test fun sameNameIsNotEnoughToSkipAnotherArtistOrVersion() {
         val song = OnlineSong(JSONObject().put("source", "kw").put("songmid", "1")
             .put("name", "测试歌曲").put("singer", "歌手A").put("interval", "03:00"))

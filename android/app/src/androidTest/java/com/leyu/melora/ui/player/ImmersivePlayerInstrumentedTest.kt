@@ -595,8 +595,8 @@ class ImmersivePlayerInstrumentedTest {
         val clicked = mutableListOf<String>()
         compose.setContent {
             PlayerAppearanceProvider(dark = true) {
-                ImmersiveTrackNotes(track, "本地音频", specification, "播放源：本地媒体",
-                    { clicked += "album:$it" }, { clicked += "artist:$it" })
+                ImmersiveTrackNotes(track, "网易云音乐", specification, "播放源：缓存",
+                    { clicked += "album:$it" }, { clicked += "artist:$it" }, sourceQuality = "master")
             }
         }
         compose.onNodeWithText(track.title).assertIsDisplayed()
@@ -604,6 +604,7 @@ class ImmersivePlayerInstrumentedTest {
         compose.onNodeWithTag("immersive-album").performScrollTo().performClick()
         compose.onNodeWithText("HI-RES").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("24-bit · 192 kHz · FLAC · 4,812 kbps").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("音源档位：母带").performScrollTo().assertIsDisplayed()
         assertEquals(listOf("artist:${track.artist}", "album:${track.album}"), clicked)
     }
 

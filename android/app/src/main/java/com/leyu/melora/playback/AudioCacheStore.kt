@@ -58,6 +58,7 @@ private const val META_PREFIX = ContentMetadata.KEY_CUSTOM_PREFIX + "melora."
 private const val META_SOURCE_URL = META_PREFIX + "source_url"
 private const val META_SOURCE_IDENTITY = META_PREFIX + "source_identity"
 private const val META_ACTUAL_QUALITY = META_PREFIX + "actual_quality"
+private const val META_SOURCE_QUALITY = META_PREFIX + "source_quality"
 private const val META_VERIFIED_QUALITY = META_PREFIX + "verified_quality"
 private const val META_EXTENSION = META_PREFIX + "extension"
 private const val META_ALIAS_RESOURCE = META_PREFIX + "alias_resource"
@@ -504,6 +505,7 @@ object AudioCacheStore {
             sourceUrl = resource.sourceUrl,
             sourceIdentity = resource.sourceIdentity,
             actualQuality = resource.actualQuality,
+            sourceQuality = resource.sourceQuality,
             contentType = contentType,
             extension = resource.extension ?: audioExtensionFromContentType(contentType),
             contentLength = length.takeIf { it > 0L },
@@ -514,12 +516,16 @@ object AudioCacheStore {
         throw error
     }
 
-    private fun AudioCacheResource.withMetadata(metadata: ContentMetadata): AudioCacheResource = copy(
-        sourceUrl = metadata.string(META_SOURCE_URL) ?: sourceUrl ?: metadata.sourceUrl(),
-        sourceIdentity = metadata.string(META_SOURCE_IDENTITY) ?: sourceIdentity,
-        actualQuality = SourceResolver.observedQuality(audioResourceId(key)) ?: metadata.string(META_VERIFIED_QUALITY) ?: actualQuality,
-        extension = metadata.string(META_EXTENSION) ?: extension,
-    )
+    private fun AudioCacheResource.withMetadata(metadata: ContentMetadata): AudioCacheResource {
+        val quality = SourceResolver.observedQuality(audioResourceId(key)) ?: metadata.string(META_VERIFIED_QUALITY) ?: actualQuality
+        return copy(
+            sourceUrl = metadata.string(META_SOURCE_URL) ?: sourceUrl ?: metadata.sourceUrl(),
+            sourceIdentity = metadata.string(META_SOURCE_IDENTITY) ?: sourceIdentity,
+            actualQuality = quality,
+            sourceQuality = SourceResolver.verifiedSourceQuality(quality, sourceQuality ?: metadata.string(META_SOURCE_QUALITY)),
+            extension = metadata.string(META_EXTENSION) ?: extension,
+        )
+    }
 
     private fun ContentMetadata.sourceUrl(): String? =
         string(META_SOURCE_URL) ?: ContentMetadata.getRedirectedUri(this)?.toString()
@@ -537,11 +543,15 @@ internal class AudioCacheIndex(private val cache: Cache) {
             key.startsWith("melora://audio/$uid?") && audioResourceId(key) == resolved.resourceId &&
                 cache.getContentMetadata(key).string(META_VERIFIED_QUALITY) == quality
         } ?: audioResourceKey(uid, quality, resolved.song.uid, resolved.resourceId)
-        val resource = AudioCacheResource(key, resolved.url, resolved.song.uid, quality, audioExtensionFromUrl(resolved.url))
+        val sourceQuality = SourceResolver.verifiedSourceQuality(
+            quality, resolved.sourceQuality ?: cache.getContentMetadata(key).string(META_SOURCE_QUALITY),
+        )
+        val resource = AudioCacheResource(key, resolved.url, resolved.song.uid, quality, audioExtensionFromUrl(resolved.url), sourceQuality)
         val metadata = ContentMetadataMutations()
             .set(META_SOURCE_URL, resolved.url)
             .set(META_SOURCE_IDENTITY, resolved.song.uid)
             .set(META_ACTUAL_QUALITY, quality)
+            .apply { if (sourceQuality != null) set(META_SOURCE_QUALITY, sourceQuality) else remove(META_SOURCE_QUALITY) }
             .set(META_RECORDING, JSONObject().apply {
                 // 保存实际文件对应的录音，而不是请求曲目；旧元数据缺失不推测回填。
                 val song = resolved.song
@@ -584,15 +594,25 @@ internal class AudioCacheIndex(private val cache: Cache) {
             // 不把源声明的“无损/320k”扩散给其它曲目；须有解码器或文件探测的实测证据。
             if (crossSource && verified == null) return null
             val quality = verified ?: metadata.string(META_ACTUAL_QUALITY) ?: return null
+            val sourceQuality = SourceResolver.verifiedSourceQuality(quality, metadata.string(META_SOURCE_QUALITY))
             // 原 UID 保留离线降级行为；跨曲目复用即使离线也不能把低音质当成请求音质。
-            if ((online || crossSource) && !SourceResolver.sameQualityTier(preferredQuality, quality)) return null
+            if ((online || crossSource) && !SourceResolver.sameQualityTier(preferredQuality, sourceQuality ?: quality)) return null
             val length = ContentMetadata.getContentLength(metadata)
             if (length <= 0L || !cache.isCached(key, 0L, length)) return null
-            return AudioCacheResource(key, metadata.string(META_SOURCE_URL), source, quality, metadata.string(META_EXTENSION))
+            return AudioCacheResource(key, metadata.string(META_SOURCE_URL), source, quality, metadata.string(META_EXTENSION), sourceQuality)
         }
+        // SimpleCache 重启后可能回收只有元数据的偏好别名。两种 HR 文件都完整时，
+        // 按所选来源档位命中；离线仍允许使用本曲已缓存的其它档位。
+        var sameTierFallback: AudioCacheResource? = null
+        var offlineFallback: AudioCacheResource? = null
         for (key in (listOfNotNull(alias) + ownKeys).distinct()) {
-            resource(key, crossSource = false)?.let { return it }
+            val hit = resource(key, crossSource = false) ?: continue
+            if (SourceResolver.sameQualityTier(preferredQuality, hit.sourceQuality ?: hit.actualQuality)) {
+                if (hit.sourceQuality == null || hit.sourceQuality == preferredQuality) return hit
+                if (sameTierFallback == null) sameTierFallback = hit
+            } else if (offlineFallback == null) offlineFallback = hit
         }
+        (sameTierFallback ?: offlineFallback)?.let { return it }
         if (song.isBookChapter || song.intervalSeconds <= 0) return null
         // 线性建堆，依次探测最高优先级的完整资源，保持跨别名的音质回填顺序。
         val candidates = PriorityQueue(otherKeys.mapNotNull { key ->
@@ -637,6 +657,7 @@ internal data class AudioCacheResource(
     val sourceIdentity: String,
     val actualQuality: String,
     val extension: String?,
+    val sourceQuality: String? = null,
 )
 
 internal data class CachedAudioInput(
@@ -649,6 +670,7 @@ internal data class CachedAudioInput(
     val extension: String?,
     val contentLength: Long?,
     val completeCacheHit: Boolean,
+    val sourceQuality: String? = null,
 )
 
 /** 仅包裹 HTTP upstream 的 open/read IOException；缓存 sink 与目标存储故障不会获得此标记。 */

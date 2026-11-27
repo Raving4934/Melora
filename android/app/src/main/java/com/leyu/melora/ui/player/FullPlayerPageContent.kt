@@ -644,6 +644,7 @@ internal fun FullPlayerPageContent(
                             track = track,
                             audioSpec = state.audioSpec,
                             sourceLabel = playbackSourceLabel(state, autoSwitch),
+                            sourceQuality = state.sourceQuality.takeUnless { state.resolving },
                             onOpenAlbum = { album ->
                                 onImmersiveChange(false)
                                 val raw = track?.raw
@@ -1100,6 +1101,7 @@ private fun AudioInfoPage(
     track: UiTrack?,
     audioSpec: AudioSpecification?,
     sourceLabel: String,
+    sourceQuality: String?,
     onOpenAlbum: (String) -> Unit,
     onOpenArtist: (String) -> Unit,
     compactSpacing: Boolean = false,
@@ -1108,7 +1110,7 @@ private fun AudioInfoPage(
     val platformName = sourceAliasDisplay(track?.source.orEmpty(), platformLabel(track?.source))
     // 只显示已选中音轨的实测徽标，不借目录最高档或请求档冒充实际音质。
     if (immersive) {
-        ImmersiveTrackNotes(track, platformName, audioSpec, sourceLabel, onOpenAlbum, onOpenArtist)
+        ImmersiveTrackNotes(track, platformName, audioSpec, sourceLabel, onOpenAlbum, onOpenArtist, sourceQuality)
         return
     }
     val viewConfiguration = LocalViewConfiguration.current
@@ -1130,6 +1132,7 @@ private fun AudioInfoPage(
                             platformName = platformName,
                             audioSpec = audioSpec,
                             sourceLabel = sourceLabel,
+                            sourceQuality = sourceQuality,
                         )
                         Row(
                             modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max),
@@ -1162,6 +1165,7 @@ private fun AudioInfoPage(
                         platformName = platformName,
                         audioSpec = audioSpec,
                         sourceLabel = sourceLabel,
+                        sourceQuality = sourceQuality,
                     )
                     AlbumInfoCard(track = track, onOpenAlbum = onOpenAlbum)
                     ArtistInfoCard(track = track, onOpenArtist = onOpenArtist)
@@ -1180,6 +1184,7 @@ internal fun ImmersiveTrackNotes(
     sourceLabel: String,
     onOpenAlbum: (String) -> Unit,
     onOpenArtist: (String) -> Unit,
+    sourceQuality: String? = null,
 ) {
     BoxWithConstraints(Modifier.fillMaxSize().testTag("immersive-track-notes")) {
         val viewportHeight = maxHeight
@@ -1240,7 +1245,7 @@ internal fun ImmersiveTrackNotes(
                         modifier = Modifier.padding(top = 8.dp))
                 }
             }
-            AudioSpecificationLine(audioSpec, Modifier.padding(top = 12.dp, bottom = 6.dp))
+            AudioSpecificationDetails(audioSpec, Modifier.padding(top = 12.dp, bottom = 6.dp), sourceQuality)
             Text(sourceLabel, fontSize = 11.sp, lineHeight = 18.sp,
                 color = FullPlayerTextMuted.copy(alpha = 0.65f))
         }
