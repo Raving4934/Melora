@@ -20,11 +20,21 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.leyu.melora.playback.lx.LxScriptStore
+import com.leyu.melora.playback.lx.LxSourceImporter
 import com.leyu.melora.ui.awaitStable
 import com.leyu.melora.ui.theme.MeloraTheme
+import java.io.Closeable
 import java.io.File
+import java.io.IOException
+import java.net.InetAddress
+import java.net.ServerSocket
 import java.nio.file.Files
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.concurrent.thread
+import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -86,6 +96,31 @@ class LxSourceActionsInstrumentedTest {
         compose.awaitStable(compose.onNodeWithText("脚本报告初始化失败", substring = true))
     }
 
+    @Test
+    fun linkedSourceChangesOnlyWhenTheCheckedUpdateIsApplied() {
+        val installed = lyricSource("1")
+        val remote = lyricSource("2")
+        ScriptServer(installed).use { server ->
+            val source = runBlocking { LxSourceImporter(store).importUrl(server.url).single() }
+            server.body.set(remote)
+            showSourceMenu()
+
+            val check = compose.onNodeWithText("检查更新")
+            compose.awaitStable(check)
+            check.performClick()
+            val apply = compose.onNodeWithText("应用更新")
+            compose.awaitStable(apply)
+            assertEquals(installed, store.code(source.id))
+            assertEquals(2, server.requests.get())
+
+            apply.performClick()
+            compose.awaitStable(compose.onNodeWithText("音源已更新"))
+            assertEquals(remote, store.code(source.id))
+            assertEquals("2", store.list().single().version)
+            assertEquals(2, server.requests.get())
+        }
+    }
+
     private fun showSourceMenu() {
         compose.setContent {
             CompositionLocalProvider(LocalContext provides fixtureContext) {
@@ -113,4 +148,35 @@ class LxSourceActionsInstrumentedTest {
         lx.on('request', () => '');
         lx.send('inited', {sources:{wy:{actions:['lyric']}}});
     """.trimIndent()
+
+    private class ScriptServer(initialCode: String) : Closeable {
+        val body = AtomicReference(initialCode)
+        val requests = AtomicInteger()
+        private val listener = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
+        val url = "http://127.0.0.1:${listener.localPort}/source.js"
+
+        private val worker = thread(name = "lx-source-actions-fixture", isDaemon = true) {
+            while (!listener.isClosed) {
+                val socket = try { listener.accept() } catch (_: IOException) { break }
+                socket.use {
+                    it.soTimeout = 3_000
+                    val reader = it.getInputStream().bufferedReader()
+                    while (!reader.readLine().isNullOrEmpty()) { /* 读取请求头。 */ }
+                    requests.incrementAndGet()
+                    val bytes = body.get().toByteArray(Charsets.UTF_8)
+                    val headers = "HTTP/1.1 200 OK\r\nContent-Type: application/javascript\r\n" +
+                        "Content-Length: ${bytes.size}\r\nConnection: close\r\n\r\n"
+                    it.getOutputStream().apply {
+                        write(headers.toByteArray(Charsets.US_ASCII))
+                        write(bytes)
+                    }
+                }
+            }
+        }
+
+        override fun close() {
+            listener.close()
+            worker.join(3_000)
+        }
+    }
 }

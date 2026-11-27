@@ -71,16 +71,19 @@ class LxScriptStore(context: Context) {
         contentRevisions[file.absoluteFile] = ScriptRevision(++nextRevision, code?.let(::parseLxScriptMetadata))
     }
 
-    fun import(name: String, code: String, originUrl: String? = null, expectedCode: String? = null): LxScript =
+    internal fun requireUpdateBase(id: String, originUrl: String?, expectedRevision: Long) = synchronized(enabledStateLock) {
+        check(revision(id) == expectedRevision && prefs.getString(originKey(id), null) == originUrl) {
+            "音源在更新期间已更改或删除，请重新检查后重试"
+        }
+    }
+
+    fun import(name: String, code: String, originUrl: String? = null, expectedRevision: Long? = null): LxScript =
         BackupStateLock.write {
             validateImportedScriptCode(code)
             val normalizedOriginUrl = originUrl?.let { LxSourceUrlPolicy.validate(it).toString() }
             val file = File(dir, backupScriptId(name))
+            if (expectedRevision != null) requireUpdateBase(file.name, normalizedOriginUrl, expectedRevision)
             val currentCode = file.takeIf { it.isFile }?.readText()
-            check(expectedCode == null || (currentCode == expectedCode &&
-                prefs.getString(originKey(file.name), null) == normalizedOriginUrl)) {
-                "音源在更新期间已更改或删除，请重新检查后重试"
-            }
             if (currentCode != code) {
                 writeTextAtomically(file, code)
                 contentChanged(file, code)

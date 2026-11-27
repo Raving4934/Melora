@@ -36,9 +36,13 @@ internal data class LxSourcePayload(
     val originUrl: String,
 )
 
-internal data class LxSourceUpdate(
-    val script: LxScript,
-    val updated: Boolean,
+internal class LxSourceUpdate(
+    val scriptId: String,
+    val currentVersion: String,
+    val remoteVersion: String,
+    internal val originUrl: String,
+    internal val expectedRevision: Long,
+    internal val code: String,
 )
 
 /**
@@ -137,17 +141,29 @@ internal class LxSourceImporter(
         importDocument(payload.code, payload.fileName, MAX_IMPORTED_SCRIPT_BYTES, payload.originUrl)
     }
 
-    suspend fun updateFromOrigin(script: LxScript): LxSourceUpdate = withContext(Dispatchers.IO) {
+    suspend fun checkUpdate(script: LxScript): LxSourceUpdate? = withContext(Dispatchers.IO) {
         val originUrl = script.originUrl ?: error("此音源不是通过链接导入的")
-        val expectedCode = store.code(script.id) ?: error("本地音源已更改或删除，请重新检查")
+        val (currentCode, revision) = store.content(script.id) ?: error("本地音源已删除")
+        store.requireUpdateBase(script.id, originUrl, revision)
         val payload = downloader.download(originUrl)
-        val entries = parseLxSourceDocument(payload.code, payload.fileName, MAX_IMPORTED_SCRIPT_BYTES)
-        val remote = entries.firstOrNull { (name, _) -> backupScriptId(name) == script.id }
-            ?: entries.singleOrNull()
+        val entries = parseLxSourceDocument(payload.code, script.id, MAX_IMPORTED_SCRIPT_BYTES)
+        val (_, remoteCode) = entries.firstOrNull { (name, _) -> name == script.id }
             ?: error("远端音源包中未找到「${script.name}」")
         currentCoroutineContext().ensureActive()
-        val current = store.import(script.id, remote.second, originUrl, expectedCode = expectedCode)
-        LxSourceUpdate(current, updated = expectedCode != remote.second)
+        store.requireUpdateBase(script.id, originUrl, revision)
+        if (currentCode == remoteCode) return@withContext null
+        LxSourceUpdate(
+            scriptId = script.id,
+            currentVersion = parseLxScriptMetadata(currentCode)["version"].orEmpty(),
+            remoteVersion = parseLxScriptMetadata(remoteCode)["version"].orEmpty(),
+            originUrl = originUrl,
+            expectedRevision = revision,
+            code = remoteCode,
+        )
+    }
+
+    suspend fun applyUpdate(update: LxSourceUpdate): LxScript = withContext(Dispatchers.IO) {
+        store.import(update.scriptId, update.code, update.originUrl, expectedRevision = update.expectedRevision)
     }
 
     private suspend fun importDocument(

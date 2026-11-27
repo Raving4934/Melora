@@ -97,6 +97,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.lx.LxInspector
 import com.leyu.melora.playback.lx.LxInspector.LinkStatus
+import com.leyu.melora.playback.lx.LxSourceUpdate
 import com.leyu.melora.playback.lx.LxScript
 import com.leyu.melora.playback.lx.LxSourceImporter
 import com.leyu.melora.playback.lx.LxScriptStore
@@ -274,39 +275,25 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
         }
     }
 
-    fun updateLinkedSource(target: LxScript) {
-        if (sourceStatuses[target.id]?.busy == true) return
-        updateSourceStatus(target.id, SourceActionStatus("正在检查远端更新…", busy = true))
-        scope.launch(Dispatchers.IO) {
-            val outcome = runCatchingCancellable {
-                val update = sourceImporter.updateFromOrigin(target)
-                val refreshError = if (update.updated) {
+    fun applySourceUpdate(update: LxSourceUpdate) {
+        val id = update.scriptId
+        if (sourceStatuses[id]?.busy == true) return
+        updateSourceStatus(id, SourceActionStatus("正在应用更新…", busy = true))
+        scope.launch {
+            val status = runCatchingCancellable {
+                sourceImporter.applyUpdate(update)
+                val refresh = withContext(Dispatchers.IO) {
                     SourceResolver.clearCache()
-                    runCatchingCancellable { LxScriptPool.refresh(context, setOf(target.id)) }.exceptionOrNull()
-                } else {
-                    null
+                    runCatchingCancellable { LxScriptPool.refresh(context, setOf(id)) }
                 }
-                Triple(update, refreshError, store.list())
-            }
-            withContext(Dispatchers.Main) {
-                outcome.fold(
-                    onSuccess = { (update, refreshError, refreshed) ->
-                        scripts = refreshed
-                        val message = when {
-                            !update.updated -> "已是最新版本"
-                            refreshError == null -> "发现更新，已下载并重新加载"
-                            else -> "已下载更新，但重新加载失败：${refreshError.message ?: "未知错误"}"
-                        }
-                        updateSourceStatus(target.id, SourceActionStatus(message, result = if (refreshError == null) null else LinkStatus.INVALID))
-                    },
-                    onFailure = { error ->
-                        updateSourceStatus(
-                            target.id,
-                            SourceActionStatus("检查更新失败 · ${error.message ?: error.javaClass.simpleName}", result = LinkStatus.INVALID),
-                        )
-                    },
+                scripts = withContext(Dispatchers.IO) { store.list() }
+                refresh.fold(
+                    onSuccess = { SourceActionStatus("音源已更新", result = LinkStatus.VALID) },
+                    onFailure = { SourceActionStatus("已更新，重新加载失败 · ${it.message}", result = LinkStatus.INVALID) },
                 )
-            }
+            }.getOrElse { SourceActionStatus("更新失败 · ${it.message ?: "请重新检查"}", result = LinkStatus.INVALID) }
+            updateSourceStatus(id, status)
+            notify(status.message)
         }
     }
 
@@ -398,7 +385,8 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
                                     SourceResolver.clearCache()
                                 },
                                 onTestValidity = { validityTestScript = script },
-                                onUpdate = if (script.originUrl != null) ({ updateLinkedSource(script) }) else null,
+                                checkUpdate = script.originUrl?.let { { sourceImporter.checkUpdate(script) } },
+                                onApplyUpdate = ::applySourceUpdate,
                                 onExport = {
                                     pendingExportId = script.id
                                     singleExporter.launch(script.id)
@@ -834,7 +822,8 @@ private fun SourceRow(
     actionStatus: SourceActionStatus?,
     onToggle: (Boolean) -> Unit,
     onTestValidity: () -> Unit,
-    onUpdate: (() -> Unit)?,
+    checkUpdate: (suspend () -> LxSourceUpdate?)?,
+    onApplyUpdate: (LxSourceUpdate) -> Unit,
     onExport: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -1007,29 +996,8 @@ private fun SourceRow(
                         }
                     }
 
-                    if (onUpdate != null) {
-                        SourceSheetAction(
-                            icon = Icons.Rounded.Refresh,
-                            iconTint = if (script.originUrl?.startsWith("http://", true) == true) {
-                                MeloraAppearance.accent
-                            } else {
-                                Color(0xFF0284C7)
-                            },
-                            iconBg = if (script.originUrl?.startsWith("http://", true) == true) {
-                                MeloraAppearance.tintRed
-                            } else {
-                                Color(0xFF0284C7).copy(alpha = 0.10f)
-                            },
-                            title = "检查更新",
-                            subtitle = if (script.originUrl?.startsWith("http://", true) == true) {
-                                "HTTP 明文连接，更新内容可能被篡改"
-                            } else {
-                                "发现新版本时自动替换并重新加载"
-                            },
-                            titleColor = TextMain,
-                            enabled = !actionBusy,
-                            onClick = onUpdate,
-                        )
+                    if (checkUpdate != null) {
+                        LinkedSourceUpdateAction(script, !actionBusy, checkUpdate, onApplyUpdate)
                     }
 
                     SourceSheetAction(
@@ -1061,6 +1029,55 @@ private fun SourceRow(
                             onDelete()
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LinkedSourceUpdateAction(
+    script: LxScript,
+    enabled: Boolean,
+    checkUpdate: suspend () -> LxSourceUpdate?,
+    onApplyUpdate: (LxSourceUpdate) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var checking by remember { mutableStateOf(false) }
+    var checked by remember(script) { mutableStateOf<Result<LxSourceUpdate?>?>(null) }
+    val update = checked?.getOrNull()
+    val error = checked?.exceptionOrNull()
+    val subtitle = when {
+        checking -> "正在从导入链接检查…"
+        error != null -> "检查失败 · ${error.message ?: "请重试"}"
+        update != null -> when {
+            update.currentVersion.isNotBlank() && update.remoteVersion.isNotBlank() &&
+                update.currentVersion != update.remoteVersion -> "${update.currentVersion} → ${update.remoteVersion}"
+            else -> "远端脚本内容已变更，点按应用"
+        }
+        checked != null -> "已是最新版本"
+        script.originUrl.orEmpty().startsWith("http://", ignoreCase = true) -> "从原 HTTP 明文链接检查更新"
+        else -> "与导入链接中的脚本比较"
+    }
+    SourceSheetAction(
+        icon = Icons.Rounded.Refresh,
+        iconTint = BrandBlue,
+        iconBg = BrandBlue.copy(alpha = 0.10f),
+        title = if (update == null) "检查更新" else "应用更新",
+        subtitle = subtitle,
+        titleColor = TextMain,
+        enabled = enabled && !checking,
+    ) {
+        if (update != null) {
+            checked = null
+            onApplyUpdate(update)
+        } else {
+            checking = true
+            scope.launch {
+                try {
+                    checked = runCatchingCancellable { checkUpdate() }
+                } finally {
+                    checking = false
                 }
             }
         }

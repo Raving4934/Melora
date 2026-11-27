@@ -176,28 +176,55 @@ class LxSourceImportInstrumentedTest {
     }
 
     @Test
-    fun urlImportAndOriginUpdateSkipExecutionButRejectHtml() = runBlocking<Unit> {
-        val throwingCode = "throw new Error('remote import must not execute');"
+    fun urlUpdateAppliesCheckedContentAndRejectsHtml() = runBlocking<Unit> {
+        val throwingCode = "// @version 1\nthrow new Error('remote import must not execute');"
         ScriptServer(throwingCode).use { server ->
             val sourceImporter = importer()
             val original = sourceImporter.importUrl(server.url).single()
             assertEquals(throwingCode, store.code(original.id))
-            store.setEnabled(original.id, true)
-            val before = store.list().single()
-            val updatedCode = "lx.request('${server.url}', {timeout:100});"
+            val updatedCode = "// @version 2\nlx.request('${server.url}', {timeout:100});"
             server.body.set(updatedCode)
-            val update = sourceImporter.updateFromOrigin(before)
-            assertTrue(update.updated)
-            assertTrue(update.script.enabled)
-            assertEquals(server.url, update.script.originUrl)
-            assertEquals(updatedCode, store.code(before.id))
-            assertEquals(2, server.requestCount.get())
+            val update = requireNotNull(sourceImporter.checkUpdate(original))
+            assertEquals("1", update.currentVersion)
+            assertEquals("2", update.remoteVersion)
+            assertEquals(throwingCode, store.code(original.id))
+            store.setEnabled(original.id, true)
 
             server.body.set("<!doctype html><html>not a script</html>")
-            assertThrows(Exception::class.java) { runBlocking { sourceImporter.updateFromOrigin(update.script) } }
-            assertEquals(updatedCode, store.code(before.id))
+            val installed = sourceImporter.applyUpdate(update)
+            assertTrue(installed.enabled)
+            assertEquals(server.url, installed.originUrl)
+            assertEquals(updatedCode, store.code(original.id))
+            assertEquals(2, server.requestCount.get())
+
+            assertThrows(Exception::class.java) { runBlocking { sourceImporter.checkUpdate(installed) } }
             assertThrows(Exception::class.java) { runBlocking { sourceImporter.importUrl(server.url) } }
-            assertEquals(updatedCode, store.code(before.id))
+            assertEquals(updatedCode, store.code(original.id))
+        }
+    }
+
+    @Test
+    fun bundleUpdateMatchesOnlyTheOriginalEntryWhenOneRemains() = runBlocking<Unit> {
+        val originalCode = "// @name 原音源\nconst original = true;"
+        val original = JSONObject().put("name", "original.js").put("code", originalCode)
+        val other = JSONObject().put("name", "other.js").put("code", "const other = true;")
+        val bundle = JSONObject().put("scripts", JSONArray().put(original).put(other))
+        ScriptServer(bundle.toString()).use { server ->
+            val sourceImporter = importer()
+            val scripts = sourceImporter.importUrl(server.url).associateBy(LxScript::id)
+            val updatedCode = "// @version 2\nconst other = 'updated';"
+            other.put("code", updatedCode)
+            server.body.set(bundle.put("scripts", JSONArray().put(other)).toString())
+
+            val error = assertThrows(IllegalStateException::class.java) {
+                runBlocking { sourceImporter.checkUpdate(scripts.getValue("original.js")) }
+            }
+            assertEquals("远端音源包中未找到「原音源」", error.message)
+            assertEquals(originalCode, store.code("original.js"))
+
+            val update = requireNotNull(sourceImporter.checkUpdate(scripts.getValue("other.js")))
+            assertEquals("other.js", sourceImporter.applyUpdate(update).id)
+            assertEquals(updatedCode, store.code("other.js"))
         }
     }
 
@@ -207,7 +234,7 @@ class LxSourceImportInstrumentedTest {
         ScriptServer(remoteCode, holdResponse = true).use { server ->
             val original = store.import("restore-race.js", "const original = true;", server.url)
             store.setEnabled(original.id, true)
-            val update = async(Dispatchers.IO) { runCatching { importer().updateFromOrigin(original) } }
+            val update = async(Dispatchers.IO) { runCatching { importer().checkUpdate(original) } }
             assertTrue("remote request should reach the response barrier", server.awaitRequest())
 
             val restoredCode = "const restoredBackup = true;"
@@ -231,7 +258,7 @@ class LxSourceImportInstrumentedTest {
     fun inFlightOriginUpdateRejectsReplacementAndDeletion() = runBlocking<Unit> {
         ScriptServer("const staleResponse = true;", holdResponse = true).use { server ->
             val original = store.import("replacement-race.js", "const original = true;", server.url)
-            val update = async(Dispatchers.IO) { runCatching { importer().updateFromOrigin(original) } }
+            val update = async(Dispatchers.IO) { runCatching { importer().checkUpdate(original) } }
             assertTrue(server.awaitRequest())
 
             val replacementOrigin = "https://local.example.test/replacement.js"
@@ -245,11 +272,11 @@ class LxSourceImportInstrumentedTest {
         ScriptServer("const staleResponse = true;", holdResponse = true).use { server ->
             val originalCode = "const original = true;"
             val original = store.import("another-update-race.js", originalCode, server.url)
-            val update = async(Dispatchers.IO) { runCatching { importer().updateFromOrigin(original) } }
+            val update = async(Dispatchers.IO) { runCatching { importer().checkUpdate(original) } }
             assertTrue(server.awaitRequest())
 
             val interveningCode = "const interveningUpdate = true;"
-            store.import(original.id, interveningCode, server.url, expectedCode = originalCode)
+            store.import(original.id, interveningCode, server.url)
             server.releaseResponse()
             assertTrue("an intervening source update must invalidate the older response", update.await().isFailure)
             assertEquals(interveningCode, store.code(original.id))
@@ -258,13 +285,30 @@ class LxSourceImportInstrumentedTest {
 
         ScriptServer("const staleResponse = true;", holdResponse = true).use { server ->
             val original = store.import("deletion-race.js", "const original = true;", server.url)
-            val update = async(Dispatchers.IO) { runCatching { importer().updateFromOrigin(original) } }
+            val update = async(Dispatchers.IO) { runCatching { importer().checkUpdate(original) } }
             assertTrue(server.awaitRequest())
 
             store.remove(original.id)
             server.releaseResponse()
             assertTrue("a deleted script must not be recreated by a pending update", update.await().isFailure)
             assertNull(store.code(original.id))
+        }
+    }
+
+    @Test
+    fun applyingCheckedUpdateRejectsReimportOfSameContent() = runBlocking<Unit> {
+        val code = "const original = true;"
+        ScriptServer("const updated = true;").use { server ->
+            val sourceImporter = importer()
+            val original = store.import("confirm-race.js", code, server.url)
+            val update = requireNotNull(sourceImporter.checkUpdate(original))
+
+            store.remove(original.id)
+            store.import(original.id, code, server.url)
+
+            assertThrows(IllegalStateException::class.java) { runBlocking { sourceImporter.applyUpdate(update) } }
+            assertEquals(code, store.code(original.id))
+            assertEquals(1, server.requestCount.get())
         }
     }
 
@@ -299,15 +343,12 @@ class LxSourceImportInstrumentedTest {
             val file = File(fixtureContext.filesDir, "${LxScriptStore.DIRECTORY}/${original.id}")
             assertTrue(file.setLastModified(1_000L))
             val modifiedAt = file.lastModified()
-            val update = async(Dispatchers.IO) { importer().updateFromOrigin(original) }
+            val update = async(Dispatchers.IO) { importer().checkUpdate(original) }
             assertTrue(server.awaitRequest())
 
             store.setEnabled(original.id, true)
             server.releaseResponse()
-            val result = update.await()
-
-            assertFalse(result.updated)
-            assertTrue(result.script.enabled)
+            assertNull(update.await())
             assertTrue(store.list().single { it.id == original.id }.enabled)
             assertEquals(code, store.code(original.id))
             assertEquals(modifiedAt, file.lastModified())
