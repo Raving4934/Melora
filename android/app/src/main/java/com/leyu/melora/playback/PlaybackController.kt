@@ -86,7 +86,8 @@ object PlaybackController {
     private val recentPlaybackTracker = RecentPlaybackTracker()
     private val rebufferRecovery = RebufferRecovery()
     private var recoveryJob: Job? = null
-    private var recoveryGeneration = 0L
+    internal var recoveryGeneration = 0L
+        private set
     private var queueLoadJob: Job? = null
     private var bookQueue: BookPlaybackQueue? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -537,9 +538,13 @@ object PlaybackController {
     }
 
     private fun handlePlayerError(error: PlaybackException) {
-        interruptRecovery()
         val player = controller ?: return
         val expectedUid = player.currentMediaItem?.mediaId ?: return
+        val stall = error.cause as? AudioOutputProbe.Failure
+        if (stall != null && (stall.uid != expectedUid || stall.itemIndex != player.currentMediaItemIndex ||
+                player.playbackState != Player.STATE_IDLE || player.playerError?.timestampMs != error.timestampMs)) return
+        val resumeAt = stall?.takeIf { it.recoveryGeneration == recoveryGeneration }?.resumePositionMs
+        interruptRecovery()
         val generation = recoveryGeneration
         fun stop(message: String) {
             player.pause()
@@ -547,6 +552,9 @@ object PlaybackController {
         }
         fun prepare(message: String) {
             _state.value = _state.value.copy(message = message)
+            if (resumeAt != null && player.isCurrentMediaItemSeekable && resumeAt < player.currentPosition) {
+                player.seekTo(resumeAt)
+            }
             player.prepare()
         }
         scope.launch {
@@ -567,14 +575,14 @@ object PlaybackController {
                     return@launch
                 }
             }
-            if (player.currentMediaItem?.mediaId != expectedUid || generation != recoveryGeneration) return@launch
+            if (controller !== player || player.currentMediaItem?.mediaId != expectedUid || generation != recoveryGeneration) return@launch
             // 已暂停时仍可能收到在途读取的错误；不能因重试/跳曲覆盖用户刚发出的暂停。
             if (!player.playWhenReady) {
                 _state.value = _state.value.copy(message = "加载失败，点击播放重试")
                 return@launch
             }
             if (error.errorCode == ERROR_CODE_AUDIO_OUTPUT_STALLED && errorRecovery.allowOutputRestart()) {
-                return@launch prepare("音频输出未启动，正在重新准备播放…")
+                return@launch prepare("音频输出中断，正在恢复播放…")
             }
             val track = failedTrack ?: _state.value.current?.takeIf { it.uid == expectedUid } ?: return@launch
             val resourceId = TrackRegistry.resolved(track.uid)?.resourceId

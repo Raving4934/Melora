@@ -14,34 +14,47 @@ import androidx.media3.exoplayer.audio.AudioSink
 
 internal const val ERROR_CODE_AUDIO_OUTPUT_STALLED = PlaybackException.CUSTOM_ERROR_CODE_BASE + 1
 
-/** 只在播放线程读取AudioSink，主线程仅读取不可变快照，避免跨线程调用平台AudioTrack。 */
+/** 字节和播放头均在播放线程采集，主线程只观察不可变快照。 */
 @androidx.annotation.OptIn(UnstableApi::class)
 internal class AudioOutputProbe {
-    data class Snapshot(val generation: Long = 0, val progress: Long = 0, val positionUs: Long = AudioSink.CURRENT_POSITION_NOT_SET)
-    class Failure(val snapshot: Snapshot) {
+    data class Snapshot(val generation: Long = 0, val writtenBytes: Long = 0, val playedFrames: Long = 0)
+    class Failure(
+        val snapshot: Snapshot,
+        val uid: String,
+        val itemIndex: Int,
+        val resumePositionMs: Long,
+        val recoveryGeneration: Long,
+    ) : IllegalStateException("Playback position advanced without audio output") {
         @Volatile var cancelled = false
     }
 
     @Volatile var snapshot = Snapshot()
         private set
     lateinit var renderer: Renderer
+    private var writtenBytes = 0L
+    private var lastHead: Int? = null
 
     fun reset() {
-        snapshot = Snapshot(snapshot.generation + 1, snapshot.progress)
+        lastHead = null
+        writtenBytes = 0
+        snapshot = Snapshot(generation = snapshot.generation + 1)
     }
 
-    fun position(positionUs: Long) {
-        if (positionUs == AudioSink.CURRENT_POSITION_NOT_SET) return
+    fun wrote(bytes: Int) { writtenBytes += bytes }
+
+    // AudioTrack 的播放头是会回绕的 32 位帧计数。保留高水位，小幅回落和反弹不算输出。
+    fun sample(head: Int?, minimumFrames: Int) {
         val old = snapshot
-        snapshot = old.copy(
-            progress = old.progress + if (positionUs > 0 &&
-                (old.positionUs == AudioSink.CURRENT_POSITION_NOT_SET || positionUs > old.positionUs)) 1 else 0,
-            positionUs = positionUs,
-        )
+        val previous = lastHead
+        val delta = if (head != null && previous != null) head - previous else 0
+        val advanced = delta.takeIf { it >= minimumFrames } ?: 0
+        if (previous == null || advanced > 0) lastHead = head
+        if (advanced > 0 || writtenBytes != old.writtenBytes) {
+            snapshot = old.copy(writtenBytes = writtenBytes, playedFrames = old.playedFrames + advanced)
+        }
     }
 
-    fun stillStalled(failure: Failure): Boolean = !failure.cancelled &&
-        snapshot.generation == failure.snapshot.generation && snapshot.progress == failure.snapshot.progress
+    fun stillStalled(failure: Failure): Boolean = !failure.cancelled && snapshot == failure.snapshot
 
     companion object {
         const val CHECK_OUTPUT = Renderer.MSG_CUSTOM_BASE
@@ -96,31 +109,35 @@ internal class AudioOutputMonitor(
 
     fun check(nowMs: Long = SystemClock.elapsedRealtime()) {
         if (closed) return
+        // 普通采样与报错前的最终复查都在播放线程读硬件，主线程不会查询或持有 AudioTrack。
         val output = probe.snapshot
-        if (player.isPlaying && output.generation == previousOutput.generation && output.progress != previousOutput.progress) {
+        if (player.isPlaying && output.generation == previousOutput.generation && output.playedFrames > previousOutput.playedFrames) {
             val since = healthySinceMs ?: nowMs.also { healthySinceMs = it }
             // 跨项残留的少量尾音不算恢复，持续输出才清除连续失败计数。
             if (nowMs - since >= 1_000) player.currentMediaItem?.mediaId?.let(PlaybackController::onAudioOutputProgress)
         } else healthySinceMs = null
         previousOutput = output
+        val uid = player.currentMediaItem?.mediaId
         if (!watchdog.update(AudioOutputWatchdog.Observation(
-                uid = player.currentMediaItem?.mediaId,
+                uid = uid,
                 positionMs = player.currentPosition,
                 durationMs = player.duration,
                 playing = player.isPlaying,
-                outputGeneration = output.generation,
-                outputProgress = output.progress,
-            ), nowMs)) return
+                output = output,
+            ), nowMs) || uid == null) {
+            if (player.isPlaying) player.createMessage(probe.renderer).setType(AudioOutputProbe.CHECK_OUTPUT).send()
+            return
+        }
         val counters = player.audioDecoderCounters
         counters?.ensureUpdated()
-        val uid = player.currentMediaItem?.mediaId
-        val resolution = uid?.let(TrackRegistry::resolved)
-        Log.e(TAG, "output stalled uid=${playbackDiagnosticId(uid)} position=${player.currentPosition} " +
+        val resolution = TrackRegistry.resolved(uid)
+        Log.e(TAG, "output stalled uid=${playbackDiagnosticId(uid)} position=${player.currentPosition} resume=${watchdog.resumePositionMs} " +
             "resource=${playbackDiagnosticId(resolution?.resourceId)} cache=${resolution?.fromCompleteCache} " +
-            "generation=${output.generation} progress=${output.progress} sinkUs=${output.positionUs} " +
+            "generation=${output.generation} writtenBytes=${output.writtenBytes} playedFrames=${output.playedFrames} " +
             "input=${counters?.queuedInputBufferCount} output=${counters?.renderedOutputBufferCount} " +
             formatDescription(player.audioFormat))
-        val failure = AudioOutputProbe.Failure(output)
+        val failure = AudioOutputProbe.Failure(output, uid, player.currentMediaItemIndex,
+            watchdog.resumePositionMs, PlaybackController.recoveryGeneration)
         pendingFailure = failure
         player.createMessage(probe.renderer).setType(AudioOutputProbe.CHECK_OUTPUT).setPayload(failure).send()
     }

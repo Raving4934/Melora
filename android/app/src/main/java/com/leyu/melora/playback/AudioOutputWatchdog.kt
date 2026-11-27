@@ -7,13 +7,14 @@ internal class AudioOutputWatchdog(private val timeoutMs: Long = 5_000L) {
         val positionMs: Long,
         val durationMs: Long,
         val playing: Boolean,
-        val outputGeneration: Long,
-        val outputProgress: Long,
+        val output: AudioOutputProbe.Snapshot,
     )
 
     private var previous: Observation? = null
     private var startedAtMs = 0L
     private var startedPositionMs = 0L
+    var resumePositionMs = 0L
+        private set
     private var reported = false
 
     fun reset() { previous = null; reported = false }
@@ -27,15 +28,21 @@ internal class AudioOutputWatchdog(private val timeoutMs: Long = 5_000L) {
             reset()
             return false
         }
-        if (old == null || old.uid != observation.uid ||
-            old.outputGeneration != observation.outputGeneration ||
-            old.outputProgress != observation.outputProgress || observation.positionMs <= old.positionMs) {
+        val newPosition = old == null || old.uid != observation.uid || observation.positionMs < old.positionMs - 1_000
+        // 同一章节中更换音轨会重置帧数；只有新的播放位置或实际消费音频才能移动恢复点。
+        if (newPosition || (observation.output.generation == old.output.generation &&
+                observation.output.playedFrames > old.output.playedFrames)) {
+            resumePositionMs = observation.positionMs
+        }
+        // 阶梯式媒体时钟中间可以连续几拍相同；只比较整个无输出窗口的净位移。
+        if (newPosition || observation.output != old.output || observation.positionMs <= startedPositionMs) {
             startedAtMs = nowMs
             startedPositionMs = observation.positionMs
             reported = false
             return false
         }
-        if (!reported && nowMs - startedAtMs >= timeoutMs && observation.positionMs - startedPositionMs >= 1_000) {
+        if (!reported && observation.positionMs > old.positionMs && nowMs - startedAtMs >= timeoutMs &&
+            observation.positionMs - startedPositionMs >= 1_000) {
             reported = true
             return true
         }

@@ -1,5 +1,6 @@
 package com.leyu.melora.playback
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -16,8 +17,9 @@ class AudioOutputWatchdogTest {
         duration: Long = 600_000L,
         generation: Long = 0L,
         progress: Long = 0L,
+        bytes: Long = 0L,
     ): Boolean = watchdog.update(
-        AudioOutputWatchdog.Observation(uid, position, duration, playing, generation, progress),
+        AudioOutputWatchdog.Observation(uid, position, duration, playing, AudioOutputProbe.Snapshot(generation, bytes, progress)),
         time,
     )
 
@@ -140,5 +142,30 @@ class AudioOutputWatchdogTest {
             assertFalse(tick(time, position = time - 30_500))
         }
         assertTrue(tick(35_500, position = 5_000))
+    }
+
+    @Test fun staircaseMediaClockDuringUnderrunRecoversLastPlayedPosition() {
+        assertFalse(tick(0, position = 27_000))
+        assertFalse(tick(500, position = 27_200, progress = 1))
+        for (time in 1_000L..5_000L step 500) {
+            assertFalse(tick(time, position = 27_200 + time / 1_500 * 600, progress = 1))
+        }
+        assertTrue(tick(6_000, position = 29_600, progress = 1))
+        assertEquals(27_200L, watchdog.resumePositionMs)
+    }
+
+    @Test fun writesIntoABufferDoNotAdvanceTheResumePositionUntilFramesArePlayed() {
+        assertFalse(tick(0, position = 27_000))
+        assertFalse(tick(1_000, position = 28_000, bytes = 1024))
+        assertTrue(tick(6_000, position = 33_000, bytes = 1024))
+        assertEquals(27_000L, watchdog.resumePositionMs)
+    }
+
+    @Test fun replacingSilentOutputKeepsTheLastPlayedChapterPosition() {
+        assertFalse(tick(0, position = 2_000))
+        assertFalse(tick(500, position = 2_500, progress = 4000))
+        assertFalse(tick(2_000, position = 4_000, generation = 1))
+        assertTrue(tick(7_000, position = 9_000, generation = 1))
+        assertEquals(2_500L, watchdog.resumePositionMs)
     }
 }

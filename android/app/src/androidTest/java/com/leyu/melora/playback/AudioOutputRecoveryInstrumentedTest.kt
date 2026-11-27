@@ -15,6 +15,7 @@ import androidx.media3.datasource.ByteArrayDataSource
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.extractor.Extractor
@@ -44,7 +45,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/** 隔离播放器和合成 PCM：验证选轨后零 sample 的真实故障，也验证零波形并不等于无输出。 */
+/** 用隔离播放器和合成 PCM 验证无样本、中途断样本以及正常静音波形。 */
 @androidx.annotation.OptIn(UnstableApi::class, ExperimentalApi::class)
 @RunWith(AndroidJUnit4::class)
 class AudioOutputRecoveryInstrumentedTest {
@@ -52,35 +53,71 @@ class AudioOutputRecoveryInstrumentedTest {
     private val context get() = instrumentation.targetContext
 
     @Test(timeout = 45_000L)
-    fun selectedTrackWithoutSamplesRaisesRealErrorAndRecoversSameResourceAtCurrentPosition() = withPlayer { fixture ->
+    fun selectedTrackWithoutSamplesRecoversSameResourceAtStartPosition() =
+        assertRecoveryRestartsNearLastOutput(firstPcmDurationMs = 0)
+
+    @Test(timeout = 45_000L)
+    fun outputStopsMidChapterAndRecoversSameResourceNearLastPlayedAudio() =
+        assertRecoveryRestartsNearLastOutput(firstPcmDurationMs = 6_000)
+
+    private fun assertRecoveryRestartsNearLastOutput(firstPcmDurationMs: Long) = withPlayer { fixture ->
+        val startPositionMs = 2_000L
+        val lastOutputMs = maxOf(startPositionMs, firstPcmDurationMs)
         val song = OnlineSong(JSONObject().put("source", "kw").put("songmid", "output-${System.nanoTime()}")
             .put("name", "Output fixture").put("singer", "Fixture Artist"))
         val track = UiTrack.fromOnline(song)
         val resourceId = "lx:fixture:output-${System.nanoTime()}"
         val attempts = AtomicInteger()
         withController(fixture, track) { controller ->
-            val failingThenHealthy = source(track.uid, 20_000L, attempts, emptyFirst = true, resourceId = resourceId)
+            val failingThenHealthy = source(track.uid, 20_000L, attempts,
+                firstPcmDurationMs = firstPcmDurationMs, resourceId = resourceId)
             val following = source("next", 20_000L)
+            var outputStarted = false
+            var outputResumed = false
+            var resumedAtMs = C.TIME_UNSET
             main {
-                fixture.player.setMediaSources(listOf(failingThenHealthy, following), 0, 2_000L)
+                fixture.player.addAnalyticsListener(object : AnalyticsListener {
+                    override fun onAudioPositionAdvancing(eventTime: AnalyticsListener.EventTime,
+                        playoutStartSystemTimeMs: Long) {
+                        if (fixture.failures.isEmpty()) outputStarted = true else outputResumed = true
+                    }
+                })
+                fixture.player.addListener(object : Player.Listener {
+                    override fun onPlaybackStateChanged(playbackState: Int) {
+                        if (playbackState == Player.STATE_READY && fixture.failures.isNotEmpty() &&
+                            resumedAtMs == C.TIME_UNSET) {
+                            resumedAtMs = fixture.player.currentPosition
+                        }
+                    }
+                })
+                fixture.player.setMediaSources(listOf(failingThenHealthy, following), 0, startPositionMs)
                 fixture.player.prepare()
                 fixture.player.play()
             }
-            await(fixture, "无 sample 的已选中音轨进入播放") {
-                fixture.player.isPlaying && fixture.player.currentPosition >= 2_500L &&
+            await(fixture, "已选中音轨进入播放") {
+                fixture.player.isPlaying && fixture.player.currentPosition >= startPositionMs + 500L &&
                     fixture.player.currentTracks.groups.any { it.type == C.TRACK_TYPE_AUDIO && it.isSelected }
             }
             main { assertTrue("夹具须保留已知时长，不能退化为零时长文件", fixture.player.duration >= 19_000L) }
+            if (firstPcmDurationMs > startPositionMs) {
+                await(fixture, "中途断流前音轨已实际开始输出") {
+                    outputStarted && fixture.player.currentPosition < firstPcmDurationMs
+                }
+            }
             await(fixture, "输出检测必须触发真实 Media3 错误", 12_000L) { fixture.failures.isNotEmpty() }
             val failure = fixture.failures.single()
             assertEquals(ERROR_CODE_AUDIO_OUTPUT_STALLED, failure.code)
             assertEquals("错误回调前应已进入 IDLE，才能真正 prepare", Player.STATE_IDLE, failure.state)
             assertEquals(track.uid, failure.uid)
-            assertTrue("须在进度静音空跑时检出", failure.positionMs >= 6_000L)
+            assertTrue("须在进度静音空跑时检出，故障位置=${failure.positionMs}", failure.positionMs >= lastOutputMs + 1_000L)
             await(fixture, "同资源重新准备后继续播放", 8_000L) {
-                attempts.get() >= 2 && fixture.player.isPlaying &&
-                    fixture.player.currentPosition >= failure.positionMs + 500L
+                attempts.get() >= 2 && outputResumed && resumedAtMs != C.TIME_UNSET && fixture.player.isPlaying &&
+                    fixture.player.currentPosition >= resumedAtMs + 500L
             }
+            val resumePositionMs = main { resumedAtMs }
+            assertTrue("恢复位置 $resumePositionMs 应接近最后输出位置 $lastOutputMs",
+                resumePositionMs in maxOf(startPositionMs, lastOutputMs - 1_500L)..(lastOutputMs + 1_000L))
+            assertTrue("恢复位置应回退到没有静音空跑的位置", failure.positionMs - resumePositionMs >= 500L)
             observeFor(fixture, 5_500L)
             main {
                 assertEquals("原资源首次重建不能跳集", track.uid, fixture.player.currentMediaItem?.mediaId)
@@ -103,8 +140,8 @@ class AudioOutputRecoveryInstrumentedTest {
     private fun assertFailureStaysOnPlayingItem(nextTextOnly: Boolean) = withPlayer { fixture ->
         main {
             fixture.player.setMediaSources(listOf(
-                source("empty-first", 20_000L, AtomicInteger(0), emptyFirst = true),
-                source("empty-next", 20_000L, AtomicInteger(0), emptyFirst = true, textOnly = nextTextOnly),
+                source("empty-first", 20_000L, pcmDurationMs = 0),
+                source("empty-next", 20_000L, pcmDurationMs = 0, textOnly = nextTextOnly),
             ), 0, 2_000L)
             fixture.player.prepare()
             fixture.player.play()
@@ -161,7 +198,7 @@ class AudioOutputRecoveryInstrumentedTest {
                 field("appContext").set(PlaybackController, null)
                 fixture.player.setMediaSources(tracks.mapIndexed { index, track ->
                     source(track.uid, 20_000L, resourceId = "lx:fixture:empty-$identity-$index",
-                        noSamplesAlways = index < 3)
+                        pcmDurationMs = if (index < 3) 0L else 20_000L)
                 })
                 fixture.player.prepare()
                 fixture.player.play()
@@ -331,8 +368,8 @@ class AudioOutputRecoveryInstrumentedTest {
     }
 
     private fun source(uid: String, durationMs: Long, attempts: AtomicInteger = AtomicInteger(),
-                       emptyFirst: Boolean = false, resourceId: String? = null, textOnly: Boolean = false,
-                       noSamplesAlways: Boolean = false): MediaSource {
+                       resourceId: String? = null, textOnly: Boolean = false, pcmDurationMs: Long = durationMs,
+                       firstPcmDurationMs: Long = pcmDurationMs): MediaSource {
         val dataSources = DataSource.Factory {
             val upstream = ByteArrayDataSource(byteArrayOf(0))
             object : DataSource by upstream {
@@ -343,8 +380,8 @@ class AudioOutputRecoveryInstrumentedTest {
             }
         }
         val extractors = ExtractorsFactory {
-            arrayOf<Extractor>(DeclaredTrackExtractor(durationMs,
-                noSamplesAlways || (emptyFirst && attempts.getAndIncrement() == 0), textOnly))
+            val sampleDurationMs = if (attempts.getAndIncrement() == 0) firstPcmDurationMs else pcmDurationMs
+            arrayOf<Extractor>(DeclaredTrackExtractor(durationMs, sampleDurationMs, textOnly))
         }
         return ProgressiveMediaSource.Factory(dataSources, extractors).createMediaSource(
             MediaItem.Builder().setMediaId(uid).setUri("fixture://output/$uid").build(),
@@ -378,10 +415,11 @@ class AudioOutputRecoveryInstrumentedTest {
                                val failures: CopyOnWriteArrayList<Failure> = CopyOnWriteArrayList())
     private data class Failure(val code: Int, val state: Int, val positionMs: Long, val uid: String?)
 
-    /** 发布已知时长和轨道格式；音频正常轮每次交付100ms零 PCM，故障轮及纯文本轮不交付 sample。 */
-    private class DeclaredTrackExtractor(durationMs: Long, private val noSamples: Boolean,
+    /** 声明固定媒体时长，按实际供给时长交付每段 100ms 的零 PCM 样本。 */
+    private class DeclaredTrackExtractor(durationMs: Long, sampleDurationMs: Long,
                                          private val textOnly: Boolean) : Extractor {
         private val mediaDurationUs = durationMs * 1_000L
+        private val sampleEndUs = sampleDurationMs * 1_000L
         private var positionUs = 0L
         private lateinit var track: TrackOutput
         override fun sniff(input: ExtractorInput): Boolean = true
@@ -402,8 +440,8 @@ class AudioOutputRecoveryInstrumentedTest {
             })
         }
         override fun read(input: ExtractorInput, seekPosition: PositionHolder): Int {
-            if (noSamples || textOnly || positionUs >= mediaDurationUs) return Extractor.RESULT_END_OF_INPUT
-            val samples = minOf(800L, (mediaDurationUs - positionUs) * 8_000 / 1_000_000).toInt()
+            if (textOnly || positionUs >= sampleEndUs) return Extractor.RESULT_END_OF_INPUT
+            val samples = minOf(800L, (sampleEndUs - positionUs) * 8_000 / 1_000_000).toInt()
             if (samples <= 0) return Extractor.RESULT_END_OF_INPUT
             val pcm = ParsableByteArray(ByteArray(samples * 2))
             track.sampleData(pcm, samples * 2)

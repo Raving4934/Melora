@@ -1,6 +1,7 @@
 package com.leyu.melora.playback
 
 import android.content.Context
+import android.media.AudioTrack
 import android.os.Build
 import android.os.Handler
 import androidx.media3.common.Format
@@ -11,13 +12,19 @@ import androidx.media3.exoplayer.ExoPlaybackException
 import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.audio.AudioOffloadSupport
 import androidx.media3.exoplayer.audio.AudioRendererEventListener
+import androidx.media3.exoplayer.audio.AudioOutput
+import androidx.media3.exoplayer.audio.AudioOutputProvider
 import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.AudioTrackAudioOutputProvider
 import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.audio.ForwardingAudioOutput
+import androidx.media3.exoplayer.audio.ForwardingAudioOutputProvider
 import androidx.media3.exoplayer.audio.ForwardingAudioSink
 import androidx.media3.exoplayer.audio.MediaCodecAudioRenderer
 import androidx.media3.exoplayer.mediacodec.DefaultMediaCodecAdapterFactory
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.MediaSource
+import java.nio.ByteBuffer
 
 /** 即时解码唤醒与位置采样共用一条播放循环，不以关闭动态调度换取歌词刷新。 */
 @androidx.annotation.OptIn(UnstableApi::class)
@@ -26,6 +33,7 @@ internal class PlaybackRenderersFactory(
     private val effects: PcmEffectsAudioProcessor,
 ) : DefaultRenderersFactory(context) {
     val outputProbe = AudioOutputProbe()
+    private var platformTrack: AudioTrack? = null
 
     override fun buildAudioRenderers(
         context: Context,
@@ -57,14 +65,14 @@ internal class PlaybackRenderersFactory(
                     super.handleMessage(messageType, message)
                     return
                 }
-                val failure = message as AudioOutputProbe.Failure
-                // 时钟可能已切到standalone，先在播放线程复查sink，避免把尚未采样的恢复误判为故障。
-                audioSink.getCurrentPositionUs(isEnded)
+                val track = platformTrack
+                outputProbe.sample(track?.playbackHeadPosition, track?.let { (it.sampleRate / 20).coerceAtLeast(1) } ?: 1)
+                val failure = message as? AudioOutputProbe.Failure ?: return
                 // 有效播放令牌由主线程暂停/切项时取消；renderer提前disabled本身可能就是故障，不能永久排除。
                 if (outputProbe.stillStalled(failure)) {
                     // 这是当前播放项的健康错误；TYPE_RENDERER会被SDK归因到预读项并强制跳集。
                     throw ExoPlaybackException.createForUnexpected(
-                        IllegalStateException("Playback position advanced without audio output"),
+                        failure,
                         ERROR_CODE_AUDIO_OUTPUT_STALLED,
                     )
                 }
@@ -88,33 +96,55 @@ internal class PlaybackRenderersFactory(
         context: Context,
         enableFloatOutput: Boolean,
         enableAudioOutputPlaybackParams: Boolean,
-    ): AudioSink = object : ForwardingAudioSink(
-        DefaultAudioSink.Builder(context)
+    ): AudioSink {
+        val tracks = AudioTrackAudioOutputProvider.Builder(context).build()
+        val outputs = object : ForwardingAudioOutputProvider(tracks) {
+            override fun getAudioOutput(config: AudioOutputProvider.OutputConfig): AudioOutput {
+                val output = tracks.getAudioOutput(config)
+                platformTrack = output.audioTrack
+                outputProbe.reset()
+                return object : ForwardingAudioOutput(output) {
+                    override fun write(buffer: ByteBuffer, encodedAccessUnitCount: Int, presentationTimeUs: Long): Boolean {
+                        val before = buffer.position()
+                        val handled = super.write(buffer, encodedAccessUnitCount, presentationTimeUs)
+                        outputProbe.wrote(buffer.position() - before)
+                        return handled
+                    }
+
+                    override fun release() {
+                        if (platformTrack === output.audioTrack) platformTrack = null
+                        super.release()
+                    }
+                }
+            }
+        }
+        val sink = DefaultAudioSink.Builder(context)
             // float直出/offload会跳过软件音效；保留原整数PCM和Sonic倍速路径。
             .setEnableFloatOutput(false)
             .setEnableAudioOutputPlaybackParameters(false)
             .setAudioProcessors(arrayOf(effects))
-            .build(),
-    ) {
-        override fun getCurrentPositionUs(sourceEnded: Boolean): Long =
-            super.getCurrentPositionUs(sourceEnded).also(outputProbe::position)
+            .setAudioOutputProvider(outputs)
+            .build()
+        return object : ForwardingAudioSink(sink) {
+            override fun getAudioCapabilities() = tracks.audioCapabilities
 
-        override fun flush() {
-            outputProbe.reset()
-            super.flush()
+            override fun flush() {
+                outputProbe.reset()
+                super.flush()
+            }
+
+            override fun reset() {
+                outputProbe.reset()
+                super.reset()
+            }
+
+            override fun supportsFormat(format: Format): Boolean = getFormatSupport(format) != AudioSink.SINK_FORMAT_UNSUPPORTED
+            override fun getFormatSupport(format: Format): Int =
+                if (format.sampleMimeType == MimeTypes.AUDIO_RAW) super.getFormatSupport(format)
+                else AudioSink.SINK_FORMAT_UNSUPPORTED
+            override fun getFormatOffloadSupport(format: Format): AudioOffloadSupport = AudioOffloadSupport.DEFAULT_UNSUPPORTED
+            override fun setOffloadMode(offloadMode: Int) = super.setOffloadMode(AudioSink.OFFLOAD_MODE_DISABLED)
         }
-
-        override fun reset() {
-            outputProbe.reset()
-            super.reset()
-        }
-
-        override fun supportsFormat(format: Format): Boolean = getFormatSupport(format) != AudioSink.SINK_FORMAT_UNSUPPORTED
-        override fun getFormatSupport(format: Format): Int =
-            if (format.sampleMimeType == MimeTypes.AUDIO_RAW) super.getFormatSupport(format)
-            else AudioSink.SINK_FORMAT_UNSUPPORTED
-        override fun getFormatOffloadSupport(format: Format): AudioOffloadSupport = AudioOffloadSupport.DEFAULT_UNSUPPORTED
-        override fun setOffloadMode(offloadMode: Int) = super.setOffloadMode(AudioSink.OFFLOAD_MODE_DISABLED)
     }
 }
 
