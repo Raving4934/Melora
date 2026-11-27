@@ -2,23 +2,40 @@ package com.leyu.melora.ui.settings
 
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.click
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.core.graphics.ColorUtils
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.leyu.melora.playback.MeloraSettings
+import com.leyu.melora.playback.SourceAlias
+import com.leyu.melora.playback.ThemeMode
 import com.leyu.melora.playback.lx.LxScriptStore
 import com.leyu.melora.playback.lx.LxSourceImporter
 import com.leyu.melora.ui.awaitStable
@@ -53,12 +70,7 @@ class LxSourceActionsInstrumentedTest {
     fun prepareSourceStorage() {
         val activity = compose.activity
         files = Files.createTempDirectory(activity.cacheDir.toPath(), "lx-source-actions-").toFile()
-        fixtureContext = object : ContextWrapper(activity) {
-            override fun getApplicationContext(): Context = this
-            override fun getFilesDir(): File = files
-            override fun getSharedPreferences(name: String, mode: Int) =
-                super.getSharedPreferences("${files.name}.$name", mode)
-        }
+        fixtureContext = FixtureContext(activity.applicationContext, files)
         store = LxScriptStore(fixtureContext)
     }
 
@@ -82,6 +94,10 @@ class LxSourceActionsInstrumentedTest {
 
         val color = statusColor("脚本协议通过")
         assertTrue(color.green > color.red && color.green > color.blue)
+        val platform = SourceAlias.display("wy", "网易云音乐")
+        compose.awaitStable(
+            compose.onNode(hasText("声明平台", substring = true) and hasText(platform, substring = true)),
+        )
         compose.awaitStable(compose.onNodeWithText("未声明在线平台的播放能力", substring = true))
     }
 
@@ -94,6 +110,76 @@ class LxSourceActionsInstrumentedTest {
         val color = statusColor("脚本协议未通过")
         assertTrue(color.red > color.green && color.red > color.blue)
         compose.awaitStable(compose.onNodeWithText("脚本报告初始化失败", substring = true))
+    }
+
+    @Test
+    fun landscapeValidityTestKeepsActionsReachableWithFiveInconclusivePlatforms() {
+        val scenario = compose.activityRule.scenario
+        val originalOrientation = compose.activity.requestedOrientation
+        try {
+            scenario.onActivity { it.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+            compose.waitUntil(8_000) {
+                compose.activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+            }
+            val script = store.import(
+                "five-platforms.js",
+                """
+                // @name 五平台测试源
+                lx.on('request', () => '');
+                const sources = {};
+                for (const source of ['kw', 'kg', 'tx', 'wy', 'mg']) {
+                    sources[source] = {actions: ['musicUrl'], qualitys: ['unavailable-fixture-quality']};
+                }
+                lx.send('inited', {sources});
+                """.trimIndent(),
+            )
+            showSourceMenu()
+            compose.onNodeWithText("有效性测试").performClick()
+
+            val inSheet = hasAnyAncestor(isDialog())
+            compose.awaitStable(compose.onNode(inSheet and hasText("待确认 5 项", substring = true)))
+            compose.onAllNodes(
+                inSheet and hasText("待确认", substring = true) and
+                    hasText("当前播放音质没有兼容档位", substring = true),
+            ).assertCountEquals(5)
+
+            compose.onNode(inSheet and hasText(SourceAlias.display("mg", "咪咕音乐")))
+                .performScrollTo().assertIsDisplayed()
+            val close = compose.onNodeWithText("关闭")
+            close.assertIsDisplayed().assertIsEnabled()
+            val retry = compose.onNodeWithText("重新测试")
+            retry.assertIsDisplayed().assertIsEnabled()
+            store.import(script.id, lyricSource("1"))
+            retry.performTouchInput { click(center) }
+            compose.awaitStable(compose.onNodeWithText("未声明在线平台的播放能力"))
+
+            close.performTouchInput { click(center) }
+            compose.waitUntil(5_000) { compose.onAllNodes(isDialog()).fetchSemanticsNodes().isEmpty() }
+        } finally {
+            scenario.onActivity { it.requestedOrientation = originalOrientation }
+        }
+    }
+
+    @Test
+    fun closeButtonLabelHasReadableContrastInDarkMode() {
+        val previousMode = MeloraSettings.themeMode.value
+        val previousEInk = MeloraSettings.eInkMode.value
+        try {
+            MeloraSettings.themeMode.value = ThemeMode.Dark
+            MeloraSettings.eInkMode.value = false
+            store.import("lyrics.js", lyricSource("1"))
+            showSourceMenu()
+            compose.onNodeWithText("有效性测试").performClick()
+
+            val foreground = statusColor("关闭")
+            val button = compose.onNodeWithText("关闭").captureToImage().toPixelMap()
+            val background = button[button.width / 4, button.height / 2]
+            val contrast = ColorUtils.calculateContrast(foreground.toArgb(), background.toArgb())
+            assertTrue("关闭按钮文字对比度为 $contrast", contrast >= 4.5)
+        } finally {
+            MeloraSettings.themeMode.value = previousMode
+            MeloraSettings.eInkMode.value = previousEInk
+        }
     }
 
     @Test
@@ -122,8 +208,9 @@ class LxSourceActionsInstrumentedTest {
     }
 
     private fun showSourceMenu() {
+        val context = FixtureContext(compose.activity, files)
         compose.setContent {
-            CompositionLocalProvider(LocalContext provides fixtureContext) {
+            CompositionLocalProvider(LocalContext provides context) {
                 MeloraTheme { LxSourceScreen() }
             }
         }
@@ -148,6 +235,13 @@ class LxSourceActionsInstrumentedTest {
         lx.on('request', () => '');
         lx.send('inited', {sources:{wy:{actions:['lyric']}}});
     """.trimIndent()
+
+    private class FixtureContext(base: Context, private val directory: File) : ContextWrapper(base) {
+        override fun getApplicationContext(): Context = this
+        override fun getFilesDir(): File = directory
+        override fun getSharedPreferences(name: String, mode: Int) =
+            super.getSharedPreferences("${directory.name}.$name", mode)
+    }
 
     private class ScriptServer(initialCode: String) : Closeable {
         val body = AtomicReference(initialCode)

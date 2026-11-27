@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -41,6 +42,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -51,6 +54,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Build
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.MoreVert
@@ -61,6 +65,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -68,7 +73,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -1097,11 +1101,13 @@ private fun LxInspector.ValidityTest.summary(): SourceActionStatus {
     if (platforms.isEmpty()) return SourceActionStatus("脚本协议通过 · 未声明在线播放", result = LinkStatus.VALID)
     val valid = platforms.count { it.result?.status == LinkStatus.VALID }
     val invalid = platforms.count { it.result?.status == LinkStatus.INVALID }
-    val unknown = platforms.size - valid - invalid
+    val unknown = platforms.count { it.result?.status == LinkStatus.INCONCLUSIVE }
+    val pending = platforms.size - valid - invalid - unknown
     val counts = listOfNotNull(
         "有效 ${valid} 项".takeIf { valid > 0 },
         "失效 ${invalid} 项".takeIf { invalid > 0 },
         "待确认 ${unknown} 项".takeIf { unknown > 0 },
+        "未测试 ${pending} 项".takeIf { pending > 0 },
     )
     val status = when (platforms.size) {
         valid -> LinkStatus.VALID
@@ -1147,93 +1153,339 @@ private fun ValidityTestSheet(
         val snapshot = report
         val tests = snapshot?.platforms.orEmpty()
         val current = tests.firstOrNull { it.result == null }?.source
+        val eInk = MeloraAppearance.isEInk
         Column(modifier = Modifier.fillMaxWidth().height(392.dp)) {
-            LazyColumn(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+            val scrollState = key(attempt) { rememberScrollState() }
+            Column(
+                modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(scrollState),
             ) {
-                item {
-                    val status = when {
-                        snapshot != null -> LinkStatus.VALID
-                        failure != null -> LinkStatus.INVALID
-                        else -> null
-                    }
-                    Text(
-                        text = when (status) {
-                            LinkStatus.VALID -> "脚本协议通过 · 声明 ${snapshot?.declaredPlatforms.orEmpty().joinToString("、")}"
-                            LinkStatus.INVALID -> "脚本协议未通过 · $failure"
-                            else -> "正在检查脚本协议…"
-                        },
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = status.textColor,
-                        modifier = Modifier.padding(vertical = 4.dp),
-                    )
-                }
+                ValidityProtocolBanner(snapshot, running, failure)
                 if (tests.isNotEmpty()) {
-                    item { Text("测试曲目 · ${LxInspector.sampleLabel}", fontSize = 12.sp, color = TextSub) }
-                    items(tests, key = { it.source }) { test ->
-                        PlaybackTestRow(test, running && test.source == current)
+                    Spacer(Modifier.height(10.dp))
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = CardBg,
+                        border = MeloraAppearance.cardBorder,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column {
+                            tests.forEachIndexed { index, test ->
+                                PlaybackTestRow(test, running, active = running && test.source == current)
+                                if (index < tests.lastIndex) {
+                                    HorizontalDivider(
+                                        color = MeloraAppearance.divider,
+                                        thickness = 0.6.dp,
+                                        modifier = Modifier.padding(start = 46.dp, end = 14.dp),
+                                    )
+                                }
+                            }
+                        }
                     }
-                } else if (snapshot != null) {
-                    item { Text("未声明在线平台的播放能力", fontSize = 12.sp, color = TextSub) }
-                }
-                if (snapshot != null && failure != null) {
-                    item { Text("测试中断 · $failure", fontSize = 12.sp, color = TextSub) }
                 }
             }
+            Spacer(Modifier.height(14.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                TextButton(onClick = { attempt++ }, enabled = !running) { Text("重新测试") }
-                TextButton(onClick = { closeSheet(onDismiss) }) { Text("关闭") }
+                Surface(
+                    onClick = { attempt++ },
+                    enabled = !running,
+                    shape = RoundedCornerShape(12.dp),
+                    color = MeloraAppearance.softFill,
+                    border = if (eInk) MeloraAppearance.cardBorder else null,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(44.dp),
+                ) {
+                    val contentColor = if (running) TextSub.copy(alpha = 0.45f) else TextMain
+                    Row(
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            Icons.Rounded.Refresh,
+                            contentDescription = null,
+                            tint = contentColor,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "重新测试",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = contentColor,
+                        )
+                    }
+                }
+                Surface(
+                    onClick = { closeSheet(onDismiss) },
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(44.dp),
+                ) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "关闭",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun PlaybackTestRow(test: LxInspector.PlatformTest, active: Boolean) {
-    val result = test.result
-    val request = listOfNotNull(
-        test.requestedQuality?.let { "档位 $it" },
-        test.elapsedMs?.let { "$it ms" },
-    ).joinToString(" · ")
-    val outcome = listOfNotNull(
-        when (result?.status) {
-            LinkStatus.VALID -> "链接有效"
-            LinkStatus.INVALID -> "链接无效"
-            LinkStatus.INCONCLUSIVE -> "待确认"
-            null -> if (active) "正在测试…" else "等待测试"
-        },
-        result?.message,
-        result?.spec?.playerSpecificationLabel()?.takeIf(String::isNotBlank),
-    ).joinToString(" · ")
+private fun ValidityProtocolBanner(snapshot: LxInspector.ValidityTest?, running: Boolean, failure: String?) {
+    val eInk = MeloraAppearance.isEInk
+    val tests = snapshot?.platforms.orEmpty()
+    val dark = MeloraAppearance.isDark
+    val protocolStatus = when {
+        snapshot != null -> LinkStatus.VALID
+        failure != null -> LinkStatus.INVALID
+        else -> null
+    }
+    val bannerBg = when (protocolStatus) {
+        LinkStatus.VALID -> when {
+            eInk -> Color.White
+            dark -> Color(0xFF16271D)
+            else -> Color(0xFFEDF8F1)
+        }
+        LinkStatus.INVALID -> when {
+            eInk -> Color.White
+            dark -> Color(0xFF2B181A)
+            else -> Color(0xFFFEF0F0)
+        }
+        else -> CardBg
+    }
+    val bannerBorder = when {
+        eInk || protocolStatus == null -> MeloraAppearance.cardBorder
+        protocolStatus == LinkStatus.VALID -> BorderStroke(
+            0.6.dp,
+            if (dark) Color(0xFF234230) else Color(0xFFC8EBD5),
+        )
+        else -> BorderStroke(
+            0.6.dp,
+            if (dark) Color(0xFF4B2428) else Color(0xFFF6CACA),
+        )
+    }
     Surface(
         shape = RoundedCornerShape(14.dp),
-        color = CardBg,
-        border = MeloraAppearance.cardBorder,
+        color = bannerBg,
+        border = bannerBorder,
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp).heightIn(min = 44.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 11.dp),
         ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier.size(16.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    when (protocolStatus) {
+                        LinkStatus.VALID -> Icon(
+                            Icons.Rounded.CheckCircle,
+                            contentDescription = null,
+                            tint = protocolStatus.textColor,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        LinkStatus.INVALID -> Icon(
+                            Icons.Outlined.ErrorOutline,
+                            contentDescription = null,
+                            tint = protocolStatus.textColor,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        else -> CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 1.8.dp,
+                            color = if (eInk) TextMain else BrandBlue,
+                        )
+                    }
+                }
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = when (protocolStatus) {
+                        LinkStatus.VALID -> "脚本协议通过"
+                        LinkStatus.INVALID -> "脚本协议未通过 · $failure"
+                        else -> "正在检查脚本协议…"
+                    },
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = protocolStatus.textColor,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            if (snapshot != null) {
+                val declared = snapshot.declaredPlatforms.map { id ->
+                    sourceAliasDisplay(id, platformLabel(id, fallback = id))
+                }
+                Text(
+                    text = "声明平台 · ${declared.joinToString("、")}",
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                    color = TextSub,
+                    modifier = Modifier.padding(start = 24.dp, top = 4.dp),
+                )
+                FlowRow(
+                    modifier = Modifier.padding(start = 24.dp, top = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    Text(
+                        text = if (tests.isEmpty()) "未声明在线平台的播放能力" else "试播曲目 · ${LxInspector.sampleLabel}",
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                        color = TextSub,
+                    )
+                    if (tests.isNotEmpty()) {
+                        Text(
+                            text = if (running) {
+                                "已测 ${tests.count { it.result != null }}/${tests.size} 项"
+                            } else {
+                                snapshot.summary().message
+                            },
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp,
+                            color = TextSub,
+                        )
+                    }
+                }
+            }
+            if (snapshot != null && failure != null) {
+                Text(
+                    text = "测试中断 · $failure",
+                    fontSize = 12.sp,
+                    color = LinkStatus.INVALID.textColor,
+                    modifier = Modifier.padding(start = 24.dp, top = 2.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlaybackTestRow(test: LxInspector.PlatformTest, running: Boolean, active: Boolean) {
+    val result = test.result
+    val eInk = MeloraAppearance.isEInk
+    val dark = MeloraAppearance.isDark
+    val status = when (result?.status) {
+        LinkStatus.VALID -> "链接有效"
+        LinkStatus.INVALID -> "链接无效"
+        LinkStatus.INCONCLUSIVE -> "待确认"
+        null -> when {
+            active -> "正在测试…"
+            running -> "等待测试"
+            else -> "未测试"
+        }
+    }
+    val detail = result?.spec?.playerSpecificationLabel()?.takeIf(String::isNotBlank) ?: result?.message
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics(mergeDescendants = true) {}
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier.size(22.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            when {
+                result?.status == LinkStatus.VALID -> Icon(
+                    Icons.Rounded.CheckCircle,
+                    contentDescription = null,
+                    tint = LinkStatus.VALID.textColor,
+                    modifier = Modifier.size(17.dp),
+                )
+                result?.status == LinkStatus.INVALID -> Icon(
+                    Icons.Outlined.ErrorOutline,
+                    contentDescription = null,
+                    tint = LinkStatus.INVALID.textColor,
+                    modifier = Modifier.size(17.dp),
+                )
+                result?.status == LinkStatus.INCONCLUSIVE -> Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(
+                            when {
+                                eInk -> TextSub
+                                dark -> Color(0xFFFBBF24)
+                                else -> Color(0xFFD97706)
+                            },
+                        ),
+                )
+                active -> CircularProgressIndicator(
+                    modifier = Modifier.size(15.dp),
+                    strokeWidth = 1.8.dp,
+                    color = if (eInk) TextMain else BrandBlue,
+                )
+                else -> Box(
+                    modifier = Modifier
+                        .size(7.dp)
+                        .clip(CircleShape)
+                        .background(MeloraAppearance.textMuted.copy(alpha = 0.45f)),
+                )
+            }
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = sourceAliasDisplay(test.source, platformLabel(test.source)),
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
                     color = TextMain,
-                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
-                if (request.isNotEmpty()) Text(request, fontSize = 12.sp, color = TextSub)
+                test.requestedQuality?.let { quality ->
+                    Spacer(Modifier.width(6.dp))
+                    Surface(
+                        shape = RoundedCornerShape(5.dp),
+                        color = MeloraAppearance.softFill,
+                        border = if (eInk) MeloraAppearance.chipBorder else null,
+                    ) {
+                        Text(
+                            text = quality,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = TextSub,
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+                        )
+                    }
+                }
             }
+            Spacer(Modifier.height(2.dp))
             Text(
-                text = outcome,
+                text = listOfNotNull(status, detail).joinToString(" · "),
                 fontSize = 12.sp,
                 color = result?.status.textColor,
+            )
+        }
+        test.elapsedMs?.let { ms ->
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = "$ms ms",
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.Medium,
+                color = TextSub,
             )
         }
     }
