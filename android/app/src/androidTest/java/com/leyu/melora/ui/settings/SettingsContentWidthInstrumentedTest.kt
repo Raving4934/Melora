@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -19,6 +20,7 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
@@ -29,6 +31,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -160,12 +163,25 @@ class SettingsContentWidthInstrumentedTest {
             showSettings(fontScale = 1.5f)
 
             val radio = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.RadioButton)
-            fun chooseMaster(setting: String, currentLabel: String) {
+            fun chooseMaster(setting: String, currentLabel: String, touchNearTop: Boolean) {
                 compose.onNode(hasScrollAction()).performScrollToNode(hasText(setting))
                 val row = compose.onNodeWithText(setting)
                 compose.awaitStable(row)
                 compose.waitUntil(5_000) { compose.activity.hasWindowFocus() }
-                row.performClick()
+                val node = row.fetchSemanticsNode()
+                val (rowBounds, cardBounds) = compose.runOnIdle {
+                    node.boundsInRoot to requireNotNull(node.parent).boundsInRoot
+                }
+                assertEquals(
+                    "$setting 的按压范围应贴齐卡片边缘",
+                    if (touchNearTop) cardBounds.top else cardBounds.bottom,
+                    if (touchNearTop) rowBounds.top else rowBounds.bottom,
+                    1f,
+                )
+                row.performTouchInput {
+                    val inset = 2f * density
+                    click(Offset(centerX, if (touchNearTop) inset else height - inset))
+                }
                 compose.waitUntil(5_000) { !compose.activity.hasWindowFocus() }
                 for (badge in listOf("SD", "HQ", "SQ", "HR", "母带")) {
                     compose.onNodeWithText(badge, useUnmergedTree = true).assertExists()
@@ -181,17 +197,17 @@ class SettingsContentWidthInstrumentedTest {
             }
 
             compose.onNode(hasScrollAction()).performScrollToNode(hasText("WIFI/以太网首选音质，不可用时自动降级"))
-            chooseMaster("WiFi 网络音质", "320k 高品")
+            chooseMaster("WiFi 网络音质", "320k 高品", touchNearTop = true)
             assertEquals("master", MeloraSettings.playQualityWifi.value)
             assertEquals("128k", MeloraSettings.playQualityMobile.value)
             assertEquals("flac24bit", MeloraSettings.downloadQuality.value)
 
-            chooseMaster("移动网络音质", "128k 标清")
+            chooseMaster("移动网络音质", "128k 标清", touchNearTop = false)
             assertEquals("master", MeloraSettings.playQualityMobile.value)
             assertEquals("flac24bit", MeloraSettings.downloadQuality.value)
 
             compose.runOnIdle { page.value = SettingsSubPage.Download }
-            chooseMaster("下载音质", "Hi-Res 24bit")
+            chooseMaster("下载音质", "Hi-Res 24bit", touchNearTop = true)
             assertEquals("master", MeloraSettings.downloadQuality.value)
         } finally {
             MeloraSettings.updatePlayQualityWifi(previousWifi)

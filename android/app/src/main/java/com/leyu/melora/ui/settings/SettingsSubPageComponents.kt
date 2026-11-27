@@ -315,12 +315,13 @@ internal fun DownloadSettingsSubPage(onBack: () -> Unit) {
             SectionCaption("音质偏好")
         }
         item {
-            SettingsCard(contentPadding = PaddingValues(vertical = 4.dp)) {
+            SettingsCard(contentPadding = PaddingValues(0.dp)) {
                 AudioQualitySetting(
                     title = "下载音质",
                     subtitle = "所选档位不可用时自动降级",
                     value = downloadQuality,
                     onSelect = MeloraSettings::updateDownloadQuality,
+                    edgePadding = PaddingValues(vertical = 4.dp),
                 )
             }
         }
@@ -439,12 +440,13 @@ internal fun PlaybackSettingsSubPage(onBack: () -> Unit) {
             SectionCaption("音质偏好")
         }
         item {
-            SettingsCard(contentPadding = PaddingValues(vertical = 4.dp)) {
+            SettingsCard(contentPadding = PaddingValues(0.dp)) {
                 AudioQualitySetting(
                     title = "WiFi 网络音质",
                     subtitle = "WIFI/以太网首选音质，不可用时自动降级",
                     value = wifiQuality,
                     onSelect = MeloraSettings::updatePlayQualityWifi,
+                    edgePadding = PaddingValues(top = 4.dp),
                 )
 
                 SettingsDivider(Modifier.padding(horizontal = 14.dp))
@@ -454,6 +456,7 @@ internal fun PlaybackSettingsSubPage(onBack: () -> Unit) {
                     subtitle = "128k 或 320k 更节省流量",
                     value = mobileQuality,
                     onSelect = MeloraSettings::updatePlayQualityMobile,
+                    edgePadding = PaddingValues(bottom = 4.dp),
                 )
             }
         }

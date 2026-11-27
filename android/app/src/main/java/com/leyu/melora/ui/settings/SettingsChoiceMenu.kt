@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -76,6 +77,7 @@ internal fun <T> SettingsChoiceMenu(
     enabled: Boolean = true,
     optionEnabled: (T) -> Boolean = { true },
     optionPreview: (@Composable (T) -> Unit)? = null,
+    edgePadding: PaddingValues = PaddingValues(0.dp),
 ) {
     val active = LocalPageActive.current
     var expanded by remember(active) { mutableStateOf(false) }
@@ -87,6 +89,8 @@ internal fun <T> SettingsChoiceMenu(
                 anchor = IntRect(coordinates.positionInWindow().round(), coordinates.size)
             }
             .clickable(enabled = canChoose, role = Role.Button) { expanded = true }
+            // 卡片边缘的留白也属于这一行的按压区域。
+            .padding(edgePadding)
             .heightIn(min = 56.dp)
             .padding(horizontal = 16.dp, vertical = 11.dp),
         horizontalArrangement = Arrangement.SpaceBetween,

@@ -91,6 +91,7 @@ internal fun AudioQualitySetting(
     subtitle: String,
     value: String,
     onSelect: (String) -> Unit,
+    edgePadding: PaddingValues,
 ) {
     SettingsChoiceMenu(
         title = title,
@@ -99,6 +100,7 @@ internal fun AudioQualitySetting(
         options = AudioQualityOptions.keys.toList(),
         label = { AudioQualityOptions[it] ?: it },
         onSelect = onSelect,
+        edgePadding = edgePadding,
         optionPreview = { quality ->
             remember(quality) { qualityBadgeForCapabilities(listOf(quality)) }?.let { badge ->
                 BadgePill(badge, mode = QualityBadgeMode.Compact)
