@@ -8,9 +8,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.leyu.melora.playback.lx.LxScriptStore
 import java.io.File
-import java.net.InetAddress
-import java.net.ServerSocket
-import java.net.SocketException
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -18,7 +15,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
@@ -94,27 +90,8 @@ class SourceSchedulingInstrumentedTest {
 
     @Test
     fun playbackDoesNotWaitForTheSamePlatformAgainOnTheNextQualityTier() = runBlocking {
-        val bytes = InstrumentationRegistry.getInstrumentation().context.assets
-            .open("audio/fixture-128.mp3").use { it.readBytes() }
-        ServerSocket(0, 4, InetAddress.getByName("127.0.0.1")).use { server ->
-            val serveAudio = launch(Dispatchers.IO) {
-                while (!server.isClosed) {
-                    val peer = try { server.accept() } catch (closed: SocketException) {
-                        if (server.isClosed) break else throw closed
-                    }
-                    peer.use {
-                        it.soTimeout = 2_000
-                        val request = it.getInputStream().bufferedReader()
-                        while (!request.readLine().isNullOrEmpty()) Unit
-                        it.getOutputStream().apply {
-                            write(("HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\n" +
-                                "Content-Length: ${bytes.size}\r\nConnection: close\r\n\r\n").toByteArray(Charsets.US_ASCII))
-                            write(bytes)
-                        }
-                    }
-                }
-            }
-            val baseUrl = "http://127.0.0.1:${server.localPort}"
+        ResolutionMediaServer().use { server ->
+            val baseUrl = server.url
             val samePlatform = "same-platform-$runId.js"
             val crossPlatform = "cross-platform-$runId.js"
             fun script(platform: String, highDelay: Int, lowDelay: Int, lowUrl: String?) = """
@@ -150,8 +127,6 @@ class SourceSchedulingInstrumentedTest {
                 store.remove(samePlatform)
                 store.remove(crossPlatform)
                 SourceResolver.clearCache()
-                server.close()
-                serveAudio.cancelAndJoin()
             }
         }
     }

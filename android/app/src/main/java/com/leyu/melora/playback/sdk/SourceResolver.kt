@@ -3,6 +3,7 @@ package com.leyu.melora.playback.sdk
 import android.content.Context
 import android.util.Log
 import com.leyu.melora.BuildConfig
+import com.leyu.melora.playback.AudioCacheStore
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.sdk.LxScriptPool.ScriptScope
 import kotlinx.coroutines.CancellationException
@@ -24,6 +25,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.json.JSONObject
 import java.security.MessageDigest
 import java.text.Normalizer
@@ -252,6 +254,12 @@ object SourceResolver {
             val lowerResults = ScriptScope.entries.associateWith { ConcurrentHashMap<String, Resolved>() }
             val lowerReady = CompletableDeferred<Unit>()
             val rejectedPrimary = AtomicBoolean()
+            val competingSources = async(start = CoroutineStart.LAZY) {
+                (purpose == Purpose.PLAYBACK || purpose == Purpose.REBUFFER) &&
+                    (LxScriptPool.hasMultipleScripts(context, key.allowSwitch) ||
+                        (matches.isNotEmpty() && searchPlatforms.await().any { it != song.source }))
+            }
+            val checkedUrls = ConcurrentHashMap<String, Boolean>()
             fun usable(result: Resolved): Boolean = result.resourceId !in excludedResources && !isRejected(result.resourceId)
             fun candidate(quality: String, scope: ScriptScope): Resolved? {
                 val origins = when (scope) {
@@ -264,11 +272,15 @@ object SourceResolver {
                         else qualitySatisfies(quality, value.quality))
                 }.maxByOrNull { qualityRank(it.quality) }
             }
-            fun accept(result: Resolved?, quality: String, scope: ScriptScope): Resolved? {
-                if (result == null) return null
+            suspend fun accept(result: Resolved, quality: String, scope: ScriptScope): Resolved? {
                 if (!usable(result)) {
                     if (scope == ScriptScope.ENABLED) rejectedPrimary.set(true)
                     return null
+                }
+                if (competingSources.await()) {
+                    val page = checkedUrls[result.url] ?: AudioCacheStore.returnsNonAudioPage(result.url)
+                        .also { checkedUrls[result.url] = it }
+                    if (page) return null
                 }
                 val actual = result.copy(quality = observedQuality(result.resourceId) ?: result.quality,
                     switched = result.song.uid != song.uid, fromPrimary = scope == ScriptScope.ENABLED)
@@ -322,6 +334,7 @@ object SourceResolver {
                     } ?: playableFallback() ?: error("各档播放音质均不可用，请检查网络或音源")
                 } else chain(if (key.allowSwitch) ScriptScope.ALL else ScriptScope.ENABLED)
             } finally {
+                competingSources.cancel()
                 matches.forEach { it.cancel() }
                 searchPlatforms.cancel()
             }
@@ -385,7 +398,7 @@ object SourceResolver {
         timeoutMs: Long,
         budgetMs: Long,
         resolutionAttempt: LxScriptPool.ResolutionAttempt,
-        accept: (Resolved) -> Boolean,
+        accept: suspend (Resolved) -> Boolean,
     ): Resolved? {
         val winner = LxScriptPool.race(context, song.source, scope, budgetMs, resolutionAttempt,
             request = { script, support ->
@@ -394,7 +407,7 @@ object SourceResolver {
                         JSONObject().put("type", parameter).put("musicInfo", song.raw), timeoutMs)
                 }
             },
-            accept = { result -> scriptResolution(song, result)?.let(accept) == true }) ?: return null
+            accept = { result -> scriptResolution(song, result)?.let { accept(it) } == true }) ?: return null
         return scriptResolution(song, winner)?.let { result ->
             observedQuality(result.resourceId)?.let { result.copy(quality = it) } ?: result
         }
@@ -431,7 +444,7 @@ object SourceResolver {
 
     private fun urlFromText(text: String): String? {
         val trimmed = text.trim()
-        if (trimmed.startsWith("http", ignoreCase = true)) return trimmed
+        if (trimmed.toHttpUrlOrNull() != null) return trimmed
         if (trimmed.startsWith("{")) {
             return runCatching { urlFromObject(JSONObject(trimmed)) }.getOrNull()
         }
@@ -440,8 +453,8 @@ object SourceResolver {
 
     private fun urlFromObject(obj: JSONObject): String? {
         for (key in listOf("url", "surl", "musicUrl", "play_url", "urlHttps")) {
-            val value = obj.optString(key)
-            if (value.startsWith("http", ignoreCase = true)) return value
+            val value = obj.optString(key).trim()
+            if (value.toHttpUrlOrNull() != null) return value
         }
         for (key in listOf("data", "result", "body")) {
             when (val nested = obj.opt(key)) {

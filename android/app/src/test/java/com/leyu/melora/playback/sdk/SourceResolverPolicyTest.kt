@@ -153,6 +153,8 @@ class SourceResolverPolicyTest {
     @Test
     fun extractUrlRejectsEmptyAndBusinessOnlyResults() {
         assertNull(SourceResolver.extractUrl(""))
+        assertNull(SourceResolver.extractUrl("http request failed"))
+        assertNull(SourceResolver.extractUrl(JSONObject().put("url", "http://")))
         assertNull(SourceResolver.extractUrl(JSONObject().put("code", 200)))
         assertNull(SourceResolver.extractUrl(JSONObject().put("data", JSONObject().put("message", "ok"))))
     }

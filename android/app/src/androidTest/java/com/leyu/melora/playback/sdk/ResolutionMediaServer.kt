@@ -1,0 +1,48 @@
+package com.leyu.melora.playback.sdk
+
+import androidx.test.platform.app.InstrumentationRegistry
+import java.io.Closeable
+import java.io.IOException
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.concurrent.thread
+
+/** 给真实解析和探测链路提供离线可重放的媒体、错误页与 HEAD 特例。 */
+internal class ResolutionMediaServer : Closeable {
+    private val server = ServerSocket(0, 16, InetAddress.getByName("127.0.0.1"))
+    private val audio = InstrumentationRegistry.getInstrumentation().context.assets
+        .open("audio/fixture-128.mp3").use { it.readBytes() }
+    private val html = "<html>unavailable</html>".toByteArray()
+    val url = "http://127.0.0.1:${server.localPort}"
+    val requests = CopyOnWriteArrayList<String>()
+    private val worker = thread(isDaemon = true, name = "resolution-media-fixture") {
+        while (!server.isClosed) {
+            try {
+                server.accept().use { peer ->
+                    peer.soTimeout = 2_000
+                    val reader = peer.getInputStream().bufferedReader()
+                    val line = reader.readLine() ?: return@use
+                    while (!reader.readLine().isNullOrEmpty()) Unit
+                    val (method, path) = line.split(' ', limit = 3)
+                    requests += "$method $path"
+                    val page = path.startsWith("/page-") || method == "HEAD" && path.startsWith("/head-page-")
+                    val status = if (method == "HEAD" && path.startsWith("/get-only-")) "405 Method Not Allowed" else "200 OK"
+                    val body = if (page) html else audio
+                    val mime = if (page) "text/html" else "audio/mpeg"
+                    val output = peer.getOutputStream()
+                    output.write(("HTTP/1.1 $status\r\nContent-Type: $mime\r\n" +
+                        "Content-Length: ${body.size}\r\nConnection: close\r\n\r\n").toByteArray(Charsets.US_ASCII))
+                    if (method != "HEAD") output.write(body)
+                }
+            } catch (_: IOException) {
+                // 竞速结束可能先取消客户端；下一条连接仍要正常服务。
+            }
+        }
+    }
+
+    override fun close() {
+        server.close()
+        worker.join(2_500)
+    }
+}

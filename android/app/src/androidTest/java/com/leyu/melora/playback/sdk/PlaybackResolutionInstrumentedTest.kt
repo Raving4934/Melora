@@ -33,16 +33,18 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/** 只解析合成脚本的example.test字符串，不联网、不播放、不读写用户源/媒体/设置。 */
+/** 合成脚本和回环媒体服务，不访问公网或用户的音源、媒体与设置。 */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @RunWith(AndroidJUnit4::class)
 class PlaybackResolutionInstrumentedTest {
     private val context = FixtureContext(InstrumentationRegistry.getInstrumentation().targetContext)
+    private lateinit var media: ResolutionMediaServer
     private val store get() = LxScriptStore(context)
     private val song = OnlineSong(JSONObject().put("source", "kw").put("songmid", "fixture")
         .put("name", "Fixture").put("singer", "Test Artist").put("_types", JSONObject().put("128k", JSONObject())))
 
     @Before fun setup() = runBlocking<Unit> {
+        media = ResolutionMediaServer()
         context.filesDir.deleteRecursively()
         context.filesDir.mkdirs()
         context.getSharedPreferences("lx-sources", 0).edit().clear().commit()
@@ -53,6 +55,7 @@ class PlaybackResolutionInstrumentedTest {
     }
 
     @After fun cleanup() = runBlocking<Unit> {
+        media.close()
         SourceResolver.clearCache()
         context.filesDir.deleteRecursively()
         context.filesDir.mkdirs()
@@ -125,11 +128,40 @@ class PlaybackResolutionInstrumentedTest {
         }
     }
 
+    @Test fun quickHtmlResultCannotWinOrSeedTheLowerQualityCache() = runBlocking<Unit> {
+        for (reported in listOf("320k", "128k")) {
+            media.requests.clear()
+            store.import("page.js", source("page", reportedQuality = reported))
+            store.import("music.js", source("music", responseDelay = 800))
+            store.setEnabled("page.js", true)
+            val song = chapterSong("page-before-media-$reported")
+            val result = SourceResolver.resolve(context, song, "320k", allowSwitch = true)
+            assertEquals("${media.url}/music-320k.flac", result.url)
+            assertEquals(result, SourceResolver.peek(song, "320k", allowSwitch = true))
+            assertTrue("应以 GET 复核网页", "GET /page-320k.flac" in media.requests)
+            assertFalse("正常媒体不应被重复 GET", "GET /music-320k.flac" in media.requests)
+        }
+    }
+
+    @Test fun headUnsupportedOrReturningAGenericPageKeepsPlayableGet() = runBlocking<Unit> {
+        for (name in listOf("head-page", "get-only")) {
+            store.import("music.js", source(name))
+            store.import("slow.js", source("slow", responseDelay = 1500))
+            store.setEnabled("music.js", true)
+            val result = SourceResolver.resolve(context, chapterSong(name), "320k", allowSwitch = true)
+            assertEquals("${media.url}/$name-320k.flac", result.url)
+            assertTrue("HEAD /$name-320k.flac" in media.requests)
+        }
+        assertTrue("GET /head-page-320k.flac" in media.requests)
+        assertFalse("GET /get-only-320k.flac" in media.requests)
+    }
+
     @Test fun highTierCanFinishAfterFormer128kHedgeWouldHaveWon() = runBlocking<Unit> {
         store.import("primary.js", source("primary", responseDelay = 1800))
         store.setEnabled("primary.js", true)
         val result = SourceResolver.resolve(context, song, "flac24bit", allowSwitch = false)
         assertEquals("flac24bit", result.quality)
+        assertTrue("单源直出不应预检", media.requests.isEmpty())
         assertTrue(result.resourceId.startsWith("lx:primary.js:"))
     }
 
@@ -216,14 +248,14 @@ class PlaybackResolutionInstrumentedTest {
             assertTrue(failed.resourceId.startsWith("lx:${primary.id}:"))
             assertEquals("同一脚本对不同 UID 返回相同 URL，应具有相同物理资源身份",
                 SourceResolver.scriptResourceId(primary.id, failed.url), failed.resourceId)
-            assertTrue(failed.url.startsWith("https://example.test/shared-$suffix-"))
+            assertTrue(failed.url.startsWith("${media.url}/shared-$suffix-"))
 
             SourceResolver.rejectResource(failed.resourceId)
             assertTrue(SourceResolver.isRejected(failed.resourceId))
             val recovered = SourceResolver.resolve(context, nextSong, "320k", allowSwitch = true)
             assertTrue("另一 UID 不得再次解析命中已拒绝 URL", recovered.resourceId.startsWith("lx:${backup.id}:"))
             assertNotEquals(failed.resourceId, recovered.resourceId)
-            assertTrue("未被拒绝的备用 URL 仍可解析", recovered.url.startsWith("https://example.test/good-$suffix-"))
+            assertTrue("未被拒绝的备用 URL 仍可解析", recovered.url.startsWith("${media.url}/good-$suffix-"))
             assertFalse(SourceResolver.isRejected(recovered.resourceId))
         } finally {
             store.remove(primary.id)
@@ -453,7 +485,7 @@ class PlaybackResolutionInstrumentedTest {
         }}});
         if ($initDelay > 0) setTimeout(initialize, $initDelay); else initialize();
         lx.on('request', ({info}) => new Promise(resolve => {
-            const result = {url: 'https://example.test/$name-' + info.type + '.flac',
+            const result = {url: '${media.url}/$name-' + info.type + '.flac',
                 type: ${reportedQuality?.let(JSONObject::quote) ?: "info.type"}};
             if ($responseDelay > 0) setTimeout(() => resolve(result), $responseDelay); else resolve(result);
         }));
@@ -474,7 +506,7 @@ class PlaybackResolutionInstrumentedTest {
         lx.on('request', ({info}) => {
             if (info.type === 'probe_count') return 'calls:' + musicUrlCalls;
             musicUrlCalls++;
-            const result = ${if (unavailable) "null" else "{url: 'https://example.test/$name-' + info.type + '.flac', type: ${JSONObject.quote(reportedQuality)}}"};
+            const result = ${if (unavailable) "null" else "{url: '${media.url}/$name-' + info.type + '.flac', type: ${JSONObject.quote(reportedQuality)}}"};
             if ($responseDelay > 0) return new Promise(resolve => setTimeout(() => resolve(result), $responseDelay));
             return Promise.resolve(result);
         });

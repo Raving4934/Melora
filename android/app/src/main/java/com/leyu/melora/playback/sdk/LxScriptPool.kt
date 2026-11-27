@@ -139,6 +139,9 @@ object LxScriptPool {
     /** 读取已安装的启用状态，不等待脚本初始化，也不为判断是否有源发起网络请求。 */
     fun hasEnabledScripts(context: Context): Boolean = store(context).hasEnabledScripts()
 
+    internal fun hasMultipleScripts(context: Context, includeDisabled: Boolean): Boolean =
+        store(context).list().count { includeDisabled || it.enabled } > 1
+
     internal fun declaredPlatforms(sources: JSONObject?): Map<String, PlatformSupport> = buildMap {
         sources?.keys()?.forEach { id ->
             val node = sources.optJSONObject(id) ?: return@forEach
@@ -480,7 +483,7 @@ object LxScriptPool {
         timeoutMs: Long,
         resolutionAttempt: ResolutionAttempt = ResolutionAttempt(),
         request: (LxScript, PlatformSupport) -> ScriptRequest?,
-        accept: (ScriptResult) -> Boolean,
+        accept: suspend (ScriptResult) -> Boolean,
     ): ScriptResult? = coroutineScope {
         val results = Channel<ScriptResult>(Channel.UNLIMITED)
         val attempted = mutableSetOf<String>()

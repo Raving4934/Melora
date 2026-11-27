@@ -31,6 +31,7 @@ import java.util.concurrent.TimeUnit
 import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
+import okhttp3.Request
 import kotlinx.coroutines.currentCoroutineContext
 import org.json.JSONObject
 import kotlinx.coroutines.CancellationException
@@ -81,6 +82,27 @@ object AudioCacheStore {
         // 保留原媒体上游的HTTP/1.1行为，与脚本宿主一致，避免顺带改变CDN协议协商。
         .protocols(listOf(Protocol.HTTP_1_1))
         .build()
+
+    /** 竞速时只排除 GET 也确认的错误页面。正常地址只读 HEAD，签名链接仍由播放器打开。 */
+    internal suspend fun returnsNonAudioPage(url: String): Boolean {
+        val request = Request.Builder().url(url).header("User-Agent", USER_AGENT).head().build()
+        return try {
+            withTimeoutOrNull(450L) {
+                fun isPage(response: okhttp3.Response) = response.isSuccessful &&
+                    isNonAudioResponseContentType(response.header("Content-Type"))
+                if (!mediaHttpClient.newCall(request).readResponse(::isPage)) return@withTimeoutOrNull false
+                // 部分 CDN 的 HEAD 返回通用网页，GET 却能正常播放。
+                val call = mediaHttpClient.newCall(request.newBuilder().get().header("Range", "bytes=0-511").build())
+                call.readResponse { response ->
+                    val page = isPage(response)
+                    if (response.body.contentLength() !in 0L..512L) call.cancel()
+                    page
+                }
+            } ?: false
+        } catch (_: IOException) {
+            false
+        }
+    }
 
     private val initLock = Any()
     private val metadataLock = Any()
