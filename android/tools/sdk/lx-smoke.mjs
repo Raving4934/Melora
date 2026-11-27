@@ -1,10 +1,9 @@
 // 音源脚本 Node 冒烟：加载 shim + 预置脚本，验证 inited 声明与 musicUrl 解析。
 // 用法：node lx-smoke.mjs <脚本文件> [source] [keyword]
 import fs from 'node:fs'
-import { setTimeout as sleep } from 'node:timers/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createNative } from './native-node.mjs'
+import { createNative, invokeLx, waitForLx } from './native-node.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const appAssets = path.resolve(here, '../../app/src/main/assets')
@@ -28,18 +27,7 @@ const shim = fs.readFileSync(path.join(appAssets, 'lx-shim.js'), 'utf8')
 const code = fs.readFileSync(scriptFile, 'utf8')
 ;(0, eval)(`(function(){ ${code} })()`)
 
-const pump = async (takeExpr, timeoutMs = 30_000) => {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    globalThis.__lxTick && globalThis.__lxTick()
-    const raw = (0, eval)(takeExpr)
-    if (raw) return JSON.parse(raw)
-    await sleep(20)
-  }
-  throw new Error('timeout')
-}
-
-const inited = globalThis.__lxInited
+const inited = await waitForLx(() => globalThis.__lxInited, 10_000)
 console.log('[inited]', JSON.stringify(inited).slice(0, 400))
 if (!inited || !inited.sources) {
   console.error('脚本未成功初始化')
@@ -55,12 +43,12 @@ const source = wantSource || Object.keys(inited.sources)[0]
 const qualitys = inited.sources[source]?.qualitys || ['320k']
 const quality = qualitys.find((q) => q === '320k') || qualitys[0]
 
-globalThis.__lxInvoke(JSON.stringify({
+const result = await invokeLx({
   source,
   action: 'musicUrl',
   info: { type: quality, musicInfo: song },
-}))
-const result = await pump('globalThis.__lxTakeResult()')
+}, 30_000)
+if (!result) throw new Error('timeout')
 console.log('[result]', JSON.stringify(result).slice(0, 400))
 if (!result.ok) process.exit(1)
 

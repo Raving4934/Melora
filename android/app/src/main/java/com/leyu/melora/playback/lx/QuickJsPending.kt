@@ -10,7 +10,10 @@ object QuickJsPending {
     external fun executePendingNative(runtimePtr: Long, contextPtr: Long): Int
 
     /** 等待runtime线程上的Promise任务全部退出，再允许调用方归还本次执行budget。 */
-    fun executePending(runtime: QuickJS, runtimePtr: Long, contextPtr: Long) {
-        runtime.runOnEventQueue { executePendingNative(runtimePtr, contextPtr) }
+    internal fun executePending(runtime: QuickJS, runtimePtr: Long, contextPtr: Long): Boolean {
+        var executed = 0
+        runtime.runOnEventQueue { executed = executePendingNative(runtimePtr, contextPtr) }
+        // 原生泵每批最多执行 1000 个任务；满批时先继续排空再等待外部事件。
+        return executed >= 1000
     }
 }

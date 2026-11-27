@@ -1,5 +1,5 @@
 // 乐屿 LX 脚本运行时 shim：实现 globalThis.lx 的 mobile 子集。
-// 同步宿主函数由 __lxNative 提供（HTTP/哈希/压缩/AES/随机数），Promise 由 Kotlin 侧任务泵驱动。
+// 网络完成事件、计时器与 Promise 由 Kotlin 侧任务泵驱动。
 (() => {
   'use strict'
 
@@ -9,6 +9,8 @@
   let invokeGeneration = 0
   const scopes = native.scope
   let requestScope = ''
+  const httpCallbacks = new Map()
+  let httpSequence = 0
 
   const inScope = (scope, callback, args) => {
     if (scope && scope !== requestScope) return
@@ -69,7 +71,9 @@
 
   globalThis.__lxEndRequest = (id) => {
     const scope = requestScope
-    if (!scope || scope !== id) return
+    if (scope && scope !== id) return
+    httpCallbacks.clear()
+    if (!scope) return
     scopes.end(id)
     for (const [timerId, timer] of timers) {
       if (timer.scope === scope) timers.delete(timerId)
@@ -80,10 +84,27 @@
   }
 
   globalThis.__lxTick = () => {
+    const completion = native.takeHttpResponse()
+    if (completion) {
+      const raw = JSON.parse(completion)
+      const pending = httpCallbacks.get(raw.requestId)
+      if (pending) {
+        httpCallbacks.delete(raw.requestId)
+        inScope(pending.scope, pending.deliver, [raw])
+      }
+      return -2
+    }
     const now = Date.now()
+    let fired = false
+    let earliest = Infinity
     // 回调可以取消自身/其它定时器；快照避免下标移动漏跑相邻回调。
     for (const timer of [...timers.values()]) {
-      if (!timers.has(timer.id) || timer.at > now) continue
+      if (!timers.has(timer.id)) continue
+      if (timer.at > now) {
+        earliest = Math.min(earliest, timer.at)
+        continue
+      }
+      fired = true
       if (timer.repeat > 0) timer.at = now + timer.repeat
       else timers.delete(timer.id)
       try {
@@ -92,7 +113,11 @@
         globalThis.console.error('定时器回调异常: ' + String((error && error.message) || error))
       }
     }
+    // -2 表示有事件已分发，需要先排空其微任务。-1 表示没有计时器。
+    return fired ? -2 : earliest === Infinity ? -1 : Math.min(2147483647, Math.ceil(earliest - now))
   }
+
+  globalThis.__lxHasPendingHttp = () => httpCallbacks.size > 0
 
   const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 
@@ -231,69 +256,72 @@
   }
 
   function request(url, options, callback) {
-    const run = () => {
+    const task = new Promise((resolve, reject) => {
       const opts = options || {}
-      const payload = {
-        url: String(url),
-        method: (opts.method || 'get').toUpperCase(),
-        headers: Object.assign({}, defaultRequestHeaders, opts.headers || {}),
-        timeout: opts.timeout || 15000,
-        responseType: opts.responseType || '',
-        maxResponseBytes: opts.maxResponseBytes,
-      }
-      if (opts.body != null) {
-        // 与 LX 宿主一致：对象/数组 body 自动 JSON 序列化后再发送
-        let body = opts.body
-        if (
-          typeof body === 'object' &&
-          !(body instanceof ArrayBuffer) &&
-          !ArrayBuffer.isView(body)
-        ) {
-          body = JSON.stringify(body)
-        }
-        payload.body = toBase64(body)
-      }
-      if (opts.form) payload.form = opts.form
-      const raw = JSON.parse(native.http(JSON.stringify(payload)))
-      if (raw.error) throw new Error(raw.error)
-      const rawBuffer = LxBuffer.from(base64ToBytes(raw.raw || ''))
-      const response = {
-        statusCode: raw.statusCode,
-        statusMessage: raw.statusMessage || '',
-        headers: raw.headers || {},
-        url: raw.finalUrl || String(url),
-        raw: rawBuffer,
-      }
-      // 与 LX 宿主一致：默认把文本响应尝试 JSON.parse 为对象；binary:true 才返回 Buffer
+      const payload = requestPayload(url, opts)
+      const id = String(++httpSequence)
+      const scope = scopes.current()
+      const failure = native.startHttp(JSON.stringify(payload), scope, id)
+      if (failure) throw new Error(JSON.parse(failure).error)
+      httpCallbacks.set(id, {
+        scope,
+        deliver(raw) {
+          try {
+            if (raw.error) throw new Error(raw.error)
+            resolve(requestResponse(raw, payload, opts.binary))
+          } catch (error) {
+            reject(error)
+          }
+        },
+      })
+    })
+    if (typeof callback !== 'function') return task
+    task.then(
+      (response) => callback(null, response, response.body),
+      (error) => callback(error, null, null),
+    )
+  }
+
+  function requestPayload(url, opts) {
+    const payload = {
+      url: String(url),
+      method: (opts.method || 'get').toUpperCase(),
+      headers: Object.assign({}, defaultRequestHeaders, opts.headers || {}),
+      timeout: opts.timeout || 15000,
+      responseType: opts.responseType || '',
+      maxResponseBytes: opts.maxResponseBytes,
+    }
+    if (opts.body != null) {
+      // 与 LX 宿主一致：对象/数组 body 自动 JSON 序列化后再发送。
+      const body = opts.body
+      const jsonBody = typeof body === 'object' && !(body instanceof ArrayBuffer) && !ArrayBuffer.isView(body)
+      payload.body = toBase64(jsonBody ? JSON.stringify(body) : body)
+    }
+    if (opts.form) payload.form = opts.form
+    return payload
+  }
+
+  function requestResponse(raw, payload, binary) {
+    const rawBuffer = LxBuffer.from(base64ToBytes(raw.raw || ''))
+    const response = {
+      statusCode: raw.statusCode,
+      statusMessage: raw.statusMessage || '',
+      headers: raw.headers || {},
+      url: raw.finalUrl || payload.url,
+      raw: rawBuffer,
+    }
+    if (binary === true) response.body = rawBuffer
+    else if (payload.responseType === 'arraybuffer') response.body = rawBuffer.toArrayBuffer()
+    else {
       const text = rawBuffer.toString()
-      if (opts.binary === true) response.body = rawBuffer
-      else if (payload.responseType === 'arraybuffer') response.body = rawBuffer.toArrayBuffer()
-      else if (payload.responseType === 'text') response.body = text
-      else {
+      response.body = text
+      if (payload.responseType !== 'text') {
         try {
           response.body = JSON.parse(text)
-        } catch (error) {
-          response.body = text
-        }
+        } catch (error) { /* LX retains non-JSON responses as text. */ }
       }
-      return response
     }
-    if (typeof callback === 'function') {
-      try {
-        const response = run()
-        callback(null, response, response.body)
-      } catch (error) {
-        callback(error, null, null)
-      }
-      return
-    }
-    return new Promise((resolve, reject) => {
-      try {
-        resolve(run())
-      } catch (error) {
-        reject(error)
-      }
-    })
+    return response
   }
 
   const utils = {

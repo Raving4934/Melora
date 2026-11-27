@@ -1,7 +1,6 @@
 // 屿溪 kw 排查 3：Proxy 记录脚本对响应的读取；可选把 201 重写为 200
 import fs from 'node:fs'
-import { setTimeout as sleep } from 'node:timers/promises'
-import { createNative } from './native-node.mjs'
+import { createNative, invokeLx, waitForLx } from './native-node.mjs'
 
 const REWRITE_STATUS = process.env.REWRITE_STATUS === '1'
 
@@ -49,27 +48,11 @@ globalThis.lx.request = (url, options, callback) => {
 const code = fs.readFileSync('/tmp/opencode/phone-sources/屿溪-终章__v_0.0.0.js', 'utf8')
 ;(0, eval)(`(function(){ ${code} })()`)
 
-const pump = async (expr, timeoutMs) => {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    globalThis.__lxTick && globalThis.__lxTick()
-    const raw = (0, eval)(expr)
-    if (raw) return JSON.parse(raw)
-    await sleep(20)
-  }
-  return null
-}
-
-const initDeadline = Date.now() + 12_000
-while (!globalThis.__lxInited && Date.now() < initDeadline) {
-  globalThis.__lxTick && globalThis.__lxTick()
-  await sleep(30)
-}
+await waitForLx(() => globalThis.__lxInited, 12_000)
 
 const sdk = await import('./search-helper.mjs')
 const song = await sdk.searchSong('kw', '晴天 周杰伦')
 console.log('--- resolve (REWRITE_STATUS=' + REWRITE_STATUS + ') ---')
-globalThis.__lxInvoke(JSON.stringify({ source: 'kw', action: 'musicUrl', info: { type: '320k', musicInfo: song } }))
-const res = await pump('globalThis.__lxTakeResult()', 20_000)
+const res = await invokeLx({ source: 'kw', action: 'musicUrl', info: { type: '320k', musicInfo: song } }, 20_000)
 console.log('[result]', JSON.stringify(res).slice(0, 260))
 process.exit(0)

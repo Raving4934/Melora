@@ -1,5 +1,6 @@
 package com.leyu.melora.playback.lx
 
+import okhttp3.Dispatcher
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -75,7 +76,7 @@ class LxHostTest {
             error("OkHttp must not be entered")
         })
         val token = host.newRequestToken()
-        host.cancelRequest(token)
+        token.cancel()
 
         val result = JSONObject(host.withinRequestDeadline(token, monotonicDeadlineAfter(5_000)) { host.http(requestPayload()) })
 
@@ -104,17 +105,52 @@ class LxHostTest {
             }
             assertTrue(entered.await(1, TimeUnit.SECONDS))
 
-            host.cancelRequest(otherToken)
+            otherToken.cancel()
             assertFalse(observedCancellation.await(100, TimeUnit.MILLISECONDS))
 
-            host.cancelRequest(token)
+            token.cancel()
             assertTrue(observedCancellation.await(1, TimeUnit.SECONDS))
             val result = JSONObject(future.get(1, TimeUnit.SECONDS))
             assertTrue(result.getString("error").contains("cancelled"))
             assertEquals(1, calls.get())
         } finally {
-            host.cancelRequest(token)
+            token.cancel()
             executor.shutdownNow()
+        }
+    }
+
+    @Test(timeout = 4_000)
+    fun queuedHttpDeadlineExpiresWhileAnotherCallIsStillRunning() {
+        val entered = CountDownLatch(1)
+        val cancelled = CountDownLatch(1)
+        val calls = AtomicInteger()
+        val dispatcher = Dispatcher().apply { maxRequests = 1 }
+        val client = client { chain ->
+            calls.incrementAndGet()
+            entered.countDown()
+            while (!chain.call().isCanceled()) Thread.sleep(1)
+            cancelled.countDown()
+            throw IOException("cancelled")
+        }.newBuilder().dispatcher(dispatcher).build()
+        val host = LxHost(client)
+        val token = host.newRequestToken()
+        try {
+            host.withinRequestDeadline(token, monotonicDeadlineAfter(3_000)) {
+                assertEquals("", host.startHttp(requestPayload(), token.scopeId, "running"))
+                assertTrue(entered.await(1, TimeUnit.SECONDS))
+                val queued = JSONObject(requestPayload()).put("timeout", 120).toString()
+                assertEquals("", host.startHttp(queued, token.scopeId, "queued"))
+                token.awaitHttpResponse(monotonicDeadlineAfter(1_000))
+                val result = JSONObject(host.takeHttpResponse())
+                assertEquals("queued", result.getString("requestId"))
+                assertTrue(result.getString("error").contains("超时"))
+                assertEquals(1, calls.get())
+                assertEquals(1L, cancelled.count)
+            }
+            assertTrue(cancelled.await(1, TimeUnit.SECONDS))
+        } finally {
+            token.cancel()
+            dispatcher.executorService.shutdownNow()
         }
     }
 
@@ -125,6 +161,51 @@ class LxHostTest {
         assertFalse(result.has("error"))
         assertEquals(64, Base64.getDecoder().decode(result.getString("raw")).size)
         assertEquals(800, effectiveHttpTimeoutMs(800, Long.MAX_VALUE))
+    }
+
+    @Test(timeout = 5_000)
+    fun asyncRequiresTheWholeBodyUnlessTheScriptRequestsAPrefix() {
+        val host = LxHost(clientReturning { generatedBody(HTTP_LIMIT + 1) })
+        val token = host.newRequestToken()
+        host.withinRequestDeadline(token, monotonicDeadlineAfter(4_000)) {
+            val full = asyncResult(host, token, "full")
+            assertTrue(full.getString("error").contains("8 MiB"))
+            assertFalse(full.has("raw"))
+
+            val payload = JSONObject(requestPayload()).put("maxResponseBytes", 64).toString()
+            val prefix = asyncResult(host, token, "prefix", payload)
+            assertEquals(64, Base64.getDecoder().decode(prefix.getString("raw")).size)
+        }
+    }
+
+    @Test(timeout = 6_000)
+    fun completedAsyncBodiesShareTheBufferBudgetAndRetirementReleasesIt() {
+        fun withBufferedBody(block: (LxRequestToken) -> Unit) {
+            val host = LxHost(clientReturning { generatedBody(HTTP_LIMIT) })
+            val token = host.newRequestToken()
+            host.withinRequestDeadline(token, monotonicDeadlineAfter(5_000)) {
+                assertEquals("", host.startHttp(requestPayload(), token.scopeId, "large"))
+                token.awaitHttpResponse(monotonicDeadlineAfter(3_000))
+                block(token)
+            }
+        }
+
+        withBufferedBody { first ->
+            withBufferedBody {
+                val host = LxHost(clientReturning { "ok".toResponseBody() })
+                val token = host.newRequestToken()
+                host.withinRequestDeadline(token, monotonicDeadlineAfter(2_000)) {
+                    val rejected = asyncResult(host, token, "rejected")
+                    assertTrue(rejected.getString("error").contains("16 MiB"))
+                    assertFalse(rejected.has("raw"))
+                    assertEquals(200, JSONObject(host.http(requestPayload())).getInt("statusCode"))
+
+                    first.cancel()
+                    val retried = asyncResult(host, token, "retry")
+                    assertEquals("ok", String(Base64.getDecoder().decode(retried.getString("raw"))))
+                }
+            }
+        }
     }
 
     @Test
@@ -247,14 +328,27 @@ class LxHostTest {
         .retryOnConnectionFailure(true)
         .build()
 
-    private fun clientReturning(body: ResponseBody): OkHttpClient = client { chain ->
+    private fun clientReturning(body: ResponseBody): OkHttpClient = clientReturning { body }
+
+    private fun clientReturning(body: () -> ResponseBody): OkHttpClient = client { chain ->
         Response.Builder()
             .request(chain.request())
             .protocol(Protocol.HTTP_1_1)
             .code(200)
             .message("OK")
-            .body(body)
+            .body(body())
             .build()
+    }
+
+    private fun asyncResult(
+        host: LxHost,
+        token: LxRequestToken,
+        id: String,
+        payload: String = requestPayload(),
+    ): JSONObject {
+        assertEquals("", host.startHttp(payload, token.scopeId, id))
+        token.awaitHttpResponse(monotonicDeadlineAfter(1_000))
+        return JSONObject(host.takeHttpResponse()).also { assertEquals(id, it.getString("requestId")) }
     }
 
     private fun generatedBody(size: Long): ResponseBody = object : ResponseBody() {

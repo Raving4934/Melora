@@ -1,10 +1,9 @@
 // 单脚本 × 全平台解析测试：输出每平台 RESULT 行（PLAY/BADURL/FAIL/SKIP）。
 import fs from 'node:fs'
 import { execFileSync } from 'node:child_process'
-import { setTimeout as sleep } from 'node:timers/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createNative } from './native-node.mjs'
+import { createNative, invokeLx, waitForLx } from './native-node.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const appAssets = path.resolve(here, '../../app/src/main/assets')
@@ -21,24 +20,7 @@ const shim = fs.readFileSync(path.join(appAssets, 'lx-shim.js'), 'utf8')
 const code = fs.readFileSync(scriptFile, 'utf8')
 ;(0, eval)(`(function(){ ${code} })()`)
 
-const pump = async (takeExpr, timeoutMs) => {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    globalThis.__lxTick && globalThis.__lxTick()
-    const raw = (0, eval)(takeExpr)
-    if (raw) return JSON.parse(raw)
-    await sleep(20)
-  }
-  return null
-}
-
-let inited = globalThis.__lxInited
-const initDeadline = Date.now() + 10_000
-while (!inited && Date.now() < initDeadline) {
-  globalThis.__lxTick && globalThis.__lxTick()
-  await sleep(50)
-  inited = globalThis.__lxInited
-}
+const inited = await waitForLx(() => globalThis.__lxInited, 10_000)
 if (!inited?.sources) {
   console.log('INIT_FAIL 脚本未完成初始化')
   process.exit(0)
@@ -63,8 +45,7 @@ for (const source of ['kw', 'kg', 'wy', 'tx', 'mg']) {
   const qualitys = support.qualitys || []
   const quality = qualitys.includes('320k') ? '320k' : qualitys.includes('128k') ? '128k' : qualitys[0] || '128k'
   const t0 = Date.now()
-  globalThis.__lxInvoke(JSON.stringify({ source, action: 'musicUrl', info: { type: quality, musicInfo: song } }))
-  const res = await pump('globalThis.__lxTakeResult()', 35_000)
+  const res = await invokeLx({ source, action: 'musicUrl', info: { type: quality, musicInfo: song } }, 35_000)
   const ms = Date.now() - t0
   if (!res || !res.ok) {
     console.log(`RESULT ${source} FAIL ${ms}ms ${res?.error || 'timeout'}`)

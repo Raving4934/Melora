@@ -253,11 +253,18 @@ int main(int argc, char **argv) {
         evalChecked(ctx, R"JS(
             let clock = 0;
             const calls = [];
+            const replies = [];
             Date.now = () => clock;
             __lxNative.http = (payload, scope) => {
                 calls.push(Object.assign(JSON.parse(payload), {scope}));
                 return JSON.stringify({statusCode:200, raw:''});
             };
+            __lxNative.startHttp = (payload, scope, requestId) => {
+                calls.push(Object.assign(JSON.parse(payload), {scope}));
+                replies.push(JSON.stringify({requestId, statusCode:200, raw:''}));
+                return '';
+            };
+            __lxNative.takeHttpResponse = () => replies.shift() || '';
             __lxNative.log = () => {};
         )JS", "fixture.js");
         evalFile(ctx, argv[3]);

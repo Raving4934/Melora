@@ -6,7 +6,11 @@ const equal = (actual, expected, message = '') => {
 }
 const begin = __lxBeginRequest
 const end = __lxEndRequest
-const tick = time => { clock = time; __lxTick(); drain() }
+const tick = time => {
+  clock = time
+  drain()
+  while (__lxTick() === -2) drain()
+}
 const urls = () => calls.map(call => call.url)
 const assertThrows = fn => {
   let threw = false
@@ -103,6 +107,23 @@ const cases = {
     equal(calls.length, 4)
     equal(calls.every(call => call.scope === '1'), true)
     end('1')
+  },
+  lateHttp() {
+    let oldCallbacks = 0, status = 0
+    begin('1')
+    lx.request('old/promise').then(() => oldCallbacks++)
+    lx.request('old/callback', {}, () => oldCallbacks++)
+    end('1')
+    begin('2')
+    lx.request('live/request', {}, (error, response) => {
+      if (error) throw error
+      status = response.statusCode
+    })
+    tick(0)
+    equal(oldCallbacks, 0)
+    equal(status, 200)
+    equal(calls.map(call => call.scope), ['1', '1', '2'])
+    end('2')
   },
   staleCleanup() {
     begin('1'); end('1'); begin('2'); end('1')

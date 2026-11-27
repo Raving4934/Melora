@@ -40,6 +40,10 @@ class LxScriptEngine(private val context: Context) : Closeable {
             native.registerJavaMethod(JavaCallback { _, args ->
                 host.http(args.getString(0), args.getString(1))
             }, "http")
+            native.registerJavaMethod(JavaCallback { _, args ->
+                host.startHttp(args.getString(0), args.getString(1), args.getString(2))
+            }, "startHttp")
+            native.registerJavaMethod(JavaCallback { _, _ -> host.takeHttpResponse() }, "takeHttpResponse")
             native.registerJavaMethod(JavaCallback { _, args -> host.hash(args.getString(0), args.getString(1)) }, "hash")
             native.registerJavaMethod(JavaCallback { _, args -> host.zlibInflate(args.getString(0)) }, "zlibInflate")
             native.registerJavaMethod(JavaCallback { _, args -> host.zlibDeflate(args.getString(0)) }, "zlibDeflate")
@@ -67,15 +71,34 @@ class LxScriptEngine(private val context: Context) : Closeable {
     }
 
     fun load(code: String, fileName: String, timeoutMs: Long = 3_000) {
-        executeWithBudget(host.newRequestToken(), timeoutMs, "脚本加载超时") {
-            evaluateScript(code, fileName)
+        val token = host.newRequestToken()
+        executeWithBudget(token, timeoutMs, "脚本加载超时") { deadlineNanos ->
+            evaluateAndDrainStartupHttp(code, fileName, deadlineNanos, token, "脚本加载超时")
         }
     }
 
-    private fun evaluateScript(code: String, fileName: String) {
+    private fun evaluateAndDrainStartupHttp(
+        code: String,
+        fileName: String,
+        deadlineNanos: Long,
+        token: LxRequestToken,
+        timeoutMessage: String,
+        readyExpression: String? = null,
+    ): String {
+        ensureActive(token)
         // 部分脚本在顶层读取 lx.currentScriptInfo.version，先注入脚本真实元信息再执行。
         jsContext.executeVoidScript("globalThis.lx.currentScriptInfo = ${JSONObject(parseLxScriptMetadata(code))}", null)
         jsContext.executeVoidScript(code, fileName)
+        if (readyExpression == null && !jsContext.executeBooleanScript("globalThis.__lxHasPendingHttp()", null)) {
+            return ""
+        }
+        // 脚本可以先声明能力，之后的 musicUrl 才等待初始化 HTTP 的结果。
+        return pumpUntil(
+            "globalThis.__lxHasPendingHttp() ? '' : (${readyExpression ?: "'ready'"})",
+            deadlineNanos,
+            token,
+            timeoutMessage,
+        )
     }
 
     fun inited(timeoutMs: Long = 3_000): JSONObject? =
@@ -92,7 +115,7 @@ class LxScriptEngine(private val context: Context) : Closeable {
             task.await()
         } finally {
             // 取消只写原子中断标志；实际JS执行与runtime关闭仍由QuickJS线程串行处理。
-            host.cancelRequest(token)
+            token.cancel()
             token.runtimeTicket.get().takeIf { it != 0L }?.let(quickJs::interruptExecution)
         }
     }
@@ -113,16 +136,14 @@ class LxScriptEngine(private val context: Context) : Closeable {
         fileName: String,
         deadlineNanos: Long,
         token: LxRequestToken,
-    ): JSONObject {
-        ensureActive(token)
-        evaluateScript(code, fileName)
-        return JSONObject(pumpUntil(
-            "globalThis.__lxInited && JSON.stringify(globalThis.__lxInited)",
-            deadlineNanos,
-            token,
-            "脚本初始化超时",
-        ))
-    }
+    ): JSONObject = JSONObject(evaluateAndDrainStartupHttp(
+        code,
+        fileName,
+        deadlineNanos,
+        token,
+        "脚本初始化超时",
+        readyExpression = "globalThis.__lxInited && JSON.stringify(globalThis.__lxInited)",
+    ))
 
     /** 手动“检查脚本”时执行并检查音源协议；初始化及协议检查共享一个总budget。 */
     internal suspend fun inspectSource(code: String, fileName: String, timeoutMs: Long = 8_000): JSONObject =
@@ -223,12 +244,15 @@ class LxScriptEngine(private val context: Context) : Closeable {
         block: (Long) -> T,
     ): T {
         val deadlineNanos = monotonicDeadlineAfter(timeoutMs)
+        // 初始化 HTTP 恰好超时时，给错误回调及随后可返回的能力声明留出执行时间。
+        val replyReserveMs = if (requestScoped) 0L else (timeoutMs / 5).coerceIn(0L, 200L)
+        val asyncDeadlineNanos = deadlineNanos - TimeUnit.MILLISECONDS.toNanos(replyReserveMs)
         val ticket = quickJs.beginInterruptibleExecution(deadlineNanos)
         token.runtimeTicket.set(ticket)
         var executionFailure: Throwable? = null
         try {
             if (token.cancelled.get()) quickJs.interruptExecution(ticket)
-            return host.withinRequestDeadline(token, deadlineNanos) {
+            return host.withinRequestDeadline(token, deadlineNanos, asyncDeadlineNanos) {
                 try {
                     ensureActive(token)
                     if (requestScoped) {
@@ -254,19 +278,17 @@ class LxScriptEngine(private val context: Context) : Closeable {
         } finally {
             token.runtimeTicket.compareAndSet(ticket, 0)
             quickJs.endInterruptibleExecution(ticket)
-            if (requestScoped) {
+            try {
+                // 初始化也能发起 HTTP。所有执行结束时都回收尚未交付的网络回调。
+                val cleanupTicket = quickJs.beginInterruptibleExecution(monotonicDeadlineAfter(250))
                 try {
-                    // 中断标志先清除，再在所有者队列中回收；清理仍有独立上限，不能无限执行 JS。
-                    val cleanupTicket = quickJs.beginInterruptibleExecution(monotonicDeadlineAfter(250))
-                    try {
-                        jsContext.executeVoidScript("globalThis.__lxEndRequest(${JSONObject.quote(token.scopeId)})", null)
-                    } finally {
-                        quickJs.endInterruptibleExecution(cleanupTicket)
-                    }
-                } catch (cleanupFailure: Throwable) {
-                    if (executionFailure == null) throw cleanupFailure
-                    if (cleanupFailure !== executionFailure) executionFailure.addSuppressed(cleanupFailure)
+                    jsContext.executeVoidScript("globalThis.__lxEndRequest(${JSONObject.quote(token.scopeId)})", null)
+                } finally {
+                    quickJs.endInterruptibleExecution(cleanupTicket)
                 }
+            } catch (cleanupFailure: Throwable) {
+                if (executionFailure == null) throw cleanupFailure
+                if (cleanupFailure !== executionFailure) executionFailure.addSuppressed(cleanupFailure)
             }
         }
     }
@@ -275,7 +297,7 @@ class LxScriptEngine(private val context: Context) : Closeable {
         if (token.cancelled.get()) throw CancellationException("脚本请求已取消")
     }
 
-    // 驱动Promise微任务与JS定时器；同步JS及整个泵共享同一个单调deadline。
+    // 驱动 Promise、HTTP 回调与计时器。空闲时等待下个事件或截止时间。
     private fun pumpUntil(
         expression: String,
         deadlineNanos: Long,
@@ -285,18 +307,17 @@ class LxScriptEngine(private val context: Context) : Closeable {
         while (true) {
             ensureActive(token)
             if (System.nanoTime() >= deadlineNanos) throw LxScriptTimeoutException(timeoutMessage)
-            QuickJsPending.executePending(quickJs, runtimePtr, contextPtr)
-            ensureActive(token)
-            if (System.nanoTime() >= deadlineNanos) throw LxScriptTimeoutException(timeoutMessage)
-            runCatching { jsContext.executeVoidScript("globalThis.__lxTick && globalThis.__lxTick()", null) }
+            val moreJobs = QuickJsPending.executePending(quickJs, runtimePtr, contextPtr)
             ensureActive(token)
             if (System.nanoTime() >= deadlineNanos) throw LxScriptTimeoutException(timeoutMessage)
             val raw = jsContext.executeStringScript(expression, null)
             ensureActive(token)
             if (!raw.isNullOrEmpty()) return raw
-            val remainingNanos = deadlineNanos - System.nanoTime()
-            if (remainingNanos <= 0L) throw LxScriptTimeoutException(timeoutMessage)
-            Thread.sleep(minOf(4L, TimeUnit.NANOSECONDS.toMillis(remainingNanos).coerceAtLeast(1L)))
+            val delayMs = jsContext.executeIntegerScript("globalThis.__lxTick()", null)
+            if (delayMs == -2 || moreJobs) continue
+            val wakeup = if (delayMs < 0) deadlineNanos
+            else minOf(deadlineNanos, monotonicDeadlineAfter(delayMs.toLong()))
+            token.awaitHttpResponse(wakeup)
         }
     }
 

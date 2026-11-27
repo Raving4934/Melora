@@ -27,7 +27,7 @@ CASES = (
 
 SCOPE_CASES = (
     "timers", "initializationTimers", "pendingThen", "queuedJobs", "pendingAwait",
-    "pendingCatchFinally", "initializationAwait", "liveRequest", "staleCleanup",
+    "pendingCatchFinally", "initializationAwait", "liveRequest", "lateHttp", "staleCleanup",
     "nestedAwait", "thenableAwait", "asyncGenerator", "identities",
     "restoreAfterException", "manyReusesAndGc", "closeWithPendingJobs",
     "reversedTokenOrder", "initializationAdoption", "retiredAdoption",

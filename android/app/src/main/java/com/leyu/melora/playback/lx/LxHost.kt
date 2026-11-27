@@ -4,14 +4,17 @@ import android.util.Base64
 import android.util.Log
 import android.webkit.JavascriptInterface
 import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import okhttp3.ResponseBody
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.io.Closeable
 import java.io.IOException
 import java.nio.charset.StandardCharsets
 import java.security.KeyFactory
@@ -21,7 +24,7 @@ import java.security.spec.X509EncodedKeySpec
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.locks.ReentrantLock
 import java.util.Base64 as JavaBase64
 import java.util.zip.DataFormatException
 import java.util.zip.Deflater
@@ -29,30 +32,134 @@ import java.util.zip.Inflater
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
+import kotlin.concurrent.withLock
 
 private const val MAX_ZLIB_INPUT_BYTES = 8 * 1024 * 1024
 private const val MAX_ZLIB_OUTPUT_BYTES = 16 * 1024 * 1024
+private const val MAX_OUTSTANDING_HTTP = 32
+private const val MAX_BUFFERED_HTTP_BODY_BYTES = 16L * 1024 * 1024
+private const val HTTP_TIMEOUT = "http 请求超时"
+
+private val bufferedHttpBodyBytes = AtomicLong()
+
+/** 异步读入与排队交付共用预算，按原始响应体字节计量。 */
+internal class LxHttpBodyReservation : Closeable {
+    private var reservedBytes = 0L
+
+    fun reserve(bytes: Int) {
+        while (true) {
+            val buffered = bufferedHttpBodyBytes.get()
+            if (bytes > MAX_BUFFERED_HTTP_BODY_BYTES - buffered) {
+                throw IOException("并行 HTTP 响应体超过 16 MiB 缓冲上限")
+            }
+            if (bufferedHttpBodyBytes.compareAndSet(buffered, buffered + bytes)) {
+                reservedBytes += bytes
+                return
+            }
+        }
+    }
+
+    override fun close() {
+        bufferedHttpBodyBytes.addAndGet(-reservedBytes)
+        reservedBytes = 0L
+    }
+}
+
+internal class LxHttpResponse(
+    val json: String,
+    private val body: LxHttpBodyReservation? = null,
+) : Closeable {
+    override fun close() {
+        body?.close()
+    }
+}
+
+// 部分音源 CDN 的 HTTP/2 会断流。各引擎统一使用 HTTP/1.1 和同一连接池。
+private val sharedHttpClient by lazy {
+    OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .protocols(listOf(Protocol.HTTP_1_1))
+        .retryOnConnectionFailure(true)
+        .build()
+}
 
 internal class LxRequestToken(internal val scopeId: String) {
     internal val cancelled = AtomicBoolean(false)
-    internal val currentCall = AtomicReference<Call?>(null)
     internal val runtimeTicket = AtomicLong(0)
+    private val lock = ReentrantLock()
+    private val changed = lock.newCondition()
+    private val calls = mutableMapOf<Call, PendingHttp?>()
+    private val responses = ArrayDeque<LxHttpResponse>()
+
+    internal fun register(call: Call, pending: PendingHttp? = null) = lock.withLock {
+        if (cancelled.get()) throw IOException("脚本请求已取消")
+        if (calls.size + responses.size >= MAX_OUTSTANDING_HTTP) throw IOException("并行 HTTP 请求过多")
+        calls[call] = pending
+    }
+
+    internal fun finish(call: Call, response: LxHttpResponse? = null) {
+        lock.withLock {
+            if (calls.remove(call) != null && response != null) {
+                responses.addLast(response)
+                changed.signal()
+                return
+            }
+        }
+        response?.close()
+    }
+
+    internal fun takeHttpResponse(): String? {
+        val (call, pending) = lock.withLock {
+            responses.removeFirstOrNull()?.let { return it.use { response -> response.json } }
+            val now = System.nanoTime()
+            val expired = calls.entries.firstOrNull { (_, pending) ->
+                pending != null && pending.deadlineNanos <= now
+            } ?: return null
+            val call = expired.key
+            call to checkNotNull(calls.remove(call))
+        }
+        call.cancel()
+        return pending.result(JSONObject().put("error", HTTP_TIMEOUT))
+    }
+
+    internal fun awaitHttpResponse(wakeupNanos: Long) = lock.withLock {
+        while (!cancelled.get() && responses.isEmpty()) {
+            var wakeup = wakeupNanos
+            calls.values.forEach { if (it != null) wakeup = minOf(wakeup, it.deadlineNanos) }
+            val remaining = wakeup - System.nanoTime()
+            if (remaining <= 0L) break
+            changed.awaitNanos(remaining)
+        }
+    }
+
+    internal fun cancel() {
+        val cancelledCalls = lock.withLock {
+            cancelled.set(true)
+            val snapshot = calls.keys.toList()
+            calls.clear()
+            responses.forEach(LxHttpResponse::close)
+            responses.clear()
+            changed.signal()
+            snapshot
+        }
+        cancelledCalls.forEach(Call::cancel)
+    }
+
+    internal class PendingHttp(val id: String, val deadlineNanos: Long) {
+        fun result(response: JSONObject): String = response.put("requestId", id).toString()
+    }
 }
 
 private data class LxRequestContext(
     val token: LxRequestToken,
     val deadlineNanos: Long,
+    val asyncDeadlineNanos: Long,
 )
 
-// 提供给音源脚本的同步宿主能力；运行在脚本引擎线程，网络调用串行执行。
+// LX 的 HTTP 回调由引擎线程交付。内置目录 SDK 同步调用相同的 HTTP 传输。
 class LxHost internal constructor(
-    // 部分音源 CDN 对 HTTP/2 支持不稳定（unexpected end of stream），强制 HTTP/1.1 更可靠。
-    private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .protocols(listOf(Protocol.HTTP_1_1))
-        .retryOnConnectionFailure(true)
-        .build(),
+    private val client: OkHttpClient = sharedHttpClient,
 ) {
     private val random = SecureRandom()
     private val requestSequence = AtomicLong(0)
@@ -62,28 +169,20 @@ class LxHost internal constructor(
 
     internal fun newRequestToken(): LxRequestToken = LxRequestToken(requestSequence.incrementAndGet().toString())
 
-    /**
-     * 取消指定脚本调用当前正在执行的 OkHttp Call。
-     * token 自带调用状态，不能误伤同一引擎外的其它请求。
-     */
-    internal fun cancelRequest(token: LxRequestToken) {
-        token.cancelled.set(true)
-        token.currentCall.get()?.cancel()
-    }
-
     /** 媒体脚本的JS执行与宿主HTTP共享调用方创建的同一单调时钟deadline。 */
     internal fun <T> withinRequestDeadline(
         token: LxRequestToken,
         deadlineNanos: Long,
+        asyncDeadlineNanos: Long = deadlineNanos,
         block: () -> T,
     ): T {
         val previous = requestContext
-        requestContext = LxRequestContext(token, deadlineNanos)
+        requestContext = LxRequestContext(token, deadlineNanos, asyncDeadlineNanos)
         return try {
             block()
         } finally {
             // 成功/异常/超时和外部取消走同一条退役路径，不能遗留宿主 Call。
-            cancelRequest(token)
+            token.cancel()
             requestContext = previous
         }
     }
@@ -95,11 +194,75 @@ class LxHost internal constructor(
 
     @JavascriptInterface
     fun http(payloadJson: String, scopeId: String = ""): String = try {
-        val context = requestContext
+        val context = activeRequest(scopeId)
         val token = context?.token
-        if (scopeId.isNotEmpty() && scopeId != token?.scopeId) throw IOException("脚本请求已结束")
-        if (token?.cancelled?.get() == true) throw IOException("脚本请求已取消")
         val payload = JSONObject(payloadJson)
+        val call = createHttpCall(payload, httpDeadline(payload, context?.deadlineNanos))
+        token?.register(call)
+        try {
+            httpResponse(call.execute(), payload.optInt("maxResponseBytes", 0)).toString()
+        } finally {
+            token?.finish(call)
+        }
+    } catch (error: Exception) {
+        httpFailure(error).toString()
+    }
+
+    internal fun startHttp(payloadJson: String, scopeId: String, id: String): String = try {
+        val context = activeRequest(scopeId) ?: throw IOException("脚本请求已结束")
+        val payload = JSONObject(payloadJson)
+        val deadline = httpDeadline(payload, context.asyncDeadlineNanos)
+        val token = context.token
+        val call = createHttpCall(payload, deadline)
+        val limit = payload.optInt("maxResponseBytes", 0)
+        val pending = LxRequestToken.PendingHttp(id, deadline)
+        token.register(call, pending)
+        try {
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    token.finish(call, LxHttpResponse(pending.result(httpFailure(e))))
+                }
+
+                override fun onResponse(call: Call, response: Response) {
+                    val body = LxHttpBodyReservation()
+                    val result = try {
+                        LxHttpResponse(pending.result(httpResponse(response, limit, body)), body)
+                    } catch (error: Exception) {
+                        body.close()
+                        LxHttpResponse(pending.result(httpFailure(error)))
+                    }
+                    token.finish(call, result)
+                }
+            })
+        } catch (error: Exception) {
+            token.finish(call)
+            call.cancel()
+            throw error
+        }
+        ""
+    } catch (error: Exception) {
+        httpFailure(error).toString()
+    }
+
+    internal fun takeHttpResponse(): String = requestContext?.token?.takeHttpResponse().orEmpty()
+
+    private fun activeRequest(scopeId: String): LxRequestContext? {
+        val context = requestContext
+        if (scopeId.isNotEmpty() && scopeId != context?.token?.scopeId) throw IOException("脚本请求已结束")
+        if (context?.token?.cancelled?.get() == true) throw IOException("脚本请求已取消")
+        return context
+    }
+
+    private fun httpDeadline(payload: JSONObject, deadlineNanos: Long?): Long {
+        val remainingMs = deadlineNanos?.let {
+            TimeUnit.NANOSECONDS.toMillis(it - System.nanoTime())
+        } ?: Long.MAX_VALUE
+        val timeout = effectiveHttpTimeoutMs(payload.optInt("timeout", 15_000), remainingMs)
+        if (timeout <= 0) throw IOException(HTTP_TIMEOUT)
+        return minOf(monotonicDeadlineAfter(timeout.toLong()), deadlineNanos ?: Long.MAX_VALUE)
+    }
+
+    private fun createHttpCall(payload: JSONObject, deadlineNanos: Long): Call {
         val url = payload.getString("url")
         val method = payload.optString("method", "GET").uppercase()
         val builder = Request.Builder().url(url)
@@ -119,45 +282,27 @@ class LxHost internal constructor(
             else -> null
         }
         builder.method(method, body)
-        val timeout = if (context == null) {
-            effectiveHttpTimeoutMs(payload.optInt("timeout", 15000), Long.MAX_VALUE)
-        } else {
-            effectiveHttpTimeoutMs(
-                requestedMs = payload.optInt("timeout", 15000),
-                remainingMs = TimeUnit.NANOSECONDS.toMillis(context.deadlineNanos - System.nanoTime()),
-            )
-        }
-        if (timeout <= 0) throw IOException("http 请求超时")
-        if (token?.cancelled?.get() == true) throw IOException("脚本请求已取消")
-        val callClient = client.newBuilder().callTimeout(timeout.toLong(), TimeUnit.MILLISECONDS).build()
-        val call = callClient.newCall(builder.build())
-        if (token != null) {
-            token.currentCall.set(call)
-            // cancel() 可能正好发生在 newCall 与 execute 之间；二次检查覆盖该窗口。
-            if (token.cancelled.get()) {
-                token.currentCall.compareAndSet(call, null)
-                call.cancel()
-                throw IOException("脚本请求已取消")
-            }
-        }
-        try {
-            call.execute().use { response ->
-                return JSONObject().apply {
-                    put("statusCode", response.code)
-                    put("statusMessage", response.message)
-                    put("finalUrl", response.request.url.toString())
-                    put("headers", JSONObject().apply {
-                        response.headers.forEach { (name, value) -> put(name, value) }
-                    })
-                    put("raw", readBodyBase64(response.body, payload.optInt("maxResponseBytes", 0)))
-                }.toString()
-            }
-        } finally {
-            token?.currentCall?.compareAndSet(call, null)
-        }
-    } catch (error: Exception) {
-        JSONObject().put("error", error.message ?: "http 请求失败").toString()
+        return client.newCall(builder.build()).also { it.timeout().deadlineNanoTime(deadlineNanos) }
     }
+
+    private fun httpResponse(
+        response: Response,
+        limit: Int,
+        reservation: LxHttpBodyReservation? = null,
+    ): JSONObject = response.use {
+        JSONObject().apply {
+            put("statusCode", response.code)
+            put("statusMessage", response.message)
+            put("finalUrl", response.request.url.toString())
+            put("headers", JSONObject().apply {
+                response.headers.forEach { (name, value) -> put(name, value) }
+            })
+            put("raw", readBodyBase64(response.body, limit, reservation))
+        }
+    }
+
+    private fun httpFailure(error: Exception): JSONObject =
+        JSONObject().put("error", error.message ?: "http 请求失败")
 
     @JavascriptInterface
     fun hash(algo: String, dataBase64: String): String {
@@ -223,7 +368,7 @@ class LxHost internal constructor(
         return Base64.encodeToString(cipher.doFinal(Base64.decode(dataBase64, Base64.DEFAULT)), Base64.NO_WRAP)
     }
 
-    private fun readBodyBase64(body: ResponseBody, requestedLimit: Int): String {
+    private fun readBodyBase64(body: ResponseBody, requestedLimit: Int, reservation: LxHttpBodyReservation?): String {
         val limited = requestedLimit in 1..MAX_HTTP_BODY_BYTES.toInt()
         val limit = if (limited) requestedLimit.toLong() else MAX_HTTP_BODY_BYTES
         if (!limited && body.contentLength() > limit) throw IOException(BODY_TOO_LARGE)
@@ -238,6 +383,7 @@ class LxHost internal constructor(
                     if (count < 0) break
                     total += count
                     if (total > MAX_HTTP_BODY_BYTES) throw IOException(BODY_TOO_LARGE)
+                    reservation?.reserve(count)
                     output.write(buffer, 0, count)
                 }
             }

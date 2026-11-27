@@ -509,6 +509,71 @@ class ScriptRuntimeContractTest {
     }
 
     @Test(timeout = 6_000)
+    fun startupRequestSettlesEvenIfCapabilityIsAnnouncedBeforeItsResult() = runBlocking {
+        for (initialize in listOf(false, true)) {
+            DelayedHttpServer(responseDelayMs = 100).use { server ->
+                LxScriptEngine(InstrumentationRegistry.getInstrumentation().targetContext).use { engine ->
+                    val code = startupRequestScript(server.url)
+                    val state = if (initialize) {
+                        engine.initialize(code, "startup-http.js", timeoutMs = 1_500)
+                    } else {
+                        engine.load(code, "startup-http.js", timeoutMs = 1_500)
+                        engine.inited()
+                    }
+                    assertTrue(state?.optBoolean("status") == true)
+                    assertTrue(server.awaitRequest())
+                    assertEquals("delayed", engine.request("kw", "musicUrl", JSONObject(), timeoutMs = 500))
+                }
+            }
+        }
+    }
+
+    @Test(timeout = 5_000)
+    fun startupHttpTimeoutRejectsThePromiseAndKeepsTheAnnouncedCapability() = runBlocking {
+        DelayedHttpServer(0, holdResponseUntilReleased = true).use { server ->
+            LxScriptEngine(InstrumentationRegistry.getInstrumentation().targetContext).use { engine ->
+                val state = engine.initialize(startupRequestScript(server.url), "startup-http-timeout.js", timeoutMs = 800)
+                assertTrue(state?.optBoolean("status") == true)
+                assertTrue(server.awaitRequest())
+                assertFalse(server.responseWasWritten())
+                assertEquals("fallback", engine.request("kw", "musicUrl", JSONObject(), timeoutMs = 500))
+            }
+        }
+    }
+
+    @Test(timeout = 6_000)
+    fun callbackHttpCanWinWhileAnEarlierPromiseRequestIsStillWaiting() {
+        DelayedHttpServer(0, holdResponseUntilReleased = true).use { slow ->
+            DelayedHttpServer(0, beforeResponse = { check(slow.awaitRequest()) }).use { fast ->
+                LxScriptEngine(InstrumentationRegistry.getInstrumentation().targetContext).use { engine ->
+                    engine.load("""
+                        let slowCallbacks = 0;
+                        lx.on(lx.EVENT_NAMES.request, ({info}) => {
+                          if (!info.slow) return slowCallbacks;
+                          const slow = lx.request(info.slow).then(
+                            reply => { slowCallbacks++; return 'slow:' + reply.body; },
+                            error => { slowCallbacks++; throw error; }
+                          );
+                          const fast = new Promise((resolve, reject) => {
+                            lx.request(info.fast, {responseType:'text'}, (error, reply, body) => {
+                              if (error) reject(error);
+                              else resolve(reply.statusCode + ':' + body);
+                            });
+                          });
+                          return Promise.race([slow, fast]);
+                        });
+                    """.trimIndent(), "concurrent-http.js")
+                    val params = JSONObject().put("slow", slow.url).put("fast", fast.url)
+                    assertEquals("200:delayed", engine.request("kw", "musicUrl", params, timeoutMs = 2_500))
+                    assertTrue(slow.awaitRequest())
+                    assertFalse(slow.responseWasWritten())
+                    assertEquals(0, engine.request("kw", "musicUrl", JSONObject(), timeoutMs = 1_000))
+                }
+            }
+        }
+    }
+
+    @Test(timeout = 6_000)
     fun cancellationCancelsHostHttpAcrossQuickJsEventThread() = runBlocking {
         DelayedHttpServer(responseDelayMs = 1_500).use { server ->
             LxScriptEngine(InstrumentationRegistry.getInstrumentation().targetContext).use { engine ->
@@ -672,9 +737,16 @@ class ScriptRuntimeContractTest {
         engine.load(script, "loopback-http.js")
     }
 
+    private fun startupRequestScript(url: String) = """
+        const startup = lx.request(${JSONObject.quote(url)}, {timeout:5000, responseType:'text'});
+        lx.send(lx.EVENT_NAMES.inited, {status:true, sources:{kw:{actions:['musicUrl']}}});
+        lx.on(lx.EVENT_NAMES.request, () => startup.then(response => response.body, () => 'fallback'));
+    """.trimIndent()
+
     private class DelayedHttpServer(
         private val responseDelayMs: Long,
         private val holdResponseUntilReleased: Boolean = false,
+        private val beforeResponse: () -> Unit = {},
     ) : Closeable {
         private val server = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
         private val requestReceived = CountDownLatch(1)
@@ -692,6 +764,7 @@ class ScriptRuntimeContractTest {
                     requestReceived.countDown()
                     if (holdResponseUntilReleased) responseGate.await()
                     else Thread.sleep(responseDelayMs)
+                    beforeResponse()
                     val body = "delayed".toByteArray(StandardCharsets.UTF_8)
                     val headers = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n" +
                         "Content-Length: ${body.size}\r\nConnection: close\r\n\r\n"
