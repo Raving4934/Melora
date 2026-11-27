@@ -11,9 +11,14 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasAnyAncestor
@@ -42,6 +47,7 @@ import com.leyu.melora.playback.ThemeMode
 import com.leyu.melora.playback.lx.LxScriptStore
 import com.leyu.melora.playback.lx.LxSourceImporter
 import com.leyu.melora.ui.awaitStable
+import com.leyu.melora.ui.boundsInSameFrame
 import com.leyu.melora.ui.theme.MeloraAppearance
 import com.leyu.melora.ui.theme.MeloraTheme
 import java.io.Closeable
@@ -50,6 +56,8 @@ import java.io.IOException
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.nio.file.Files
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
@@ -117,14 +125,8 @@ class LxSourceActionsInstrumentedTest {
     }
 
     @Test
-    fun landscapeValidityTestKeepsActionsReachableWithFiveInconclusivePlatforms() {
-        val scenario = compose.activityRule.scenario
-        val originalOrientation = compose.activity.requestedOrientation
-        try {
-            scenario.onActivity { it.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
-            compose.waitUntil(8_000) {
-                compose.activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-            }
+    fun landscapeValidityRetryKeepsResultsAndActionsInPlace() = inLandscape {
+        ScriptServer("ready", holdResponse = true).use { server ->
             val script = store.import(
                 "five-platforms.js",
                 """
@@ -147,18 +149,105 @@ class LxSourceActionsInstrumentedTest {
                     hasText("当前播放音质没有兼容档位", substring = true),
             ).assertCountEquals(5)
 
-            compose.onNode(inSheet and hasText(SourceAlias.display("mg", "咪咕音乐")))
-                .performScrollTo().assertIsDisplayed()
+            val lastPlatform = compose.onNode(inSheet and hasText(SourceAlias.display("mg", "咪咕音乐")))
+            lastPlatform.performScrollTo().assertIsDisplayed()
             val close = compose.onNodeWithText("关闭")
             close.assertIsDisplayed().assertIsEnabled()
             val retry = compose.onNodeWithText("重新测试")
             retry.assertIsDisplayed().assertIsEnabled()
-            store.import(script.id, lyricSource("1"))
+            val header = compose.onNode(inSheet and hasText("有效性测试"))
+            val beforeRetry = compose.boundsInSameFrame(header, lastPlatform, close)
+            val scrollOffset = validityBody().fetchSemanticsNode()
+                .config[SemanticsProperties.VerticalScrollAxisRange].value()
+            assertTrue("先把测试结果滚到列表底部", scrollOffset > 0f)
+
+            store.import(
+                script.id,
+                """
+                lx.on('request', () => '');
+                lx.request('${server.url}', {timeout:7500}).then(() => {
+                    lx.send('inited', {sources:{wy:{actions:['lyric']}}});
+                });
+                """.trimIndent(),
+            )
             retry.performTouchInput { click(center) }
+            compose.waitUntil(5_000) { server.requests.get() == 1 }
+            retry.assertIsDisplayed().assertIsNotEnabled()
+            close.assertIsDisplayed().assertIsEnabled()
+            lastPlatform.assertIsDisplayed()
+            assertEquals(
+                "等待重测时保留结果的滚动位置",
+                scrollOffset,
+                validityBody().fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value(),
+                1f,
+            )
+            val duringRetry = compose.boundsInSameFrame(header, lastPlatform, close)
+            for ((before, during) in beforeRetry.zip(duringRetry)) {
+                assertEquals("重测时保持标题、结果和关闭按钮的纵向位置", before.top, during.top, 1f)
+                assertEquals("重测时保持标题、结果和关闭按钮的高度", before.height, during.height, 1f)
+            }
+
+            server.releaseResponse()
             compose.awaitStable(compose.onNodeWithText("未声明在线平台的播放能力"))
+            lastPlatform.assertDoesNotExist()
+            retry.assertIsEnabled()
 
             close.performTouchInput { click(center) }
             compose.waitUntil(5_000) { compose.onAllNodes(isDialog()).fetchSemanticsNodes().isEmpty() }
+        }
+    }
+
+    @Test
+    fun landscapeValidityLongErrorScrollsWithoutCoveringTheActions() = inLandscape {
+        val script = store.import(
+            "long-error.js",
+            "throw new Error('初始化异常，请核对音源配置。'.repeat(100) + '诊断末尾');",
+        )
+        showSourceMenu()
+        compose.onNodeWithText("有效性测试").performClick()
+
+        val error = compose.onNode(hasAnyAncestor(isDialog()) and hasText("诊断末尾", substring = true))
+        compose.awaitStable(error)
+        val close = compose.onNodeWithText("关闭")
+        val retry = compose.onNodeWithText("重新测试")
+        close.assertIsDisplayed().assertIsEnabled()
+        retry.assertIsDisplayed().assertIsEnabled()
+        val actions = compose.boundsInSameFrame(retry, close)
+        val body = validityBody()
+        val range = body.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange]
+        val end = range.maxValue()
+        assertTrue("长错误应有可滚动的正文", end > 0f)
+        body.performSemanticsAction(SemanticsActions.ScrollBy) { scrollBy ->
+            assertTrue(scrollBy(0f, end))
+        }
+        compose.waitUntil(5_000) { range.value() >= end - 1f }
+        error.assertIsDisplayed()
+        assertEquals("滚动错误正文时页脚保持固定", actions, compose.boundsInSameFrame(retry, close))
+
+        store.import(script.id, lyricSource("2"))
+        retry.performTouchInput { click(center) }
+        compose.awaitStable(compose.onNodeWithText("未声明在线平台的播放能力"))
+        error.assertDoesNotExist()
+        close.performTouchInput { click(center) }
+        compose.waitUntil(5_000) { compose.onAllNodes(isDialog()).fetchSemanticsNodes().isEmpty() }
+    }
+
+    private fun validityBody(): SemanticsNodeInteraction = compose.onNode(
+        hasAnyAncestor(isDialog()) and hasScrollAction() and SemanticsMatcher("可滚动的结果正文") {
+            val range = it.config.getOrNull(SemanticsProperties.VerticalScrollAxisRange)
+            range != null && range.maxValue() > 0f
+        },
+    )
+
+    private inline fun inLandscape(test: () -> Unit) {
+        val scenario = compose.activityRule.scenario
+        val originalOrientation = compose.activity.requestedOrientation
+        try {
+            scenario.onActivity { it.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+            compose.waitUntil(8_000) {
+                compose.activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+            }
+            test()
         } finally {
             scenario.onActivity { it.requestedOrientation = originalOrientation }
         }
@@ -323,33 +412,42 @@ class LxSourceActionsInstrumentedTest {
             super.getSharedPreferences("${directory.name}.$name", mode)
     }
 
-    private class ScriptServer(initialCode: String) : Closeable {
+    private class ScriptServer(initialCode: String, holdResponse: Boolean = false) : Closeable {
         val body = AtomicReference(initialCode)
         val requests = AtomicInteger()
+        private val responseGate = CountDownLatch(if (holdResponse) 1 else 0)
         private val listener = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
         val url = "http://127.0.0.1:${listener.localPort}/source.js"
 
         private val worker = thread(name = "lx-source-actions-fixture", isDaemon = true) {
             while (!listener.isClosed) {
                 val socket = try { listener.accept() } catch (_: IOException) { break }
-                socket.use {
-                    it.soTimeout = 3_000
-                    val reader = it.getInputStream().bufferedReader()
-                    while (!reader.readLine().isNullOrEmpty()) { /* 读取请求头。 */ }
-                    requests.incrementAndGet()
-                    val bytes = body.get().toByteArray(Charsets.UTF_8)
-                    val headers = "HTTP/1.1 200 OK\r\nContent-Type: application/javascript\r\n" +
-                        "Content-Length: ${bytes.size}\r\nConnection: close\r\n\r\n"
-                    it.getOutputStream().apply {
-                        write(headers.toByteArray(Charsets.US_ASCII))
-                        write(bytes)
+                try {
+                    socket.use {
+                        it.soTimeout = 3_000
+                        val reader = it.getInputStream().bufferedReader()
+                        while (!reader.readLine().isNullOrEmpty()) { /* 读取请求头。 */ }
+                        requests.incrementAndGet()
+                        if (!responseGate.await(8, TimeUnit.SECONDS)) return@use
+                        val bytes = body.get().toByteArray(Charsets.UTF_8)
+                        val headers = "HTTP/1.1 200 OK\r\nContent-Type: application/javascript\r\n" +
+                            "Content-Length: ${bytes.size}\r\nConnection: close\r\n\r\n"
+                        it.getOutputStream().apply {
+                            write(headers.toByteArray(Charsets.US_ASCII))
+                            write(bytes)
+                        }
                     }
+                } catch (_: IOException) {
+                    // 测试断言失败时客户端可能已关闭请求。
                 }
             }
         }
 
+        fun releaseResponse() = responseGate.countDown()
+
         override fun close() {
             listener.close()
+            releaseResponse()
             worker.join(3_000)
         }
     }

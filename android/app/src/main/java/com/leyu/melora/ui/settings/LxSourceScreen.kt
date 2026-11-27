@@ -1,6 +1,7 @@
 package com.leyu.melora.ui.settings
 
 import com.leyu.melora.ui.common.MeloraBottomSheet
+import com.leyu.melora.ui.common.MeloraSheetActionBar
 import com.leyu.melora.ui.common.MeloraSheetHandle
 import com.leyu.melora.ui.common.rememberMeloraBottomSheetState
 import com.leyu.melora.ui.common.rememberSheetDismiss
@@ -15,10 +16,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.BorderStroke
@@ -34,6 +35,7 @@ import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -89,9 +91,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -745,59 +750,24 @@ private fun OnlineSourceImportSheet(
         Spacer(Modifier.height(4.dp))
 
         val canSubmit = !busy && url.trim().isNotBlank()
-        val colors = MaterialTheme.colorScheme
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(42.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Surface(
-                onClick = { closeSheet(onDismiss) },
-                enabled = !busy,
-                shape = RoundedCornerShape(12.dp),
-                color = MeloraAppearance.softFill,
-                border = MeloraAppearance.chipBorder,
-                modifier = Modifier.weight(1f).height(42.dp),
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text("取消", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = TextSub)
-                }
-            }
-            Surface(
-                onClick = {
-                    val submitted = urlField.text.toString()
-                    failure = null
-                    onImport(
-                        submitted.trim(),
-                        { closeSheet(onImportSuccess) },
-                        { failure = SourceImportFailure(submitted, it) },
-                    )
-                },
-                enabled = canSubmit,
-                shape = RoundedCornerShape(12.dp),
-                color = if (canSubmit) colors.primary else colors.primary.copy(alpha = 0.22f),
-                contentColor = if (canSubmit) colors.onPrimary else Color.White.copy(alpha = 0.65f),
-                modifier = Modifier.weight(1f).height(42.dp),
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    if (busy) {
-                        CircularProgressIndicator(
-                            color = colors.primary,
-                            strokeWidth = 2.dp,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    } else {
-                        Text(
-                            text = if (isCleartextHttp) "仍要导入" else "立即导入",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
-                }
-            }
-        }
+        MeloraSheetActionBar(
+            secondaryText = "取消",
+            onSecondary = { closeSheet(onDismiss) },
+            secondaryEnabled = !busy,
+            primaryText = if (isCleartextHttp) "仍要导入" else "立即导入",
+            onPrimary = {
+                val submitted = urlField.text.toString()
+                failure = null
+                onImport(
+                    submitted.trim(),
+                    { closeSheet(onImportSuccess) },
+                    { failure = SourceImportFailure(submitted, it) },
+                )
+            },
+            primaryEnabled = canSubmit,
+            primaryWorking = busy,
+            minHeight = 42.dp,
+        )
     }
 }
 
@@ -1123,6 +1093,7 @@ private fun LxInspector.ValidityTest.summary(): SourceActionStatus {
     return SourceActionStatus("测试链接 · ${counts.joinToString("，")}", result = status)
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ValidityTestSheet(
     store: LxScriptStore,
@@ -1131,41 +1102,139 @@ private fun ValidityTestSheet(
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
-    SourceModalSheet(
-        onDismiss = onDismiss,
-        icon = Icons.Rounded.Build,
-        title = "有效性测试",
-        subtitle = script.name,
-    ) { closeSheet ->
-        var attempt by remember { mutableIntStateOf(0) }
-        var running by remember(attempt) { mutableStateOf(true) }
-        var failure by remember(attempt) { mutableStateOf<String?>(null) }
-        var report by remember(attempt) { mutableStateOf<LxInspector.ValidityTest?>(null) }
-        LaunchedEffect(script.id, attempt) {
-            val outcome = runCatchingCancellable {
-                LxInspector.testValidity(context, store, script).collect { report = it }
-            }
-            failure = outcome.exceptionOrNull()?.let { it.message ?: "未知错误" }
-            running = false
-            val message = failure
-            if (message != null) {
-                val status = if (report == null) LinkStatus.INVALID else LinkStatus.INCONCLUSIVE
-                val label = if (report == null) "脚本协议未通过" else "测试中断"
-                onFinished(SourceActionStatus("$label · $message", result = status))
-            } else {
-                report?.let { onFinished(it.summary()) }
+    val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true)
+    val closeSheet = rememberSheetDismiss(sheetState)
+    var attempt by remember(script.id) { mutableIntStateOf(0) }
+    var running by remember(script.id, attempt) { mutableStateOf(true) }
+    var protocolChecked by remember(script.id, attempt) { mutableStateOf(false) }
+    var failure by remember(script.id, attempt) { mutableStateOf<String?>(null) }
+    var report by remember(script.id) { mutableStateOf<LxInspector.ValidityTest?>(null) }
+    LaunchedEffect(script.id, attempt) {
+        val outcome = runCatchingCancellable {
+            LxInspector.testValidity(context, store, script).collect {
+                report = it
+                protocolChecked = true
             }
         }
-        val snapshot = report
-        val tests = snapshot?.platforms.orEmpty()
-        val current = tests.firstOrNull { it.result == null }?.source
-        val eInk = MeloraAppearance.isEInk
-        Column(modifier = Modifier.fillMaxWidth().height(392.dp)) {
-            val scrollState = key(attempt) { rememberScrollState() }
-            Column(
-                modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(scrollState),
+        if (!protocolChecked) report = null
+        failure = outcome.exceptionOrNull()?.let { it.message ?: "未知错误" }
+        running = false
+        val message = failure
+        if (message != null) {
+            val status = if (report == null) LinkStatus.INVALID else LinkStatus.INCONCLUSIVE
+            val label = if (report == null) "脚本协议未通过" else "测试中断"
+            onFinished(SourceActionStatus("$label · $message", result = status))
+        } else {
+            report?.let { onFinished(it.summary()) }
+        }
+    }
+
+    val snapshot = report
+    val tests = snapshot?.platforms.orEmpty()
+    val current = if (protocolChecked) tests.firstOrNull { it.result == null }?.source else null
+    val eInk = MeloraAppearance.isEInk
+    val dark = MeloraAppearance.isDark
+
+    MeloraBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        dragHandle = { MeloraSheetHandle() },
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 540.dp)
+                .fillMaxHeight(0.84f)
+                .padding(bottom = 20.dp),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 2.dp)
+                    .padding(bottom = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                ValidityProtocolBanner(snapshot, running, failure)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "有效性测试",
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = TextMain,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = if (tests.isNotEmpty()) "${script.name} · 试播 ${LxInspector.sampleLabel}" else script.name,
+                        fontSize = 12.sp,
+                        color = TextSub,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (tests.isNotEmpty()) {
+                    val doneCount = tests.count { it.result != null }
+                    val summary = snapshot?.summary()
+                    val summaryLabel = summary?.message?.removePrefix("测试链接 · ").orEmpty()
+                    val pillBg = when {
+                        running -> if (eInk) Color.White else MeloraAppearance.softFill
+                        summary?.result == LinkStatus.VALID -> when {
+                            eInk -> Color.White
+                            dark -> Color(0xFF172D20)
+                            else -> Color(0xFFE7F6EC)
+                        }
+                        summary?.result == LinkStatus.INVALID -> when {
+                            eInk -> Color.White
+                            dark -> Color(0xFF311A1D)
+                            else -> Color(0xFFFDECEC)
+                        }
+                        else -> if (eInk) Color.White else MeloraAppearance.softFill
+                    }
+                    val pillBorder = if (eInk) MeloraAppearance.chipBorder else null
+                    Spacer(Modifier.width(10.dp))
+                    Surface(
+                        shape = RoundedCornerShape(999.dp),
+                        color = pillBg,
+                        border = pillBorder,
+                    ) {
+                        Box(modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)) {
+                            if (running) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(11.dp),
+                                        strokeWidth = 1.5.dp,
+                                        color = if (eInk) TextMain else BrandBlue,
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        text = "已测 $doneCount/${tests.size}",
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = TextSub,
+                                        style = TextStyle(fontFeatureSettings = "tnum"),
+                                    )
+                                }
+                            } else if (summary != null) {
+                                Text(
+                                    text = summaryLabel,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = summary.result.textColor,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(horizontal = 16.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                ValidityProtocolBanner(snapshot, protocolChecked, failure)
                 if (tests.isNotEmpty()) {
                     Spacer(Modifier.height(10.dp))
                     Surface(
@@ -1180,8 +1249,8 @@ private fun ValidityTestSheet(
                                 if (index < tests.lastIndex) {
                                     HorizontalDivider(
                                         color = MeloraAppearance.divider,
-                                        thickness = 0.6.dp,
-                                        modifier = Modifier.padding(start = 46.dp, end = 14.dp),
+                                        thickness = 0.5.dp,
+                                        modifier = Modifier.padding(start = 44.dp, end = 14.dp),
                                     )
                                 }
                             }
@@ -1189,87 +1258,42 @@ private fun ValidityTestSheet(
                     }
                 }
             }
+
             Spacer(Modifier.height(14.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Surface(
-                    onClick = { attempt++ },
-                    enabled = !running,
-                    shape = RoundedCornerShape(12.dp),
-                    color = MeloraAppearance.softFill,
-                    border = if (eInk) MeloraAppearance.cardBorder else null,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(44.dp),
-                ) {
-                    val contentColor = if (running) TextSub.copy(alpha = 0.45f) else TextMain
-                    Row(
-                        modifier = Modifier.fillMaxSize(),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            Icons.Rounded.Refresh,
-                            contentDescription = null,
-                            tint = contentColor,
-                            modifier = Modifier.size(16.dp),
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            text = "重新测试",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = contentColor,
-                        )
-                    }
-                }
-                Surface(
-                    onClick = { closeSheet(onDismiss) },
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(44.dp),
-                ) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = "关闭",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
-                }
-            }
+            MeloraSheetActionBar(
+                secondaryText = "重新测试",
+                onSecondary = {
+                    report = snapshot?.copy(platforms = tests.map { it.copy(result = null, elapsedMs = null) })
+                    attempt++
+                },
+                secondaryEnabled = !running,
+                primaryText = "关闭",
+                onPrimary = { closeSheet(onDismiss) },
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
         }
     }
 }
 
 @Composable
-private fun ValidityProtocolBanner(snapshot: LxInspector.ValidityTest?, running: Boolean, failure: String?) {
+private fun ValidityProtocolBanner(snapshot: LxInspector.ValidityTest?, protocolChecked: Boolean, failure: String?) {
     val eInk = MeloraAppearance.isEInk
-    val tests = snapshot?.platforms.orEmpty()
     val dark = MeloraAppearance.isDark
     val protocolStatus = when {
-        snapshot != null -> LinkStatus.VALID
+        protocolChecked -> LinkStatus.VALID
         failure != null -> LinkStatus.INVALID
         else -> null
     }
     val bannerBg = when (protocolStatus) {
         LinkStatus.VALID -> when {
             eInk -> Color.White
-            dark -> Color(0xFF16271D)
-            else -> Color(0xFFEDF8F1)
+            dark -> Color(0xFF17241C)
+            else -> Color(0xFFF3FAF5)
         }
         LinkStatus.INVALID -> when {
             eInk -> Color.White
-            dark -> Color(0xFF2B181A)
-            else -> Color(0xFFFEF0F0)
+            dark -> Color(0xFF28181A)
+            else -> Color(0xFFFEF4F4)
         }
         else -> CardBg
     }
@@ -1277,15 +1301,15 @@ private fun ValidityProtocolBanner(snapshot: LxInspector.ValidityTest?, running:
         eInk || protocolStatus == null -> MeloraAppearance.cardBorder
         protocolStatus == LinkStatus.VALID -> BorderStroke(
             0.6.dp,
-            if (dark) Color(0xFF234230) else Color(0xFFC8EBD5),
+            if (dark) Color(0xFF23392B) else Color(0xFFD4EEDB),
         )
         else -> BorderStroke(
             0.6.dp,
-            if (dark) Color(0xFF4B2428) else Color(0xFFF6CACA),
+            if (dark) Color(0xFF442528) else Color(0xFFF6D2D2),
         )
     }
     Surface(
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(12.dp),
         color = bannerBg,
         border = bannerBorder,
         modifier = Modifier.fillMaxWidth(),
@@ -1293,14 +1317,14 @@ private fun ValidityProtocolBanner(snapshot: LxInspector.ValidityTest?, running:
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 11.dp),
+                .padding(horizontal = 12.dp, vertical = 9.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(
-                    modifier = Modifier.size(16.dp),
+                    modifier = Modifier.size(15.dp),
                     contentAlignment = Alignment.Center,
                 ) {
                     when (protocolStatus) {
@@ -1308,30 +1332,30 @@ private fun ValidityProtocolBanner(snapshot: LxInspector.ValidityTest?, running:
                             Icons.Rounded.CheckCircle,
                             contentDescription = null,
                             tint = protocolStatus.textColor,
-                            modifier = Modifier.size(16.dp),
+                            modifier = Modifier.size(15.dp),
                         )
                         LinkStatus.INVALID -> Icon(
                             Icons.Outlined.ErrorOutline,
                             contentDescription = null,
                             tint = protocolStatus.textColor,
-                            modifier = Modifier.size(16.dp),
+                            modifier = Modifier.size(15.dp),
                         )
                         else -> CircularProgressIndicator(
-                            modifier = Modifier.size(14.dp),
-                            strokeWidth = 1.8.dp,
+                            modifier = Modifier.size(13.dp),
+                            strokeWidth = 1.6.dp,
                             color = if (eInk) TextMain else BrandBlue,
                         )
                     }
                 }
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(7.dp))
                 Text(
                     text = when (protocolStatus) {
                         LinkStatus.VALID -> "脚本协议通过"
                         LinkStatus.INVALID -> "脚本协议未通过 · $failure"
                         else -> "正在检查脚本协议…"
                     },
-                    fontSize = 13.sp,
-                    lineHeight = 18.sp,
+                    fontSize = 12.5.sp,
+                    lineHeight = 17.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = protocolStatus.textColor,
                     modifier = Modifier.weight(1f),
@@ -1342,42 +1366,29 @@ private fun ValidityProtocolBanner(snapshot: LxInspector.ValidityTest?, running:
                     sourceAliasDisplay(id, platformLabel(id, fallback = id))
                 }
                 Text(
-                    text = "声明平台 · ${declared.joinToString("、")}",
-                    fontSize = 12.sp,
-                    lineHeight = 17.sp,
+                    text = (if (protocolChecked) "声明平台 · " else "上次声明 · ") + declared.joinToString("、"),
+                    fontSize = 11.5.sp,
+                    lineHeight = 16.sp,
                     color = TextSub,
-                    modifier = Modifier.padding(start = 24.dp, top = 4.dp),
+                    modifier = Modifier.padding(start = 22.dp, top = 3.dp),
                 )
-                FlowRow(
-                    modifier = Modifier.padding(start = 24.dp, top = 2.dp),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                ) {
+                if (snapshot.platforms.isEmpty()) {
                     Text(
-                        text = if (tests.isEmpty()) "未声明在线平台的播放能力" else "试播曲目 · ${LxInspector.sampleLabel}",
-                        fontSize = 12.sp,
-                        lineHeight = 17.sp,
+                        text = "未声明在线平台的播放能力",
+                        fontSize = 11.5.sp,
+                        lineHeight = 16.sp,
                         color = TextSub,
+                        modifier = Modifier.padding(start = 22.dp, top = 2.dp),
                     )
-                    if (tests.isNotEmpty()) {
-                        Text(
-                            text = if (running) {
-                                "已测 ${tests.count { it.result != null }}/${tests.size} 项"
-                            } else {
-                                snapshot.summary().message
-                            },
-                            fontSize = 12.sp,
-                            lineHeight = 17.sp,
-                            color = TextSub,
-                        )
-                    }
                 }
             }
             if (snapshot != null && failure != null) {
                 Text(
                     text = "测试中断 · $failure",
-                    fontSize = 12.sp,
+                    fontSize = 11.5.sp,
+                    lineHeight = 16.sp,
                     color = LinkStatus.INVALID.textColor,
-                    modifier = Modifier.padding(start = 24.dp, top = 2.dp),
+                    modifier = Modifier.padding(start = 22.dp, top = 2.dp),
                 )
             }
         }
@@ -1400,15 +1411,21 @@ private fun PlaybackTestRow(test: LxInspector.PlatformTest, running: Boolean, ac
         }
     }
     val detail = result?.spec?.playerSpecificationLabel()?.takeIf(String::isNotBlank) ?: result?.message
+    val statusTextColor = when (result?.status) {
+        LinkStatus.VALID -> LinkStatus.VALID.textColor
+        LinkStatus.INVALID -> LinkStatus.INVALID.textColor
+        LinkStatus.INCONCLUSIVE -> if (eInk) TextMain else if (dark) Color(0xFFFBBF24) else Color(0xFFB45309)
+        null -> TextSub
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .semantics(mergeDescendants = true) {}
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .padding(horizontal = 14.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
-            modifier = Modifier.size(22.dp),
+            modifier = Modifier.size(20.dp),
             contentAlignment = Alignment.Center,
         ) {
             when {
@@ -1416,17 +1433,17 @@ private fun PlaybackTestRow(test: LxInspector.PlatformTest, running: Boolean, ac
                     Icons.Rounded.CheckCircle,
                     contentDescription = null,
                     tint = LinkStatus.VALID.textColor,
-                    modifier = Modifier.size(17.dp),
+                    modifier = Modifier.size(16.dp),
                 )
                 result?.status == LinkStatus.INVALID -> Icon(
                     Icons.Outlined.ErrorOutline,
                     contentDescription = null,
                     tint = LinkStatus.INVALID.textColor,
-                    modifier = Modifier.size(17.dp),
+                    modifier = Modifier.size(16.dp),
                 )
                 result?.status == LinkStatus.INCONCLUSIVE -> Box(
                     modifier = Modifier
-                        .size(8.dp)
+                        .size(7.dp)
                         .clip(CircleShape)
                         .background(
                             when {
@@ -1437,15 +1454,15 @@ private fun PlaybackTestRow(test: LxInspector.PlatformTest, running: Boolean, ac
                         ),
                 )
                 active -> CircularProgressIndicator(
-                    modifier = Modifier.size(15.dp),
-                    strokeWidth = 1.8.dp,
+                    modifier = Modifier.size(14.dp),
+                    strokeWidth = 1.6.dp,
                     color = if (eInk) TextMain else BrandBlue,
                 )
                 else -> Box(
                     modifier = Modifier
-                        .size(7.dp)
+                        .size(6.dp)
                         .clip(CircleShape)
-                        .background(MeloraAppearance.textMuted.copy(alpha = 0.45f)),
+                        .background(MeloraAppearance.textMuted.copy(alpha = 0.4f)),
                 )
             }
         }
@@ -1454,7 +1471,7 @@ private fun PlaybackTestRow(test: LxInspector.PlatformTest, running: Boolean, ac
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = sourceAliasDisplay(test.source, platformLabel(test.source)),
-                    fontSize = 14.sp,
+                    fontSize = 13.5.sp,
                     fontWeight = FontWeight.Medium,
                     color = TextMain,
                     maxLines = 1,
@@ -1464,34 +1481,60 @@ private fun PlaybackTestRow(test: LxInspector.PlatformTest, running: Boolean, ac
                 test.requestedQuality?.let { quality ->
                     Spacer(Modifier.width(6.dp))
                     Surface(
-                        shape = RoundedCornerShape(5.dp),
-                        color = MeloraAppearance.softFill,
-                        border = if (eInk) MeloraAppearance.chipBorder else null,
+                        shape = RoundedCornerShape(4.dp),
+                        color = MeloraAppearance.softFill.copy(alpha = 0.7f),
+                        border = MeloraAppearance.chipBorder,
                     ) {
                         Text(
                             text = quality,
-                            fontSize = 10.5.sp,
+                            fontSize = 10.sp,
                             fontWeight = FontWeight.Medium,
                             color = TextSub,
-                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 0.5.dp),
                         )
                     }
                 }
             }
             Spacer(Modifier.height(2.dp))
             Text(
-                text = listOfNotNull(status, detail).joinToString(" · "),
-                fontSize = 12.sp,
-                color = result?.status.textColor,
+                text = buildAnnotatedString {
+                    withStyle(SpanStyle(color = statusTextColor, fontWeight = FontWeight.Medium)) {
+                        append(status)
+                    }
+                    if (!detail.isNullOrBlank()) {
+                        withStyle(SpanStyle(color = MeloraAppearance.textMuted)) { append(" · ") }
+                        withStyle(SpanStyle(color = TextSub)) { append(detail) }
+                    }
+                },
+                fontSize = 11.5.sp,
+                lineHeight = 15.sp,
+                maxLines = if (result?.status == LinkStatus.VALID) 1 else 2,
+                overflow = TextOverflow.Ellipsis,
             )
         }
         test.elapsedMs?.let { ms ->
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(10.dp))
             Text(
-                text = "$ms ms",
-                fontSize = 11.5.sp,
-                fontWeight = FontWeight.Medium,
-                color = TextSub,
+                text = buildAnnotatedString {
+                    withStyle(
+                        SpanStyle(
+                            color = if (eInk) TextMain else TextMain.copy(alpha = 0.82f),
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.Medium,
+                        ),
+                    ) {
+                        append(ms.toString())
+                    }
+                    withStyle(
+                        SpanStyle(
+                            color = MeloraAppearance.textMuted,
+                            fontSize = 10.5.sp,
+                        ),
+                    ) {
+                        append(" ms")
+                    }
+                },
+                style = TextStyle(fontFeatureSettings = "tnum"),
             )
         }
     }
