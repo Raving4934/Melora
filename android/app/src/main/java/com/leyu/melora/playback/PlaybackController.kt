@@ -364,9 +364,6 @@ object PlaybackController {
             mode = player.playMode(),
             speed = player.playbackParameters.speed,
             quality = resolution?.quality,
-            sourceQuality = resolution?.let {
-                SourceResolver.verifiedSourceQuality(audioSpec?.verifiedStreamQuality(it.sourceQuality) ?: it.quality, it.sourceQuality)
-            },
             resolvedPlatform = resolution?.platform,
             resolvedBy = resolution?.resourceId,
             fromCompleteCache = resolution?.fromCompleteCache == true,

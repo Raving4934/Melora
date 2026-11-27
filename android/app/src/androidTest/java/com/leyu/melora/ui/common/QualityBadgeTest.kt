@@ -199,8 +199,7 @@ class QualityBadgeTest {
     }
 
     @Test fun playerAudioInfoCardShowsAFixedOutlinedSpecification() {
-        val specification = mutableStateOf(AudioSpecification("audio/flac", 192_000, 4_812_000, bitDepth = 24))
-        val sourceQuality = mutableStateOf<String?>("master")
+        val specification = mutableStateOf<AudioSpecification?>(null)
         val dark = mutableStateOf(false)
         val original = MeloraSettings.qualityBadgeMode.value
         val badgeDescription = "HI-RES · 192 kHz"
@@ -210,12 +209,15 @@ class QualityBadgeTest {
                 val background = if (dark.value) Color(0xFF18222C) else Color(0xFFF0E9DE)
                 Box(Modifier.background(background).testTag("audio-info-card")) {
                     PlayerAppearanceProvider(dark = dark.value) {
-                        AudioInfoCard("网易云音乐", specification.value, "播放源：缓存", sourceQuality.value)
+                        AudioInfoCard("网易云音乐", specification.value, "播放源：缓存")
                     }
                 }
             }
 
             val card = compose.onNodeWithTag("audio-info-card")
+            val resolvingHeight = card.fetchSemanticsNode().size.height
+            compose.runOnIdle { specification.value = AudioSpecification("audio/flac", 192_000, 4_812_000, bitDepth = 24) }
+            assertEquals("解析完成后音频信息卡应保持原高度", resolvingHeight, card.fetchSemanticsNode().size.height)
             for (night in listOf(false, true)) {
                 compose.runOnIdle { dark.value = night }
                 val badgeWidths = QualityBadgeMode.entries.map { mode ->
@@ -223,7 +225,7 @@ class QualityBadgeTest {
                     val badge = compose.onNodeWithContentDescription(badgeDescription).assertIsDisplayed()
                         .assertHeightIsEqualTo(18.dp)
                     compose.onNodeWithText(fullSpecification).assertIsDisplayed()
-                    compose.onNodeWithText("音源档位：母带").assertIsDisplayed()
+                    compose.onNodeWithText("音源档位：母带").assertDoesNotExist()
 
                     val bounds = badge.fetchSemanticsNode().boundsInRoot
                     val cardTop = card.fetchSemanticsNode().boundsInRoot.top
@@ -253,11 +255,6 @@ class QualityBadgeTest {
                 }
                 assertEquals("the global badge mode should leave the player badge size stable", 1, badgeWidths.distinct().size)
             }
-
-            compose.runOnIdle { sourceQuality.value = null }
-            compose.onNodeWithText("音源档位：母带").assertDoesNotExist()
-            compose.onNodeWithText(fullSpecification).assertIsDisplayed()
-            compose.onNodeWithContentDescription(badgeDescription).assertIsDisplayed()
 
             compose.runOnIdle { specification.value = AudioSpecification("audio/flac", 96_000, -1) }
             compose.onNodeWithText("96 kHz · FLAC").assertIsDisplayed()

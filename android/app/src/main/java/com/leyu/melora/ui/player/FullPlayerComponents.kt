@@ -136,31 +136,21 @@ internal fun AudioSpecification.playerSpecificationLabel(): String = buildList {
 }.joinToString(" · ")
 
 @Composable
-internal fun AudioSpecificationDetails(
-    specification: AudioSpecification?,
-    modifier: Modifier = Modifier,
-    sourceQuality: String? = null,
-) {
+internal fun AudioSpecificationLine(specification: AudioSpecification?, modifier: Modifier = Modifier) {
     val label = remember(specification) { specification?.playerSpecificationLabel().orEmpty() }
     val lineHeight = 18.sp
-    val style = TextStyle(
-        fontSize = 12.sp,
-        lineHeight = lineHeight,
-        letterSpacing = 0.15.sp,
-        fontFeatureSettings = "tnum",
-        lineBreak = LineBreak.Paragraph,
+    Text(
+        text = label,
+        modifier = modifier.fillMaxWidth().heightIn(min = with(LocalDensity.current) { lineHeight.toDp() }),
+        color = FullPlayerTextMuted,
+        style = TextStyle(
+            fontSize = 12.sp,
+            lineHeight = lineHeight,
+            letterSpacing = 0.15.sp,
+            fontFeatureSettings = "tnum",
+            lineBreak = LineBreak.Paragraph,
+        ),
     )
-    Column(modifier.fillMaxWidth()) {
-        Text(
-            text = label,
-            modifier = Modifier.heightIn(min = with(LocalDensity.current) { lineHeight.toDp() }),
-            color = FullPlayerTextMuted,
-            style = style,
-        )
-        if (sourceQuality == "master") {
-            Text("音源档位：母带", color = FullPlayerTextMuted, style = style)
-        }
-    }
 }
 
 @Composable
@@ -168,7 +158,6 @@ internal fun AudioInfoCard(
     platformName: String,
     audioSpec: AudioSpecification?,
     sourceLabel: String,
-    sourceQuality: String? = null,
 ) {
     Surface(
         shape = RoundedCornerShape(16.dp),
@@ -211,7 +200,7 @@ internal fun AudioInfoCard(
                     BadgePill(badge, mode = QualityBadgeMode.Split, outlined = true)
                 }
             }
-            AudioSpecificationDetails(audioSpec, Modifier.padding(top = 6.dp), sourceQuality)
+            AudioSpecificationLine(audioSpec, Modifier.padding(top = 6.dp))
             Text(
                 text = sourceLabel,
                 minLines = 2,

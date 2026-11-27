@@ -108,8 +108,6 @@ data class PlayerUiState(
     val pendingQueueId: String? = null,
     /** 连续采样校正时的显示下界；实际positionMs和保存断点始终保留播放器原值。 */
     val lyricPositionFloorMs: Long = 0,
-    // 明确取得的音源档位，独立于解码器读出的实际规格。
-    val sourceQuality: String? = null,
 )
 
 /** 全屏歌词外观；由设置中心持久化，mini与桌面悬浮歌词保持各自字号。 */
