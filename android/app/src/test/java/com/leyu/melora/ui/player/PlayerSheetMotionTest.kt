@@ -336,6 +336,24 @@ class PlayerSheetMotionTest {
     }
 
     @Test
+    fun sharedArtworkSamplesTheLargestCoverSlotInsteadOfTheWindow() {
+        assertEquals(1024, playerArtworkRequestSidePx(1280.dp, 800.dp, Density(2f)))
+        assertEquals(768, playerArtworkRequestSidePx(900.dp, 1280.dp, Density(2f)))
+        assertEquals(1152, playerArtworkRequestSidePx(700.dp, 900.dp, Density(2f)))
+        assertEquals(768, playerArtworkRequestSidePx(800.dp, 360.dp, Density(3f)))
+        assertEquals(1024, playerArtworkRequestSidePx(360.dp, 800.dp, Density(3f)))
+    }
+
+    @Test
+    fun sharedArtworkReusesTheSampleWhenTheWindowSizeChangesSlightly() {
+        val density = Density(3f)
+        val size = playerArtworkRequestSidePx(360.dp, 800.dp, density)
+        assertEquals(size, playerArtworkRequestSidePx(361.dp, 799.dp, density))
+        assertEquals(size, playerArtworkRequestSidePx(370.dp, 820.dp, density))
+        assertEquals(1152, playerArtworkRequestSidePx(390.dp, 800.dp, density))
+    }
+
+    @Test
     fun skipBurstAllowsThreeImmediateTapsThenRejectsTheFourth() {
         val gate = PlayerSkipBurstGate()
 

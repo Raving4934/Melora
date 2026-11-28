@@ -63,7 +63,7 @@ class PlayerTransportGestureInstrumentedTest {
                             if (state.value.current != null) {
                                 back = rememberPlayerSheetBackState()
                                 ContinuousPlayerSheet(
-                                    state = state.value,
+                                    playback = state,
                                     modifier = Modifier.fillMaxSize(),
                                     backState = back,
                                     onSeek = { seeks += state.value.current?.uid to it },
@@ -157,6 +157,16 @@ class PlayerTransportGestureInstrumentedTest {
         compose.onRoot().performTouchInput { up() }
         compose.runOnIdle { assertEquals(listOf(first.uid to preview.toLong()), seeks) }
         assertEquals(2_000f, sliderValue(), 1f)
+    }
+
+    @Test fun seekSameTrackDurationCorrectionKeepsTheHeldGesture() {
+        show(expanded = true)
+        val preview = beginSeek()
+        compose.runOnIdle { state.value = state.value.copy(durationMs = 240_000) }
+        val corrected = sliderValue()
+        assertEquals(preview * 2f, corrected, 2f)
+        compose.onRoot().performTouchInput { up() }
+        compose.runOnIdle { assertEquals(listOf(first.uid to corrected.toLong()), seeks) }
     }
 
     @Test fun seekClearingQueueWhileHeldDoesNotCommit() {

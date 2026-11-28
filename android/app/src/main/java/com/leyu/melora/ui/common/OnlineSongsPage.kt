@@ -6,21 +6,17 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -77,9 +73,9 @@ fun OnlineSongsPage(
         if (base.img == null) {
             val first = list.firstOrNull()
             val cover = first?.let { CoverLoader.cachedUrl(it) } ?: first?.img
-            UserLibrary.markContainerPlayed(if (cover == null) base else base.copy(img = cover))
+            recordContainerPlayback(if (cover == null) base else base.copy(img = cover))
         } else {
-            UserLibrary.markContainerPlayed(base)
+            recordContainerPlayback(base)
         }
     }
 
@@ -146,33 +142,13 @@ fun OnlineSongsPage(
                     Text(subtitle, fontSize = 11.sp, color = TextMuted, maxLines = 1)
                 }
                 if (songs.isNotEmpty()) {
-                    ChromeActionSurface(
+                    PlayAllPill(
                         onClick = {
                             markContainer(songs)
                             PlaybackController.playQueue(context, songs.toUiTracks(), 0, queueId)
                         },
-                        shape = RoundedCornerShape(16.dp),
                         modifier = Modifier.padding(end = 8.dp),
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(
-                                Icons.Rounded.PlayArrow,
-                                contentDescription = null,
-                                tint = BrandBlue,
-                                modifier = Modifier.size(15.dp),
-                            )
-                            Spacer(Modifier.width(3.dp))
-                            Text(
-                                "播放全部",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = BrandBlue,
-                            )
-                        }
-                    }
+                    )
                 }
             }
         },
@@ -191,20 +167,28 @@ fun OnlineSongsPage(
                 Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current),
             )
             else -> {
+                val snapshot = songs
+                val sourceUids = remember(snapshot) { snapshot.map(OnlineSong::uid) }
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
                 ) {
-                    itemsIndexed(songs, key = { _, song -> song.uid }) { _, song ->
+                    itemsIndexed(snapshot, key = { _, song -> song.uid }) { index, song ->
                         OnlineSongRow(
                             song = song,
                             showAlbum = true,
                             isFavorite = song.uid in favoriteUids,
                             onMore = { moreSong = song },
                             onClick = {
-                                markContainer(songs)
-                                PlaybackController.playTrack(context, UiTrack.fromOnline(song))
+                                markContainer(snapshot)
+                                PlaybackController.playFromCollection(
+                                    context,
+                                    selected = UiTrack.fromOnline(song),
+                                    startIndex = index,
+                                    queueId = queueId,
+                                    sourceUids = sourceUids,
+                                ) { trackIndex -> UiTrack.fromOnline(snapshot[trackIndex]) }
                             },
                         )
                     }

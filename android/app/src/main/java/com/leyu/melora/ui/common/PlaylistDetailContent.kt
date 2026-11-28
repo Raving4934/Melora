@@ -187,6 +187,9 @@ fun PlaylistDetailContent(
             val songs = remember(bookCatalog, songSnapshot) {
                 if (isBook) bookCatalog.items else songSnapshot?.list.orEmpty()
             }
+            val sourceUids = remember(songs, isBook) {
+                if (isBook) emptyList() else songs.map(OnlineSong::uid)
+            }
             val displaySongs = if (isBook && bookDescending) songs.asReversed() else songs
             val bookTotal = bookSnapshot?.total?.takeIf { isBook && it > 0 }
             val totalCount = if (isBook) bookTotal ?: songs.size
@@ -613,7 +616,7 @@ fun PlaylistDetailContent(
                 val canPlayPlaylist = songs.isNotEmpty() || playButton.intent != CollectionPlayIntent.PlayAll
 
                 fun LazyListScope.playlistSongItems() {
-                    itemsIndexed(displaySongs, key = { _, song -> song.uid }) { _, song ->
+                    itemsIndexed(displaySongs, key = { _, song -> song.uid }) { index, song ->
                         val highlight = highlightedBookChapter?.takeIf { it.uid == song.uid }
                         Box(
                             modifier = Modifier
@@ -632,8 +635,19 @@ fun PlaylistDetailContent(
                                     if (selection.active) {
                                         selection.toggle(song.uid)
                                     } else {
-                                        playlist.markCollectionPlayed("playlist.${playlist.source}.${playlist.id}")
-                                        PlaybackController.playTrack(context, UiTrack.fromOnline(song))
+                                        playlist.markCollectionPlayed(playQueueId)
+                                        val selected = UiTrack.fromOnline(song)
+                                        if (isBook) {
+                                            PlaybackController.playTrack(context, selected)
+                                        } else {
+                                            PlaybackController.playFromCollection(
+                                                context,
+                                                selected = selected,
+                                                startIndex = index,
+                                                queueId = playQueueId,
+                                                sourceUids = sourceUids,
+                                            ) { trackIndex -> UiTrack.fromOnline(songs[trackIndex]) }
+                                        }
                                     }
                                 },
                             )
@@ -708,7 +722,6 @@ fun PlaylistDetailContent(
                             ) {
                                 CollectionHeroArtwork(
                                     image = playlist.img,
-                                    seed = playlist.id,
                                     artist = false,
                                     size = 196.dp,
                                     cornerRadius = 18,
@@ -755,7 +768,7 @@ fun PlaylistDetailContent(
                                     playLabel = playButton.label,
                                     playPause = playButton.pause,
                                     onPlay = onPlayButton,
-                                    onFavorite = { UserLibrary.toggleFavoritePlaylist(detailPlaylist) },
+                                    onFavorite = { submitLibraryWrite { UserLibrary.toggleFavoritePlaylist(detailPlaylist) } },
                                     onSelect = selection::start,
                                 )
                             }
@@ -884,7 +897,7 @@ fun PlaylistDetailContent(
                             onPlay = onPlayButton,
                             playLabel = playButton.label,
                             playPause = playButton.pause,
-                            onFavorite = { UserLibrary.toggleFavoritePlaylist(detailPlaylist) },
+                            onFavorite = { submitLibraryWrite { UserLibrary.toggleFavoritePlaylist(detailPlaylist) } },
                             onSelect = selection::start,
                             loading = loading && songs.isEmpty(),
                             modifier = if (isBook) Modifier.testTag("book-chapter-toolbar") else Modifier,
@@ -1013,7 +1026,6 @@ fun PlaylistDetailContent(
                                                 ) {
                                                     CollectionHeroArtwork(
                                                         image = playlist.img,
-                                                        seed = playlist.id,
                                                         artist = false,
                                                         size = 120.dp,
                                                         cornerRadius = 16,
@@ -1055,7 +1067,6 @@ fun PlaylistDetailContent(
                                             } else {
                                                 CollectionInfoHeader(
                                                     image = playlist.img,
-                                                    seed = playlist.id,
                                                     primary = header.primary,
                                                     secondary = header.secondary,
                                                     primaryMaxLines = header.primaryMaxLines,

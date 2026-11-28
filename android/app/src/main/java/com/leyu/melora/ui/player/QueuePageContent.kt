@@ -1,7 +1,6 @@
 package com.leyu.melora.ui.player
 
 import com.leyu.melora.ui.common.MeloraAlertDialog
-import com.leyu.melora.ui.theme.SystemBarsVisibility
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.snap
@@ -178,7 +177,7 @@ fun QueuePageContent(
                         modifier = Modifier.padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        SongArtwork(displayed.artwork, displayed.uid, Modifier.size(46.dp), cornerRadius = 8)
+                        SongArtwork(displayed.artwork, Modifier.size(46.dp), cornerRadius = 8)
                         Column(
                             modifier = Modifier
                                 .weight(1f)
@@ -399,7 +398,6 @@ fun QueuePageContent(
         MeloraAlertDialog(
             onDismissRequest = { showClearConfirm = false },
             title = {
-                SystemBarsVisibility()
                 Text(
                     text = "清空播放队列",
                     fontSize = 18.sp,

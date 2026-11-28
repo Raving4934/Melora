@@ -96,7 +96,7 @@ class DockedPlayerTest {
                                 drawRect(warm, size = half)
                                 drawRect(cool, topLeft = Offset(half.width, 0f), size = half)
                             }
-                            ContinuousPlayerSheet(state = playback.value, backState = back)
+                            ContinuousPlayerSheet(playback = playback, backState = back)
                         }
                     }
                 }

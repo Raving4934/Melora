@@ -9,7 +9,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.unit.dp
@@ -274,7 +274,7 @@ internal const val PlayerBackdropTransitionMillis = 240
 internal fun playerPageIsLight(showingCollection: Boolean, playerIsDark: Boolean, appIsDark: Boolean): Boolean =
     !(if (showingCollection) appIsDark else playerIsDark)
 
-internal val LocalPlayerColors = staticCompositionLocalOf { DarkPlayerColors }
+internal val LocalPlayerColors = compositionLocalOf { DarkPlayerColors }
 
 @Composable
 internal fun PlayerAppearanceProvider(
@@ -348,10 +348,6 @@ internal val FullPlayerCardSurface: Color
     get() = LocalPlayerColors.current.cardSurface
 
 @get:Composable
-internal val FullPlayerCardSelected: Color
-    get() = LocalPlayerColors.current.cardSelected
-
-@get:Composable
 internal val FullPlayerSheetBackground: Color
     get() = LocalPlayerColors.current.sheetBackground
 
@@ -368,29 +364,5 @@ internal val FullPlayerSheetPrimaryBlue: Color
     get() = LocalPlayerColors.current.accent
 
 @get:Composable
-internal val FullPlayerSheetDivider: Color
-    get() = LocalPlayerColors.current.divider
-
-@get:Composable
-internal val FullPlayerSheetTextFaint: Color
-    get() = LocalPlayerColors.current.sheetTextFaint
-
-@get:Composable
-internal val FullPlayerSheetSegmentTrack: Color
-    get() = LocalPlayerColors.current.segmentTrack
-
-@get:Composable
-internal val FullPlayerSheetSoftFill: Color
-    get() = LocalPlayerColors.current.softFill
-
-@get:Composable
-internal val FullPlayerSheetTintBlue: Color
-    get() = LocalPlayerColors.current.tintBlue
-
-@get:Composable
 internal val FullPlayerSheetAccentRed: Color
     get() = Color(0xFFE53935)
-
-@get:Composable
-internal val FullPlayerSheetChipBorder: BorderStroke
-    get() = LocalPlayerColors.current.chipBorder

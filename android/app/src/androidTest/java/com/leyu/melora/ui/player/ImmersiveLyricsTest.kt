@@ -16,6 +16,7 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
@@ -93,10 +94,22 @@ class ImmersiveLyricsTest {
         )
         composeRule.waitForIdle()
 
-        val viewport = viewportBounds()
-        val focus = textBounds("沉浸焦点")
-        val near = textBounds("近处上")
-        val far = textBounds("远处上")
+        val viewportNode = composeRule.onNodeWithTag(VIEWPORT_TAG).fetchSemanticsNode()
+        val rows = listOf("沉浸焦点", "近处上", "远处上").map { text ->
+            composeRule.onNodeWithText(text, useUnmergedTree = true).fetchSemanticsNode()
+        }
+        val (viewport, focus, near, far) = composeRule.runOnIdle {
+            val coordinates = viewportNode.layoutInfo.coordinates
+            val viewport = Rect(0f, 0f, coordinates.size.width.toFloat(), coordinates.size.height.toFloat())
+            // 从同一帧读取绕中心缩放后的布局坐标，避免语义节点的裁切矩形干扰。
+            val rowBounds = rows.map { row ->
+                assertTrue("immersive row must be placed", row.layoutInfo.isPlaced)
+                coordinates.localBoundingBoxOf(row.layoutInfo.coordinates, clipBounds = false).also { bounds ->
+                    assertTrue("immersive row must intersect the viewport: $bounds", !bounds.isEmpty && bounds.overlaps(viewport))
+                }
+            }
+            listOf(viewport) + rowBounds
+        }
         assertEquals("immersive focus must be vertically centered", viewport.center.y, focus.center.y, 2f)
         assertEquals("immersive rows must be horizontally centered", viewport.center.x, focus.center.x, 2f)
         assertEquals("near rows must share the centered axis", viewport.center.x, near.center.x, 2f)

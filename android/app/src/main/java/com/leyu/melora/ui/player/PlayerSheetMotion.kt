@@ -9,9 +9,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.ViewConfiguration
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.lerp
+import kotlin.math.ceil
 
 /** 播放面板、翻页与队列共用吸附节奏，保留手势速度但避免硬弹簧的急冲。 */
 internal val PlayerPageSnapSpec = spring<Float>(
@@ -106,10 +108,42 @@ internal fun playerUsesCompactLandscape(widthDp: Float, heightDp: Float): Boolea
 internal fun playerUsesTwoPanes(widthDp: Float, heightDp: Float): Boolean =
     playerUsesExpandedLayout(widthDp, heightDp) || playerUsesCompactLandscape(widthDp, heightDp)
 
+internal val ExpandedPlayerPanePadding = 24.dp
+internal val ExpandedPlayerPaneGap = 32.dp
+internal const val ExpandedPlayerArtworkWeight = 0.44f
+internal val ExpandedPlayerArtworkMaxSide = 460.dp
+internal val CompactLandscapeArtworkMaxSide = 152.dp
+internal val LargePortraitPlayerStageWidth = 560.dp
+internal val PlayerArtworkPreviewSide = 112.dp
+private val PlayerPaneHorizontalInset = 22.dp
+
+/** 按同一窗口普通和沉浸布局可展示的最大尺寸取样，切换面板状态不重启请求。 */
+internal fun playerArtworkRequestSidePx(width: Dp, height: Dp, density: Density): Int {
+    val coverSide = when {
+        playerUsesExpandedLayout(width.value, height.value) -> minOf(
+            (width - ExpandedPlayerPanePadding * 2 - ExpandedPlayerPaneGap) * ExpandedPlayerArtworkWeight,
+            ExpandedPlayerArtworkMaxSide,
+            height,
+        )
+        playerUsesCompactLandscape(width.value, height.value) -> maxOf(
+            CompactLandscapeArtworkMaxSide,
+            landscapeImmersiveLayout(width.value, height.value).coverSideDp.dp,
+        )
+        else -> {
+            val stageWidth = if (width >= 600.dp) LargePortraitPlayerStageWidth else width
+            minOf(stageWidth - PlayerPaneHorizontalInset * 2, height)
+        }
+    }
+    val side = maxOf(coverSide, 48.dp, minOf(width / 3, PlayerArtworkPreviewSide))
+    // 像素向上取整，窗口小幅调整能复用已有采样。
+    val stepPx = 128
+    return with(density) { ceil(side.toPx() / stepPx).toInt() * stepPx }
+}
+
 /** 翻页视口和单页始终等宽，内距只用于页内内容；横屏内侧由两栏间距负责。 */
 internal fun playerPaneContentPadding(twoPanes: Boolean, controls: Boolean): PaddingValues = PaddingValues(
-    start = if (twoPanes && controls) 0.dp else 22.dp,
-    end = if (twoPanes && !controls) 0.dp else 22.dp,
+    start = if (twoPanes && controls) 0.dp else PlayerPaneHorizontalInset,
+    end = if (twoPanes && !controls) 0.dp else PlayerPaneHorizontalInset,
 )
 
 /** 手机横屏隐藏状态栏后保留最低顶部呼吸留白，避免封面与歌词顶栏贴死屏幕上沿。 */

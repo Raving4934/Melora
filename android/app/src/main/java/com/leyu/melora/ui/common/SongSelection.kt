@@ -198,13 +198,14 @@ internal fun SongBatchActionsBar(
 ) {
     val context = LocalContext.current
     var addToPlaylist by remember { mutableStateOf<List<OnlineSong>?>(null) }
+    var savingFavorites by remember { mutableStateOf(false) }
     AnimatedVisibility(
         visible = selection.active,
         enter = fadeIn(tween(160)) + slideInVertically(tween(200)) { it / 2 },
         exit = fadeOut(tween(140)) + slideOutVertically(tween(180)) { it / 2 },
     ) {
         val selected = selection.selectedSongs(songs)
-        val enabled = selected.isNotEmpty()
+        val enabled = selected.isNotEmpty() && !savingFavorites
         Column(
             Modifier
                 .fillMaxWidth()
@@ -218,13 +219,22 @@ internal fun SongBatchActionsBar(
                         if (removeFavorites) Icons.Rounded.Favorite else Icons.Outlined.FavoriteBorder,
                         if (removeFavorites) "取消收藏" else "收藏", enabled,
                     ) {
-                        val changed = UserLibrary.setFavorites(selected, favorite = !removeFavorites)
-                        PlaybackController.postMessage(context, when {
-                            removeFavorites -> "已取消收藏 $changed 首"
-                            changed == 0 -> "所选歌曲已在收藏中"
-                            else -> "已收藏 $changed 首"
-                        })
-                        selection.finish()
+                        if (savingFavorites) return@BatchAction
+                        savingFavorites = true
+                        val requested = selection.selectedUids
+                        submitLibraryWrite(onCompletion = { result ->
+                            savingFavorites = false
+                            result.onSuccess { changed ->
+                                PlaybackController.postMessage(context, when {
+                                    removeFavorites -> "已取消收藏 $changed 首"
+                                    changed == 0 -> "所选歌曲已在收藏中"
+                                    else -> "已收藏 $changed 首"
+                                })
+                                if (selection.selectedUids === requested) selection.finish()
+                            }
+                        }) {
+                            UserLibrary.setFavorites(selected, favorite = !removeFavorites)
+                        }
                     }
                     BatchAction(Icons.AutoMirrored.Outlined.PlaylistAdd, "添加到歌单", enabled) { addToPlaylist = selected }
                     BatchAction(Icons.AutoMirrored.Rounded.QueueMusic, "加入播放队列", enabled) {
@@ -241,15 +251,12 @@ internal fun SongBatchActionsBar(
         }
     }
     addToPlaylist?.let { selected ->
-        AddToPlaylistSheet(selected) {
-            addToPlaylist = null
-            selection.finish()
-        }
+        AddToPlaylistSheet(selected, onAdded = selection::finish, onDismiss = { addToPlaylist = null })
     }
 }
 
 @Composable
-private fun RowScope.BatchAction(icon: ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
+internal fun RowScope.BatchAction(icon: ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
     Column(
         Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).clickable(
             enabled = enabled, indication = null, interactionSource = remember { MutableInteractionSource() },

@@ -61,6 +61,7 @@ import com.leyu.melora.ui.common.runCatchingCancellable
 import com.leyu.melora.ui.common.shouldResetRootBackOnKeyEvent
 import com.leyu.melora.ui.settings.AboutModal
 import com.leyu.melora.ui.settings.AboutModalSheet
+import com.leyu.melora.ui.theme.MeloraAppearance
 import com.leyu.melora.ui.theme.MeloraTheme
 import com.leyu.melora.ui.theme.AdaptiveDisplay
 import dev.chrisbanes.haze.hazeSource
@@ -177,6 +178,10 @@ class MainActivity : ComponentActivity() {
                 hasSavedInstanceState = savedInstanceState != null,
                 startupPage = MeloraSettings.startupPage.value,
             )
+            val systemDark = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK ==
+                android.content.res.Configuration.UI_MODE_NIGHT_YES
+            MeloraAppearance.isEInk = MeloraSettings.eInkMode.value
+            MeloraAppearance.isDark = !MeloraAppearance.isEInk && MeloraSettings.themeMode.value.isDark(systemDark)
             setContent {
                 AdaptiveDisplay {
                     MeloraTheme {
@@ -201,7 +206,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
-            runDebugActions()
+            if (BuildConfig.DEBUG) runDebugActions()
             repeatOnLifecycle(Lifecycle.State.RESUMED) {
                 if (MeloraSettings.showDesktopLyrics.value) DesktopLyricService.setEnabled(this@MainActivity)
                 launch {

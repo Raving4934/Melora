@@ -31,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.PlaylistAdd
@@ -50,7 +51,6 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.TextFieldState
-import androidx.compose.foundation.text.input.clearText
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.outlined.AddCircleOutline
@@ -65,7 +65,6 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -73,8 +72,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -106,7 +105,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlaybackController
-import com.leyu.melora.playback.PlayerCoverStyle
 import com.leyu.melora.playback.UiTrack
 import com.leyu.melora.playback.UserLibrary
 import com.leyu.melora.playback.local.LocalMediaStore
@@ -115,11 +113,9 @@ import com.leyu.melora.playback.sdk.CoverLoader
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.sdk.OnlinePlaylist
 import org.json.JSONObject
-import com.leyu.melora.ui.player.ArtworkPlaceholder
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.delay
 import com.leyu.melora.ui.theme.LightSheetFrost
 import com.leyu.melora.ui.theme.MeloraAppearance
 import com.leyu.melora.ui.theme.currentMeloraSheetPalette
@@ -143,51 +139,32 @@ internal fun isLoadableArtworkUri(url: String): Boolean {
         scheme == "android.resource"
 }
 
-/** 封面：有地址用 Coil，无地址回退自绘占位（根据样式自动适配方形/圆形/黑胶）。 */
+/** 目录缩略图按行或卡片的尺寸加载，缺少地址时显示音符。 */
 @Composable
 fun SongArtwork(
     url: String?,
-    seed: String,
     modifier: Modifier = Modifier,
     cornerRadius: Int = 10,
-    retryOnError: Boolean = false,
     crossfade: Boolean = true,
-    style: PlayerCoverStyle = PlayerCoverStyle.Default,
-    onResult: ((Painter?) -> Unit)? = null,
 ) {
     if (url.isNullOrBlank() || !isLoadableArtworkUri(url)) {
-        ArtworkPlaceholder(seed = seed, modifier = modifier, cornerRadius = cornerRadius, style = style)
+        val shape = if (cornerRadius >= 500) CircleShape else RoundedCornerShape(cornerRadius.dp)
+        Box(
+            modifier.clip(shape)
+                .background(Brush.linearGradient(listOf(Color(0xFF242730), Color(0xFF14161B))))
+                .border(0.8.dp, Color.White.copy(alpha = 0.06f), shape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.Outlined.MusicNote, null, Modifier.fillMaxSize(0.28f), tint = Color.White.copy(alpha = 0.40f))
+        }
         return
     }
-    var attempt by remember(url) { mutableIntStateOf(0) }
-    var failed by remember(url) { mutableStateOf(false) }
-    val retryDelay = artworkRetryDelayMs(attempt)
-    if (retryOnError) {
-        LaunchedEffect(url, seed) {
-            // 常驻的全屏播放页重新展开时，仅失败且已用完预算的请求重新开始。
-            if (failed && artworkRetryDelayMs(attempt) == null) {
-                failed = false
-                attempt = 0
-            }
-        }
-    }
-    if (retryOnError && failed && retryDelay != null) {
-        LaunchedEffect(url, attempt) {
-            delay(retryDelay)
-            failed = false
-            attempt++
-        }
-    } else if (failed && onResult != null) {
-        LaunchedEffect(url, attempt) { onResult(null) }
-    }
-    // 全屏封面自管解码后的交接动画，关闭该请求的二次淡入；默认调用完全沿用原模型。
     val context = LocalContext.current
     val model = remember(url, crossfade, context) {
         if (crossfade) url else ImageRequest.Builder(context).data(url).crossfade(false).build()
     }
-    // 只重建失败的图片请求，沿用 AsyncImage 的约束采样和 URL 缓存键；封面布局不变。
     val shape = RoundedCornerShape(cornerRadius.dp)
-    val borderModifier = if (cornerRadius > 0 && style == PlayerCoverStyle.Default) {
+    val borderModifier = if (cornerRadius > 0) {
         Modifier.border(
             0.5.dp,
             if (MeloraAppearance.isDark) Color(0x14FFFFFF) else Color(0x0F000000),
@@ -196,16 +173,11 @@ fun SongArtwork(
     } else {
         Modifier
     }
-    key(url, attempt) {
+    key(url) {
         AsyncImage(
             model = model,
             contentDescription = null,
             contentScale = ContentScale.Crop,
-            onError = { failed = true },
-            onSuccess = {
-                failed = false
-                onResult?.invoke(it.painter)
-            },
             modifier = modifier.clip(shape).then(borderModifier),
         )
     }
@@ -340,7 +312,7 @@ fun OnlineSongRow(
         }
         // 关闭单曲封面时整个封面位移除，文字左移，左边缘与表头严格对齐
         if (showCovers) {
-            SongArtwork(artwork, song.uid, Modifier.size(42.dp), cornerRadius = 10)
+            SongArtwork(artwork, Modifier.size(42.dp), cornerRadius = 10)
             Spacer(Modifier.width(12.dp))
         }
         Column(
@@ -411,7 +383,7 @@ fun OnlineSongRow(
 /** 多选歌曲加入歌单（单曲调用方保持原签名）。 */
 @Composable
 fun AddToPlaylistSheet(song: OnlineSong, onDismiss: () -> Unit) =
-    AddToPlaylistSheet(listOf(song), onDismiss)
+    AddToPlaylistSheet(listOf(song), onDismiss = onDismiss)
 
 @Composable
 fun LoadingState(modifier: Modifier = Modifier, text: String = "加载中…") {
@@ -605,11 +577,7 @@ fun SongMoreSheet(
             Downloader.upgrade(context, song, local)
         } else {
             PlaybackController.postMessage(context, "开始下载：${song.name}")
-            scope.launch {
-                Downloader.download(context, song)
-                    .onSuccess { PlaybackController.postMessage(context, it) }
-                    .onFailure { PlaybackController.postMessage(context, it.message ?: "下载失败") }
-            }
+            Downloader.enqueue(context, song)
         }
     }
     val storagePermissionLauncher = rememberLauncherForActivityResult(
@@ -657,7 +625,6 @@ fun SongMoreSheet(
             ) {
                 SongArtwork(
                     cover ?: song.img,
-                    "more_song_${song.uid}",
                     Modifier.size(48.dp),
                     cornerRadius = 12,
                 )
@@ -719,7 +686,7 @@ fun SongMoreSheet(
                             label = if (isBookFavorite) "取消收藏专辑" else "收藏专辑",
                             destructive = isBookFavorite,
                         ) {
-                            closeSheet { UserLibrary.toggleFavoritePlaylist(book); onDismiss() }
+                            closeSheet { submitLibraryWrite { UserLibrary.toggleFavoritePlaylist(book) }; onDismiss() }
                         }
                     }
                     if (onResumeBook == null || isFavorite) {
@@ -729,7 +696,7 @@ fun SongMoreSheet(
                             label = if (isFavorite) "取消收藏本集" else "收藏本集",
                             destructive = isFavorite,
                         ) {
-                            closeSheet { UserLibrary.toggleFavorite(song); onDismiss() }
+                            closeSheet { submitLibraryWrite { UserLibrary.toggleFavorite(song) }; onDismiss() }
                         }
                     }
                 } else {
@@ -741,7 +708,7 @@ fun SongMoreSheet(
                         destructive = isFavorite,
                     ) {
                         closeSheet {
-                            UserLibrary.toggleFavorite(song)
+                            submitLibraryWrite { UserLibrary.toggleFavorite(song) }
                             onDismiss()
                         }
                     }
@@ -907,36 +874,49 @@ internal fun SheetAction(
     }
 }
 
+private enum class PlaylistAddition { Ready, Writing, Added, Dismissed }
+
 /** 选择/新建歌单（支持多选批量加入）。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
+fun AddToPlaylistSheet(
+    songs: List<OnlineSong>,
+    onAdded: () -> Unit = {},
+    onDismiss: () -> Unit,
+) {
     if (songs.isEmpty()) return
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val sheetState = rememberMeloraBottomSheetState()
-    val closeSheet = rememberSheetDismiss(sheetState)
     val newName = remember { TextFieldState() }
-    var adding by remember { mutableStateOf(false) }
+    var addition by remember { mutableStateOf(PlaylistAddition.Ready) }
+    val sheetState = rememberMeloraBottomSheetState(
+        confirmValueChange = { it != SheetValue.Hidden || addition != PlaylistAddition.Writing },
+    )
+    val closeSheet = rememberSheetDismiss(sheetState)
+    val dismiss: () -> Unit = {
+        if (addition != PlaylistAddition.Writing && addition != PlaylistAddition.Dismissed) {
+            addition = PlaylistAddition.Dismissed
+            onDismiss()
+        }
+    }
     val playlists by UserLibrary.playlists.collectAsStateWithLifecycle()
     val addSongs: (UserLibrary.UserPlaylist?) -> Unit = { playlist ->
-        if (!adding && sheetState.targetValue != SheetValue.Hidden &&
+        if (addition == PlaylistAddition.Ready && sheetState.targetValue != SheetValue.Hidden &&
             (playlist != null || newName.text.isNotBlank())
         ) {
             val name = newName.text.trim().toString()
-            adding = true
+            addition = PlaylistAddition.Writing
+            val write = UserLibrary.enqueueWrite {
+                if (playlist == null) {
+                    UserLibrary.createPlaylist(name, songs)
+                    songs.size
+                } else {
+                    UserLibrary.addToPlaylist(playlist.id, songs)
+                }
+            }
             scope.launch {
                 try {
-                    runCatchingCancellable {
-                        withContext(Dispatchers.IO) {
-                            if (playlist == null) {
-                                UserLibrary.createPlaylist(name, songs)
-                                songs.size
-                            } else {
-                                UserLibrary.addToPlaylist(playlist.id, songs)
-                            }
-                        }
-                    }.onSuccess { newCount ->
+                    runCatchingCancellable { write.await() }.onSuccess { newCount ->
                         PlaybackController.postMessage(context, when {
                             playlist == null -> if (songs.size == 1) "已创建歌单「$name」并添加" else "已创建歌单「$name」并添加 ${songs.size} 首"
                             newCount == null -> "歌单已不存在，请重试"
@@ -944,8 +924,12 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
                             songs.size == 1 -> "已添加到歌单「${playlist.name}」"
                             else -> "已添加 $newCount 首到歌单「${playlist.name}」"
                         })
-                        if (playlist == null) newName.clearText()
-                        if (newCount != null) closeSheet(onDismiss)
+                        if (newCount != null) {
+                            // 返回手势可能接管退场，写入成功时就结束上游多选。
+                            addition = PlaylistAddition.Added
+                            onAdded()
+                            closeSheet(dismiss)
+                        }
                     }.onFailure {
                         PlaybackController.postMessage(
                             context,
@@ -953,15 +937,16 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
                         )
                     }
                 } finally {
-                    adding = false
+                    if (addition == PlaylistAddition.Writing) addition = PlaylistAddition.Ready
                 }
             }
         }
     }
 
+    val canAdd = addition == PlaylistAddition.Ready
     val palette = currentMeloraSheetPalette()
     MeloraBottomSheet(
-        onDismissRequest = onDismiss,
+        onDismissRequest = dismiss,
         sheetState = sheetState,
         lightFrostTint = if (!palette.isDark) LightSheetFrost.tint else Color.Unspecified,
         dragHandle = { MeloraSheetHandle(topPadding = 8.dp, bottomPadding = 4.dp) },
@@ -995,7 +980,7 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
                         .padding(start = 14.dp, end = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    val hintColor = if (adding) palette.textMuted else palette.textSub
+                    val hintColor = if (canAdd) palette.textSub else palette.textMuted
                     Icon(
                         Icons.Outlined.AddCircleOutline,
                         contentDescription = null,
@@ -1005,7 +990,7 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
                     Spacer(Modifier.width(10.dp))
                     BasicTextField(
                         state = newName,
-                        enabled = !adding,
+                        enabled = canAdd,
                         lineLimits = TextFieldLineLimits.SingleLine,
                         textStyle = TextStyle(
                             fontSize = 14.sp,
@@ -1036,6 +1021,7 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
                     if (newName.text.isNotBlank()) {
                         Surface(
                             onClick = { addSongs(null) },
+                            enabled = canAdd,
                             shape = RoundedCornerShape(14.dp),
                             color = MaterialTheme.colorScheme.primary,
                         ) {
@@ -1068,7 +1054,7 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable(enabled = !adding) {
+                                .clickable(enabled = canAdd) {
                                     addSongs(playlist)
                                 }
                                 .padding(horizontal = 20.dp, vertical = 8.dp),
@@ -1085,7 +1071,6 @@ fun AddToPlaylistSheet(songs: List<OnlineSong>, onDismiss: () -> Unit) {
                                 if (!cover.isNullOrBlank()) {
                                     SongArtwork(
                                         cover,
-                                        "pl_cover_${playlist.id}",
                                         Modifier.fillMaxSize(),
                                         cornerRadius = 10,
                                     )

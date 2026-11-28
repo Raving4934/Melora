@@ -227,7 +227,7 @@ class LyricsRendererInstrumentedTest {
             positionMs = 1_000L, positionSampleRealtimeMs = SystemClock.elapsedRealtime() - 250L,
             positionAdvancing = true, durationMs = 100_000L))
         lateinit var position: State<Long>
-        composeRule.setContent { position = rememberLyricPosition(state.value, visible = true) }
+        composeRule.setContent { position = rememberLyricPosition(state, visible = true) }
         try {
             composeRule.runOnIdle {
                 assertTrue("初次展示不能先画过期采样值: ${position.value}", position.value >= 1_250L)
@@ -253,7 +253,7 @@ class LyricsRendererInstrumentedTest {
             positionMs = 4_000L, positionSampleRealtimeMs = SystemClock.elapsedRealtime(),
             positionAdvancing = false, durationMs = 100_000L))
         lateinit var position: State<Long>
-        composeRule.setContent { position = rememberLyricPosition(state.value, visible = true) }
+        composeRule.setContent { position = rememberLyricPosition(state, visible = true) }
         fun publish(next: PlayerUiState, expected: Long, advancing: Boolean = false) {
             composeRule.runOnIdle { state.value = next }
             composeRule.mainClock.advanceTimeByFrame()

@@ -1,6 +1,6 @@
 package com.leyu.melora.ui.player
 
-import android.content.pm.ActivityInfo
+import androidx.compose.runtime.rememberUpdatedState
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.os.Build
@@ -44,6 +44,7 @@ import com.leyu.melora.playback.PlayerCoverStyle
 import com.leyu.melora.playback.PlayerLyric
 import com.leyu.melora.playback.PlayerUiState
 import com.leyu.melora.playback.UiTrack
+import com.leyu.melora.ui.HostOrientationFixture
 import com.leyu.melora.ui.awaitStable
 import com.leyu.melora.ui.boundsInSameFrame
 import com.leyu.melora.ui.common.SongListStateProvider
@@ -76,8 +77,7 @@ class PhoneLandscapePlayerInstrumentedTest {
     private val seeks = mutableListOf<Long>()
     private var nextClicks = 0
     private lateinit var back: PlayerSheetBackState
-    private data class HostOrientation(val configuration: Int, val requested: Int)
-    private var originalHostOrientation: HostOrientation? = null
+    private val hostOrientation = HostOrientationFixture(compose)
 
     @Suppress("UNCHECKED_CAST")
     private val lyricFlow = PlaybackController.javaClass.getDeclaredField("_lyric").apply { isAccessible = true }
@@ -90,39 +90,13 @@ class PhoneLandscapePlayerInstrumentedTest {
     @After
     fun restoreFixture() {
         try {
-            restoreHostOrientation()
+            hostOrientation.restore()
         } finally {
             lyricFlow.value = originalLyrics
             MeloraSettings.miniLyricsEnabled.value = originalMiniLyrics
             MeloraSettings.playerCoverStyle.value = originalCoverStyle
             MeloraSettings.hideStatusBar.value = originalHideStatusBar
         }
-    }
-
-    private fun restoreHostOrientation() {
-        val original = originalHostOrientation ?: return
-        val scenario = compose.activityRule.scenario
-        try {
-            val request = when (original.configuration) {
-                Configuration.ORIENTATION_LANDSCAPE -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-                Configuration.ORIENTATION_PORTRAIT -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                else -> null
-            }
-            if (request != null) {
-                // 先由仍在台前的 Activity 带动真实屏幕回转，再交还方向策略。
-                scenario.onActivity { it.requestedOrientation = request }
-                awaitHostOrientation(original.configuration)
-            }
-        } finally {
-            scenario.onActivity {
-                it.requestedOrientation = original.requested
-                assertEquals("恢复 Activity 的方向策略", original.requested, it.requestedOrientation)
-            }
-        }
-    }
-
-    private fun awaitHostOrientation(expected: Int) {
-        compose.waitUntil(8_000) { compose.activity.resources.configuration.orientation == expected }
     }
 
     private fun hostShortSideDp(): Float = compose.activity.run {
@@ -148,16 +122,8 @@ class PhoneLandscapePlayerInstrumentedTest {
         }
         if (viewport == null || simulateHiddenBars || (!landscape && shortSide < 600f)) {
             // 只旋转测试 Activity，保留手机的真实比例、刘海和系统栏设置。
-            compose.activityRule.scenario.onActivity {
-                originalHostOrientation = originalHostOrientation ?: HostOrientation(
-                    it.resources.configuration.orientation,
-                    it.requestedOrientation,
-                )
-                it.requestedOrientation = if (landscape) ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-                    else ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            }
             val expected = if (landscape) Configuration.ORIENTATION_LANDSCAPE else Configuration.ORIENTATION_PORTRAIT
-            awaitHostOrientation(expected)
+            hostOrientation.request(expected)
         }
 
         val track = tracks.first()
@@ -189,7 +155,7 @@ class PhoneLandscapePlayerInstrumentedTest {
                                 else -> Modifier.size(viewport.width, viewport.height)
                             }
                             ContinuousPlayerSheet(
-                                state = state,
+                                playback = rememberUpdatedState(state),
                                 modifier = playerModifier,
                                 backState = back,
                                 onSeek = { seeks += it },

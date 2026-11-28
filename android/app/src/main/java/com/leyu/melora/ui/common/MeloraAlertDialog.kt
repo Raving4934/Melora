@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogWindowProvider
+import com.leyu.melora.ui.theme.SystemBarsVisibility
 
 /** 确认弹窗统一沿用调用页面的尺寸；原生 Dialog 仍负责返回、焦点和窗口安全区。 */
 @Composable
@@ -47,6 +48,7 @@ internal fun MeloraAlertDialog(
     val useGlass = glassBackdropSource(containerColor) != null
     val glassScrim = if (useGlass) Color.Black.copy(alpha = glassScrimAlpha(containerColor)) else Color.Transparent
     Dialog(onDismissRequest = onDismissRequest) {
+        SystemBarsVisibility()
         if (useGlass) {
             val window = (LocalView.current.parent as? DialogWindowProvider)?.window
             SideEffect { window?.setDimAmount(glassScrim.alpha) }

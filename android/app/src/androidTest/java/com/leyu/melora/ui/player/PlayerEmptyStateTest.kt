@@ -34,7 +34,7 @@ class PlayerEmptyStateTest {
             CompositionLocalProvider(LocalSongListState provides shared) {
                 MeloraTheme {
                     // 与 MeloraApp 一致：清空时卸载播放器及返回状态，新队列从 Mini 开始。
-                    if (state.value.current != null) ContinuousPlayerSheet(state.value, Modifier.fillMaxSize())
+                    if (state.value.current != null) ContinuousPlayerSheet(state, Modifier.fillMaxSize())
                 }
             }
         }

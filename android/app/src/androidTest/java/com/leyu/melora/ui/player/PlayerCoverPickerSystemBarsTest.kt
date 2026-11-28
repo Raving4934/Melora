@@ -75,7 +75,7 @@ class PlayerCoverPickerSystemBarsTest {
                         PlayerAppearanceProvider(dark = true) {
                             PlayerCoverPicker(
                                 selected = selected.value,
-                                track = null,
+                                artwork = testPlayerArtwork(),
                                 immersive = forceHide.value, motionEnabled = false,
                                 themeMode = ThemeMode.Auto, onThemeModeChange = {},
                                 onSelect = { style ->

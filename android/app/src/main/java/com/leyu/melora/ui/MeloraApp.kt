@@ -75,6 +75,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.State
 import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -105,7 +106,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.leyu.melora.playback.MeloraSettings
+import com.leyu.melora.playback.PlatformSource
 import com.leyu.melora.playback.PlaybackController
+import com.leyu.melora.playback.PlayerUiState
 import com.leyu.melora.playback.UserLibrary
 import com.leyu.melora.startup.StartupPage
 import com.leyu.melora.ui.common.PageBackHandler
@@ -114,13 +117,13 @@ import com.leyu.melora.ui.common.LocalResetRootBack
 import com.leyu.melora.ui.common.PlatformChoice
 import com.leyu.melora.ui.common.PlatformUnderlineRow
 import com.leyu.melora.ui.common.SourceAliasProvider
+import com.leyu.melora.ui.common.dotColor
 import com.leyu.melora.ui.common.sourceAliasDisplay
 import com.leyu.melora.ui.common.toUiTracks
 import com.leyu.melora.ui.common.titleScrollToTop
 import com.leyu.melora.ui.audiobook.AudiobooksScreen
 import com.leyu.melora.ui.discover.DiscoverScreen
 import com.leyu.melora.ui.leaderboard.LeaderboardScreen
-import com.leyu.melora.ui.leaderboard.boardPlatforms
 import com.leyu.melora.ui.local.rememberLocalSongsContent
 import com.leyu.melora.ui.common.LocalSongListState
 import com.leyu.melora.ui.local.LocalSongsPage
@@ -128,7 +131,6 @@ import com.leyu.melora.ui.local.rememberLocalSongDeletion
 import com.leyu.melora.ui.my.MyLibraryScreen
 import com.leyu.melora.ui.playlist.PlaylistTopBarFilter
 import com.leyu.melora.ui.playlist.PlaylistsScreen
-import com.leyu.melora.ui.playlist.playlistPlatforms
 import com.leyu.melora.ui.settings.SettingsMasterScreen
 import com.leyu.melora.ui.common.ChromeActionSurface
 import com.leyu.melora.ui.common.ChromeScaffold
@@ -224,14 +226,10 @@ private fun MainPageHeader(
         title = {
             if (picking) {
                 val selectedId by (if (tab == 1) MeloraSettings.leaderboardPlatform else MeloraSettings.playlistPlatform).collectAsStateWithLifecycle()
-                val choices = if (tab == 1) {
-                    boardPlatforms.map {
-                        PlatformChoice(it.id, sourceAliasDisplay(it.id, it.name), boardPlatformColors[it.id] ?: MeloraAppearance.brand)
-                    }
-                } else {
-                    playlistPlatforms.map {
-                        PlatformChoice(it.id, sourceAliasDisplay(it.id, it.label), it.color)
-                    }
+                val platforms = if (tab == 1) PlatformSource.boardOrder else PlatformSource.musicPlatforms
+                val choices = platforms.map { platform ->
+                    val label = if (tab == 1) platform.boardLabel else platform.label
+                    PlatformChoice(platform.id, sourceAliasDisplay(platform.id, label), platform.dotColor)
                 }
                 PlatformUnderlineRow(
                     choices = choices,
@@ -322,7 +320,6 @@ fun MeloraApp(modifier: Modifier = Modifier, initialTab: Int = 5) {
         sortField = MeloraSettings.localSortField.collectAsStateWithLifecycle().value,
         ascending = MeloraSettings.localSortAscending.collectAsStateWithLifecycle().value,
     )
-    val playerState by PlaybackController.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val resetRootBack = LocalResetRootBack.current
@@ -396,19 +393,12 @@ fun MeloraApp(modifier: Modifier = Modifier, initialTab: Int = 5) {
     }
 
     // 与播放层使用同一状态，清空后同时撤销底栏占位和所有旧曲目展示。
-    val hasActivePlayback = playerState.current != null
+    val playback = PlaybackController.state.collectAsStateWithLifecycle()
+    val hasActivePlayback by remember(playback) { derivedStateOf { playback.value.current != null } }
     val playerNavigationInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val playerSheetBackState = if (hasActivePlayback) rememberPlayerSheetBackState() else null
     val playerOwnsBack = playerSheetBackState?.ownsBack == true
     val miniBarHeight = if (isPersistentDrawer) DesktopMiniPlayerHeight else MiniPlayerContentHeight
-
-    // 全局提示消息：显示 2.4 秒后自动消费
-    androidx.compose.runtime.LaunchedEffect(playerState.message) {
-        if (playerState.message != null) {
-            kotlinx.coroutines.delay(2_400)
-            PlaybackController.consumeMessage()
-        }
-    }
 
     androidx.compose.runtime.LaunchedEffect(Unit) {
         if (MeloraSettings.autoPlayOnStart.value) {
@@ -708,90 +698,18 @@ fun MeloraApp(modifier: Modifier = Modifier, initialTab: Int = 5) {
             )
         }
 
-        // --- 4. 全局消息浮层（平滑淡入浮出 + 语义图标 + 磨砂质感深色胶囊 + 点按快速关闭） ---
-        AnimatedVisibility(
-            visible = playerState.message != null,
-            enter = fadeIn(tween(180)) + slideInVertically(tween(220)) { it / 2 },
-            exit = fadeOut(tween(160)) + slideOutVertically(tween(180)) { it / 2 },
+        PlaybackMessage(
+            playback = playback,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = if (hasActivePlayback) miniBarHeight + maxOf(24.dp, playerNavigationInset + 8.dp) else 32.dp)
                 .padding(horizontal = 24.dp),
-        ) {
-            val message = playerState.message.orEmpty()
-            if (message.isNotBlank()) {
-                val isDark = MeloraAppearance.isDark
-                val isError = message.contains("失败") || message.contains("不可用") || message.contains("错误") || message.contains("无法")
-                val isSuccess = message.contains("已") || message.contains("成功") || message.contains("完成")
-                val isWarning = message.contains("超时") || message.contains("未获得") || message.contains("限制") || message.contains("失效")
-
-                val icon = when {
-                    isError -> Icons.Rounded.ErrorOutline
-                    isSuccess -> Icons.Rounded.CheckCircle
-                    isWarning -> Icons.Rounded.WarningAmber
-                    message.contains("下载") -> Icons.Outlined.Download
-                    else -> Icons.Outlined.Info
-                }
-                val iconTint = if (isDark) {
-                    when {
-                        isError -> Color(0xFFF87171) // 柔和珊红
-                        isSuccess -> Color(0xFF34D399) // 翠玉绿
-                        isWarning -> Color(0xFFFBBF24) // 琥珀金
-                        else -> Color(0xFF60A5FA) // 晴空蓝
-                    }
-                } else {
-                    when {
-                        isError -> Color(0xFFDC2626) // 绯红
-                        isSuccess -> Color(0xFF059669) // 祖母绿
-                        isWarning -> Color(0xFFD97706) // 暖琥珀
-                        else -> Color(0xFF2563EB) // 品牌钴蓝
-                    }
-                }
-
-                // 浅色模式采用纯净浅色半透明（0xF2FFFFFF）+ 细微浅边；深色模式中性深炭（0xFF18181B）+ 细微亮边；shadowElevation 归零彻底干掉怪光晕
-                val capsuleBg = if (isDark) Color(0xFF18181B) else Color(0xF2FFFFFF)
-                val capsuleBorder = if (isDark) Color(0x1AFFFFFF) else Color(0x14000000)
-                val textColor = if (isDark) MeloraAppearance.textMain else Color(0xFF111827)
-
-                Surface(
-                    shape = RoundedCornerShape(22.dp),
-                    color = capsuleBg,
-                    shadowElevation = 0.dp,
-                    border = BorderStroke(1.dp, capsuleBorder),
-                    modifier = Modifier.clickable(
-                        indication = null,
-                        interactionSource = remember { MutableInteractionSource() },
-                    ) { PlaybackController.consumeMessage() },
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            imageVector = icon,
-                            contentDescription = null,
-                            tint = iconTint,
-                            modifier = Modifier.size(16.dp),
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = message,
-                            fontSize = 12.5.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = textColor,
-                            lineHeight = 17.sp,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-            }
-        }
+        )
 
         // --- 5. 一体化持久播放层 ---
         if (playerSheetBackState != null) {
             ContinuousPlayerSheet(
-                state = playerState,
+                playback = playback,
                 modifier = Modifier.align(Alignment.BottomCenter),
                 backState = playerSheetBackState,
             )
@@ -802,20 +720,98 @@ fun MeloraApp(modifier: Modifier = Modifier, initialTab: Int = 5) {
     }
 }
 
-// 排行榜顶栏右侧：平台筛选（替换原搜索入口）
-private val boardPlatformColors = mapOf(
-    "kw" to Color(0xFFFFB300),
-    "kg" to Color(0xFF0091EA),
-    "tx" to Color(0xFF00C853),
-    "wy" to Color(0xFFE53935),
-    "mg" to Color(0xFF8E24AA),
-)
+@Composable
+private fun PlaybackMessage(playback: State<PlayerUiState>, modifier: Modifier) {
+    val message by remember(playback) { derivedStateOf { playback.value.message } }
+    var displayedMessage by remember { mutableStateOf("") }
+    androidx.compose.runtime.LaunchedEffect(message) {
+        if (message != null) {
+            if (!message.isNullOrBlank()) displayedMessage = message.orEmpty()
+            kotlinx.coroutines.delay(2_400)
+            if (PlaybackController.state.value.message == message) PlaybackController.consumeMessage()
+        }
+    }
+    AnimatedVisibility(
+        visible = !message.isNullOrBlank(),
+        enter = fadeIn(tween(180)) + slideInVertically(tween(220)) { it / 2 },
+        exit = fadeOut(tween(160)) + slideOutVertically(tween(180)) { it / 2 },
+        modifier = modifier,
+    ) {
+        val text = message?.takeIf(String::isNotBlank) ?: displayedMessage
+        if (text.isNotBlank()) {
+            val isDark = MeloraAppearance.isDark
+            val isError = text.contains("失败") || text.contains("不可用") || text.contains("错误") || text.contains("无法")
+            val isSuccess = text.contains("已") || text.contains("成功") || text.contains("完成")
+            val isWarning = text.contains("超时") || text.contains("未获得") || text.contains("限制") || text.contains("失效")
+
+            val icon = when {
+                isError -> Icons.Rounded.ErrorOutline
+                isSuccess -> Icons.Rounded.CheckCircle
+                isWarning -> Icons.Rounded.WarningAmber
+                text.contains("下载") -> Icons.Outlined.Download
+                else -> Icons.Outlined.Info
+            }
+            val iconTint = if (isDark) {
+                when {
+                    isError -> Color(0xFFF87171) // 柔和珊红
+                    isSuccess -> Color(0xFF34D399) // 翠玉绿
+                    isWarning -> Color(0xFFFBBF24) // 琥珀金
+                    else -> Color(0xFF60A5FA) // 晴空蓝
+                }
+            } else {
+                when {
+                    isError -> Color(0xFFDC2626) // 绯红
+                    isSuccess -> Color(0xFF059669) // 祖母绿
+                    isWarning -> Color(0xFFD97706) // 暖琥珀
+                    else -> Color(0xFF2563EB) // 品牌钴蓝
+                }
+            }
+
+            // 浅色模式采用纯净浅色半透明（0xF2FFFFFF）+ 细微浅边；深色模式中性深炭（0xFF18181B）+ 细微亮边；shadowElevation 归零彻底干掉怪光晕
+            val capsuleBg = if (isDark) Color(0xFF18181B) else Color(0xF2FFFFFF)
+            val capsuleBorder = if (isDark) Color(0x1AFFFFFF) else Color(0x14000000)
+            val textColor = if (isDark) MeloraAppearance.textMain else Color(0xFF111827)
+
+            Surface(
+                shape = RoundedCornerShape(22.dp),
+                color = capsuleBg,
+                shadowElevation = 0.dp,
+                border = BorderStroke(1.dp, capsuleBorder),
+                modifier = Modifier.clickable(
+                    indication = null,
+                    interactionSource = remember { MutableInteractionSource() },
+                ) { PlaybackController.consumeMessage() },
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = iconTint,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = text,
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = textColor,
+                        lineHeight = 17.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun LeaderboardPlatformFilter(onOpenPlatformPicker: () -> Unit) {
     val currentId by MeloraSettings.leaderboardPlatform.collectAsStateWithLifecycle()
-    val platform = boardPlatforms.firstOrNull { it.id == currentId } ?: boardPlatforms.first()
-    val dotColor = boardPlatformColors[platform.id] ?: MeloraAppearance.brand
+    val platform = PlatformSource.musicPlatform(currentId) ?: PlatformSource.Kuwo
 
     Box(modifier = Modifier.padding(end = 8.dp)) {
         ChromeActionSurface(
@@ -833,10 +829,10 @@ private fun LeaderboardPlatformFilter(onOpenPlatformPicker: () -> Unit) {
                     modifier = Modifier
                         .size(7.dp)
                         .clip(CircleShape)
-                        .background(dotColor.copy(alpha = 0.55f)),
+                        .background(platform.dotColor.copy(alpha = 0.55f)),
                 )
                 Spacer(Modifier.width(6.dp))
-                Text(sourceAliasDisplay(platform.id, platform.name), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextDark)
+                Text(sourceAliasDisplay(platform.id, platform.boardLabel), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextDark)
                 Spacer(Modifier.width(2.dp))
                 Icon(
                     Icons.Rounded.KeyboardArrowDown,

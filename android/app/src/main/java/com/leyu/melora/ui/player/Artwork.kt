@@ -9,20 +9,20 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -31,6 +31,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.isActive
@@ -39,24 +40,31 @@ import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material3.Icon
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.ColorProducer
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import coil3.Image as CoilImage
+import coil3.SingletonImageLoader
+import coil3.compose.asPainter
+import coil3.request.ImageRequest
+import coil3.request.SuccessResult
+import coil3.size.Precision
+import coil3.size.Scale
 import com.leyu.melora.playback.PlayerCoverStyle
-import com.leyu.melora.ui.common.SongArtwork
+import com.leyu.melora.ui.common.artworkRetryDelayMs
 import com.leyu.melora.ui.common.isLoadableArtworkUri
 
 // 沟槽与环境反光固定，中心标签随唱片转动，避免整层亮斑像贴纸一样旋转。
@@ -180,76 +188,6 @@ internal fun rememberVinylTonearmAngle(
     }
 }
 
-/**
- * 默认方形与圆形裁切模式下的专属通用音乐封面占位。
- * 极简克制高级感：深邃哑光中性渐变 + 柔和微透亮内描边 + 居中半透明优雅音符，彻底抛弃突兀的蓝色彩圈。
- */
-@Composable
-fun ModernMusicCoverPlaceholder(
-    modifier: Modifier = Modifier,
-    shape: Shape = RoundedCornerShape(14.dp),
-) {
-    Box(
-        modifier = modifier
-            .clip(shape)
-            .background(
-                Brush.linearGradient(
-                    listOf(Color(0xFF242730), Color(0xFF14161B)),
-                ),
-            )
-            .border(0.8.dp, Color.White.copy(alpha = 0.06f), shape),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            imageVector = Icons.Outlined.MusicNote,
-            contentDescription = null,
-            tint = Color.White.copy(alpha = 0.40f),
-            modifier = Modifier.fillMaxSize(0.28f),
-        )
-    }
-}
-
-@Composable
-fun ArtworkPlaceholder(
-    seed: String,
-    modifier: Modifier = Modifier,
-    cornerRadius: Int = 14,
-    style: PlayerCoverStyle = PlayerCoverStyle.Default,
-) {
-    when (style) {
-        PlayerCoverStyle.Vinyl -> {
-            Box(
-                modifier = modifier
-                    .clip(if (cornerRadius >= 500) CircleShape else RoundedCornerShape(cornerRadius.dp))
-                    .background(
-                        Brush.linearGradient(
-                            listOf(Color(0xFF1E2128), Color(0xFF14161A)),
-                        ),
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                VinylDisc(
-                    modifier = Modifier
-                        .fillMaxWidth(0.88f)
-                        .aspectRatio(1f),
-                )
-            }
-        }
-        PlayerCoverStyle.Circle -> {
-            ModernMusicCoverPlaceholder(
-                modifier = modifier,
-                shape = CircleShape,
-            )
-        }
-        PlayerCoverStyle.Default -> {
-            ModernMusicCoverPlaceholder(
-                modifier = modifier,
-                shape = if (cornerRadius >= 500) CircleShape else RoundedCornerShape(cornerRadius.dp),
-            )
-        }
-    }
-}
-
 /** 封面几何、标签和歌词共享节奏，快速换目标时从当前显示值继续。 */
 internal val PlayerCoverMorphSpec = tween<Float>(280, easing = FastOutSlowInEasing)
 
@@ -272,13 +210,10 @@ internal fun nowPlayingArtworkShape(style: PlayerCoverStyle): NowPlayingArtworkS
  */
 @Composable
 internal fun NowPlayingArtwork(
-    url: String?,
-    seed: String,
+    artwork: PlayerArtwork,
     style: PlayerCoverStyle,
     modifier: Modifier = Modifier,
     cornerRadius: Int = 18,
-    retryOnError: Boolean = false,
-    smoothChanges: Boolean = false,
     rotationDegrees: () -> Float = { 0f },
     motionEnabled: Boolean = true,
     tonearmAngle: (() -> Float)? = null,
@@ -297,8 +232,6 @@ internal fun NowPlayingArtwork(
         if (motionEnabled) PlayerCoverMorphSpec else snap(), label = "coverRotationAlignment",
     )
     val record = recordChange?.takeIf { style == PlayerCoverStyle.Vinyl }
-    val artworkUrl = if (record != null) record.displayedArtwork else url
-    val artworkSeed = record?.displayedUid ?: seed
     val discMotion = if (record == null) Modifier else Modifier.graphicsLayer {
         val scale = record.scale
         scaleX = scale
@@ -326,15 +259,7 @@ internal fun NowPlayingArtwork(
                     size.minDimension / (2f * density) * roundness.value).dp)
                 clip = true
             }
-            // 方形和圆形共用占位，由外层连续控制裁切。
-            val imageStyle = if (style == PlayerCoverStyle.Circle) PlayerCoverStyle.Default else style
-            if ((smoothChanges || record != null) && artworkUrl != null && isLoadableArtworkUri(artworkUrl)) {
-                SmoothPlayerArtwork(
-                    artworkUrl, artworkSeed, artworkModifier, retryOnError, imageStyle, motionEnabled,
-                )
-            } else {
-                SongArtwork(artworkUrl, artworkSeed, artworkModifier, 0, retryOnError, style = imageStyle)
-            }
+            artwork.Draw(artworkModifier, style)
             if (showVinyl) {
                 Canvas(Modifier.fillMaxSize().graphicsLayer { alpha = vinyl.value }) {
                     val radius = size.minDimension / 2f
@@ -388,65 +313,128 @@ private fun DrawScope.drawVinylTonearm(angle: Float) {
     drawCircle(Color(0xFFAEB4BE), baseRadius * 0.24f, center = pivot)
 }
 
-private class ArtworkResult(val painter: Painter?) {
-    // 每张图独立淡入，下一张从零开始时，已经上屏的图层仍然完全不透明。
-    val opacity = Animatable(0f)
+private const val PreviousTrackArtworkHoldMs = 450L
+
+@Stable
+internal class PlayerArtwork(val placeholderTint: ColorProducer) {
+    internal class Layer(val image: CoilImage?) {
+        val opacity = Animatable(0f)
+    }
+
+    var displayed by mutableStateOf<CoilImage?>(null)
+    var incoming by mutableStateOf<Layer?>(null)
 }
 
 @Composable
-private fun SmoothPlayerArtwork(
-    url: String,
-    seed: String,
-    modifier: Modifier,
+internal fun rememberPlayerArtwork(
+    url: String?,
+    uid: String,
+    sizePx: Int,
     retryOnError: Boolean,
-    style: PlayerCoverStyle,
     motionEnabled: Boolean,
-) {
-    val request = remember(url) { mutableStateOf<ArtworkResult?>(null) }
-    val activeRequest by rememberUpdatedState(request)
-    var displayed by remember { mutableStateOf<Painter?>(null) }
-    var incoming by remember { mutableStateOf<ArtworkResult?>(null) }
-
-    LaunchedEffect(motionEnabled) {
-        if (!motionEnabled) {
-            incoming?.let { displayed = it.painter }
-            incoming = null
+    placeholderTint: ColorProducer,
+    recordChange: VinylRecordChange? = null,
+): PlayerArtwork {
+    val context = LocalContext.current
+    val tint by rememberUpdatedState(placeholderTint)
+    val artwork = remember { PlayerArtwork { tint() } }
+    val source = url?.takeIf(::isLoadableArtworkUri)
+    val request = remember(context, source, sizePx) {
+        source?.takeIf { sizePx > 0 }?.let {
+            ImageRequest.Builder(context).data(it).size(sizePx).scale(Scale.FILL)
+                .precision(Precision.INEXACT).build()
         }
-        // 当前淡入可以完成；随后只读取最新请求的结果。等待新图时继续显示已解码的图。
-        snapshotFlow { activeRequest.value }.filterNotNull().collect { result ->
-            val next = result.painter
-            if (next === displayed) return@collect
-            if (motionEnabled && next != null) {
-                incoming = result
-                result.opacity.animateTo(1f, tween(220, easing = FastOutSlowInEasing))
+    }
+    val result = remember(source, request) {
+        mutableStateOf(if (source == null) PlayerArtwork.Layer(null) else null)
+    }
+    var attempt by remember(request) { mutableIntStateOf(0) }
+    val retryDelay = artworkRetryDelayMs(attempt)
+    LaunchedEffect(request, attempt) {
+        if (request == null) return@LaunchedEffect
+        val loaded = SingletonImageLoader.get(context).execute(request) as? SuccessResult
+        result.value = PlayerArtwork.Layer(loaded?.image)
+    }
+    if (retryOnError && request != null) {
+        LaunchedEffect(request, uid) {
+            // 重新展开后允许已耗尽预算的封面重新请求。
+            if (artworkRetryDelayMs(attempt) == null && result.value?.let { it.image == null } == true) {
+                result.value = null
+                attempt = 0
             }
-            displayed = next
-            incoming = null
+        }
+        if (retryDelay != null && result.value?.let { it.image == null } == true) {
+            LaunchedEffect(request, attempt) {
+                delay(retryDelay)
+                result.value = null
+                attempt++
+            }
         }
     }
 
-    Box(modifier) {
+    val currentUid by rememberUpdatedState(uid)
+    val activeResult by rememberUpdatedState(
+        result.value?.takeIf {
+            (recordChange == null || recordChange.displayedArtwork == url) &&
+                (it.image != null || request == null || !retryOnError || retryDelay == null)
+        },
+    )
+    var coverUid by remember { mutableStateOf<String?>(null) }
+    // 连续跳过尚未取得封面的曲目时，上一张图的等待窗口只计算一次。
+    val holdingPreviousTrack = coverUid != null && coverUid != uid
+    LaunchedEffect(holdingPreviousTrack) {
+        if (holdingPreviousTrack) {
+            delay(PreviousTrackArtworkHoldMs)
+            if (coverUid == currentUid) return@LaunchedEffect
+            artwork.displayed = null
+            artwork.incoming = null
+            coverUid = null
+        }
+    }
+
+    LaunchedEffect(motionEnabled) {
+        if (!motionEnabled) {
+            artwork.incoming?.let { artwork.displayed = it.image }
+            artwork.incoming = null
+        }
+        // 黑胶在抬臂期间即可解码，换碟后接管绘制。共享同一张封面的相邻曲目只更新归属。
+        snapshotFlow { activeResult?.let { currentUid to it } }.filterNotNull().collect { (owner, layer) ->
+            val next = layer.image
+            coverUid = owner.takeIf { next != null }
+            if (next === artwork.displayed) return@collect
+            if (motionEnabled && next != null) {
+                artwork.incoming = layer
+                layer.opacity.animateTo(1f, tween(220, easing = FastOutSlowInEasing))
+                if (artwork.incoming !== layer) return@collect
+            }
+            artwork.displayed = next
+            artwork.incoming = null
+        }
+    }
+    return artwork
+}
+
+@Composable
+private fun PlayerArtwork.Draw(modifier: Modifier, style: PlayerCoverStyle) {
+    val context = LocalContext.current
+    Box(modifier, contentAlignment = Alignment.Center) {
         val base = displayed
-        if (base == null) {
-            ArtworkPlaceholder(seed, Modifier.fillMaxSize(), cornerRadius = 0, style = style)
-        } else {
-            Image(base, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        when {
+            base != null -> Image(remember(base, context) { base.asPainter(context) }, null,
+                Modifier.matchParentSize(), contentScale = ContentScale.Crop)
+            style == PlayerCoverStyle.Vinyl -> Box(
+                Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color(0xFF1E2128), Color(0xFF14161A)))),
+                contentAlignment = Alignment.Center,
+            ) {
+                VinylDisc(Modifier.fillMaxWidth(0.88f).aspectRatio(1f))
+            }
+            else -> Icon(rememberVectorPainter(Icons.Outlined.MusicNote), placeholderTint, null, Modifier.fillMaxSize(0.28f))
         }
         val layer = incoming
-        if (layer?.painter != null) {
-            Image(layer.painter, null, Modifier.fillMaxSize().graphicsLayer { alpha = layer.opacity.value },
-                contentScale = ContentScale.Crop)
+        if (layer?.image != null) {
+            val image = layer.image
+            Image(remember(image, context) { image.asPainter(context) }, null,
+                Modifier.matchParentSize().graphicsLayer { alpha = layer.opacity.value }, contentScale = ContentScale.Crop)
         }
-        // 保留 SongArtwork 的尺寸采样和重试，由上面的图层接管绘制。
-        SongArtwork(
-            url = url,
-            seed = seed,
-            modifier = Modifier.matchParentSize().drawWithContent {},
-            cornerRadius = 0,
-            retryOnError = retryOnError,
-            crossfade = false,
-            style = style,
-            onResult = { request.value = ArtworkResult(it) },
-        )
     }
 }

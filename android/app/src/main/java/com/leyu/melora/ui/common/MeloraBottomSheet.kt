@@ -182,7 +182,7 @@ internal fun MeloraBottomSheet(
     tonalElevation: Dp = 0.dp,
     shape: Shape = BottomSheetDefaults.ExpandedShape,
     scrimColor: Color = BottomSheetDefaults.ScrimColor,
-    lightFrostTint: Color = Color.Unspecified,
+    lightFrostTint: Color = if (glassBackdropSource(containerColor) != null) LightSheetFrost.tint else Color.Unspecified,
     dragHandle: @Composable (() -> Unit)? = {
         val glassColor = LocalGlassHandleColor.current
         if (glassColor.isSpecified) BottomSheetDefaults.DragHandle(color = glassColor)

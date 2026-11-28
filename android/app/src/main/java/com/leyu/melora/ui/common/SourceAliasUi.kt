@@ -5,9 +5,21 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.leyu.melora.playback.MeloraSettings
+import com.leyu.melora.playback.PlatformSource
 import com.leyu.melora.playback.SourceAlias
+
+internal val PlatformSource.dotColor: Color
+    get() = when (this) {
+        PlatformSource.Kuwo -> Color(0xFFFFB300)
+        PlatformSource.Kugou -> Color(0xFF0091EA)
+        PlatformSource.Netease -> Color(0xFFE53935)
+        PlatformSource.Tencent -> Color(0xFF00C853)
+        PlatformSource.Migu -> Color(0xFF8E24AA)
+        PlatformSource.All -> Color(0xFF2E7D32)
+    }
 
 /**
  * 为整棵 Compose UI 订阅来源别名开关，避免各个文本调用方直接读取 StateFlow.value。

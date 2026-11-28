@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -33,7 +34,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leyu.melora.playback.PlayerCoverStyle
-import com.leyu.melora.playback.UiTrack
 import com.leyu.melora.playback.ThemeMode
 import com.leyu.melora.ui.common.MeloraBottomSheet
 import com.leyu.melora.ui.common.rememberMeloraBottomSheetState
@@ -45,7 +45,7 @@ import kotlinx.coroutines.delay
 @Composable
 internal fun PlayerCoverPicker(
     selected: PlayerCoverStyle,
-    track: UiTrack?,
+    artwork: PlayerArtwork,
     immersive: Boolean,
     motionEnabled: Boolean,
     themeMode: ThemeMode,
@@ -118,9 +118,18 @@ internal fun PlayerCoverPicker(
                             .selectable(current, role = Role.RadioButton, onClick = { closeSheet { onSelect(style) } })
                             .testTag("player-cover-${style.storageValue}").padding(7.dp),
                     ) {
-                        Box(Modifier.fillMaxWidth().height(112.dp), contentAlignment = Alignment.Center) {
-                            NowPlayingArtwork(track?.artwork, track?.uid ?: "cover-preview", style,
-                                Modifier.widthIn(max = 112.dp).fillMaxWidth().aspectRatio(1f), cornerRadius = 12)
+                        Box(Modifier.fillMaxWidth().height(PlayerArtworkPreviewSide), contentAlignment = Alignment.Center) {
+                            val previewRadius = 12
+                            val previewOutline = if (style != PlayerCoverStyle.Vinyl &&
+                                artwork.displayed == null && artwork.incoming?.image == null
+                            ) {
+                                val previewShape = if (style == PlayerCoverStyle.Circle) CircleShape else RoundedCornerShape(previewRadius.dp)
+                                Modifier.border(1.dp, colors.textPrimary.copy(alpha = 0.54f), previewShape)
+                            } else Modifier
+                            NowPlayingArtwork(artwork, style,
+                                Modifier.widthIn(max = PlayerArtworkPreviewSide).fillMaxWidth().aspectRatio(1f)
+                                    .testTag("player-cover-preview-${style.storageValue}").then(previewOutline),
+                                cornerRadius = previewRadius)
                         }
                         Text(when (style) {
                             PlayerCoverStyle.Default -> "默认方形"

@@ -13,6 +13,9 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshState
 import androidx.compose.material3.pulltorefresh.pullToRefresh
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
@@ -66,13 +69,15 @@ private fun RefreshBadge(
     refreshing: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    val pulled by remember(state) { derivedStateOf { state.distanceFraction > 0f } }
+    if (!refreshing && !pulled) return
     val density = LocalDensity.current
-    val fraction = (if (refreshing) 1f else state.distanceFraction).coerceIn(0f, 1f)
     val travelPx = with(density) { 52.dp.toPx() }
     Box(
         modifier = modifier
             .padding(top = 8.dp)
             .graphicsLayer {
+                val fraction = (if (refreshing) 1f else state.distanceFraction).coerceIn(0f, 1f)
                 translationY = fraction * travelPx
                 alpha = fraction
                 val scale = 0.72f + 0.28f * fraction
@@ -84,11 +89,21 @@ private fun RefreshBadge(
             .background(MeloraAppearance.card, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
-        CircularProgressIndicator(
-            modifier = Modifier.size(20.dp),
-            color = MeloraAppearance.brand,
-            strokeWidth = 2.2.dp,
-            trackColor = MeloraAppearance.divider,
-        )
+        if (refreshing) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(20.dp),
+                color = MeloraAppearance.brand,
+                strokeWidth = 2.2.dp,
+                trackColor = MeloraAppearance.divider,
+            )
+        } else {
+            CircularProgressIndicator(
+                progress = { state.distanceFraction.coerceIn(0f, 1f) },
+                modifier = Modifier.size(20.dp),
+                color = MeloraAppearance.brand,
+                strokeWidth = 2.2.dp,
+                trackColor = MeloraAppearance.divider,
+            )
+        }
     }
 }

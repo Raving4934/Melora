@@ -41,7 +41,7 @@ import com.leyu.melora.playback.sdk.SongPage
 import com.leyu.melora.ui.theme.MeloraAppearance
 
 internal fun OnlinePlaylist.markCollectionPlayed(queueId: String) =
-    UserLibrary.markContainerPlayed(
+    recordContainerPlayback(
         UserLibrary.PlayContainer(
             kind = if (isBookAlbum) "book" else "playlist",
             id = id,
@@ -58,7 +58,7 @@ fun playOnlinePlaylist(context: android.content.Context, playlist: OnlinePlaylis
         PlaybackController.playBook(context, playlist)
         return
     }
-    val queueId = "playlist.${playlist.source}.${playlist.id}"
+    val queueId = collectionQueueId(playlist.source, playlist.id, playlist.isBookAlbum)
     playlist.markCollectionPlayed(queueId)
     PlaybackController.requestQueue(context, queueId, OnlineRepository.playlistEntryPageKey(playlist), SongPage::list) {
         OnlineRepository.playlistEntryPage(context, playlist)
@@ -80,7 +80,8 @@ fun OnlinePlaylistCard(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val queueId = "playlist.${playlist.source}.${playlist.id}"
+    val isBook = playlist.isBookAlbum
+    val queueId = collectionQueueId(playlist.source, playlist.id, isBook)
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(18.dp),
@@ -95,7 +96,7 @@ fun OnlinePlaylistCard(
                 .aspectRatio(1f)
                 .clip(RoundedCornerShape(18.dp)),
         ) {
-            SongArtwork(playlist.img, "${playlist.source}_${playlist.id}", Modifier.fillMaxSize(), cornerRadius = 18)
+            SongArtwork(playlist.img, Modifier.fillMaxSize(), cornerRadius = 18)
 
             // 底部渐变遮罩：保证白色文字在任意封面上可读
             Box(
@@ -124,9 +125,9 @@ fun OnlinePlaylistCard(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(
-                            Icons.Outlined.Headphones,
+                            if (isBook) Icons.Outlined.Whatshot else Icons.Outlined.Headphones,
                             contentDescription = null,
-                            tint = Color.White,
+                            tint = if (isBook) Color(0xFFFF6D00) else Color.White,
                             modifier = Modifier.size(10.dp),
                         )
                         Spacer(Modifier.width(3.dp))
@@ -172,119 +173,8 @@ fun OnlinePlaylistCard(
                 Text(
                     text = listOfNotNull(
                         playlist.author.takeIf { it.isNotBlank() },
-                        playlist.total.takeIf { it > 0 }?.let { "$it 首" },
-                    ).joinToString(" · ").ifBlank { "乐屿精选" },
-                    fontSize = 11.sp,
-                    color = Color.White.copy(alpha = 0.82f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-    }
-}
-
-/** 有声专辑网格卡（全幅封面版）：封面铺满整卡，热度+标题/集数叠在封面上。 */
-@Composable
-fun OnlineAudiobookCard(
-    playlist: OnlinePlaylist,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val context = LocalContext.current
-    val queueId = "playlist.${playlist.source}.${playlist.id}"
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(18.dp),
-        color = CardWhite,
-        shadowElevation = 0.dp,
-        border = MeloraAppearance.cardBorder,
-        modifier = modifier.fillMaxWidth(),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(1f)
-                .clip(RoundedCornerShape(18.dp)),
-        ) {
-            SongArtwork(playlist.img, "${playlist.source}_${playlist.id}", Modifier.fillMaxSize(), cornerRadius = 18)
-
-            // 底部渐变遮罩：保证白色文字在任意封面上可读
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .fillMaxHeight(0.68f)
-                    .align(Alignment.BottomCenter)
-                    .background(
-                        Brush.verticalGradient(
-                            0f to Color.Transparent,
-                            0.42f to Color.Black.copy(alpha = 0.42f),
-                            0.76f to Color.Black.copy(alpha = 0.76f),
-                            1f to Color.Black.copy(alpha = 0.88f),
-                        ),
-                    ),
-            )
-
-            if (playlist.playCountLabel.isNotBlank()) {
-                Surface(
-                    shape = RoundedCornerShape(bottomStart = 8.dp),
-                    color = Color.Black.copy(alpha = 0.45f),
-                    modifier = Modifier.align(Alignment.TopEnd),
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            Icons.Outlined.Whatshot,
-                            contentDescription = null,
-                            tint = Color(0xFFFF6D00),
-                            modifier = Modifier.size(10.dp),
-                        )
-                        Spacer(Modifier.width(3.dp))
-                        Text(
-                            text = playlist.playCountLabel,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color.White,
-                        )
-                    }
-                }
-            }
-
-            CardPlayButton(
-                queueId = queueId,
-                onPlay = { playOnlinePlaylist(context, playlist) },
-                modifier = Modifier
-                    .padding(6.dp)
-                    .align(Alignment.BottomEnd),
-                size = 28.dp,
-                iconSize = 18.dp,
-            )
-
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .fillMaxWidth()
-                    .padding(start = 10.dp, end = 42.dp, bottom = 10.dp),
-            ) {
-                Text(
-                    text = playlist.name,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = Color.White,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    lineHeight = 17.sp,
-                )
-
-                Spacer(Modifier.height(3.dp))
-
-                Text(
-                    text = listOfNotNull(
-                        playlist.author.takeIf { it.isNotBlank() },
-                        playlist.total.takeIf { it > 0 }?.let { "$it 集" },
-                    ).joinToString(" · ").ifBlank { "乐屿精选有声" },
+                        playlist.total.takeIf { it > 0 }?.let { if (isBook) "$it 集" else "$it 首" },
+                    ).joinToString(" · ").ifBlank { if (isBook) "乐屿精选有声" else "乐屿精选" },
                     fontSize = 11.sp,
                     color = Color.White.copy(alpha = 0.82f),
                     maxLines = 1,

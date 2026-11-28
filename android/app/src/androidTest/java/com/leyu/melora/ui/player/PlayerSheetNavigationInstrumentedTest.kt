@@ -1,5 +1,6 @@
 package com.leyu.melora.ui.player
 
+import androidx.compose.runtime.rememberUpdatedState
 import android.graphics.Bitmap
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -11,9 +12,12 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -28,13 +32,25 @@ import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
+import coil3.ImageLoader
+import coil3.SingletonImageLoader
+import coil3.Uri
+import coil3.annotation.DelicateCoilApi
+import coil3.asImage
+import coil3.decode.DataSource
+import coil3.fetch.Fetcher
+import coil3.fetch.ImageFetchResult
+import coil3.request.Options
+import coil3.size.Size
 import com.leyu.melora.playback.AudioEffects
 import com.leyu.melora.playback.ComponentBlurMode
 import com.leyu.melora.playback.MeloraSettings
+import com.leyu.melora.playback.PlayerCoverStyle
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.ThemeMode
 import com.leyu.melora.playback.PlayerLyric
 import com.leyu.melora.playback.LyricLine
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.After
 import com.leyu.melora.playback.PlayerUiState
@@ -48,6 +64,8 @@ import com.leyu.melora.ui.theme.MeloraTheme
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import java.io.File
+import java.io.IOException
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import org.junit.Assert.assertEquals
@@ -83,7 +101,9 @@ class PlayerSheetNavigationInstrumentedTest {
         queueSize: Int = 1,
         currentIndex: Int = 0,
         glassSheets: Boolean = false,
+        artwork: String? = track.artwork,
     ) {
+        val currentTrack = track.copy(artwork = artwork)
         val shared = SongListState(mutableStateOf(emptyList()), mutableStateOf(false), mutableStateOf(null))
         restoration.setContent {
             val glassSource = if (glassSheets) rememberHazeState() else null
@@ -107,7 +127,7 @@ class PlayerSheetNavigationInstrumentedTest {
                         Box(hostModifier.testTag("player-test-host")) {
                             Box(Modifier.fillMaxSize().background(Color.Magenta).testTag("player-test-underlay"))
                             ContinuousPlayerSheet(
-                                PlayerUiState(ready = true, current = track, queue = List(queueSize) { if (it == currentIndex) track else track.copy(uid = "queue-$it", title = "队列歌曲 $it") }, currentIndex = currentIndex),
+                                rememberUpdatedState(PlayerUiState(ready = true, current = currentTrack, queue = List(queueSize) { if (it == currentIndex) currentTrack else track.copy(uid = "queue-$it", title = "队列歌曲 $it") }, currentIndex = currentIndex)),
                                 modifier = if (wide) Modifier.requiredSize(900.dp, 600.dp) else Modifier.fillMaxSize(),
                                 backState = back,
                             )
@@ -314,6 +334,148 @@ class PlayerSheetNavigationInstrumentedTest {
             MeloraSettings.themeMode.value = originalAppTheme
             MeloraSettings.playerThemeMode.value = originalPlayerTheme
         }
+    }
+
+    @OptIn(DelicateCoilApi::class)
+    @Test fun pendingCoverStaysVisibleThroughExpansionAndRetriesOnceForBothEndpoints() {
+        val originalAppTheme = MeloraSettings.themeMode.value
+        val originalPlayerTheme = MeloraSettings.playerThemeMode.value
+        val originalCoverStyle = MeloraSettings.playerCoverStyle.value
+        val originalEInk = MeloraSettings.eInkMode.value
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val originalLoader = SingletonImageLoader.get(context)
+        val artwork = "https://sheet-artwork.invalid/pending.png"
+        val foregroundRequests = AtomicInteger()
+        val releaseRequests = CompletableDeferred<Unit>()
+        val loader = ImageLoader.Builder(context).components {
+            add(object : Fetcher.Factory<Uri> {
+                override fun create(data: Uri, options: Options, imageLoader: ImageLoader): Fetcher? {
+                    if (data.toString() != artwork) return null
+                    return object : Fetcher {
+                        override suspend fun fetch(): ImageFetchResult {
+                            // 背景使用独立的小图，不参与封面断言和重试计数。
+                            if (options.size == Size(128, 128)) throw IOException("No fixture backdrop")
+                            val attempt = foregroundRequests.incrementAndGet()
+                            releaseRequests.await()
+                            if (attempt == 1) throw IOException("Retry the foreground artwork")
+                            val bitmap = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+                            bitmap.eraseColor(Color.Green.toArgb())
+                            return ImageFetchResult(bitmap.asImage(), isSampled = false, dataSource = DataSource.NETWORK)
+                        }
+                    }
+                }
+            })
+        }.build()
+
+        try {
+            MeloraSettings.themeMode.value = ThemeMode.Light
+            MeloraSettings.playerThemeMode.value = ThemeMode.Light
+            MeloraSettings.playerCoverStyle.value = PlayerCoverStyle.Default
+            MeloraSettings.eInkMode.value = false
+            SingletonImageLoader.setUnsafe(loader)
+            show(forcePortrait = true, artwork = artwork)
+            compose.waitUntil(8_000) { foregroundRequests.get() > 0 }
+
+            val miniCover = miniArtworkBounds()
+            assertLightArtworkPlaceholder("迷你条", miniCover)
+
+            expand()
+            val fullCover = compose.onNodeWithTag("player-artwork").fetchSemanticsNode().boundsInRoot
+            compose.runOnIdle {
+                val sheet = back.sheet
+                val travel = sheet.anchors.positionOf(PlayerSheetAnchor.Collapsed)
+                sheet.dispatchRawDelta(travel * 0.5f - sheet.offset)
+            }
+            assertLightArtworkPlaceholder("展开中", playerArtworkBounds(miniCover, fullCover, 0.5f))
+
+            compose.runOnIdle { back.sheet.dispatchRawDelta(-back.sheet.offset) }
+            assertLightArtworkPlaceholder("全屏", fullCover)
+            assertEquals("初次加载只提交一次前景请求", 1, foregroundRequests.get())
+
+            releaseRequests.complete(Unit)
+            compose.waitUntil(8_000) { artworkColorSampler(fullCover)(0.5f, 0.5f) == Color.Green }
+            Espresso.pressBack()
+            assertCollapsed()
+            assertEquals(Color.Green, artworkColorSampler(miniCover)(0.5f, 0.5f))
+            expand()
+            assertEquals(Color.Green, artworkColorSampler(fullCover)(0.5f, 0.5f))
+            assertEquals("重试成功后两端继续共用前景图", 2, foregroundRequests.get())
+        } finally {
+            SingletonImageLoader.setUnsafe(originalLoader)
+            loader.shutdown()
+            MeloraSettings.themeMode.value = originalAppTheme
+            MeloraSettings.playerThemeMode.value = originalPlayerTheme
+            MeloraSettings.playerCoverStyle.value = originalCoverStyle
+            MeloraSettings.eInkMode.value = originalEInk
+        }
+    }
+
+    @Test fun missingCoverInLightAppAndDarkPlayerHasContrast() = assertMissingCoverContrast(ThemeMode.Light, ThemeMode.Dark)
+
+    @Test fun missingCoverInDarkAppAndLightPlayerHasContrast() = assertMissingCoverContrast(ThemeMode.Dark, ThemeMode.Light)
+
+    private fun assertMissingCoverContrast(app: ThemeMode, player: ThemeMode) {
+        val originalApp = MeloraSettings.themeMode.value
+        val originalPlayer = MeloraSettings.playerThemeMode.value
+        val originalStyle = MeloraSettings.playerCoverStyle.value
+        val originalEInk = MeloraSettings.eInkMode.value
+        try {
+            MeloraSettings.themeMode.value = app
+            MeloraSettings.playerThemeMode.value = player
+            MeloraSettings.playerCoverStyle.value = PlayerCoverStyle.Default
+            MeloraSettings.eInkMode.value = false
+            show(forcePortrait = true, artwork = null)
+            fun check(bounds: Rect, theme: ThemeMode) {
+                val sample = artworkColorSampler(bounds)
+                val surface = sample(0.32f, 0.5f).luminance()
+                assertEquals("封面背景应匹配 $theme", theme == ThemeMode.Light, surface > 0.5f)
+                val contrast = (38..62 step 2).maxOf { y ->
+                    (38..62 step 2).maxOf { x ->
+                        val ink = sample(x / 100f, y / 100f).luminance()
+                        (maxOf(ink, surface) + 0.05f) / (minOf(ink, surface) + 0.05f)
+                    }
+                }
+                assertTrue("$theme 音符对比度 $contrast，应至少为 3:1", contrast >= 3f)
+            }
+            check(miniArtworkBounds(), app)
+            expand()
+            check(compose.onNodeWithTag("player-artwork").fetchSemanticsNode().boundsInRoot, player)
+            Espresso.pressBack()
+            assertCollapsed()
+            check(miniArtworkBounds(), app)
+        } finally {
+            MeloraSettings.themeMode.value = originalApp
+            MeloraSettings.playerThemeMode.value = originalPlayer
+            MeloraSettings.playerCoverStyle.value = originalStyle
+            MeloraSettings.eInkMode.value = originalEInk
+        }
+    }
+
+    private fun miniArtworkBounds(): Rect {
+        val row = compose.onNodeWithTag("player-mini-track", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val side = with(compose.density) { 46.dp.roundToPx().toFloat() }
+        val top = row.center.y - side / 2f
+        return Rect(row.left, top, row.left + side, top + side)
+    }
+
+    private fun artworkColorSampler(bounds: Rect): (Float, Float) -> Color {
+        val host = compose.onNodeWithTag("player-test-host")
+        val local = bounds.translate(-host.fetchSemanticsNode().boundsInRoot.topLeft)
+        val pixels = host.captureToImage().toPixelMap()
+        return { x, y ->
+            pixels[(local.left + local.width * x).roundToInt(), (local.top + local.height * y).roundToInt()]
+        }
+    }
+
+    private fun assertLightArtworkPlaceholder(stage: String, bounds: Rect) {
+        val sample = artworkColorSampler(bounds)
+        val surface = sample(0.24f, 0.28f).luminance()
+        val adjacent = sample(with(compose.density) { -4.dp.toPx() } / bounds.width, 0.28f).luminance()
+        val note = (36..64 step 4).minOf { y ->
+            (36..64 step 4).minOf { x -> sample(x / 100f, y / 100f).luminance() }
+        }
+        assertTrue("$stage 的占位应融入背景并保留音符，底色亮度 $surface，邻近 $adjacent，音符 $note",
+            abs(surface - adjacent) < 0.12f && surface - note > 0.035f)
     }
 
     @SdkSuppress(minSdkVersion = 33)

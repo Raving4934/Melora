@@ -35,7 +35,6 @@ import com.leyu.melora.ui.common.MeloraBottomSheet
 import com.leyu.melora.ui.common.MeloraSheetHandle
 import com.leyu.melora.ui.common.rememberMeloraBottomSheetState
 import com.leyu.melora.ui.common.sourceAliasDisplay
-import com.leyu.melora.ui.theme.SystemBarsVisibility
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -150,7 +149,7 @@ internal fun LyricsSourceSheet(track: UiTrack, onDismiss: () -> Unit) {
     }
     if (confirmWrite) MeloraAlertDialog(
         onDismissRequest = { confirmWrite = false }, containerColor = colors.sheetBackground,
-        title = { SystemBarsVisibility(); Text("写入歌词？", color = colors.textPrimary) },
+        title = { Text("写入歌词？", color = colors.textPrimary) },
         text = { Text("只更新歌词，保留其它标签。普通歌词作为兼容底稿，同时保存完整逐字数据（若有）。\n\n为避免影响播放，当前文件会在切歌或清空播放队列后写入，系统可能再请求授权。",
             color = colors.textSecondary) },
         confirmButton = {

@@ -1,5 +1,7 @@
 package com.leyu.melora.ui.player
 
+import androidx.compose.ui.graphics.Color
+import com.leyu.melora.ui.common.submitLibraryWrite
 import com.leyu.melora.ui.common.PageBackHandler as BackHandler
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.Spring
@@ -44,6 +46,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
@@ -76,8 +79,8 @@ import com.leyu.melora.playback.LyricTimeline
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlayMode
 import com.leyu.melora.playback.PlaybackController
-import com.leyu.melora.playback.PlayerCoverStyle
 import com.leyu.melora.playback.PlayerUiState
+import com.leyu.melora.playback.PlayerCoverStyle
 import com.leyu.melora.playback.UserLibrary
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.ui.common.AccentRed
@@ -91,21 +94,22 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
-private fun formatClockMs(ms: Long): String {
-    val seconds = (ms / 1000).coerceAtLeast(0)
-    return "%d:%02d".format(seconds / 60, seconds % 60)
-}
-
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 internal fun ContinuousPlayerSheet(
-    state: PlayerUiState,
+    playback: State<PlayerUiState>,
     modifier: Modifier = Modifier,
     backState: PlayerSheetBackState = rememberPlayerSheetBackState(),
     onSeek: (Long) -> Unit = { PlaybackController.seekTo(it) },
     onPrevious: () -> Unit = { PlaybackController.previous() },
     onNext: () -> Unit = { PlaybackController.next() },
 ) {
+    val sampledPosition = remember(playback) { derivedStateOf { playback.value.positionMs } }
+    val state by remember(playback) {
+        derivedStateOf {
+            playback.value.copy(positionMs = 0, positionSampleRealtimeMs = 0, lyricPositionFloorMs = 0)
+        }
+    }
     // 迷你条、过渡封面和全屏共用当前曲目；空队列不能保留已失效的旧封面。
     val track = state.current ?: return
     // loading 保留上一幅环境背景；loader 统一发布新图+色调，失败/无封面才清空。
@@ -131,7 +135,7 @@ internal fun ContinuousPlayerSheet(
     val displayLyricLines = remember(track, lyricLines) { fullPlayerLyricsOrFallback(track, lyricLines) }
     val timeline = remember(displayLyricLines) { LyricTimeline(displayLyricLines) }
     val lyricPosition = rememberLyricPosition(
-        state,
+        playback,
         visible = eInkMode || lyricLines.isNotEmpty(),
         eInkTimeline = timeline.takeIf { eInkMode },
     )
@@ -171,15 +175,13 @@ internal fun ContinuousPlayerSheet(
         val travel = with(density) { (maxHeight - miniBarHeight - bottomInset).toPx() }.coerceAtLeast(1f)
         val topInset = WindowInsets.statusBars.getTop(density).toFloat()
         val velocityThreshold = with(density) { 125.dp.toPx() }
-        SideEffect {
-            sheetState.updateAnchors(
-                DraggableAnchors {
-                    PlayerSheetAnchor.Expanded at 0f
-                    PlayerSheetAnchor.Collapsed at travel
-                },
-                newTarget = sheetState.targetValue,
-            )
+        val anchors = remember(travel) {
+            DraggableAnchors {
+                PlayerSheetAnchor.Expanded at 0f
+                PlayerSheetAnchor.Collapsed at travel
+            }
         }
+        SideEffect { sheetState.updateAnchors(anchors, newTarget = sheetState.targetValue) }
         // Read animated values in drawing/gesture lambdas, not throughout the player composition.
         fun expandPlayer() {
             backState.transitionTo(scope, PlayerSheetTransition.Expand) {
@@ -230,6 +232,28 @@ internal fun ContinuousPlayerSheet(
         val recordChange = if (playerCoverStyle == PlayerCoverStyle.Vinyl) {
             rememberVinylRecordChange(track.uid, track.artwork, enabled = vinylMotionEnabled)
         } else null
+        val baseIsLight = miniColors.surface.luminance() > 0.5f
+        val backdropAlpha = remember(progress) {
+            { playerMotionPhase(progress(), PlayerMiniFadeEnd, PlayerContentFadeStart) }
+        }
+        // 与底色淡入同步，只在绘制音符时读取拖动进度。
+        val playerInk = if (playerIsDark) DarkPlayerColors.textPrimary else LightPlayerColors.textPrimary
+        val sameThemeInk = lerp(miniColors.onSurfaceVariant, playerInk, 0.5f).copy(alpha = 0.48f)
+        val miniInk = miniColors.onSurface.copy(alpha = 0.68f)
+        val fullInk = playerInk.copy(alpha = 0.68f)
+        val playerArtwork = rememberPlayerArtwork(
+            track.artwork, track.uid, playerArtworkRequestSidePx(maxWidth, maxHeight, density),
+            retryOnError = expanded && (pageShowsCover || immersive) && (twoPanes || verticalPagerState.currentPage == 0),
+            motionEnabled = playerMotionEnabled,
+            placeholderTint = {
+                when {
+                    eInkMode -> EInkPlayerColors.textSecondary
+                    baseIsLight == !playerIsDark -> sameThemeInk
+                    else -> lerp(miniInk, fullInk, backdropAlpha())
+                }
+            },
+            recordChange = recordChange,
+        )
         val tonearmAngle = rememberVinylTonearmAngle(
             playing = state.playing,
             motionEnabled = vinylMotionEnabled,
@@ -291,11 +315,7 @@ internal fun ContinuousPlayerSheet(
 
         BackHandler(enabled = currentBackAction != PlayerSheetBackAction.PassThrough, onBack = handleBack)
 
-        val baseIsLight = miniColors.surface.luminance() > 0.5f
         val miniSurface = if (baseIsLight) miniColors.surface else MeloraCardDark
-        val backdropAlpha = remember(progress) {
-            { playerMotionPhase(progress(), PlayerMiniFadeEnd, PlayerContentFadeStart) }
-        }
         val darkStatusIcons by remember(offset, topInset, baseIsLight, pageIsLight) {
             derivedStateOf { if (offset() > topInset * 0.5f) baseIsLight else pageIsLight }
         }
@@ -373,6 +393,7 @@ internal fun ContinuousPlayerSheet(
                         }) {
                             FullPlayerPageContent(
                                 state = state,
+                                sampledPosition = sampledPosition,
                                 immersive = immersive,
                                 onImmersiveChange = { immersive = it },
                                 onCollapse = { backState.transitionTo(scope, PlayerSheetTransition.Collapse) {
@@ -404,6 +425,7 @@ internal fun ContinuousPlayerSheet(
                                     }
                                 },
                                 artworkAlpha = artworkAlpha,
+                                playerArtwork = playerArtwork,
                                 coverStyle = playerCoverStyle,
                                 artworkRotation = vinylRotation,
                                 tonearmAngle = tonearmAngle,
@@ -482,9 +504,8 @@ internal fun ContinuousPlayerSheet(
                         }
                     val miniTrackArtwork: @Composable (Dp, Int, Modifier) -> Unit = { artworkSize, cornerRadius, extraModifier ->
                         NowPlayingArtwork(
-                            url = track.artwork,
-                            seed = track.uid,
                             style = playerCoverStyle,
+                            artwork = playerArtwork,
                             rotationDegrees = vinylRotation,
                             motionEnabled = playerMotionEnabled,
                             modifier = Modifier
@@ -631,81 +652,18 @@ internal fun ContinuousPlayerSheet(
                                             )
                                         }
                                     }
-                                    key(track.uid) {
-                                        var dragging by remember { mutableStateOf<Float?>(null) }
-                                        val range = 0f..(state.durationMs.takeIf { it > 0L }?.toFloat() ?: 1f)
-                                        val seekState = remember(range) { SliderState(trackRange = range) }
-                                        seekState.value = dragging ?: state.positionMs.toFloat()
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(top = 2.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                        ) {
-                                            Text(
-                                                text = formatClockMs(dragging?.toLong() ?: state.positionMs),
-                                                fontSize = 11.sp,
-                                                style = LocalTextStyle.current.copy(fontFeatureSettings = "tnum"),
-                                                color = miniColors.onSurfaceVariant,
-                                                maxLines = 1,
-                                            )
-                                            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
-                                                Slider(
-                                                    state = seekState,
-                                                    onValueChange = { dragging = it },
-                                                    onValueChangeFinished = {
-                                                        dragging?.let { onSeek(it.toLong()) }
-                                                        dragging = null
-                                                    },
-                                                    enabled = showMini && state.durationMs > 0L,
-                                                    colors = SliderDefaults.colors(
-                                                        activeTrackColor = miniColors.onSurface.copy(alpha = 0.88f),
-                                                        inactiveTrackColor = miniColors.onSurface.copy(alpha = 0.12f),
-                                                    ),
-                                                    thumb = {},
-                                                    track = { sliderState: SliderState ->
-                                                        val barHeight = if (dragging != null) 4.dp else 2.5.dp
-                                                        Box(
-                                                            Modifier
-                                                                .fillMaxWidth()
-                                                                .height(16.dp),
-                                                            contentAlignment = Alignment.CenterStart,
-                                                        ) {
-                                                            Box(
-                                                                Modifier
-                                                                    .fillMaxWidth()
-                                                                    .height(barHeight)
-                                                                    .clip(RoundedCornerShape(2.dp))
-                                                                    .background(miniColors.onSurface.copy(alpha = 0.12f)),
-                                                            ) {
-                                                                Box(
-                                                                    Modifier
-                                                                        .fillMaxWidth(
-                                                                            ((sliderState.value - range.start) / (range.endInclusive - range.start))
-                                                                                .coerceIn(0f, 1f),
-                                                                        )
-                                                                        .height(barHeight)
-                                                                        .background(miniColors.onSurface.copy(alpha = 0.88f)),
-                                                                )
-                                                            }
-                                                        }
-                                                    },
-                                                    modifier = Modifier
-                                                        .weight(1f)
-                                                        .height(16.dp)
-                                                        .testTag("player-mini-seek-slider"),
-                                                )
-                                            }
-                                            Text(
-                                                text = if (state.durationMs > 0L) formatClockMs(state.durationMs) else "--:--",
-                                                fontSize = 11.sp,
-                                                style = LocalTextStyle.current.copy(fontFeatureSettings = "tnum"),
-                                                color = miniColors.onSurfaceVariant,
-                                                maxLines = 1,
-                                            )
-                                        }
-                                    }
+                                    PlayerSeekBar(
+                                        trackUid = track.uid,
+                                        position = sampledPosition,
+                                        durationMs = state.durationMs,
+                                        onSeek = onSeek,
+                                        activeColor = miniColors.onSurface.copy(alpha = 0.88f),
+                                        inactiveColor = miniColors.onSurface.copy(alpha = 0.12f),
+                                        clockColor = miniColors.onSurfaceVariant,
+                                        clockSize = 11.sp,
+                                        enabled = showMini,
+                                        inlineClocks = true,
+                                    )
                                 }
 
                                 // 右段：克制留白的收藏、循环模式与播放队列
@@ -722,7 +680,7 @@ internal fun ContinuousPlayerSheet(
                                             enabled = showMini,
                                             onClick = {
                                                 haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                UserLibrary.toggleFavorite(favoriteSong)
+                                                submitLibraryWrite { UserLibrary.toggleFavorite(favoriteSong) }
                                             },
                                             modifier = Modifier.size(36.dp),
                                         ) {
@@ -811,16 +769,7 @@ internal fun ContinuousPlayerSheet(
                                         ) {
                                             miniSubtitle(Modifier.weight(1f))
                                             Spacer(Modifier.width(8.dp))
-                                            Text(
-                                                text = if (state.durationMs > 0L) {
-                                                    "${formatClockMs(state.positionMs)} / ${formatClockMs(state.durationMs)}"
-                                                } else {
-                                                    formatClockMs(state.positionMs)
-                                                },
-                                                fontSize = 11.sp,
-                                                color = miniColors.onSurfaceVariant,
-                                                maxLines = 1,
-                                            )
+                                            MiniPlayerClock(sampledPosition, state.durationMs, miniColors.onSurfaceVariant)
                                         }
                                     }
                                 }
@@ -843,8 +792,7 @@ internal fun ContinuousPlayerSheet(
                             }
                         }
                     }
-                    // A single visible artwork layer connects the two measured endpoints.
-                    // Endpoint images stay attached/cache-warm, but are hidden during the morph.
+                    // 两端让出绘制，过渡层沿测得的位置绘制同一份封面。
                     val full = fullBounds
                     val mini = miniBounds
                     if (full != null && mini != null) {
@@ -854,9 +802,8 @@ internal fun ContinuousPlayerSheet(
                         }
                         fun scaleFor(rect: Rect) = (rect.width / full.width).coerceAtLeast(0.001f)
                         NowPlayingArtwork(
-                            url = track.artwork,
-                            seed = track.uid,
                             style = playerCoverStyle,
+                            artwork = playerArtwork,
                             rotationDegrees = vinylRotation, motionEnabled = playerMotionEnabled,
                             tonearmAngle = tonearmAngle,
                             tonearmAlpha = progress,
@@ -879,4 +826,15 @@ internal fun ContinuousPlayerSheet(
             }
         }
     }
+}
+
+@Composable
+private fun MiniPlayerClock(position: State<Long>, durationMs: Long, color: Color) {
+    val current = formatClock(position.value, padMinutes = false)
+    Text(
+        text = if (durationMs > 0) "$current / ${formatClock(durationMs, padMinutes = false)}" else current,
+        fontSize = 11.sp,
+        color = color,
+        maxLines = 1,
+    )
 }

@@ -7,6 +7,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.toPixelMap
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.v2.createComposeRule
@@ -48,6 +49,7 @@ class PlayerArtworkHandoffTest {
     private data class Track(val uid: String, val artwork: String?)
     private val track = mutableStateOf(Track("first", first.url))
     private val mounted = mutableStateOf(false)
+    private val retriesEnabled = mutableStateOf(true)
     private lateinit var originalLoader: ImageLoader
     private lateinit var fixtureLoader: ImageLoader
 
@@ -74,11 +76,11 @@ class PlayerArtworkHandoffTest {
         fixtureLoader.shutdown()
     }
 
-    @Test fun slowCoverHoldsThePreviousLabelAndBlendsWithoutAnEmptyFrame() {
+    @Test fun fastCoverBlendsFromThePreviousLabelWithoutAnEmptyFrame() {
         show()
         select("next", next.url)
         awaitRequests(next)
-        compose.mainClock.advanceTimeBy(1_000)
+        compose.mainClock.advanceTimeByFrame()
         assertColor(Color.Red, label())
 
         next.result.complete(Color.Blue)
@@ -88,22 +90,57 @@ class PlayerArtworkHandoffTest {
             frames.all { it.red + it.blue > 0.85f && it.green < 0.08f })
     }
 
-    @Test fun rapidSkipOnlyShowsTheLatestCoverEvenIfTheAbandonedRequestFinishes() {
-        show()
+    @Test fun slowCoverReleasesThePreviousTrackWhileTheNewRequestIsStillPending() {
+        show(initial = Track("missing", null), style = PlayerCoverStyle.Default)
+        val placeholder = label()
+        select("first", first.url)
+        collectUntil { near(it, Color.Red) }
         select("next", next.url)
         awaitRequests(next)
+        compose.mainClock.advanceTimeBy(1_000)
+        assertColor(placeholder, label())
+        next.result.complete(Color.Blue)
+        collectUntil { near(it, Color.Blue) }
+    }
+
+    @Test fun skippingAnotherPendingTrackDoesNotRestartTheHold() {
+        show(initial = Track("missing", null), style = PlayerCoverStyle.Circle)
+        val placeholder = label()
+        select("first", first.url)
+        collectUntil { near(it, Color.Red) }
+        select("next", next.url)
+        awaitRequests(next)
+        compose.mainClock.advanceTimeBy(260)
+        assertColor(Color.Red, label())
         select("local", local.url)
         awaitRequests(local)
+        compose.mainClock.advanceTimeBy(240)
+        assertColor(placeholder, label())
+        local.result.complete(Color.Green)
+        collectUntil { near(it, Color.Green) }
+    }
 
+    @Test fun rapidSkipOnlyShowsTheLatestCoverEvenIfTheAbandonedRequestFinishes() {
+        show(initial = Track("missing", null))
+        val placeholder = label()
+        select("first", first.url)
+        collectUntil { near(it, Color.Red) }
+        select("next", next.url)
+        awaitRequests(next)
+        // 让唱臂复位，第三首开始换碟时，第二首的请求仍在等待。
+        compose.mainClock.advanceTimeBy(600)
+        assertColor(placeholder, label())
+        select("local", local.url)
+        compose.mainClock.advanceTimeByFrame()
         next.result.complete(Color.Blue)
-        repeat(12) {
+        compose.waitUntil(8_000) {
             compose.mainClock.advanceTimeByFrame()
-            assertColor(Color.Red, label())
+            assertColor(placeholder, label())
+            local.requests.get() > 0
         }
         local.result.complete(Color.Green)
         val frames = collectUntil { near(it, Color.Green) }
-        assertTrue("迟到的封面不能覆盖最新曲目：$frames",
-            frames.all { it.blue < 0.08f && it.red + it.green > 0.85f })
+        assertTrue("跳过的蓝色封面不应重新出现：$frames", frames.all { it.blue < 0.25f })
     }
 
     @Test fun replacingAnArtworkDuringItsFadeKeepsTheVisibleBlend() {
@@ -118,10 +155,25 @@ class PlayerArtworkHandoffTest {
         val pending = collectUntil { local.requests.get() > 0 && near(it, Color.Blue) }
         assertTrue("换地址后已进入画面的蓝色不能跳回红色：$mixed，$pending",
             pending.all { it.blue >= mixed.blue - 0.05f })
+        compose.mainClock.advanceTimeBy(1_000)
+        assertColor(Color.Blue, label())
         local.result.complete(Color.Green)
         val finalFade = collectUntil { near(it, Color.Green) }
         assertTrue("蓝色底图应连续过渡到绿色：$finalFade",
             finalFade.all { it.red < 0.08f && it.blue + it.green > 0.85f })
+    }
+
+    @Test fun sharedAlbumCoverBelongsToTheNewTrackDuringItsLocalArtworkLookup() {
+        show(style = PlayerCoverStyle.Default)
+        select("next", first.url)
+        compose.mainClock.advanceTimeBy(500)
+        assertColor(Color.Red, label())
+        select("next", local.url)
+        awaitRequests(local)
+        compose.mainClock.advanceTimeBy(1_000)
+        assertColor(Color.Red, label())
+        local.result.complete(Color.Green)
+        collectUntil { near(it, Color.Green) }
     }
 
     @Test fun missingArtworkAndExhaustedRetriesUseThePlaceholder() {
@@ -137,11 +189,11 @@ class PlayerArtworkHandoffTest {
             compose.mainClock.advanceTimeByFrame()
             next.failures.get() > 0
         }
-        compose.mainClock.advanceTimeBy(80)
-        assertColor(Color.Red, label())
-        // 首次请求失败与两次重试用完后才退出原封面。
-        awaitRequests(next, count = 3)
+        // 旧图先退出，当前曲目的两次重试仍会照常执行。
         collectUntil { near(it, placeholder) }
+        assertTrue(next.requests.get() < 3)
+        awaitRequests(next, count = 3)
+        assertColor(placeholder, label())
 
         select("first", first.url)
         collectUntil { near(it, Color.Red) }
@@ -149,17 +201,41 @@ class PlayerArtworkHandoffTest {
         collectUntil { near(it, placeholder) }
     }
 
-    private fun show(initial: Track = track.value) {
+    @Test fun failedReplacementShowsThePlaceholderAndCanRetryWhenEnabled() {
+        retriesEnabled.value = false
+        show(initial = Track("missing", null), style = PlayerCoverStyle.Default)
+        val placeholder = label()
+        select("first", first.url)
+        collectUntil { near(it, Color.Red) }
+        select("first", next.url)
+        awaitRequests(next)
+        next.result.completeExceptionally(IOException("Fixture image failed"))
+        collectUntil { near(it, placeholder) }
+        assertTrue(next.requests.get() == 1)
+
+        compose.runOnIdle { retriesEnabled.value = true }
+        awaitRequests(next, count = 3)
+    }
+
+    private fun show(initial: Track = track.value, style: PlayerCoverStyle = PlayerCoverStyle.Vinyl) {
         track.value = initial
         mounted.value = true
         compose.setContent {
             if (mounted.value) {
                 val requested = track.value
-                val record = rememberVinylRecordChange(requested.uid, requested.artwork, enabled = true)
+                val record = if (style == PlayerCoverStyle.Vinyl) {
+                    rememberVinylRecordChange(requested.uid, requested.artwork, enabled = true)
+                } else null
+                val artwork = rememberPlayerArtwork(
+                    requested.artwork, requested.uid,
+                    sizePx = with(LocalDensity.current) { 176.dp.roundToPx() },
+                    retryOnError = retriesEnabled.value, motionEnabled = true,
+                    placeholderTint = { Color.Gray.copy(alpha = 0.40f) }, recordChange = record,
+                )
                 NowPlayingArtwork(
-                    requested.artwork, requested.uid, PlayerCoverStyle.Vinyl,
+                    artwork, style,
                     Modifier.size(176.dp).testTag("cover"),
-                    retryOnError = true, smoothChanges = true, recordChange = record,
+                    recordChange = record,
                 )
             }
         }

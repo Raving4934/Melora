@@ -174,7 +174,7 @@ class VinylRecordChangeTest {
                     contentAlignment = Alignment.Center,
                 ) {
                     NowPlayingArtwork(
-                        record.artwork, record.uid, PlayerCoverStyle.Vinyl,
+                        testPlayerArtwork(record.artwork), PlayerCoverStyle.Vinyl,
                         Modifier.size(128.dp), tonearmAngle = angle, recordChange = state,
                     )
                 }

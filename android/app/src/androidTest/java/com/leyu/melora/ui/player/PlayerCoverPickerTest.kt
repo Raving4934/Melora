@@ -17,6 +17,7 @@ import androidx.compose.ui.test.captureToImage
 import com.leyu.melora.ui.awaitStable
 import com.leyu.melora.ui.boundsInSameFrame
 
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableFloatStateOf
@@ -25,6 +26,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PixelMap
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
@@ -46,7 +48,6 @@ import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.leyu.melora.playback.PlayerCoverStyle
 import com.leyu.melora.playback.ThemeMode
-import com.leyu.melora.playback.UiTrack
 import com.leyu.melora.ui.theme.MeloraAppearance
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -55,9 +56,62 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import kotlin.math.abs
 
+@Composable
+internal fun testPlayerArtwork(url: String? = null): PlayerArtwork {
+    val tint = LocalPlayerColors.current.textPrimary.copy(alpha = 0.38f)
+    return rememberPlayerArtwork(
+        url, uid = "test-artwork", sizePx = 512, retryOnError = false, motionEnabled = false,
+        placeholderTint = { tint },
+    )
+}
+
 @RunWith(AndroidJUnit4::class)
 class PlayerCoverPickerTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test
+    fun missingArtworkKeepsSquareAndCirclePreviewsDistinctInBothThemes() {
+        val dark = mutableStateOf(false)
+        compose.setContent {
+            PlayerAppearanceProvider(dark = dark.value, eInk = false) {
+                PlayerCoverPicker(
+                    selected = PlayerCoverStyle.Default,
+                    artwork = testPlayerArtwork(),
+                    immersive = false,
+                    motionEnabled = false,
+                    themeMode = if (dark.value) ThemeMode.Dark else ThemeMode.Light,
+                    onThemeModeChange = {},
+                    onSelect = {},
+                    onToggleImmersive = {},
+                    onDismiss = {},
+                )
+            }
+        }
+
+        val square = compose.onNodeWithTag("player-cover-preview-default", useUnmergedTree = true)
+        val circle = compose.onNodeWithTag("player-cover-preview-circle", useUnmergedTree = true)
+        for (isDark in listOf(false, true)) {
+            compose.runOnIdle { dark.value = isDark }
+            compose.awaitStable(square)
+            compose.awaitStable(circle)
+
+            fun outlineContrast(preview: PixelMap, xFraction: Float): Float {
+                val x = (preview.width * xFraction).toInt()
+                val background = preview[x, preview.height / 4].luminance()
+                val edgeHeight = with(compose.density) { 2.dp.roundToPx() }.coerceAtLeast(1)
+                return (0 until edgeHeight).maxOf { y ->
+                    val pixel = preview[x, y].luminance()
+                    if (isDark) pixel - background else background - pixel
+                }
+            }
+
+            val squarePixels = square.captureToImage().toPixelMap()
+            val circlePixels = circle.captureToImage().toPixelMap()
+            assertTrue("方形预览应有平直上边，dark=$isDark", outlineContrast(squarePixels, 0.27f) > 0.08f)
+            assertTrue("圆形预览在上边中央显示圆弧，dark=$isDark", outlineContrast(circlePixels, 0.50f) > 0.08f)
+            assertTrue("圆形预览的圆弧应避开角落，dark=$isDark", outlineContrast(circlePixels, 0.27f) < 0.03f)
+        }
+    }
 
     @Test
     fun lighterPlayerPickerHasOnlyItsScrimInBothAppThemes() {
@@ -67,7 +121,7 @@ class PlayerCoverPickerTest {
                 PlayerAppearanceProvider(dark = false) {
                     PlayerCoverPicker(
                         selected = PlayerCoverStyle.Default,
-                        track = null,
+                        artwork = testPlayerArtwork(),
                         immersive = false,
                         motionEnabled = false,
                         themeMode = ThemeMode.Light,
@@ -102,7 +156,7 @@ class PlayerCoverPickerTest {
             if (visible.value) PlayerAppearanceProvider(dark = true) {
                 PlayerCoverPicker(
                     selected = selected.value,
-                    track = UiTrack("cover-test-track", "歌曲", "歌手", "专辑", artwork = null),
+                    artwork = testPlayerArtwork(),
                     immersive = false,
                     motionEnabled = false,
                     themeMode = ThemeMode.Auto,
@@ -177,7 +231,7 @@ class PlayerCoverPickerTest {
             if (pickerVisible.value) PlayerAppearanceProvider(dark = true) {
                 PlayerCoverPicker(
                     selected = selected.value,
-                    track = UiTrack("cover-theme-test-track", "歌曲", "歌手", "专辑", artwork = null),
+                    artwork = testPlayerArtwork(),
                     immersive = immersive.value,
                     motionEnabled = false,
                     themeMode = themeMode.value,
@@ -257,7 +311,7 @@ class PlayerCoverPickerTest {
                 SideEffect { currentColors = colors }
                 PlayerCoverPicker(
                     selected = PlayerCoverStyle.Circle,
-                    track = UiTrack("cover-colors-test-track", "歌曲", "歌手", "专辑", artwork = null),
+                    artwork = testPlayerArtwork(),
                     immersive = false,
                     motionEnabled = false,
                     themeMode = themeMode.value,
@@ -344,7 +398,7 @@ class PlayerCoverPickerTest {
             PlayerAppearanceProvider(dark = true) {
                 PlayerCoverPicker(
                     selected = selected.value,
-                    track = UiTrack("cover-test-track", "歌曲", "歌手", "专辑", artwork = null),
+                    artwork = testPlayerArtwork(),
                     immersive = false,
                     motionEnabled = false,
                     themeMode = ThemeMode.Auto,
@@ -405,7 +459,7 @@ class PlayerCoverPickerTest {
                     Modifier.size(56.dp).background(Color(0xFF8A7972)).testTag("small-vinyl"),
                     contentAlignment = Alignment.Center,
                 ) {
-                    NowPlayingArtwork(null, "test-vinyl", PlayerCoverStyle.Vinyl, Modifier.size(46.dp),
+                    NowPlayingArtwork(testPlayerArtwork(), PlayerCoverStyle.Vinyl, Modifier.size(46.dp),
                         tonearmAngle = angle.takeIf { visible.value }, tonearmAlpha = { alpha.floatValue },
                         frameCornerRadius = { 10.dp })
                 }
@@ -447,10 +501,11 @@ class PlayerCoverPickerTest {
         compose.setContent {
             CompositionLocalProvider(LocalDensity provides Density(2f)) {
                 val angle = rememberVinylTonearmAngle(playing.value, motionEnabled = true)
+                val artwork = testPlayerArtwork()
                 Row {
-                    NowPlayingArtwork(null, "test-vinyl", PlayerCoverStyle.Vinyl,
+                    NowPlayingArtwork(artwork, PlayerCoverStyle.Vinyl,
                         Modifier.size(88.dp).testTag("shared-vinyl"), tonearmAngle = angle)
-                    NowPlayingArtwork(null, "test-vinyl", PlayerCoverStyle.Vinyl,
+                    NowPlayingArtwork(artwork, PlayerCoverStyle.Vinyl,
                         Modifier.size(88.dp).testTag("full-vinyl"), motionEnabled = expanded.value, tonearmAngle = angle)
                 }
             }
@@ -499,7 +554,7 @@ class PlayerCoverPickerTest {
         try {
             compose.setContent {
                 Box(Modifier.size(160.dp).background(Color.Green).testTag("cover-morph")) {
-                    NowPlayingArtwork(file.toURI().toString(), "morph", selected.value,
+                    NowPlayingArtwork(testPlayerArtwork(file.toURI().toString()), selected.value,
                         Modifier.size(160.dp), motionEnabled = motionEnabled)
                 }
             }

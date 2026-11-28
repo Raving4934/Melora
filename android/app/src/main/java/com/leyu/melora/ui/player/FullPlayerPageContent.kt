@@ -1,5 +1,6 @@
 package com.leyu.melora.ui.player
 
+import com.leyu.melora.ui.common.submitLibraryWrite
 import com.leyu.melora.ui.common.LocalPageActive
 
 import com.leyu.melora.playback.LyricsUiConfig
@@ -188,7 +189,6 @@ import androidx.compose.material3.SliderState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -271,6 +271,7 @@ import kotlinx.coroutines.launch
 @Composable
 internal fun FullPlayerPageContent(
     state: PlayerUiState,
+    sampledPosition: State<Long>,
     immersive: Boolean,
     onImmersiveChange: (Boolean) -> Unit,
     lyricPosition: androidx.compose.runtime.State<Long>,
@@ -282,6 +283,7 @@ internal fun FullPlayerPageContent(
     queuePagerState: PagerState,
     onArtworkPositioned: (LayoutCoordinates) -> Unit,
     artworkAlpha: () -> Float,
+    playerArtwork: PlayerArtwork,
     coverStyle: PlayerCoverStyle,
     artworkRotation: () -> Float,
     onPageVisualChanged: (showsCover: Boolean, isLight: Boolean, blocksCollapse: Boolean) -> Unit,
@@ -392,7 +394,7 @@ internal fun FullPlayerPageContent(
         val compactQueueOpen = compactLandscape && queuePagerState.targetPage == 1
         val coverPageVisible = expandedNormal || compactLandscapeNormal || currentPage == 1
         val largePortrait = !twoPanes && maxWidth >= 600.dp
-        val portraitStageModifier = if (largePortrait) Modifier.widthIn(max = 560.dp) else Modifier
+        val portraitStageModifier = if (largePortrait) Modifier.widthIn(max = LargePortraitPlayerStageWidth) else Modifier
         val posterMode = !miniLyricsEnabled && !twoPanes
         val coverPageIndex = pages.indexOf(1)
         val awayFromCover by remember(coverPagerState, coverPageIndex) {
@@ -555,14 +557,15 @@ internal fun FullPlayerPageContent(
                 ImmersiveCoverProgress(lyricPosition, state.durationMs, immersion, roundness = roundness,
                     modifier = Modifier.matchParentSize())
                 NowPlayingArtwork(
-                    url = track?.artwork, seed = track?.uid ?: "empty", style = coverStyle,
+                    style = coverStyle,
                     modifier = Modifier.fillMaxSize().padding(6.dp * t)
                         .testTag("player-artwork")
                         .semantics { contentDescription = "${track?.title.orEmpty()}，${track?.artist.orEmpty()}" }
                         .onGloballyPositioned(onArtworkPositioned)
                         .graphicsLayer {
                             // 黑胶外圈透明且自带径向投影，不叠加 HWUI 阴影；其余样式用透明度淡出阴影并维持足够海拔，避免 Skia 低海拔圆形阴影退化为八边形切角。
-                            val shadowAlpha = if (coverStyle == PlayerCoverStyle.Vinyl || MeloraAppearance.isEInk) 0f else immersion.value.coerceIn(0f, 1f)
+                            val imageAlpha = if (playerArtwork.displayed != null) 1f else playerArtwork.incoming?.opacity?.value ?: 0f
+                            val shadowAlpha = if (coverStyle == PlayerCoverStyle.Vinyl || MeloraAppearance.isEInk) 0f else immersion.value.coerceIn(0f, 1f) * imageAlpha
                             shadowElevation = if (shadowAlpha > 0.005f) 14.dp.toPx() * (0.35f + 0.65f * shadowAlpha) else 0f
                             ambientShadowColor = Color.Black.copy(alpha = shadowAlpha)
                             spotShadowColor = Color.Black.copy(alpha = shadowAlpha)
@@ -582,7 +585,8 @@ internal fun FullPlayerPageContent(
                             onClick { tapArtwork(); true }
                             onLongClick("选择封面类型") { showCoverPicker = true; true }
                         } else artworkActions),
-                    cornerRadius = if (compactLandscape && !immersive) 16 else 18, retryOnError = isVisible && coverPageVisible, smoothChanges = true,
+                    cornerRadius = if (compactLandscape && !immersive) 16 else 18,
+                    artwork = playerArtwork,
                     rotationDegrees = artworkRotation, motionEnabled = motionEnabled,
                     tonearmAngle = tonearmAngle,
                     recordChange = recordChange,
@@ -687,11 +691,11 @@ internal fun FullPlayerPageContent(
                             val immersiveContentKey = remember(immersiveLines) { immersiveLines.map { it.startMs to it.text } }
                             Row(
                                 Modifier.fillMaxSize().windowInsetsPadding(playerInsets)
-                                    .padding(horizontal = 24.dp, vertical = 12.dp),
-                                horizontalArrangement = Arrangement.spacedBy(32.dp),
+                                    .padding(horizontal = ExpandedPlayerPanePadding, vertical = 12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(ExpandedPlayerPaneGap),
                             ) {
-                                Box(Modifier.weight(0.44f).fillMaxHeight()) { cover() }
-                                Box(Modifier.weight(0.56f).fillMaxHeight()) {
+                                Box(Modifier.weight(ExpandedPlayerArtworkWeight).fillMaxHeight()) { cover() }
+                                Box(Modifier.weight(1f - ExpandedPlayerArtworkWeight).fillMaxHeight()) {
                                     key(track?.uid, immersiveContentKey) {
                                         LyricsViewport(
                                             lines = immersiveLines,
@@ -751,73 +755,16 @@ internal fun FullPlayerPageContent(
             }
         }
         val transport: @Composable () -> Unit = {
-            // 曲目切换必须一起销毁 Slider 内部拖动和预览，不能只清空外部数值。
-            key(track?.uid) {
-                // 细长进度线（无圆点极简纯线条设计） + 左右时间（消除48dp隐形留白干扰）
-                var dragging by remember { mutableStateOf<Float?>(null) }
-                val range = 0f..(state.durationMs.takeIf { it > 0 }?.toFloat() ?: 1f)
-                val seekState = remember(range) { SliderState(trackRange = range) }
-                seekState.value = dragging ?: state.positionMs.toFloat()
-                CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
-                    Slider(
-                        state = seekState,
-                        onValueChange = { dragging = it },
-                        onValueChangeFinished = {
-                            dragging?.let { onSeek(it.toLong()) }
-                            dragging = null
-                        },
-                        enabled = state.durationMs > 0,
-                        colors = SliderDefaults.colors(
-                            activeTrackColor = FullPlayerProgressActive,
-                            inactiveTrackColor = FullPlayerProgressInactive,
-                        ),
-                        thumb = {},
-                        track = { sliderState: SliderState ->
-                            Box(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .height(2.5.dp)
-                                    .clip(RoundedCornerShape(1.5.dp))
-                                    .background(FullPlayerProgressInactive),
-                            ) {
-                                Box(
-                                    Modifier
-                                        .fillMaxWidth(
-                                            ((sliderState.value - range.start) / (range.endInclusive - range.start))
-                                                .coerceIn(0f, 1f),
-                                        )
-                                        .height(2.5.dp)
-                                        .background(FullPlayerProgressActive),
-                                )
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth().height(20.dp).testTag("player-seek-slider"),
-                    )
-                }
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 2.dp),
-                ) {
-                    val clockColor = FullPlayerTextMuted.copy(alpha = if (compactLandscapeNormal) 0.78f else 1f)
-                    val clockStyle = LocalTextStyle.current.copy(
-                        fontSize = if (compactLandscapeNormal) 11.sp else 12.sp,
-                        fontFeatureSettings = "tnum",
-                    )
-                    Text(
-                        formatClock(dragging?.toLong() ?: state.positionMs),
-                        color = clockColor,
-                        style = clockStyle,
-                    )
-                    Spacer(Modifier.weight(1f))
-                    Text(
-                        formatClock(state.durationMs),
-                        color = clockColor,
-                        style = clockStyle,
-                    )
-                }
-            }
+            PlayerSeekBar(
+                trackUid = track?.uid,
+                position = sampledPosition,
+                durationMs = state.durationMs,
+                onSeek = onSeek,
+                activeColor = FullPlayerProgressActive,
+                inactiveColor = FullPlayerProgressInactive,
+                clockColor = FullPlayerTextMuted.copy(alpha = if (compactLandscapeNormal) 0.78f else 1f),
+                clockSize = if (compactLandscapeNormal) 11.sp else 12.sp,
+            )
 
             // 紧凑控制区：进度条与播放控制紧密贴合
             Spacer(Modifier.height(if (compactLandscapeNormal) 2.dp else 4.dp))
@@ -926,20 +873,20 @@ internal fun FullPlayerPageContent(
         if (expandedNormal) {
             Row(
                 Modifier.fillMaxSize().windowInsetsPadding(playerInsets).padding(top = playerTopInset)
-                    .padding(horizontal = 24.dp, vertical = 12.dp).testTag("player-expanded-layout"),
-                horizontalArrangement = Arrangement.spacedBy(32.dp),
+                    .padding(horizontal = ExpandedPlayerPanePadding, vertical = 12.dp).testTag("player-expanded-layout"),
+                horizontalArrangement = Arrangement.spacedBy(ExpandedPlayerPaneGap),
             ) {
                 Box(
-                    Modifier.weight(0.44f).fillMaxHeight().testTag("player-artwork-pane"),
+                    Modifier.weight(ExpandedPlayerArtworkWeight).fillMaxHeight().testTag("player-artwork-pane"),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Column(Modifier.widthIn(max = 460.dp).fillMaxSize()) {
+                    Column(Modifier.widthIn(max = ExpandedPlayerArtworkMaxSide).fillMaxSize()) {
                         Box(Modifier.graphicsLayer { alpha = 1f - immersion.value }.testTag("player-heading")) { heading(Modifier) }
                         Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 16.dp)) { cover() }
                         Column(Modifier.fillMaxWidth().graphicsLayer { alpha = 1f - immersion.value }.testTag("player-transport")) { transport() }
                     }
                 }
-                playerAndQueue(Modifier.weight(0.56f).fillMaxHeight().nestedScroll(readingScroll).testTag("player-reading-pane")) {
+                playerAndQueue(Modifier.weight(1f - ExpandedPlayerArtworkWeight).fillMaxHeight().nestedScroll(readingScroll).testTag("player-reading-pane")) {
                     Column(Modifier.fillMaxSize()) {
                         PlayerReadingTabs(
                             pages = pages,
@@ -1038,7 +985,7 @@ internal fun FullPlayerPageContent(
     if (showCoverPicker) {
         val playerThemeMode by MeloraSettings.playerThemeMode.collectAsStateWithLifecycle()
         PlayerCoverPicker(
-            selected = coverStyle, track = track, immersive = immersive, motionEnabled = motionEnabled,
+            selected = coverStyle, artwork = playerArtwork, immersive = immersive, motionEnabled = motionEnabled,
             themeMode = playerThemeMode, onThemeModeChange = MeloraSettings::updatePlayerThemeMode,
             onSelect = { style -> MeloraSettings.updatePlayerCoverStyle(style); showCoverPicker = false },
             onToggleImmersive = { showCoverPicker = false; onImmersiveChange(!immersive) },
@@ -1071,6 +1018,7 @@ internal fun FullPlayerPageContent(
     if (showAudioEffects) {
         AudioEffectsBottomSheet(
             current = audioEffectPreset,
+            playing = state.playing,
             onToggle = MeloraSettings::toggleAudioEffectPreset,
             onDismiss = { showAudioEffects = false },
         )
@@ -1361,7 +1309,6 @@ internal fun SongsCollectionPage(
         return
     }
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val listState = key(
         collection.source,
         collection.keyword,
@@ -1432,17 +1379,17 @@ internal fun SongsCollectionPage(
     }
 
     // 播放来源容器：音乐专辑/歌手，登记到「我的 → 最近播放」并可回跳。
-    fun playContainer(): UserLibrary.PlayContainer? {
+    fun playContainer(snapshot: List<OnlineSong>): UserLibrary.PlayContainer? {
         val album = collection.albumName?.trim().orEmpty()
-        val img = artwork ?: if (isArtist) null else songs.firstOrNull()?.let { CoverLoader.cachedUrl(it) }
+        val img = artwork ?: if (isArtist) null else snapshot.firstOrNull()?.let { CoverLoader.cachedUrl(it) }
         return when {
-            album.isNotEmpty() -> UserLibrary.PlayContainer(
+            albumKey != null && album.isNotEmpty() -> UserLibrary.PlayContainer(
                 kind = "album",
                 id = "album_${collection.source}_$album",
                 name = album,
                 img = img,
                 source = collection.source,
-                queueId = "album.${collection.source}.$album",
+                queueId = "album.$albumKey",
                 artist = collection.artistName.orEmpty(),
             )
             collection.artistName != null -> UserLibrary.PlayContainer(
@@ -1458,12 +1405,21 @@ internal fun SongsCollectionPage(
         }
     }
 
+    class PageRequest(val page: Int)
+    var request by remember(collection) { mutableStateOf(PageRequest(1)) }
+
     fun load(targetPage: Int) {
         if (loadingMore) return
         loadingMore = true
+        request = PageRequest(targetPage)
+    }
+
+    LaunchedEffect(collection, request) {
+        val targetPage = request.page
+        loadingMore = true
         loadMoreFailed = false
         if (songs.isEmpty()) loading = true
-        scope.launch {
+        try {
             error = null
             var current = targetPage
             var extra = 0
@@ -1489,12 +1445,11 @@ internal fun SongsCollectionPage(
                 .onFailure {
                     if (songs.isEmpty()) error = it.message ?: "加载失败" else loadMoreFailed = true
                 }
+        } finally {
             loading = false
             loadingMore = false
         }
     }
-
-    LaunchedEffect(collection) { load(1) }
 
     // 用户每次滚动后恢复自动补页预算
     LaunchedEffect(listState) {
@@ -1525,10 +1480,18 @@ internal fun SongsCollectionPage(
         else -> false
     }
     val onFavorite: (() -> Unit)? = when {
-        isArtist -> { { UserLibrary.toggleFavoriteArtist(UserLibrary.FavoriteArtist(artistName, collection.source, artwork)) } }
-        albumKey != null -> { { UserLibrary.toggleFavoriteAlbum(UserLibrary.FavoriteAlbum(
-            collection.albumName, collection.artistName.orEmpty(), collection.source, artwork,
-        )) } }
+        isArtist -> {
+            {
+                val artist = UserLibrary.FavoriteArtist(artistName, collection.source, artwork)
+                submitLibraryWrite { UserLibrary.toggleFavoriteArtist(artist) }
+            }
+        }
+        albumKey != null -> {
+            {
+                val album = UserLibrary.FavoriteAlbum(collection.albumName, collection.artistName.orEmpty(), collection.source, artwork)
+                submitLibraryWrite { UserLibrary.toggleFavoriteAlbum(album) }
+            }
+        }
         else -> null
     }
     val header = remember(isArtist, artistProfile, albumProfile, artistName, songs) {
@@ -1539,7 +1502,8 @@ internal fun SongsCollectionPage(
         derivedStateOf { listState.firstVisibleItemIndex > 0 }
     }
     val playAll = {
-        PlaybackController.playQueue(context, songs.toUiTracks(), 0, container = playContainer())
+        val snapshot = songs
+        PlaybackController.playQueue(context, snapshot.toUiTracks(), 0, container = playContainer(snapshot))
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val paneWidth = maxWidth
@@ -1615,17 +1579,19 @@ internal fun SongsCollectionPage(
             bottomBar = { SongBatchActionsBar(selection, songs) },
         ) {
             val topInset = LocalChromeTopInset.current
+            val snapshot = songs
+            val sourceUids = remember(snapshot) { snapshot.map(OnlineSong::uid) }
             fun LazyListScope.collectionTrackItems() {
                 when {
                     loading -> item(key = "loading") { SkeletonSongList(modifier = bodyHazeModifier, rows = 7, rowSpacing = 2.dp) }
                     error != null -> item(key = "error") {
                         ErrorState(error!!, onRetry = { load(1) }, modifier = Modifier.fillParentMaxHeight(.65f).then(bodyHazeModifier))
                     }
-                    songs.isEmpty() -> item(key = "empty") {
+                    snapshot.isEmpty() -> item(key = "empty") {
                         EmptyState("没有找到相关歌曲", Modifier.fillParentMaxHeight(.65f).then(bodyHazeModifier))
                     }
                     else -> {
-                        itemsIndexed(songs, key = { index, song -> "${song.uid}:$index" }) { index, song ->
+                        itemsIndexed(snapshot, key = { index, song -> "${song.uid}:$index" }) { index, song ->
                             Box(Modifier.fillMaxWidth().then(bodyHazeModifier)) {
                                 OnlineSongRow(
                                     song = song,
@@ -1638,7 +1604,13 @@ internal fun SongsCollectionPage(
                                     highlightContainer = isLargeScreen,
                                     onClick = {
                                         if (selection.active) selection.toggle(song.uid)
-                                        else PlaybackController.playTrack(context, UiTrack.fromOnline(song), container = playContainer())
+                                        else PlaybackController.playFromCollection(
+                                            context,
+                                            selected = UiTrack.fromOnline(song),
+                                            startIndex = index,
+                                            container = playContainer(snapshot),
+                                            sourceUids = sourceUids,
+                                        ) { trackIndex -> UiTrack.fromOnline(snapshot[trackIndex]) }
                                     },
                                 )
                             }
@@ -1682,7 +1654,6 @@ internal fun SongsCollectionPage(
                         ) {
                             CollectionHeroArtwork(
                                 image = artwork,
-                                seed = "${collection.source}_${collection.title}",
                                 artist = isArtist,
                                 size = 196.dp,
                                 cornerRadius = 18,
@@ -1818,7 +1789,6 @@ internal fun SongsCollectionPage(
                                     ) {
                                         CollectionHeroArtwork(
                                             image = artwork,
-                                            seed = "${collection.source}_${collection.title}",
                                             artist = isArtist,
                                             size = 120.dp,
                                             cornerRadius = 16,
@@ -1859,7 +1829,7 @@ internal fun SongsCollectionPage(
                                     }
                                 } else {
                                     CollectionInfoHeader(
-                                        image = artwork, seed = "${collection.source}_${collection.title}", artist = isArtist,
+                                        image = artwork, artist = isArtist,
                                         primary = header.primary,
                                         secondary = header.secondary,
                                         primaryMaxLines = header.primaryMaxLines,
@@ -2533,6 +2503,7 @@ private fun TimerSettingsBottomSheet(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
                     .padding(bottom = 28.dp),
             ) {
                 // 统一头部卡片：44dp 质感图标 + 标题 + 副标题
@@ -2736,13 +2707,13 @@ private fun audioEffectIcon(id: String): ImageVector = when (id) {
 @Composable
 private fun AudioEffectsBottomSheet(
     current: String,
+    playing: Boolean,
     onToggle: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true)
     val selectedPreset = AudioEffects.preset(current)
     val effectState by AudioEffects.state.collectAsStateWithLifecycle()
-    val playerState by PlaybackController.state.collectAsStateWithLifecycle()
     val colors = LocalPlayerColors.current
     val eInk = MeloraAppearance.isEInk
     val accent = when {
@@ -2805,7 +2776,7 @@ private fun AudioEffectsBottomSheet(
                     }
                 }
                 AudioVisualizerBars(
-                    active = playerState.playing && effectState.active,
+                    active = playing && effectState.active,
                     color = if (effectState.active) accent else colors.sheetTextMuted.copy(alpha = 0.30f),
                 )
             }
@@ -2990,7 +2961,7 @@ private fun MoreActionsBottomSheet(
 ) {
     val song = track?.raw?.let(OnlineSong::from)
     if (song == null) {
-        onDismiss()
+        LaunchedEffect(track?.uid) { onDismiss() }
         return
     }
     WithMeloraSheetTheme(darkTheme = LocalPlayerColors.current.isDark) {

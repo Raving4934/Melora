@@ -12,7 +12,6 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -20,7 +19,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.leyu.melora.playback.PlaybackController
 
 /**
@@ -38,10 +36,7 @@ fun CardPlayButton(
     background: Color = Color.Black.copy(alpha = 0.45f),
     tint: Color = Color.White,
 ) {
-    val state by PlaybackController.state.collectAsStateWithLifecycle()
-    val active = state.queueId == queueId
-    val loading = !active && state.pendingQueueId == queueId
-    val playing = active && state.playing
+    val (active, playing, loading) = rememberQueuePlayback(queueId)
     Box(
         modifier = modifier
             .size(size)

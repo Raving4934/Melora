@@ -17,8 +17,8 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.leyu.melora.playback.PlatformSource
 import com.leyu.melora.playback.sdk.OnlinePlaylist
-import com.leyu.melora.ui.search.PlatformSource
 import com.leyu.melora.ui.search.SearchCategory
 import com.leyu.melora.ui.search.SearchResults
 import com.leyu.melora.ui.search.SearchResultsContent

@@ -82,11 +82,13 @@ class PlayerLyricsPagingTest {
             PlayerAppearanceProvider(dark = true) {
                 FullPlayerPageContent(
                     state = PlayerUiState(current = UiTrack("paging-test", "测试歌曲", "测试歌手", "测试专辑"), durationMs = 180_000),
+                    sampledPosition = position,
                     immersive = immersiveState.value, onImmersiveChange = { immersiveState.value = it },
                     lyricPosition = position, motionEnabled = true,
                     lyricFrame = rememberLyricFrame(lines, position), lyricLines = lines,
                     onOpenQueue = {}, onCloseQueue = {}, queuePagerState = rememberPagerState { 2 },
                     onArtworkPositioned = {}, artworkAlpha = { 1f },
+                    playerArtwork = testPlayerArtwork(),
                     coverStyle = coverStyleState.value, artworkRotation = { 0f },
                     onPageVisualChanged = { _, _, _ -> },
                     modifier = (resizedViewport.value?.let { Modifier.requiredSize(it.width, it.height) } ?: when {

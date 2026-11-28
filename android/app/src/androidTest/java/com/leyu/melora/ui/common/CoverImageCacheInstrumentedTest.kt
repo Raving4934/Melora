@@ -89,7 +89,7 @@ class CoverImageCacheInstrumentedTest {
                         if (visible.value) LazyColumn(Modifier.height(260.dp).testTag("covers")) {
                             items((0 until 24).toList(), key = { it }) { index ->
                                 Row(Modifier.height(60.dp)) {
-                                    SongArtwork(fixture.server.url(index), "song-$index", Modifier.size(42.dp))
+                                    SongArtwork(fixture.server.url(index), Modifier.size(42.dp))
                                     Text("测试歌曲 $index")
                                 }
                             }

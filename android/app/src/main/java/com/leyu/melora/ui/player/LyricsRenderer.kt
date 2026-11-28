@@ -84,34 +84,51 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlin.math.ceil
 
 /** 同一时钟供三个展示入口读取；时间只在 draw 或时间线边界派生中消费。 */
 @Composable
 internal fun rememberLyricPosition(
-    state: PlayerUiState,
+    playback: State<PlayerUiState>,
     visible: Boolean,
     eInkTimeline: LyricTimeline? = null,
 ): State<Long> {
-    val latest by rememberUpdatedState(state)
-    val position = remember(state.current?.uid) { mutableLongStateOf(lyricPositionAt(state, SystemClock.elapsedRealtime())) }
+    val trackUid = remember(playback) { derivedStateOf { playback.value.current?.uid } }.value
+    val position = remember(trackUid) {
+        mutableLongStateOf(lyricPositionAt(playback.value, SystemClock.elapsedRealtime()))
+    }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    LaunchedEffect(
-        state.current?.uid, state.positionMs, state.positionSampleRealtimeMs, state.positionAdvancing,
-        state.buffering, state.resolving, state.speed, state.durationMs, visible, eInkTimeline, lifecycle,
-    ) {
-        // 采样抵达界面时已过时；重锚与逐帧绘制必须使用同一时刻，不能先回写旧位置再追赶。
-        position.longValue = lyricPositionAt(state, SystemClock.elapsedRealtime())
-        if (!visible || !state.positionAdvancing) return@LaunchedEffect
+    LaunchedEffect(playback, trackUid, visible, eInkTimeline, lifecycle) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            while (isActive) {
-                if (eInkTimeline == null) {
-                    withFrameNanos { position.longValue = lyricPositionAt(latest, SystemClock.elapsedRealtime()) }
-                } else {
-                    val nowMs = SystemClock.elapsedRealtime()
-                    position.longValue = lyricPositionAt(latest, nowMs)
-                    delay(eInkLyricRefreshDelay(eInkTimeline, latest, nowMs) ?: break)
+            val samples = snapshotFlow { playback.value.takeIf { it.current?.uid == trackUid } }
+            if (visible && eInkTimeline != null) {
+                // Seek 和句界变化都能立即唤醒墨水屏路径，无需逐帧时钟。
+                samples.collectLatest { sample ->
+                    if (sample == null) return@collectLatest
+                    while (isActive) {
+                        val nowMs = SystemClock.elapsedRealtime()
+                        position.longValue = lyricPositionAt(sample, nowMs)
+                        delay(eInkLyricRefreshDelay(eInkTimeline, sample, nowMs) ?: break)
+                    }
                 }
+                return@repeatOnLifecycle
+            }
+            if (visible) launch {
+                snapshotFlow { playback.value.let { it.current?.uid == trackUid && it.positionAdvancing } }
+                    .collectLatest { advancing ->
+                        if (!advancing) return@collectLatest
+                        while (isActive) withFrameNanos {
+                            val sample = playback.value
+                            if (sample.current?.uid == trackUid) {
+                                position.longValue = lyricPositionAt(sample, SystemClock.elapsedRealtime())
+                            }
+                        }
+                    }
+            }
+            // 采样变化只校正位置，逐帧任务继续使用同一生命周期和最新样本。
+            samples.collect { sample ->
+                if (sample != null) position.longValue = lyricPositionAt(sample, SystemClock.elapsedRealtime())
             }
         }
     }

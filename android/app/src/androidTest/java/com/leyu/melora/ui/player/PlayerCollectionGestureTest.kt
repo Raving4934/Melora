@@ -1,5 +1,6 @@
 package com.leyu.melora.ui.player
 
+import androidx.compose.runtime.rememberUpdatedState
 import com.leyu.melora.ui.awaitStable
 
 import androidx.compose.foundation.layout.fillMaxSize
@@ -84,7 +85,7 @@ class PlayerCollectionGestureTest {
         compose.setContent {
             CompositionLocalProvider(LocalSongListState provides shared) {
                 MeloraTheme {
-                    ContinuousPlayerSheet(PlayerUiState(current = UiTrack.fromOnline(chapters.first())), Modifier.fillMaxSize())
+                    ContinuousPlayerSheet(rememberUpdatedState(PlayerUiState(current = UiTrack.fromOnline(chapters.first()))), Modifier.fillMaxSize())
                 }
             }
         }

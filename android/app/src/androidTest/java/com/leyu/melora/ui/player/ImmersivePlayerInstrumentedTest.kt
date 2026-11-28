@@ -129,11 +129,13 @@ class ImmersivePlayerInstrumentedTest {
                             current = UiTrack("immersive-test", "晚风与海", "测试歌手", "测试专辑", artwork = artworkUrl),
                             durationMs = 180_000,
                         ),
+                        sampledPosition = position,
                         immersive = immersive.value, onImmersiveChange = { immersive.value = it },
                         lyricPosition = position, motionEnabled = motionEnabled,
                         lyricFrame = rememberLyricFrame(lines, position), lyricLines = lines,
                         onOpenQueue = {}, onCloseQueue = {}, queuePagerState = rememberPagerState { 2 },
                         onArtworkPositioned = {}, artworkAlpha = { 1f },
+                        playerArtwork = testPlayerArtwork(artworkUrl),
                         coverStyle = coverStyle, artworkRotation = { 0f },
                         onPageVisualChanged = { _, _, _ -> },
                         modifier = when {

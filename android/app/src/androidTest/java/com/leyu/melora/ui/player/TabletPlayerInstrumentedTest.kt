@@ -1,5 +1,6 @@
 package com.leyu.melora.ui.player
 
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
@@ -52,11 +53,13 @@ class TabletPlayerInstrumentedTest {
                         FullPlayerPageContent(
                             state = PlayerUiState(current = UiTrack("tablet-fixture", "夜航：很长的歌曲标题也不能挤掉播放设备按钮", "测试歌手", "海边的夜晚"),
                                 positionMs = position.longValue, durationMs = 210_000),
+                            sampledPosition = position,
                             immersive = immersive.value, onImmersiveChange = { immersive.value = it },
                             lyricPosition = position, motionEnabled = false,
                             lyricFrame = rememberLyricFrame(lines, position), lyricLines = lines,
                             onOpenQueue = {}, onCloseQueue = {}, queuePagerState = rememberPagerState { 2 },
                             onArtworkPositioned = {}, artworkAlpha = { 1f },
+                            playerArtwork = testPlayerArtwork(),
                             coverStyle = PlayerCoverStyle.Default, artworkRotation = { 0f },
                             onPageVisualChanged = { _, _, _ -> },
                             onCollapse = { collapsed = true },
@@ -228,7 +231,7 @@ class TabletPlayerGestureInstrumentedTest {
                     MeloraTheme {
                         SongListStateProvider {
                             ContinuousPlayerSheet(
-                                PlayerUiState(current = UiTrack("tablet-gesture", "平板手势测试", "测试歌手", "测试专辑")),
+                                rememberUpdatedState(PlayerUiState(current = UiTrack("tablet-gesture", "平板手势测试", "测试歌手", "测试专辑"))),
                                 Modifier.fillMaxSize(), backState = backState,
                             )
                         }

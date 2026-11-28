@@ -43,11 +43,25 @@ import com.leyu.melora.ui.theme.MeloraAppearance
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
+@Composable
+internal fun PlayAllPill(
+    modifier: Modifier = Modifier,
+    contentPadding: PaddingValues = PaddingValues(horizontal = 11.dp, vertical = 6.dp),
+    onClick: () -> Unit,
+) {
+    ChromeActionSurface(onClick = onClick, shape = RoundedCornerShape(16.dp), modifier = modifier) {
+        Row(Modifier.padding(contentPadding), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.PlayArrow, null, tint = BrandBlue, modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(3.dp))
+            Text("播放全部", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = BrandBlue)
+        }
+    }
+}
+
 /** 歌单、专辑和艺术家共用信息区；头像没有真实结果时用人物占位，不冒用歌曲封面。 */
 @Composable
 internal fun CollectionInfoHeader(
     image: String?,
-    seed: String,
     primary: String,
     secondary: String,
     modifier: Modifier = Modifier,
@@ -70,7 +84,7 @@ internal fun CollectionInfoHeader(
                     )
                 }
             }
-        } else SongArtwork(image, seed, Modifier.size(64.dp), cornerRadius = 12)
+        } else SongArtwork(image, Modifier.size(64.dp), cornerRadius = 12)
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(primary, fontSize = 13.sp, lineHeight = 19.sp, fontWeight = FontWeight.Medium,
@@ -86,7 +100,6 @@ internal fun CollectionInfoHeader(
 @Composable
 internal fun CollectionHeroArtwork(
     image: String?,
-    seed: String,
     artist: Boolean,
     size: Dp,
     cornerRadius: Int,
@@ -121,7 +134,7 @@ internal fun CollectionHeroArtwork(
                 .clip(shape)
                 .border(0.6.dp, MeloraAppearance.divider.copy(alpha = 0.7f), shape),
         ) {
-            SongArtwork(image, seed, Modifier.fillMaxSize(), cornerRadius = cornerRadius)
+            SongArtwork(image, Modifier.fillMaxSize(), cornerRadius = cornerRadius)
         }
     }
 }
@@ -224,10 +237,15 @@ internal fun collectionPlayButton(
     else -> CollectionPlayButton("播放全部", pause = false, CollectionPlayIntent.PlayAll)
 }
 
-/** 只订阅队列身份与播放意图，避免进度刷新重组整页。返回 (本队列活动, 本队列播放中)。 */
+internal data class QueuePlayback(val active: Boolean, val playing: Boolean, val loading: Boolean)
+
+/** 只订阅当前卡片或详情页所用的队列状态。 */
 @Composable
-internal fun rememberQueuePlayback(queueId: String): Pair<Boolean, Boolean> {
-    fun project(state: PlayerUiState) = (state.queueId == queueId) to (state.queueId == queueId && state.playing)
+internal fun rememberQueuePlayback(queueId: String): QueuePlayback {
+    fun project(state: PlayerUiState): QueuePlayback {
+        val active = state.queueId == queueId
+        return QueuePlayback(active, active && state.playing, !active && state.pendingQueueId == queueId)
+    }
     val initial = remember(queueId) { project(PlaybackController.state.value) }
     val flow = remember(queueId) { PlaybackController.state.map(::project).distinctUntilChanged() }
     return flow.collectAsStateWithLifecycle(initialValue = initial).value

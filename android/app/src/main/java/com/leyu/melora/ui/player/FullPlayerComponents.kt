@@ -74,6 +74,7 @@ import com.leyu.melora.playback.QualityBadgeMode
 import com.leyu.melora.playback.sdk.LxScriptPool
 import com.leyu.melora.playback.LyricLine
 import com.leyu.melora.playback.PlayMode
+import com.leyu.melora.playback.PlatformSource
 import com.leyu.melora.playback.UiTrack
 import com.leyu.melora.playback.PlayerUiState
 import com.leyu.melora.playback.TrackRegistry
@@ -110,20 +111,16 @@ internal fun playbackSourceLabel(state: PlayerUiState, autoSwitch: Boolean): Str
         }
     }
     val switchedPlatform = state.resolvedPlatform
-        ?.takeIf { it in setOf("kw", "kg", "wy", "tx", "mg") && it != state.current?.source }
+        ?.takeIf { it in PlatformSource.musicIds && it != state.current?.source }
         ?.let { " · ${platformLabel(it)}" }.orEmpty()
     val switchHint = if (autoSwitch && state.resolvedBy !in TrackRegistry.LOCAL_RESOURCE_IDS) " · 已启用自动换源" else ""
     return "播放源：$source$switchedPlatform$switchHint"
 }
 
 internal fun platformLabel(source: String?, fallback: String = "本地音频"): String = when (source) {
-    "kw" -> "酷我音乐"
-    "kg" -> "酷狗音乐"
-    "tx" -> "QQ 音乐"
-    "wy" -> "网易云音乐"
-    "mg" -> "咪咕音乐"
+    PlatformSource.Tencent.id -> "QQ 音乐"
     "local" -> "本地音频"
-    else -> fallback
+    else -> PlatformSource.musicPlatform(source)?.officialLabel ?: fallback
 }
 
 internal fun AudioSpecification.playerSpecificationLabel(): String = buildList {
@@ -254,7 +251,6 @@ internal fun AlbumInfoCard(
             ) {
                 SongArtwork(
                     url = track?.artwork,
-                    seed = track?.uid ?: "album",
                     modifier = Modifier.size(46.dp),
                     cornerRadius = 8,
                 )
@@ -413,7 +409,7 @@ internal fun CompactLandscapeControls(
         val inlineLimit = compactLandscapeInlineCoverLimit(width.toDp(), CompactLandscapeTitleSize.toDp())
         val inline = inlineLimit != null
         val fraction = if (inline) 0.45f else 0.32f
-        val preferredSide = (viewport * fraction).roundToInt().coerceIn(minimumSide, 152.dp.roundToPx())
+        val preferredSide = (viewport * fraction).roundToInt().coerceIn(minimumSide, CompactLandscapeArtworkMaxSide.roundToPx())
         val inlineSide = inlineLimit?.let {
             minOf(it.roundToPx(), preferredSide, (room - gap).coerceAtLeast(minimumSide))
         }

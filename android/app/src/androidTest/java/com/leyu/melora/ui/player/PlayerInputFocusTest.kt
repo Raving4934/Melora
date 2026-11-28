@@ -1,5 +1,6 @@
 package com.leyu.melora.ui.player
 
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -48,7 +49,7 @@ class PlayerInputFocusTest {
                             state = query,
                             modifier = Modifier.padding(top = 80.dp, start = 24.dp).testTag("underlying-search"),
                         )
-                        ContinuousPlayerSheet(PlayerUiState(ready = true, current = track, queue = listOf(track), currentIndex = 0))
+                        ContinuousPlayerSheet(rememberUpdatedState(PlayerUiState(ready = true, current = track, queue = listOf(track), currentIndex = 0)))
                     }
                 }
             }
