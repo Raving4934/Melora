@@ -36,7 +36,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
 import okhttp3.Request
 
 internal const val APK_UPDATE_DIRECTORY = "apk_updates"
@@ -307,7 +306,7 @@ private fun restoreAuthorization(directory: File, saved: ArrayList<String>?): Ap
 }
 
 private val apkHttpClient by lazy {
-    OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
+    sharedNetworkClient.newBuilder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build()
 }
 
 internal suspend fun downloadUpdateApk(url: String, target: File, onProgress: (Long, Long?) -> Unit) {

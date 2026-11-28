@@ -8,6 +8,7 @@
 #include <set>
 #include <fstream>
 #include <sstream>
+#include <vector>
 
 static void require(bool condition, const char *message) {
     if (!condition) {
@@ -26,13 +27,23 @@ struct JavaValue : _jobject {
     explicit JavaValue(JSValue value) : value(value) {}
 };
 
+struct JavaStringArray : _jobjectArray {
+    std::vector<std::string> entries;
+    explicit JavaStringArray(jsize length) : entries(length) {}
+};
+
 static std::map<const char *, jstring> utf;
 static std::set<jobject> locals;
+static std::set<JavaValue *> callbackRefs;
+static std::set<JavaStringArray *> arrays;
 static int utfCalls, releaseCalls, newCalls, callbackCalls;
 static int failUtf, failNew;
 static bool pending, failCallback, nullCallback;
+static bool trackCallback, failHostCallback;
 static bool invalidModule;
 static JNIEnv environment;
+static JSContext *callbackContext;
+static _jthrowable hostError;
 static const char *moduleScript = "export const answer = 42;";
 static const char *moduleName = "module.js";
 
@@ -80,6 +91,17 @@ static jstring JNICALL newString(JNIEnv *, const char *value) {
 
 static void JNICALL deleteLocal(JNIEnv *, jobject value) {
     if (value == nullptr) return;
+    if (value == &hostError) return;
+    if (callbackRefs.erase(reinterpret_cast<JavaValue *>(value)) != 0) {
+        auto *wrapper = static_cast<JavaValue *>(value);
+        JS_FreeValue(callbackContext, wrapper->value);
+        delete wrapper;
+        return;
+    }
+    if (arrays.erase(reinterpret_cast<JavaStringArray *>(value)) != 0) {
+        delete static_cast<JavaStringArray *>(value);
+        return;
+    }
     require(locals.erase(value) == 1, "invalid local reference deletion");
     for (const auto &entry : utf) {
         require(entry.second != value, "local jstring deleted before UTF release");
@@ -88,6 +110,31 @@ static void JNICALL deleteLocal(JNIEnv *, jobject value) {
 }
 
 static jboolean JNICALL exceptionCheck(JNIEnv *) { return pending; }
+
+static jthrowable JNICALL exceptionOccurred(JNIEnv *) {
+    require(pending, "ExceptionOccurred called without pending exception");
+    return &hostError;
+}
+
+static void JNICALL exceptionClear(JNIEnv *) { pending = false; }
+
+static jobject JNICALL throwableMessage(JNIEnv *env, jobject failure, jmethodID method, va_list) {
+    checkedJni();
+    require(failure == &hostError && method == throwableMessageMethodID, "unexpected Java error lookup");
+    return newString(env, "host operation failed");
+}
+
+static jobjectArray JNICALL newStringArray(JNIEnv *, jsize length, jclass, jobject) {
+    checkedJni();
+    auto *array = new JavaStringArray(length);
+    arrays.insert(array);
+    return array;
+}
+
+static void JNICALL setArrayElement(JNIEnv *, jobjectArray array, jsize index, jobject value) {
+    checkedJni();
+    static_cast<JavaStringArray *>(array)->entries.at(index) = static_cast<JavaString *>(value)->text;
+}
 
 static jlong JNICALL getLong(JNIEnv *, jobject object, jfieldID field) {
     checkedJni();
@@ -120,16 +167,19 @@ static jobject JNICALL staticObject(JNIEnv *, jclass, jmethodID method, va_list 
         (void) va_arg(args, int);
         (void) va_arg(args, jdouble);
         result.u.ptr = reinterpret_cast<void *>(va_arg(args, jlong));
-        return new JavaValue(result);
+        auto *wrapped = new JavaValue(result);
+        if (trackCallback) callbackRefs.insert(wrapped);
+        return wrapped;
     }
     ++callbackCalls;
-    if (failCallback) {
+    if (failCallback || (method == callJavaCallbackMethodID && failHostCallback)) {
         pending = true;
         return nullptr;
     }
     if (nullCallback) return nullptr;
     const char *text = method == getModuleScriptMethodID
-        ? (invalidModule ? "export const = ;" : moduleScript) : moduleName;
+        ? (invalidModule ? "export const = ;" : moduleScript)
+        : method == callJavaCallbackMethodID ? "callback response" : moduleName;
     auto *result = new JavaString(text);
     locals.insert(result);
     return result;
@@ -153,12 +203,10 @@ static void freeWrapper(JSContext *ctx, jobject object) {
 
 // 同一真实 JNI/QuickJS host harness 也承载原生任务归属回归。
 static JSValue drainJobs(JSContext *ctx, JSValueConst, int, JSValueConst *) {
-    JSContext *owner = nullptr;
-    for (int i = 0; i < 1000; ++i) {
-        int result = JS_ExecutePendingJob(JS_GetRuntime(ctx), &owner);
-        if (result < 0) return JS_EXCEPTION;
-        if (result == 0) return JS_UNDEFINED;
-    }
+    int result = Java_com_quickjs_QuickJSNativeImpl__1executePendingJobs(
+            &environment, nullptr, reinterpret_cast<jlong>(ctx));
+    if (result < 0) return JS_EXCEPTION;
+    if (result == 0) return JS_UNDEFINED;
     return JS_ThrowInternalError(ctx, "test microtask queue did not settle");
 }
 
@@ -199,6 +247,8 @@ int main(int argc, char **argv) {
         else failUtf = failure;
     }
     failCallback = name == "loaderCallback" || name == "normalizeCallback";
+    trackCallback = name == "hostCallback" || name == "hostCallbackFailure";
+    failHostCallback = name == "hostCallbackFailure";
     nullCallback = name == "loaderNull" || name == "normalizeNull";
     invalidModule = name == "invalidModule";
 
@@ -207,13 +257,18 @@ int main(int argc, char **argv) {
     table.ReleaseStringUTFChars = releaseUtf;
     table.GetStringUTFLength = utfLength;
     table.NewStringUTF = newString;
+    table.NewObjectArray = newStringArray;
+    table.SetObjectArrayElement = setArrayElement;
     table.DeleteLocalRef = deleteLocal;
     table.ExceptionCheck = exceptionCheck;
+    table.ExceptionOccurred = exceptionOccurred;
+    table.ExceptionClear = exceptionClear;
     table.GetLongField = getLong;
     table.GetIntField = getInt;
     table.GetDoubleField = getDouble;
     table.IsInstanceOf = instanceOf;
     table.CallStaticObjectMethodV = staticObject;
+    table.CallObjectMethodV = throwableMessage;
     environment.functions = &table;
     JNIInvokeInterface_ vmTable{};
     vmTable.GetEnv = getEnv;
@@ -222,11 +277,14 @@ int main(int argc, char **argv) {
     createJSValueMethodID = reinterpret_cast<jmethodID>(1);
     getModuleScriptMethodID = reinterpret_cast<jmethodID>(2);
     convertModuleNameMethodID = reinterpret_cast<jmethodID>(3);
+    callJavaCallbackMethodID = reinterpret_cast<jmethodID>(4);
+    throwableMessageMethodID = reinterpret_cast<jmethodID>(5);
     stringCls = reinterpret_cast<jclass>(1);
     js_value_tag_id = reinterpret_cast<jfieldID>(1);
 
     JSRuntime *rt = JS_NewRuntime();
     JSContext *ctx = JS_NewContext(rt);
+    callbackContext = ctx;
     const auto ptr = reinterpret_cast<jlong>(ctx);
     JNIEnv *env = &environment;
     JavaValue object(JS_NewObject(ctx));
@@ -278,9 +336,47 @@ int main(int argc, char **argv) {
     } else if (name == "contains") {
         bool contains = Java_com_quickjs_QuickJSNativeImpl__1contains(env, nullptr, ptr, &object, &key);
         require(contains == !failure, "contains result changed");
+    } else if (name == "getKeys") {
+        jobjectArray keys = Java_com_quickjs_QuickJSNativeImpl__1getKeys(env, nullptr, ptr, &object);
+        require(keys != nullptr, "enumeration failed");
+        require(static_cast<JavaStringArray *>(keys)->entries == std::vector<std::string>{"key", "fn"},
+                "enumerated keys changed");
+        env->DeleteLocalRef(keys);
     } else if (name == "executeFunction") {
+        JavaValue parameters(JS_NewArray(ctx));
+        JS_SetPropertyUint32(ctx, parameters.value, 0, JS_NewString(ctx, "argument"));
         returned = Java_com_quickjs_QuickJSNativeImpl__1executeFunction(
-            env, nullptr, ptr, TYPE_NULL, &object, &function, nullptr);
+            env, nullptr, ptr, TYPE_NULL, &object, &function, &parameters);
+        JS_FreeValue(ctx, parameters.value);
+    } else if (name == "exception" || name == "stringException") {
+        const bool isError = name == "exception";
+        const char *script = isError ? "throw new TypeError('expected');" : "throw 'expected';";
+        JSValue result = JS_Eval(ctx, script, std::strlen(script), "fixture.js", JS_EVAL_TYPE_GLOBAL);
+        require(JS_IsException(result), "script did not report error");
+        jobjectArray fields = Java_com_quickjs_QuickJSNativeImpl__1getException(env, nullptr, ptr);
+        require(fields != nullptr, "exception details missing");
+        const auto &values = static_cast<JavaStringArray *>(fields)->entries;
+        require(values[0] == (isError ? "TypeError" : "Error") && values[1] == "expected",
+                "exception details changed");
+        require(!isError || values[2].find("fixture.js") != std::string::npos, "normal stack lost");
+        env->DeleteLocalRef(fields);
+        require(!JS_HasException(ctx), "exception remained pending after conversion");
+    } else if (trackCallback) {
+        JSValue callback = newFunction(ptr, false, 7);
+        JSValue result = JS_Call(ctx, callback, object.value, 0, nullptr);
+        require(!pending, "host callback left pending Java exception");
+        require(JS_IsException(result) == failHostCallback, "host callback error result changed");
+        if (failHostCallback) result = JS_GetException(ctx);
+        const char *message = JS_ToCString(ctx, result);
+        require(message != nullptr, "host callback result was not printable");
+        const std::string text(message);
+        require(failHostCallback ? text.find("host operation failed") != std::string::npos
+                                 : text == "callback response",
+                "host callback result text changed");
+        JS_FreeCString(ctx, message);
+        JS_FreeValue(ctx, result);
+        JS_FreeValue(ctx, callback);
+        evalChecked(ctx, "1 + 1", "after-callback.js");
     } else if (name == "registerJavaMethod") {
         returned = Java_com_quickjs_QuickJSNativeImpl__1registerJavaMethod(
             env, nullptr, ptr, &object, &key, 7, false);
@@ -342,6 +438,7 @@ int main(int argc, char **argv) {
 
     require(utf.empty(), "unreleased GetStringUTFChars allocation");
     require(locals.empty(), "unreleased module callback local jstring");
+    require(callbackRefs.empty() && arrays.empty(), "unreleased JNI local reference");
     require(releaseCalls == utfCalls - (failUtf ? 1 : 0), "UTF acquire/release mismatch");
     require(pending == bool(failUtf || failNew || failCallback), "Java exception not preserved");
     if (failNew) require(callbackCalls == 0, "callback invoked after NewStringUTF failure");

@@ -15398,10 +15398,6 @@ Lcom/leyu/melora/playback/lx/LxScriptStore$$ExternalSyntheticLambda0;
 SPLcom/leyu/melora/playback/lx/LxScriptStore$$ExternalSyntheticLambda0;-><init>()V
 Lcom/leyu/melora/playback/lx/LxScriptStore$list$$inlined$sortedBy$1;
 SPLcom/leyu/melora/playback/lx/LxScriptStore$list$$inlined$sortedBy$1;-><init>()V
-Lcom/leyu/melora/playback/lx/QuickJsPending;
-SPLcom/leyu/melora/playback/lx/QuickJsPending;-><clinit>()V
-SPLcom/leyu/melora/playback/lx/QuickJsPending;-><init>()V
-SPLcom/leyu/melora/playback/lx/QuickJsPending;->executePending(JJ)V
 Lcom/leyu/melora/playback/sdk/KwBookApi;
 SPLcom/leyu/melora/playback/sdk/KwBookApi;-><clinit>()V
 SPLcom/leyu/melora/playback/sdk/KwBookApi;-><init>()V

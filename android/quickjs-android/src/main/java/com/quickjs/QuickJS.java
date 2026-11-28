@@ -33,11 +33,6 @@ public class QuickJS implements Closeable {
         quickJSNative.postVoid(event, false);
     }
 
-    /** Runs on the owning runtime queue and returns only after the event has completed. */
-    public void runOnEventQueue(Runnable event) {
-        quickJSNative.postVoid(event);
-    }
-
     private static int sId = 0;
 
     public static QuickJS createRuntimeWithEventQueue() {
@@ -277,7 +272,9 @@ public class QuickJS implements Closeable {
             return;
         }
         StringBuilder message = new StringBuilder();
-        message.append(result[1]).append('\n');
+        message.append(result[0]);
+        if (!result[1].isEmpty()) message.append(": ").append(result[1]);
+        message.append('\n');
         for (int i = 2; i < result.length; i++) {
             message.append(result[i]);
         }

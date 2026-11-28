@@ -200,7 +200,9 @@ public class JSObject extends JSValue {
 
     public String[] getKeys() {
         this.context.checkReleased();
-        return getContext().getNative()._getKeys(getContextPtr(), this);
+        String[] keys = getContext().getNative()._getKeys(getContextPtr(), this);
+        QuickJS.checkException(context);
+        return keys;
     }
 
 

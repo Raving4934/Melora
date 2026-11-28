@@ -1,2 +1,2 @@
-# QuickJS JNI 使用固定类名，乐屿还会反射读取 runtimePtr/contextPtr。
+# QuickJS JNI 使用固定类名和签名。
 -keep class com.quickjs.** { *; }

@@ -1,8 +1,8 @@
 package com.leyu.melora.playback.lx
 
+import com.leyu.melora.playback.sharedNetworkClient
 import android.util.Base64
 import android.util.Log
-import android.webkit.JavascriptInterface
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.FormBody
@@ -76,7 +76,8 @@ internal class LxHttpResponse(
 
 // 部分音源 CDN 的 HTTP/2 会断流。各引擎统一使用 HTTP/1.1 和同一连接池。
 private val sharedHttpClient by lazy {
-    OkHttpClient.Builder()
+    sharedNetworkClient.newBuilder()
+        .dispatcher(okhttp3.Dispatcher())
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
         .protocols(listOf(Protocol.HTTP_1_1))
@@ -187,12 +188,10 @@ class LxHost internal constructor(
         }
     }
 
-    @JavascriptInterface
     fun log(message: String) {
         Log.d(TAG, message)
     }
 
-    @JavascriptInterface
     fun http(payloadJson: String, scopeId: String = ""): String = try {
         val context = activeRequest(scopeId)
         val token = context?.token
@@ -304,7 +303,6 @@ class LxHost internal constructor(
     private fun httpFailure(error: Exception): JSONObject =
         JSONObject().put("error", error.message ?: "http 请求失败")
 
-    @JavascriptInterface
     fun hash(algo: String, dataBase64: String): String {
         val algorithm = when (algo.lowercase()) {
             "md5" -> "MD5"
@@ -316,24 +314,20 @@ class LxHost internal constructor(
         return digest.joinToString("") { "%02x".format(it) }
     }
 
-    @JavascriptInterface
     fun zlibInflate(dataBase64: String): String = compressResult {
         inflateZlib(decodeBase64Limited(dataBase64, MAX_ZLIB_INPUT_BYTES))
     }
 
-    @JavascriptInterface
     fun zlibDeflate(dataBase64: String): String = compressResult {
         deflateZlib(decodeBase64Limited(dataBase64, MAX_ZLIB_INPUT_BYTES))
     }
 
-    @JavascriptInterface
     fun randomBase64(length: Int): String {
         val bytes = ByteArray(length.coerceIn(1, 4096))
         random.nextBytes(bytes)
         return Base64.encodeToString(bytes, Base64.NO_WRAP)
     }
 
-    @JavascriptInterface
     fun aes(action: String, mode: String, keyBase64: String, ivBase64: String, dataBase64: String): String {
         val normalized = mode.lowercase()
         val parts = normalized.split('-')
@@ -354,7 +348,6 @@ class LxHost internal constructor(
     }
 
     // PEM 公钥 + NoPadding/OAEP 加密，返回 Base64。
-    @JavascriptInterface
     fun rsaEncrypt(dataBase64: String, keyPem: String, padding: String? = null): String {
         val der = keyPem
             .replace("-----BEGIN PUBLIC KEY-----", "")

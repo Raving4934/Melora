@@ -218,7 +218,8 @@ class LxSourceImportInstrumentedTest {
                 val second = sourceImporter.importUrl(secondServer.url).single()
                 val local = sourceImporter.importLocal(sourceInput(localCode), "local.js").single()
                 val ids = listOf(first.id, second.id, local.id)
-                val exported = store.exportBundle(ids)
+                val (exported, count) = store.exportBundle()
+                assertEquals(ids.size, count)
                 ids.forEach(store::remove)
                 val restored = sourceImporter.importLocal(sourceInput(exported), "backup.json").associateBy { it.id }
 

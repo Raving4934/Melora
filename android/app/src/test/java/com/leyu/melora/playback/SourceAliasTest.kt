@@ -2,6 +2,7 @@ package com.leyu.melora.playback
 
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class SourceAliasTest {
@@ -42,5 +43,16 @@ class SourceAliasTest {
         MeloraSettings.sourceAliasEnabled.value = true
         assertEquals("小狗音乐", SourceAlias.displayMusic("kg", "酷狗音乐"))
         assertEquals("自定义音乐", SourceAlias.displayMusic("custom", "自定义音乐"))
+    }
+
+    @Test
+    fun catalogSurfacesKeepTheirPlatformOrderAndLabels() {
+        assertEquals(listOf("kw", "kg", "wy", "tx", "mg"), PlatformSource.musicIds)
+        assertEquals(listOf("kw", "kg", "tx", "wy", "mg"), PlatformSource.boardOrder.map(PlatformSource::id))
+        assertEquals("网易", PlatformSource.Netease.label)
+        assertEquals("网易云", PlatformSource.Netease.boardLabel)
+        assertEquals("QQ音乐", PlatformSource.Tencent.officialLabel)
+        assertEquals(PlatformSource.All, PlatformSource.fromId("all"))
+        assertNull(PlatformSource.musicPlatform("all"))
     }
 }

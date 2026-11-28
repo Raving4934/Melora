@@ -1,6 +1,7 @@
 package com.leyu.melora.playback.lx
 
 import android.content.Context
+import com.leyu.melora.playback.PlatformSource
 import com.quickjs.JSContext
 import com.quickjs.JavaCallback
 import com.quickjs.JSObject
@@ -25,8 +26,6 @@ internal class LxScriptRequestException(message: String, val code: String?) : Il
 class LxScriptEngine(private val context: Context) : Closeable {
     private val quickJs: QuickJS
     private val jsContext: JSContext
-    private val runtimePtr: Long
-    private val contextPtr: Long
     private val host = LxHost()
 
     init {
@@ -58,8 +57,6 @@ class LxScriptEngine(private val context: Context) : Closeable {
             }, "rsaEncrypt")
             jsContext.set("__lxNative", native)
             jsContext.executeVoidScript(shim, "lx-shim.js")
-            runtimePtr = readLong(quickJs, "runtimePtr")
-            contextPtr = readLong(jsContext, "contextPtr")
         } catch (failure: Throwable) {
             try {
                 runtime.close()
@@ -155,11 +152,11 @@ class LxScriptEngine(private val context: Context) : Closeable {
                     initializationComplete = true
                     check(initialized.opt("status") != false) { "脚本报告初始化失败" }
                     val sources = initialized.optJSONObject("sources") ?: error("脚本未声明音源")
-                    val platforms = setOf("kw", "kg", "tx", "wy", "mg", "local")
                     val actions = setOf("musicUrl", "lyric", "pic")
                     check(sources.keys().asSequence().any { id ->
                         val declared = sources.optJSONObject(id)?.optJSONArray("actions")
-                        id in platforms && declared != null && (0 until declared.length()).any { declared.opt(it) in actions }
+                        (id in PlatformSource.musicIds || id == "local") && declared != null &&
+                            (0 until declared.length()).any { declared.opt(it) in actions }
                     }) { "脚本未声明有效的平台和请求动作" }
                     ensureActive(token)
                     check(jsContext.executeBooleanScript("globalThis.__lxHasRequestHandler()", null)) {
@@ -307,7 +304,7 @@ class LxScriptEngine(private val context: Context) : Closeable {
         while (true) {
             ensureActive(token)
             if (System.nanoTime() >= deadlineNanos) throw LxScriptTimeoutException(timeoutMessage)
-            val moreJobs = QuickJsPending.executePending(quickJs, runtimePtr, contextPtr)
+            val moreJobs = jsContext.executePendingJobs()
             ensureActive(token)
             if (System.nanoTime() >= deadlineNanos) throw LxScriptTimeoutException(timeoutMessage)
             val raw = jsContext.executeStringScript(expression, null)
@@ -326,6 +323,4 @@ class LxScriptEngine(private val context: Context) : Closeable {
         runCatching { quickJs.close() }
     }
 
-    private fun readLong(target: Any, field: String): Long =
-        target.javaClass.getDeclaredField(field).apply { isAccessible = true }.getLong(target)
 }

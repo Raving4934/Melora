@@ -10,6 +10,8 @@ class QuickJSNativeImpl implements QuickJSNative {
 
     static native void _endInterruptibleExecution(long runtimePtr, long ticket);
 
+    native int _executePendingJobs(long contextPtr);
+
     @Override
     public native void _releaseRuntime(long runtimePtr);
 

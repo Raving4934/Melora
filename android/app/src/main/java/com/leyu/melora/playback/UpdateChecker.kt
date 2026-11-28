@@ -11,7 +11,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import java.net.URI
@@ -54,7 +53,7 @@ object UpdateChecker {
     private val nextLinkPattern = Regex("<([^>]+)>\\s*;\\s*rel=\"([^\"]+)\"")
 
     private val client by lazy {
-        OkHttpClient.Builder()
+        sharedNetworkClient.newBuilder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .callTimeout(15, TimeUnit.SECONDS)

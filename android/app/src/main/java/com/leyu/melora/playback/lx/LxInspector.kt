@@ -4,6 +4,7 @@ import android.content.Context
 import com.leyu.melora.playback.AudioCacheStore
 import com.leyu.melora.playback.AudioSpecification
 import com.leyu.melora.playback.NetworkState
+import com.leyu.melora.playback.PlatformSource
 import com.leyu.melora.playback.isNonAudioResponseContentType
 import com.leyu.melora.playback.probeDownloadUpgrade
 import com.leyu.melora.playback.readResponse
@@ -32,7 +33,6 @@ internal object LxInspector {
     private const val SCRIPT_TIMEOUT_MS = 6_000L
     private const val MEDIA_TIMEOUT_MS = 4_000L
     private const val MEDIA_PREFIX_LIMIT = 128 * 1024
-    private val platforms = listOf("kw", "kg", "tx", "wy", "mg")
     private val sample = OnlineSong(JSONObject()
         .put("source", "kw")
         .put("songmid", "296504")
@@ -74,10 +74,10 @@ internal object LxInspector {
             val tests = mutableListOf<PlatformTest>()
             if (includePlayback) {
                 val qualities = SourceResolver.qualityAttempts(NetworkState.playQuality(context))
-                platforms.mapNotNullTo(tests) { source ->
-                    val support = sources[source]?.takeIf { "musicUrl" in it.actions } ?: return@mapNotNullTo null
+                PlatformSource.boardOrder.mapNotNullTo(tests) { platform ->
+                    val support = sources[platform.id]?.takeIf { "musicUrl" in it.actions } ?: return@mapNotNullTo null
                     val quality = qualities.firstNotNullOfOrNull { SourceResolver.selectQuality(it, support.qualitys) }
-                    PlatformTest(source, quality)
+                    PlatformTest(platform.id, quality)
                 }
             }
             val report = ValidityTest(sources.keys.toList(), tests.toList())

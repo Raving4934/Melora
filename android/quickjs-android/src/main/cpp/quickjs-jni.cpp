@@ -1,11 +1,10 @@
 #include <jni.h>
-#include <string>
 #include <quickjs/quickjs.h>
 #include <atomic>
+#include <climits>
 #include <cstdint>
 #include <new>
 #include <time.h>
-#include <vector>
 
 #if INTPTR_MAX >= INT64_MAX
 #define JS_PTR64
@@ -56,6 +55,7 @@ jmethodID intValueMethodID = nullptr;
 jmethodID longValueMethodID = nullptr;
 jmethodID doubleValueMethodID = nullptr;
 jmethodID booleanValueMethodID = nullptr;
+jmethodID throwableMessageMethodID = nullptr;
 
 
 jclass quickJSCls = nullptr;
@@ -150,6 +150,10 @@ JSValue TO_JS_VALUE(JNIEnv *env, jobject object_handle) {
 }
 
 jobject TO_JAVA_OBJECT(JNIEnv *env, JSContext *ctx, JSValue value) {
+    if (JS_IsException(value) || env->ExceptionCheck()) {
+        JS_FreeValue(ctx, value);
+        return nullptr;
+    }
     int type = TYPE_UNKNOWN;
     if (JS_IsUndefined(value)) {
         type = TYPE_UNDEFINED;
@@ -161,7 +165,7 @@ jobject TO_JAVA_OBJECT(JNIEnv *env, JSContext *ctx, JSValue value) {
         type = TYPE_JS_OBJECT;
     }
 #if defined(JS_NAN_BOXING)
-    return env->CallStaticObjectMethod(quickJSCls,
+    jobject result = env->CallStaticObjectMethod(quickJSCls,
                                        createJSValueMethodID,
                                        (jlong) ctx,
                                        type,
@@ -170,7 +174,7 @@ jobject TO_JAVA_OBJECT(JNIEnv *env, JSContext *ctx, JSValue value) {
                                        0.0,
                                        (jlong) 0);
 #else
-    return env->CallStaticObjectMethod(quickJSCls,
+    jobject result = env->CallStaticObjectMethod(quickJSCls,
                                        createJSValueMethodID,
                                        (jlong) ctx,
                                        type,
@@ -179,6 +183,8 @@ jobject TO_JAVA_OBJECT(JNIEnv *env, JSContext *ctx, JSValue value) {
                                        (jdouble) value.u.float64,
                                        (jlong) value.u.ptr);
 #endif
+    if (result == nullptr) JS_FreeValue(ctx, value);
+    return result;
 }
 
 JSValue JobjectToJSValue(JNIEnv *env, JSContext *ctx, jobject value) {
@@ -231,7 +237,7 @@ int GetObjectType(JSContext *ctx, JSValue result) {
 
 jobject To_JObject(JNIEnv *env, jlong context_ptr, int expected_type, JSValue result) {
     auto *ctx = reinterpret_cast<JSContext *>(context_ptr);
-    if (env->ExceptionCheck()) {
+    if (JS_IsException(result) || env->ExceptionCheck()) {
         JS_FreeValue(ctx, result);
         return nullptr;
     }
@@ -250,7 +256,7 @@ jobject To_JObject(JNIEnv *env, jlong context_ptr, int expected_type, JSValue re
             break;
         case TYPE_DOUBLE: {
             double pres;
-            JS_ToFloat64(ctx, &pres, result);
+            if (JS_ToFloat64(ctx, &pres, result) < 0) break;
             converted = env->NewObject(doubleCls, doubleInitMethodID, pres);
             break;
         }
@@ -316,6 +322,11 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *) {
     longValueMethodID = env->GetMethodID(longCls, "longValue", "()J");
     doubleValueMethodID = env->GetMethodID(doubleCls, "doubleValue", "()D");
     booleanValueMethodID = env->GetMethodID(booleanCls, "booleanValue", "()Z");
+    jclass throwableClass = env->FindClass("java/lang/Throwable");
+    if (throwableClass == nullptr) return onLoad_err;
+    throwableMessageMethodID = env->GetMethodID(throwableClass, "getMessage", "()Ljava/lang/String;");
+    env->DeleteLocalRef(throwableClass);
+    if (throwableMessageMethodID == nullptr) return onLoad_err;
 
 
     jsValueCls = (jclass) env->NewGlobalRef((env)->FindClass("com/quickjs/JSValue"));
@@ -328,7 +339,15 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *) {
 
 int GetArrayLength(JSContext *ctx, JSValue this_obj) {
     JSValue lenValue = JS_GetPropertyStr(ctx, this_obj, "length");
-    return JS_VALUE_GET_INT(lenValue);
+    uint64_t len;
+    const int result = JS_ToIndex(ctx, &len, lenValue);
+    JS_FreeValue(ctx, lenValue);
+    if (result < 0) return -1;
+    if (len > INT_MAX) {
+        JS_ThrowRangeError(ctx, "QuickJS array is too large");
+        return -1;
+    }
+    return static_cast<int>(len);
 }
 
 extern "C"
@@ -432,6 +451,19 @@ Java_com_quickjs_QuickJSNativeImpl__1releaseContext(JNIEnv *env, jclass clazz, j
     auto *ctx = reinterpret_cast<JSContext *>(context_ptr);
     JS_FreeContext(ctx);
 }
+
+extern "C"
+JNIEXPORT jint JNICALL
+Java_com_quickjs_QuickJSNativeImpl__1executePendingJobs(JNIEnv *env, jobject, jlong context_ptr) {
+    auto *runtime = JS_GetRuntime(reinterpret_cast<JSContext *>(context_ptr));
+    for (int executed = 0; executed < 1000; ++executed) {
+        const int result = JS_ExecutePendingJob(runtime, nullptr);
+        if (result <= 0) return result;
+        if (env->ExceptionCheck()) return -1;
+    }
+    return JS_IsJobPending(runtime) ? 1 : 0;
+}
+
 extern "C"
 JNIEXPORT jobject JNICALL
 Java_com_quickjs_QuickJSNativeImpl__1executeScript(JNIEnv *env, jclass clazz, jlong context_ptr,
@@ -563,53 +595,70 @@ Java_com_quickjs_QuickJSNativeImpl__1contains(JNIEnv *env, jclass clazz, jlong c
     int result = JS_HasProperty(ctx, this_obj, atom);
     JS_FreeAtom(ctx, atom);
     return result;
-}extern "C"
+}
+
+static bool setStringElement(JNIEnv *env, jobjectArray array, jsize index, const char *text) {
+    if (env->ExceptionCheck()) return false;
+    jstring value = env->NewStringUTF(text);
+    if (value == nullptr) return false;
+    env->SetObjectArrayElement(array, index, value);
+    env->DeleteLocalRef(value);
+    return !env->ExceptionCheck();
+}
+
+extern "C"
 JNIEXPORT jobjectArray JNICALL
 Java_com_quickjs_QuickJSNativeImpl__1getKeys(JNIEnv *env, jclass clazz, jlong context_ptr,
                                              jobject object_handle) {
     auto *ctx = reinterpret_cast<JSContext *>(context_ptr);
     JSValue this_obj = TO_JS_VALUE(env, object_handle);
-    JSPropertyEnum *tab;
-    uint32_t len;
-    JS_GetOwnPropertyNames(ctx, &tab, &len, this_obj, JS_GPN_STRING_MASK | JS_GPN_ENUM_ONLY);
-    jclass strClass = env->FindClass("java/lang/String");
-    jobjectArray stringArray = env->NewObjectArray(len, strClass, nullptr);
-    for (int i = 0; i < len; ++i) {
-        jstring key = env->NewStringUTF(JS_AtomToCString(ctx, tab[i].atom));
-        env->SetObjectArrayElement(stringArray, i, key);
+    JSPropertyEnum *tab = nullptr;
+    uint32_t len = 0;
+    if (JS_GetOwnPropertyNames(ctx, &tab, &len, this_obj, JS_GPN_STRING_MASK | JS_GPN_ENUM_ONLY) < 0) {
+        return nullptr;
     }
+    jobjectArray stringArray = env->NewObjectArray(len, stringCls, nullptr);
+    for (uint32_t i = 0; stringArray != nullptr && i < len; ++i) {
+        JSValue name = JS_AtomToString(ctx, tab[i].atom);
+        const char *text = JS_IsException(name) ? nullptr : JS_ToCStringLen2(ctx, nullptr, name, true);
+        bool stored = text != nullptr && setStringElement(env, stringArray, i, text);
+        JS_FreeCString(ctx, text);
+        JS_FreeValue(ctx, name);
+        if (!stored) {
+            env->DeleteLocalRef(stringArray);
+            stringArray = nullptr;
+        }
+    }
+    JS_FreePropertyEnum(ctx, tab, len);
     return stringArray;
 }
 
 JSValue executeFunction(JNIEnv *env, jlong context_ptr, jobject object_handle, JSValue func,
                         jobject parameters_handle) {
+    if (JS_IsException(func)) return func;
     auto *ctx = reinterpret_cast<JSContext *>(context_ptr);
     JSValue this_obj = TO_JS_VALUE(env, object_handle);
 
-    JSValue *argv = nullptr;
-    int argc = 0;
-    if (parameters_handle != nullptr) {
-        JSValue argArray = TO_JS_VALUE(env, parameters_handle);
-        argc = GetArrayLength(ctx, argArray);
-        argv = new JSValue[argc];
-        for (int i = 0; i < argc; ++i) {
-            argv[i] = JS_GetPropertyUint32(ctx, argArray, i);
-        }
+    JSValue argArray = parameters_handle != nullptr ? TO_JS_VALUE(env, parameters_handle) : JS_UNDEFINED;
+    const int argc = parameters_handle != nullptr ? GetArrayLength(ctx, argArray) : 0;
+    JSValue *argv = argc > 0 ? new (std::nothrow) JSValue[argc] : nullptr;
+    if (argc < 0 || (argc > 0 && argv == nullptr)) {
+        JS_FreeValue(ctx, func);
+        return argc < 0 ? JS_EXCEPTION : JS_ThrowOutOfMemory(ctx);
+    }
+
+    int read = 0;
+    for (; read < argc; ++read) {
+        argv[read] = JS_GetPropertyUint32(ctx, argArray, read);
+        if (JS_IsException(argv[read])) break;
     }
     JSValue global = JS_GetGlobalObject(ctx);
-
-    if (JS_Equals(this_obj, global)) {
-        this_obj = JS_UNDEFINED;
-    }
-    JSValue result = JS_Call(ctx, func, this_obj, argc, argv);
+    JSValue thisArg = JS_Equals(this_obj, global) ? JS_UNDEFINED : this_obj;
+    JSValue result = read == argc ? JS_Call(ctx, func, thisArg, argc, argv) : JS_EXCEPTION;
     JS_FreeValue(ctx, func);
     JS_FreeValue(ctx, global);
-    if (argv != nullptr) {
-        for (int i = 0; i < argc; ++i) {
-            JS_FreeValue(ctx, argv[i]);
-        }
-    }
-//    JS_FreeValue(ctx, result);
+    for (int i = 0; i < read; ++i) JS_FreeValue(ctx, argv[i]);
+    delete[] argv;
     return result;
 }
 
@@ -644,33 +693,64 @@ Java_com_quickjs_QuickJSNativeImpl__1executeFunction(JNIEnv *env, jclass clazz, 
     return result;
 }
 
-JSValue
-callJavaCallback(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv, int magic,
-                 JSValue *func_data) {
-    JNIEnv *env;
-    jvm->GetEnv((void **) &env, JNI_VERSION_1_6);
-    int callbackId = JS_VALUE_GET_INT(func_data[0]);
-    bool void_method = JS_VALUE_GET_BOOL(func_data[1]);
-    auto context_ptr = (jlong) ctx;
-    JSValue args = JS_NewArray(ctx);
+static JSValue javaCallbackError(JNIEnv *env, JSContext *ctx) {
+    if (!env->ExceptionCheck()) return JS_ThrowInternalError(ctx, "Java callback unavailable");
+    jthrowable failure = env->ExceptionOccurred();
+    env->ExceptionClear();
+    auto message = static_cast<jstring>(env->CallObjectMethod(failure, throwableMessageMethodID));
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    {
+        ScopedUtfChars text(env, message);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        JS_ThrowInternalError(ctx, "%s", text.get() != nullptr ? text.get() : "Java callback failed");
+    }
+    env->DeleteLocalRef(message);
+    env->DeleteLocalRef(failure);
+    return JS_EXCEPTION;
+}
 
-    if (argv != nullptr) {
-        for (int i = 0; i < argc; ++i) {
-            JSValue it = argv[i];
-            JS_SetPropertyUint32(ctx, args, i, JS_DupValue(ctx, it));
+static JSValue invokeJavaCallback(JSContext *ctx, JSValueConst this_val, int argc,
+                                  JSValueConst *argv, int callbackId, bool void_method) {
+    JNIEnv *env = nullptr;
+    if (jvm->GetEnv((void **) &env, JNI_VERSION_1_6) != JNI_OK) {
+        return JS_ThrowInternalError(ctx, "Java callback thread is detached");
+    }
+    if (env->ExceptionCheck()) return JS_EXCEPTION;
+    JSValue args = JS_NewArray(ctx);
+    if (JS_IsException(args)) return args;
+    for (int i = 0; i < argc; ++i) {
+        if (JS_SetPropertyUint32(ctx, args, i, JS_DupValue(ctx, argv[i])) < 0) {
+            JS_FreeValue(ctx, args);
+            return JS_EXCEPTION;
         }
     }
-    jobject objectHandle = TO_JAVA_OBJECT(env, ctx, JS_DupValue(ctx, this_val));
-    jobject argsHandle = TO_JAVA_OBJECT(env, ctx, args);
-    jobject result = env->CallStaticObjectMethod(quickJSCls, callJavaCallbackMethodID,
-                                                 context_ptr,
-                                                 callbackId,
-                                                 objectHandle,
-                                                 argsHandle,
-                                                 void_method
-    );
 
-    return JobjectToJSValue(env, ctx, result);
+    jobject objectHandle = TO_JAVA_OBJECT(env, ctx, JS_DupValue(ctx, this_val));
+    if (objectHandle == nullptr) {
+        JS_FreeValue(ctx, args);
+        if (JS_HasException(ctx) && !env->ExceptionCheck()) return JS_EXCEPTION;
+        return javaCallbackError(env, ctx);
+    }
+    jobject argsHandle = TO_JAVA_OBJECT(env, ctx, args);
+    jobject result = argsHandle == nullptr ? nullptr : env->CallStaticObjectMethod(
+            quickJSCls, callJavaCallbackMethodID, (jlong) ctx, callbackId, objectHandle,
+            argsHandle, static_cast<jboolean>(void_method));
+    JSValue converted = argsHandle == nullptr || env->ExceptionCheck()
+            ? JS_EXCEPTION : JobjectToJSValue(env, ctx, result);
+    env->DeleteLocalRef(result);
+    env->DeleteLocalRef(argsHandle);
+    env->DeleteLocalRef(objectHandle);
+    if (env->ExceptionCheck() || (argsHandle == nullptr && !JS_HasException(ctx))) {
+        JS_FreeValue(ctx, converted);
+        return javaCallbackError(env, ctx);
+    }
+    return converted;
+}
+
+JSValue callJavaCallback(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv,
+                         int magic, JSValue *func_data) {
+    return invokeJavaCallback(ctx, this_val, argc, argv, JS_VALUE_GET_INT(func_data[0]),
+                              JS_VALUE_GET_BOOL(func_data[1]));
 }
 
 JSValue newFunction(jlong context_ptr, jboolean void_method, int callbackId) {
@@ -739,6 +819,7 @@ Java_com_quickjs_QuickJSNativeImpl__1arrayAdd(JNIEnv *env, jclass clazz, jlong c
     auto *ctx = reinterpret_cast<JSContext *>(context_ptr);
     JSValue this_obj = TO_JS_VALUE(env, object_handle);
     int len = GetArrayLength(ctx, this_obj);
+    if (len < 0) return;
     JSValue js_value = JobjectToJSValue(env, ctx, value);
     if (JS_IsException(js_value)) return;
     JS_SetPropertyUint32(ctx, this_obj, len, js_value);
@@ -756,43 +837,41 @@ Java_com_quickjs_QuickJSNativeImpl__1Undefined(JNIEnv *env, jclass clazz, jlong 
     return TO_JAVA_OBJECT(env, ctx, JS_UNDEFINED);
 }
 
+static bool setExceptionField(JNIEnv *env, JSContext *ctx, jobjectArray array, jsize index,
+                              JSValue value, const char *fallback) {
+    const char *text = JS_IsString(value) ? JS_ToCStringLen2(ctx, nullptr, value, true) : nullptr;
+    const bool stored = setStringElement(env, array, index, text != nullptr ? text : fallback);
+    JS_FreeCString(ctx, text);
+    JS_FreeValue(ctx, value);
+    // 清掉读取 name/message/stack 时产生的二次异常，原异常由调用方报告。
+    if (JS_HasException(ctx)) JS_FreeValue(ctx, JS_GetException(ctx));
+    return stored;
+}
+
 extern "C"
 JNIEXPORT jobjectArray JNICALL
 Java_com_quickjs_QuickJSNativeImpl__1getException(JNIEnv *env, jclass clazz, jlong context_ptr) {
     auto *ctx = reinterpret_cast<JSContext *>(context_ptr);
-    JSValue exc = JS_GetException(ctx);
-    if (!JS_IsError(ctx, exc)) {
-        JS_FreeValue(ctx, exc);
-        return nullptr;
+    if (!JS_HasException(ctx)) return nullptr;
+    JSValue error = JS_GetException(ctx);
+    const bool isError = JS_IsError(ctx, error);
+    jobjectArray fields = env->NewObjectArray(3, stringCls, nullptr);
+    if (fields != nullptr) {
+        const auto field = [&](const char *key) {
+            return isError ? JS_GetPropertyStr(ctx, error, key) : JS_UNDEFINED;
+        };
+        const bool stored = setExceptionField(env, ctx, fields, 0, field("name"), "Error") &&
+            setExceptionField(env, ctx, fields, 1,
+                              isError || JS_IsObject(error) ? field("message") : JS_ToString(ctx, error),
+                              isError ? "" : "JavaScript threw a non-Error value") &&
+            setExceptionField(env, ctx, fields, 2, field("stack"), "");
+        if (!stored) {
+            env->DeleteLocalRef(fields);
+            fields = nullptr;
+        }
     }
-
-    JSValue func = JS_GetPropertyStr(ctx, exc, "toString");
-    JSValue nameValue = JS_GetPropertyStr(ctx, exc, "name");
-    JSValue stackValue = JS_GetPropertyStr(ctx, exc, "stack");
-    JSValue titleValue = JS_Call(ctx, func, exc, 0, nullptr);
-    JS_FreeValue(ctx, func);
-
-    std::vector<const char *> messages;
-    messages.push_back(JS_ToCString(ctx, nameValue));
-    messages.push_back(JS_ToCString(ctx, titleValue));
-    while (!JS_IsUndefined(stackValue)) {
-        messages.push_back(JS_ToCString(ctx, stackValue));
-        JSValue next = JS_GetPropertyStr(ctx, stackValue, "stack");
-        JS_FreeValue(ctx, stackValue);
-        stackValue = next;
-    }
-    JS_FreeValue(ctx, nameValue);
-    JS_FreeValue(ctx, titleValue);
-    JS_FreeValue(ctx, exc);
-
-    jobjectArray stringArray = env->NewObjectArray(messages.size(), stringCls, nullptr);
-    for (int i = 0; i < messages.size(); ++i) {
-        jstring str = env->NewStringUTF(messages[i] != nullptr ? messages[i] : "");
-        env->SetObjectArrayElement(stringArray, i, str);
-        env->DeleteLocalRef(str);
-        if (messages[i] != nullptr) JS_FreeCString(ctx, messages[i]);
-    }
-    return stringArray;
+    JS_FreeValue(ctx, error);
+    return fields;
 }
 
 JSModuleDef *_JSModuleLoaderFunc(JSContext *ctx, const char *module_name, void *opaque) {
@@ -858,45 +937,14 @@ void initES6Module(JSRuntime *rt) {
     JS_SetModuleLoaderFunc(rt, _JSModuleNormalizeFunc, _JSModuleLoaderFunc, nullptr);
 }
 
-//JSValue js_worker_constructor(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv){
-//
-//}
 JSValue js_worker_constructor(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv,
                               int me) {
-    JNIEnv *env;
-    jvm->GetEnv((void **) &env, JNI_VERSION_1_6);
-    auto context_ptr = (jlong) ctx;
-    JSValue args = JS_NewArray(ctx);
-    int callbackId = JS_VALUE_GET_INT(JS_GetPropertyStr(ctx, this_val, "java_caller_id"));
-
-    if (argv != nullptr) {
-        for (int i = 0; i < argc; ++i) {
-            JSValue it = argv[i];
-            JS_SetPropertyUint32(ctx, args, i, JS_DupValue(ctx, it));
-        }
-    }
-    jobject objectHandle = TO_JAVA_OBJECT(env, ctx, JS_DupValue(ctx, this_val));
-    jobject argsHandle = TO_JAVA_OBJECT(env, ctx, args);
-    jobject result = env->CallStaticObjectMethod(quickJSCls, callJavaCallbackMethodID,
-                                                 context_ptr,
-                                                 callbackId,
-                                                 objectHandle,
-                                                 argsHandle,
-                                                 false
-    );
-    JSValue value = JobjectToJSValue(env, ctx, result);
-    return value;
-}
-
-void newWorker(JSContext *ctx, int callbackId) {
-//    JSClassDef workerClassDef = new JSClassDef(.);
-//    JSClassID workerJSClassID;
-//    JS_NewClassID(&workerJSClassID);
-//    JS_NewClass(rt,workerJSClassID,);
-//    JS_SetModuleLoaderFunc(rt, _JSModuleNormalizeFunc, _JSModuleLoaderFunc, nullptr);
-//    obj = JS_NewCFunction2(ctx, js_worker_constructor, "Worker", 1,
-//                           JS_CFUNC_constructor, 0);
-
+    JSValue id = JS_GetPropertyStr(ctx, this_val, "java_caller_id");
+    int32_t callbackId;
+    const int status = JS_ToInt32(ctx, &callbackId, id);
+    JS_FreeValue(ctx, id);
+    if (status < 0) return JS_EXCEPTION;
+    return invokeJavaCallback(ctx, this_val, argc, argv, callbackId, false);
 }
 
 extern "C"

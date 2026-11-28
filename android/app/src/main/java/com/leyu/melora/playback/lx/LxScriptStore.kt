@@ -45,7 +45,7 @@ class LxScriptStore(context: Context) {
     private fun scriptFiles() = dir.listFiles { it.isFile && it.name.endsWith(".js") }
 
     fun list(): List<LxScript> = synchronized(enabledStateLock) {
-        scriptFiles().orEmpty().map(::script).sortedBy(LxScript::name)
+        scriptFiles().orEmpty().map { script(it) }.sortedBy(LxScript::name)
     }
 
     fun hasEnabledScripts(): Boolean = synchronized(enabledStateLock) {
@@ -58,11 +58,15 @@ class LxScriptStore(context: Context) {
         exportPayload(requireScriptFile(id)).scriptExport()
     }
 
-    internal fun exportBundle(ids: List<String>): String = synchronized(enabledStateLock) {
-        validateSourceBundleCount(ids.size)
-        val files = ids.map(::requireScriptFile)
+    internal fun exportBundle(): Pair<String, Int> = synchronized(enabledStateLock) {
+        val files = scriptFiles() ?: error("无法读取音源目录")
+        validateSourceBundleCount(files.size)
         requireLxSourceContentLength(files.sumOf { it.length() }, MAX_LOCAL_SOURCE_DOCUMENT_BYTES)
-        sourceBundleExport(files.map(::exportPayload))
+        val sources = files.map { file ->
+            val payload = exportPayload(file)
+            script(file, payload.code).name to payload
+        }.sortedBy { it.first }.map { it.second }
+        sourceBundleExport(sources) to sources.size
     }
 
     private fun requireScriptFile(id: String): File =
@@ -116,10 +120,10 @@ class LxScriptStore(context: Context) {
             script(file)
         }
 
-    private fun script(file: File): LxScript {
+    private fun script(file: File, code: String? = null): LxScript {
         val id = file.name
         val revision = revisionOf(file)
-        val meta = revision.metadata ?: parseLxScriptMetadata(file.readText()).also { revision.metadata = it }
+        val meta = revision.metadata ?: parseLxScriptMetadata(code ?: file.readText()).also { revision.metadata = it }
         return LxScript(
             id = id,
             name = meta["name"].orEmpty().ifEmpty { "未命名脚本" },
@@ -131,8 +135,9 @@ class LxScriptStore(context: Context) {
     }
 
     fun remove(id: String) = BackupStateLock.write {
-        dir.resolve(id).delete()
-        if (!dir.resolve(id).exists()) contentRevisions.remove(dir.resolve(id).absoluteFile)
+        val file = dir.resolve(id)
+        check(!file.exists() || file.delete()) { "无法删除音源文件" }
+        contentRevisions.remove(file.absoluteFile)
         dir.resolve("$id.bak").delete()
         dir.resolve("$id.tmp").delete()
         prefs.edit {

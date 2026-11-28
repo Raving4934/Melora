@@ -10,6 +10,8 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 
+internal val sharedNetworkClient by lazy { okhttp3.OkHttpClient() }
+
 /** 网络类型感知：按当前链路（WiFi/移动网络）自动选择播放音质。 */
 object NetworkState {
     fun isCellular(context: Context): Boolean {

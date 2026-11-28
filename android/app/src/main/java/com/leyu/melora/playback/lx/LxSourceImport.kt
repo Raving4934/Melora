@@ -1,6 +1,9 @@
 package com.leyu.melora.playback.lx
 
 import com.leyu.melora.playback.BACKUP_ORIGIN_KEY
+import com.leyu.melora.playback.readResponse
+import com.leyu.melora.playback.sha256Hex
+import com.leyu.melora.playback.sharedNetworkClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -17,7 +20,6 @@ import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.CharacterCodingException
-import java.security.MessageDigest
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
@@ -97,7 +99,7 @@ internal object LxSourceUrlPolicy {
 internal class LxSourceDownloader(
     private val client: OkHttpClient = defaultLxSourceHttpClient(),
 ) {
-    fun download(rawUrl: String): LxSourcePayload {
+    suspend fun download(rawUrl: String): LxSourcePayload {
         val sourceUrl = LxSourceUrlPolicy.validate(rawUrl)
         var current = sourceUrl
         var redirects = 0
@@ -108,37 +110,34 @@ internal class LxSourceDownloader(
                 .header("Accept", "application/javascript, text/javascript, application/json, text/plain;q=0.9, */*;q=0.1")
                 .header("User-Agent", "Melora-Android")
                 .build()
-            val response = client.newCall(request).execute()
-            try {
+            val code = client.newCall(request).readResponse { response ->
                 if (response.code in 300..399) {
                     require(redirects < MAX_SOURCE_REDIRECTS) { "音源链接重定向次数过多" }
                     val location = response.header("Location")?.takeIf { it.isNotBlank() }
                         ?: error("音源重定向缺少目标地址")
                     current = LxSourceUrlPolicy.resolveRedirect(current, location)
                     redirects++
-                    continue
+                    return@readResponse null
                 }
 
                 require(response.isSuccessful) { "读取音源脚本失败（HTTP ${response.code}）" }
                 rejectHtmlContentType(response.header("Content-Type"))
                 val body = response.body
                 requireLxSourceContentLength(body.contentLength(), MAX_DOWNLOADED_SOURCE_DOCUMENT_BYTES)
-                val code = body.byteStream().use { input ->
+                body.byteStream().use { input ->
                     input.readBoundedLxSourceText(MAX_DOWNLOADED_SOURCE_DOCUMENT_BYTES)
                 }
-                return LxSourcePayload(
-                    fileName = onlineSourceFileName(sourceUrl),
-                    code = code,
-                    originUrl = sourceUrl.toString(),
-                )
-            } finally {
-                response.close()
-            }
+            } ?: continue
+            return LxSourcePayload(
+                fileName = onlineSourceFileName(sourceUrl),
+                code = code,
+                originUrl = sourceUrl.toString(),
+            )
         }
     }
 
     private companion object {
-        fun defaultLxSourceHttpClient(): OkHttpClient = OkHttpClient.Builder()
+        fun defaultLxSourceHttpClient(): OkHttpClient = sharedNetworkClient.newBuilder()
             .followRedirects(false)
             .followSslRedirects(false)
             .connectTimeout(10, TimeUnit.SECONDS)
@@ -336,10 +335,7 @@ internal fun onlineSourceFileName(sourceUrl: HttpUrl): String {
         .removeSuffix(".js")
         .take(44)
         .ifBlank { "online-source" }
-    val fingerprint = MessageDigest.getInstance("SHA-256")
-        .digest(sourceUrl.toString().toByteArray(Charsets.UTF_8))
-        .take(5)
-        .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+    val fingerprint = sourceUrl.toString().sha256Hex(byteCount = 5)
     return "$stem-$fingerprint.js"
 }
 

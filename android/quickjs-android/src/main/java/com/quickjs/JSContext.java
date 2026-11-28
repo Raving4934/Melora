@@ -169,6 +169,11 @@ public class JSContext extends JSObject implements Closeable {
         return scope;
     }
 
+    /** 在 runtime 所在线程执行一批 Promise 任务，返回是否还有待处理任务。 */
+    public boolean executePendingJobs() {
+        return quickJS.quickJSNative.executePendingJobs(this);
+    }
+
     public boolean isReleased() {
         if (getQuickJS().isReleased()) {
             return true;

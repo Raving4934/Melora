@@ -73,13 +73,6 @@ android {
         buildConfig = true
     }
 
-    externalNativeBuild {
-        cmake {
-            version = "4.1.2"
-            path = file("src/main/cpp/CMakeLists.txt")
-        }
-    }
-
     // Dependency AARs may carry colliding generic META-INF license files. The complete,
     // versioned license/notice archive is packaged as assets/licenses/manifest.json instead;
     // About page and lightweight coverage checks both read that single source.
@@ -108,7 +101,6 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime)
     implementation(libs.androidx.lifecycle.viewmodel)
     implementation(libs.androidx.lifecycle.runtime.compose)
-    implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.session)
     implementation(libs.androidx.media3.datasource.okhttp)
@@ -117,6 +109,8 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(platform(libs.kotlinx.serialization.bom))
     constraints {
+        // Activity/Compose 的系统返回事件仍沿用已验证版本。
+        implementation(libs.androidx.navigationevent.compose)
         // Media3 传递引入的 Guava 需使用修复 GHSA-xxph-c9ww-hj94 的 Android 版本。
         implementation(libs.guava)
         // OkHttp/Coil 的共享 I/O 依赖统一到已核验的稳定补丁，不引入第二套实现。
@@ -129,7 +123,6 @@ dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
-    implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons)
 
@@ -142,7 +135,6 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 
-    debugImplementation(libs.androidx.compose.ui.tooling)
     baselineProfile(project(":baselineprofile"))
 }
 

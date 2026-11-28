@@ -12,7 +12,7 @@ import java.util.concurrent.FutureTask;
 
 class EventQueue implements QuickJSNative {
     private final QuickJS quickJS;
-    private final QuickJSNative quickJSNative;
+    private final QuickJSNativeImpl quickJSNative;
     private final HandlerThread handlerThread;
     private final Handler handler;
     private final Thread thread;
@@ -116,6 +116,18 @@ class EventQueue implements QuickJSNative {
     @Override
     public long _createContext(long runtimePtr) {
         return post(() -> quickJSNative._createContext(runtimePtr));
+    }
+
+    boolean executePendingJobs(JSContext context) {
+        return Boolean.TRUE.equals(post(() -> {
+            context.checkReleased();
+            int remaining = quickJSNative._executePendingJobs(context.getContextPtr());
+            if (remaining < 0) {
+                QuickJS.checkException(context);
+                throw new QuickJSException("Error", "QuickJS pending job failed");
+            }
+            return remaining > 0;
+        }));
     }
 
     @Override

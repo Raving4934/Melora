@@ -17,7 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 CASES = (
     "get", "getValue", "contains", "executeFunction", "registerJavaMethod", "set",
     "executeScript", "scriptNoFilename", "stringValue", "loader", "normalize",
-    "moduleImport", "invalidModule", "unicode",
+    "moduleImport", "invalidModule", "unicode", "getKeys",
+    "exception", "stringException", "hostCallback", "hostCallbackFailure",
     "get:1", "getValue:1", "contains:1", "executeFunction:1",
     "registerJavaMethod:1", "set:1", "setString:2", "arrayString:1",
     "executeScript:1", "executeScript:2", "stringValue:1", "loader:1", "normalize:1",
