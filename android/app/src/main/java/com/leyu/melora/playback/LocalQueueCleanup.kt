@@ -66,11 +66,17 @@ internal data class PendingPlaybackSelection(
     val queueId: String? = null,
     val insertSingle: Boolean = false,
     val startPositionMs: Long? = null,
+    val collectionUids: List<String>? = null,
 ) {
     fun without(deleted: DeletedLocalFiles): PendingPlaybackSelection {
         val kept = tracks.indices.filterNot { deleted.matches(tracks[it]) }
+        if (kept.size == tracks.size) return this
         val replacement = kept.replacementIndex(index)
-        return copy(tracks = kept.map(tracks::get), index = replacement,
-            startPositionMs = startPositionMs.takeIf { kept.getOrNull(replacement) == index })
+        return copy(
+            tracks = kept.map(tracks::get),
+            index = replacement,
+            startPositionMs = startPositionMs.takeIf { kept.getOrNull(replacement) == index },
+            collectionUids = collectionUids?.let { kept.map(it::get) },
+        )
     }
 }

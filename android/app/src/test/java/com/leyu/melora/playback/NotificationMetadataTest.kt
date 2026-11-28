@@ -6,6 +6,7 @@ import androidx.media3.common.Player
 import java.lang.reflect.Proxy
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -247,6 +248,52 @@ class NotificationMetadataTest {
         } finally {
             TrackRegistry.removeArtworkListener(listener)
         }
+    }
+
+    @Test
+    fun bluetoothLyricsModeWritesLyricLineIntoTitleAndRestoresWhenInactive() {
+        val queue = Queue("a", "b")
+        val registered = requireNotNull(TrackRegistry.get("a"))
+
+        val lines = lyric("a")
+        for (notification in listOf(true, false)) {
+            for (bluetooth in listOf(false, true)) {
+                syncNotificationMetadata(queue.player, lines, notification, false, bluetoothLyricsActive = bluetooth)
+                val metadata = queue.items[0].mediaMetadata
+                assertEquals(if (bluetooth) "A line 1" else "Title a", metadata.title)
+                assertEquals(if (notification) "Title a - Artist a" else "Title a", notificationContentTitle(metadata))
+                assertEquals(if (notification) "A line 1" else "Artist a", metadata.artist)
+            }
+        }
+        assertEquals("Title b", queue.items[1].mediaMetadata.title)
+        assertEquals("Artist b", queue.items[1].mediaMetadata.artist)
+        assertSame(registered, TrackRegistry.get("a"))
+
+        val edits = queue.edits.toList()
+        repeat(3) {
+            syncNotificationMetadata(queue.player, lyric("a"), lyricsEnabled = false, coverEnabled = false, bluetoothLyricsActive = true)
+        }
+        assertEquals(edits, queue.edits)
+
+        syncNotificationMetadata(queue.player, lyric("a"), lyricsEnabled = false, coverEnabled = false, bluetoothLyricsActive = false)
+        assertEquals("Title a", queue.items[0].mediaMetadata.title)
+        assertNull(queue.items[0].mediaMetadata.displayTitle)
+        assertEquals("Artist a", queue.items[0].mediaMetadata.artist)
+    }
+
+    @Test
+    fun bluetoothLyricsModeHandlesBlankArtistAndMissingLyricsCleanly() {
+        val queue = Queue("a")
+        TrackRegistry.register(requireNotNull(TrackRegistry.get("a")).copy(artist = "  "))
+
+        syncNotificationMetadata(queue.player, lyric("a"), lyricsEnabled = false, coverEnabled = false, bluetoothLyricsActive = true)
+        assertEquals("A line 1", queue.items[0].mediaMetadata.title)
+        assertEquals("Title a", notificationContentTitle(queue.items[0].mediaMetadata))
+        assertEquals("  ", queue.items[0].mediaMetadata.artist)
+
+        syncNotificationMetadata(queue.player, null, lyricsEnabled = true, coverEnabled = false, bluetoothLyricsActive = true)
+        assertEquals("Title a", queue.items[0].mediaMetadata.title)
+        assertEquals("  ", queue.items[0].mediaMetadata.artist)
     }
 
     private fun lyric(uid: String) = PlayerLyric(

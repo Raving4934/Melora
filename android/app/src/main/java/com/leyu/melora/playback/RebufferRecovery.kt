@@ -2,6 +2,7 @@ package com.leyu.melora.playback
 
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import androidx.media3.exoplayer.DefaultLoadControl
 
 /** 只观察已经出声后的重缓冲；不测速、不参与首播，不把暂停/拖动进度算作慢源。 */
@@ -123,11 +124,29 @@ internal class PlaybackErrorRecovery {
     }
 }
 
+/** 时间线窗口区分相同曲目的不同队列位置；展示元数据不参与播放身份。 */
+internal class PlaybackWindow(val uid: Any, val item: MediaItem) {
+    fun isSameItem(other: PlaybackWindow?): Boolean =
+        other != null && uid == other.uid && item.mediaId == other.item.mediaId &&
+            item.localConfiguration == other.item.localConfiguration &&
+            item.clippingConfiguration == other.item.clippingConfiguration &&
+            item.liveConfiguration == other.item.liveConfiguration &&
+            item.requestMetadata == other.item.requestMetadata
+}
+
+internal fun Player.currentPlaybackWindow(): PlaybackWindow? {
+    val timeline = currentTimeline
+    val index = currentMediaItemIndex
+    if (index !in 0 until timeline.windowCount) return null
+    val window = timeline.getWindow(index, Timeline.Window())
+    return PlaybackWindow(window.uid, window.mediaItem)
+}
+
 /** 换资源而非换歌曲：保留队列/当前位置，不调用play覆盖暂停；只在仍重缓冲时接管。 */
-internal fun restartBufferedMediaItem(player: Player, expected: MediaItem): Boolean {
+internal fun restartBufferedMediaItem(player: Player, expected: PlaybackWindow, selectSource: () -> Boolean): Boolean {
     if (!player.playWhenReady || player.playbackSuppressionReason != Player.PLAYBACK_SUPPRESSION_REASON_NONE ||
         player.playbackState != Player.STATE_BUFFERING ||
-        player.currentMediaItem != expected) return false
+        !expected.isSameItem(player.currentPlaybackWindow()) || !selectSource()) return false
     val index = player.currentMediaItemIndex
     val position = player.currentPosition.coerceAtLeast(0)
     player.stop() // 清掉旧读取/缓冲，但保留队列与playWhenReady；不在URI中塞入第二条资源路由。

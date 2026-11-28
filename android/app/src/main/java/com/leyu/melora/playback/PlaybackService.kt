@@ -11,6 +11,7 @@ import androidx.media3.common.C
 import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -22,6 +23,7 @@ import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionError
 import androidx.media3.session.SessionResult
 import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.SettableFuture
 import com.google.common.util.concurrent.ListenableFuture
 import java.util.concurrent.atomic.AtomicInteger
 import com.leyu.melora.MainActivity
@@ -33,6 +35,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
@@ -45,6 +48,7 @@ class PlaybackService : MediaSessionService() {
     private var mediaSession: MediaSession? = null
     private var playbackProgress: PlaybackProgress? = null
     private var audioOutputMonitor: AudioOutputMonitor? = null
+    private lateinit var bluetoothOutput: StateFlow<Boolean>
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val notificationId = notificationIds.incrementAndGet()
 
@@ -76,6 +80,7 @@ class PlaybackService : MediaSessionService() {
             report = AudioEffects::report,
         )
         val renderers = PlaybackRenderersFactory(this, effects)
+        bluetoothOutput = renderers.bluetoothOutput
         val player = ExoPlayer.Builder(this, renderers)
             // 接收解码就绪的即时唤醒；renderer同时保留10ms进度采样，避免逐字歌词抢跑/回退。
             .experimentalSetDynamicSchedulingEnabled(true)
@@ -88,7 +93,11 @@ class PlaybackService : MediaSessionService() {
             while (isActive) {
                 delay(500)
                 audioOutputMonitor?.check()
-                if (MeloraSettings.notificationLyrics.value) refreshNotificationMetadata(currentOnly = true)
+                if (MeloraSettings.notificationLyrics.value ||
+                    (MeloraSettings.bluetoothLyrics.value && bluetoothOutput.value)
+                ) {
+                    refreshNotificationMetadata(currentOnly = true)
+                }
             }
         }
         player.followAudioFocusSettings(serviceScope)
@@ -101,7 +110,7 @@ class PlaybackService : MediaSessionService() {
                     .build(),
             ).build()
 
-        val progress = PlaybackProgress(player, getSharedPreferences("melora-progress", Context.MODE_PRIVATE))
+        val progress = PlaybackProgress(player, getSharedPreferences(BookListeningProgress.PREFS, Context.MODE_PRIVATE))
         playbackProgress = progress
         serviceScope.launch {
             while (isActive) {
@@ -117,6 +126,7 @@ class PlaybackService : MediaSessionService() {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
+        displayedFavorite = null
         mediaSession = MediaSession.Builder(this, player)
             .setSessionActivity(sessionActivity)
             .setCallback(PlaybackSessionCallback(
@@ -127,6 +137,10 @@ class PlaybackService : MediaSessionService() {
             .build()
 
         player.addListener(object : Player.Listener {
+            override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+                PlaybackController.onPlaybackTimelineChanged(player, timeline)
+            }
+
             override fun onEvents(player: Player, events: Player.Events) {
                 if (events.containsAny(Player.EVENT_MEDIA_ITEM_TRANSITION, Player.EVENT_MEDIA_METADATA_CHANGED)) refreshCustomLayout()
                 if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) refreshNotificationMetadata()
@@ -141,8 +155,11 @@ class PlaybackService : MediaSessionService() {
                 PlaybackController.state.map { it.queue to it.currentIndex }.distinctUntilChanged(),
                 PlaybackController.lyric,
                 MeloraSettings.notificationLyrics,
+                combine(MeloraSettings.bluetoothLyrics, bluetoothOutput) { enabled, routed ->
+                    enabled && routed
+                }.distinctUntilChanged(),
                 MeloraSettings.showNotificationCover,
-            ) { _, _, _, _ -> Unit }.collect { refreshNotificationMetadata() }
+            ) { _, _, _, _, _ -> Unit }.collect { refreshNotificationMetadata() }
         }
         refreshCustomLayout()
     }
@@ -155,6 +172,7 @@ class PlaybackService : MediaSessionService() {
             MeloraSettings.notificationLyrics.value,
             MeloraSettings.showNotificationCover.value,
             currentOnly,
+            bluetoothLyricsActive = MeloraSettings.bluetoothLyrics.value && bluetoothOutput.value,
         )
     }
 
@@ -166,9 +184,13 @@ class PlaybackService : MediaSessionService() {
         return OnlineSong.from(track.raw)
     }
 
-    private fun toggleFavorite() {
-        val song = currentSong() ?: return
-        UserLibrary.toggleFavorite(song)
+    private fun toggleFavorite(): ListenableFuture<SessionResult> {
+        val song = currentSong() ?: return Futures.immediateFuture(SessionResult(SessionError.ERROR_BAD_VALUE))
+        val result = SettableFuture.create<SessionResult>()
+        UserLibrary.enqueueWrite { UserLibrary.toggleFavorite(song) }.invokeOnCompletion { error ->
+            result.set(SessionResult(if (error == null) SessionResult.RESULT_SUCCESS else SessionError.ERROR_IO))
+        }
+        return result
     }
 
     private fun exitPlayback() {
@@ -180,10 +202,14 @@ class PlaybackService : MediaSessionService() {
         stopSelf()
     }
 
+    private var displayedFavorite: Boolean? = null
+
     private fun refreshCustomLayout() {
         val session = mediaSession ?: return
         val song = currentSong()
         val favorite = song != null && UserLibrary.isFavorite(song.uid)
+        if (displayedFavorite == favorite) return
+        displayedFavorite = favorite
         session.setCustomLayout(
             listOf(
                 CommandButton.Builder(
@@ -241,6 +267,7 @@ class PlaybackService : MediaSessionService() {
         playbackProgress = null
         mediaSession?.run {
             release()
+            PlaybackController.clearPresentationMetadata(player)
             player.release()
         }
         mediaSession = null
@@ -267,7 +294,7 @@ class PlaybackService : MediaSessionService() {
 /** 队列编辑在会话的实际播放器上串行完成，不能用控制器的异步投影编辑随机后继。 */
 @androidx.annotation.OptIn(UnstableApi::class)
 internal class PlaybackSessionCallback(
-    private val onFavorite: () -> Unit,
+    private val onFavorite: () -> ListenableFuture<SessionResult>,
     private val onExit: () -> Unit,
 ) : MediaSession.Callback {
     override fun onConnect(
@@ -294,10 +321,7 @@ internal class PlaybackSessionCallback(
             return Futures.immediateFuture(SessionResult(SessionError.ERROR_PERMISSION_DENIED))
         }
         val result = when (customCommand.customAction) {
-            Favorite.customAction -> {
-                onFavorite()
-                SessionResult(SessionResult.RESULT_SUCCESS)
-            }
+            Favorite.customAction -> return onFavorite()
             Exit.customAction -> {
                 onExit()
                 SessionResult(SessionResult.RESULT_SUCCESS)
@@ -336,7 +360,7 @@ internal fun ExoPlayer.followAudioFocusSettings(scope: CoroutineScope) = scope.l
     MeloraSettings.pauseOnOtherAudio.collect { setAudioAttributes(attributes, it) }
 }
 
-/** 通知展示层优先采用展示标题，不修改供曲目识别/蓝牙读取的原始 title。 */
+/** 手机通知优先读取展示标题，标准 title 可供蓝牙接收端显示歌词。 */
 internal fun notificationContentTitle(metadata: MediaMetadata): CharSequence? =
     metadata.displayTitle ?: metadata.title
 
@@ -351,6 +375,7 @@ internal fun syncNotificationMetadata(
     lyricsEnabled: Boolean,
     coverEnabled: Boolean,
     currentOnly: Boolean = false,
+    bluetoothLyricsActive: Boolean = false,
 ) {
     val currentIndex = player.currentMediaItemIndex
     val positionMs = player.currentPosition
@@ -359,28 +384,31 @@ internal fun syncNotificationMetadata(
     for (index in if (currentOnly) currentIndex..currentIndex else indices) {
         val item = player.getMediaItemAt(index)
         val track = TrackRegistry.get(item.mediaId) ?: continue
-        val artist = if (index == currentIndex) {
-            notificationLyricLine(lyricsEnabled, item.mediaId, positionMs, lyric) ?: track.artist
-        } else track.artist
-        // Android 13+ 系统媒体卡片直接读取会话，不能只改 NotificationProvider。
-        // 展示标题与原始歌名分离；读取标准 TITLE 的蓝牙客户端仍得到歌名。
-        // displayTitle 也会用于锁屏；无歌词时保留原有 artist 回退，不更改歌词行策略。
-        val displayTitle = if (index == currentIndex && lyricsEnabled && track.artist.isNotBlank()) {
-            "${track.title} - ${track.artist}"
+        val current = index == currentIndex
+        val lyricLine = if (current) {
+            notificationLyricLine(lyricsEnabled || bluetoothLyricsActive, item.mediaId, positionMs, lyric)
         } else null
+        val bluetoothTitle = lyricLine.takeIf { bluetoothLyricsActive }
+        val title = bluetoothTitle ?: track.title
+        val displayTitle = when {
+            current && lyricsEnabled && track.artist.isNotBlank() -> "${track.title} - ${track.artist}"
+            bluetoothTitle != null -> track.title
+            else -> null
+        }
+        val artist = if (lyricsEnabled) lyricLine ?: track.artist else track.artist
         val artwork = playableArtworkUri(track.artwork, coverEnabled)
         val metadata = item.mediaMetadata
-        if (metadata.title?.toString() == track.title &&
+        if (metadata.title?.toString() == title &&
             metadata.displayTitle?.toString() == displayTitle &&
             metadata.artist?.toString() == artist &&
             metadata.albumTitle?.toString() == track.album &&
             metadata.artworkUri?.toString() == artwork
         ) continue
-        player.replaceMediaItem(
-            index,
+        PlaybackController.replacePresentationMetadata(
+            player, index,
             item.buildUpon().setMediaMetadata(
                 metadata.buildUpon()
-                    .setTitle(track.title)
+                    .setTitle(title)
                     .setDisplayTitle(displayTitle)
                     .setArtist(artist)
                     .setAlbumTitle(track.album)

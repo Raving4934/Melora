@@ -362,14 +362,17 @@ class BookPlaybackQueueTest {
     }
 
     @Test fun reconnectOnlyRecognizesCompleteSingleAlbumBookQueues() {
-        assertNull(Queue().player.bookAlbumId(TrackRegistry::get))
+        val queueId = bookQueueId("fixture")
+        assertNull(Queue().player.bookAlbumId(queueId, TrackRegistry::get))
         val chapters = Queue(chapter(1), chapter(2))
-        assertEquals("fixture", chapters.player.bookAlbumId(TrackRegistry::get))
-        assertNull(chapters.player.bookAlbumId { null })
+        assertEquals("fixture", chapters.player.bookAlbumId(queueId, TrackRegistry::get))
+        assertNull(chapters.player.bookAlbumId(queueId) { null })
+        assertNull(chapters.player.bookAlbumId("user_playlist.fixture", TrackRegistry::get))
+        assertNull(chapters.player.bookAlbumId(null, TrackRegistry::get))
         val otherAlbum = Queue(chapter(1), otherBook(chapter(2)))
-        assertNull(otherAlbum.player.bookAlbumId(TrackRegistry::get))
+        assertNull(otherAlbum.player.bookAlbumId(queueId, TrackRegistry::get))
         val music = OnlineSong(JSONObject(chapter(2).raw.toString()).put("isBookChapter", false))
-        assertNull(Queue(chapter(1), music).player.bookAlbumId(TrackRegistry::get))
+        assertNull(Queue(chapter(1), music).player.bookAlbumId(queueId, TrackRegistry::get))
     }
 
     @Test fun persistedMusicModesNeverMakeBookChaptersRepeatOrShuffle() = runBlocking {

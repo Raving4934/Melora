@@ -28,35 +28,50 @@ class PlaybackQueuePersistenceTest {
     @Test
     fun singleClickReusesAnExistingTrackWithoutReplacingTheQueue() {
         val queue = listOf("a", "b", "c")
-        val target = singleTrackQueueTarget(queue, 0, "c")
+        val target = queue.singleTrackTarget(0, "c")
         assertEquals(2, target.index)
         assertFalse(target.insert)
         assertEquals(listOf("a", "b", "c"), queue)
     }
 
     @Test
+    fun singleClickKeepsTheCurrentDuplicateOccurrence() {
+        val queue = List(10_000) { index -> if (index == 0 || index == 9_998) "a" else "track_$index" }
+        var reads = 0
+
+        val target = singleTrackQueueTarget(queue.size, 9_998, "a") { index ->
+            reads++
+            queue[index]
+        }
+
+        assertEquals(SingleTrackQueueTarget(9_998, false), target)
+        assertEquals(1, reads)
+        assertEquals(SingleTrackQueueTarget(0, false), queue.singleTrackTarget(1, "a"))
+    }
+
+    @Test
     fun singleClickInsertsOnlyTheSelectedTrackAfterCurrent() {
         val queue = mutableListOf("a", "b", "c")
-        val target = singleTrackQueueTarget(queue, 1, "x")
+        val target = queue.singleTrackTarget(1, "x")
         assertTrue(target.insert)
         queue.add(target.index, "x")
         assertEquals(listOf("a", "b", "x", "c"), queue)
-        val repeated = singleTrackQueueTarget(queue, target.index, "x")
+        val repeated = queue.singleTrackTarget(target.index, "x")
         assertFalse(repeated.insert)
         assertEquals(target.index, repeated.index)
     }
 
     @Test
     fun singleClickHandlesEmptyQueueAndMissingCurrentIndex() {
-        assertEquals(SingleTrackQueueTarget(0, true), singleTrackQueueTarget(emptyList(), -1, "a"))
-        assertEquals(SingleTrackQueueTarget(0, true), singleTrackQueueTarget(listOf("a"), -1, "b"))
-        assertEquals(SingleTrackQueueTarget(1, true), singleTrackQueueTarget(listOf("a"), 0, "b"))
+        assertEquals(SingleTrackQueueTarget(0, true), emptyList<String>().singleTrackTarget(-1, "a"))
+        assertEquals(SingleTrackQueueTarget(0, true), listOf("a").singleTrackTarget(-1, "b"))
+        assertEquals(SingleTrackQueueTarget(1, true), listOf("a").singleTrackTarget(0, "b"))
     }
 
     @Test
     fun singleClickDoesNotConfuseTracksFromDifferentPlatforms() {
-        assertTrue(singleTrackQueueTarget(listOf("kw_123"), 0, "wy_123").insert)
-        assertFalse(singleTrackQueueTarget(listOf("kw_123"), 0, "kw_123").insert)
+        assertTrue(listOf("kw_123").singleTrackTarget(0, "wy_123").insert)
+        assertFalse(listOf("kw_123").singleTrackTarget(0, "kw_123").insert)
     }
 
     @Test
@@ -64,10 +79,13 @@ class PlaybackQueuePersistenceTest {
         val queue = (0 until 2000).map { "track_$it" }
         repeat(500) { i ->
             val index = i * 3
-            assertEquals(SingleTrackQueueTarget(index, false), singleTrackQueueTarget(queue, i, queue[index]))
+            assertEquals(SingleTrackQueueTarget(index, false), queue.singleTrackTarget(i, queue[index]))
         }
         assertEquals(2000, queue.size)
     }
+
+    private fun List<String>.singleTrackTarget(currentIndex: Int, uid: String): SingleTrackQueueTarget =
+        singleTrackQueueTarget(size, currentIndex, uid, ::get)
 
     @Test
     fun nextRequestKeepsCurrentAndAlreadyNextTracksInPlace() {

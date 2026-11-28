@@ -20,9 +20,9 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.ShuffleOrder
 import androidx.media3.session.SessionResult
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
@@ -52,6 +52,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
+import java.lang.ref.WeakReference
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -83,6 +84,19 @@ object PlaybackController {
     private var localQueueCheck: Job? = null
     private var localQueueObserver: ContentObserver? = null
     private var editingQueue = false
+    private class PresentationTimeline(player: Player) {
+        val owner = WeakReference(player)
+        var queueIdentity = Any()
+        var writing: PresentationChange? = null
+        var written: PresentationChange? = null
+    }
+
+    private class PresentationChange(val index: Int, val item: MediaItem, val previous: PlaybackWindow, val size: Int) {
+        fun windowIn(timeline: Timeline): Timeline.Window? =
+            if (timeline.windowCount == size) timeline.getWindow(index, Timeline.Window()) else null
+    }
+
+    private var presentationTimeline: PresentationTimeline? = null
     private val recentPlaybackTracker = RecentPlaybackTracker()
     private val rebufferRecovery = RebufferRecovery()
     private var recoveryJob: Job? = null
@@ -137,11 +151,19 @@ object PlaybackController {
     private var detailUid: String? = null
     private var consecutiveErrors = 0
     // 队列持久化指纹：避免同一队列反复写盘
-    private data class SavedQueueSelection(val fingerprint: String, val uid: String, val index: Int)
+    private data class SavedQueueSelection(
+        val fingerprint: String, val uid: String, val index: Int,
+        val owner: String? = null, val published: List<UiTrack>? = null,
+    )
     private var lastSavedQueue: SavedQueueSelection? = null
     internal val sleepTimer = PlaybackSleepTimer(scope)
+    private var collectionSource: CollectionQueueSource? = null
     // 当前队列来源标识（卡片播放按钮据此显示播放/暂停）
     private var currentQueueId: String? = null
+        set(value) {
+            field = value
+            collectionSource = null
+        }
     val sleepRemaining: StateFlow<Int?> = sleepTimer.remaining
 
     fun init(context: Context) {
@@ -179,6 +201,10 @@ object PlaybackController {
                             pending == null -> restoreQueue(it)
                             pending.tracks.isEmpty() -> restoreQueue(it, autoPlay = false)
                             pending.insertSingle -> playTrackNow(pending.tracks.single())
+                            pending.collectionUids != null -> playCollectionNow(
+                                pending.tracks[pending.index], pending.index, pending.queueId,
+                                pending.collectionUids, pending.tracks::get,
+                            )
                             else -> playQueueNow(pending.tracks, pending.index, pending.queueId, pending.startPositionMs)
                         }
                         applyMusicPlayMode()
@@ -207,10 +233,30 @@ object PlaybackController {
             reportError = { _state.value = _state.value.copy(message = it) },
         )
         var positionDiscontinuity = false
+        var observedWindow = player.currentPlaybackWindow()
+        var projectedQueue: Any? = null
+        var presentationQueue: Any? = null
         player.addListener(
             object : Player.Listener {
+                override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+                    if (controller !== player || !player.isConnected) return
+                    // Media3 包装控制器时间线，但同进程保留本次写入的 MediaItem 引用。
+                    presentationQueue = presentationTimeline?.run {
+                        val change = written
+                        written = null
+                        queueIdentity.takeIf { change != null && change.windowIn(timeline)?.mediaItem === change.item }
+                    }
+                    if (presentationQueue == null) projectedQueue = null
+                }
+
                 override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                     if (controller !== player || !player.isConnected) return
+                    val previous = observedWindow
+                    val current = player.currentPlaybackWindow()
+                    observedWindow = current
+                    // MediaController 会把当前项的展示字段替换也报告为切歌。
+                    if (!positionDiscontinuity && previous?.isSameItem(current) == true &&
+                        previous.item.mediaMetadata != current?.item?.mediaMetadata) return
                     interruptRecovery()
                     AudioCacheStore.cancelPrefetch()
                     if (urlPrefetchUid != mediaItem?.mediaId) urlPrefetchJob?.cancel()
@@ -235,13 +281,25 @@ object PlaybackController {
                     if (player.playbackState == Player.STATE_READY &&
                         (events.contains(Player.EVENT_TRACKS_CHANGED) || events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED))
                     ) confirmAudioQuality(player)
-                    publish(resetPosition = positionDiscontinuity)
+                    val timelineChanged = events.contains(Player.EVENT_TIMELINE_CHANGED)
+                    if ((timelineChanged || positionDiscontinuity) && !events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) {
+                        observedWindow = player.currentPlaybackWindow()
+                    }
+                    val presentationOnly = timelineChanged && presentationQueue != null && presentationQueue === projectedQueue
+                    val queueChanged = timelineChanged && !presentationOnly
+                    publish(
+                        resetPosition = positionDiscontinuity,
+                        refreshQueue = queueChanged || (!presentationOnly && events.contains(Player.EVENT_MEDIA_METADATA_CHANGED)),
+                        refreshOrder = queueChanged || events.contains(Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED),
+                    )
+                    if (timelineChanged) projectedQueue = presentationQueue.takeUnless { editingQueue }
+                    presentationQueue = null
                     positionDiscontinuity = false
                     updateRecentPlayback(player)
-                    val timelineChanged = events.contains(Player.EVENT_TIMELINE_CHANGED)
-                    if (timelineChanged || events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED)) {
-                        // 删除最后一首/外部清空也同步落盘，不能等下一次点歌时复活旧队列。
-                        saveQueue(force = timelineChanged && player.mediaItemCount == 0)
+                    if (queueChanged || events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED)) {
+                        saveQueue(force = queueChanged && player.mediaItemCount == 0, publishedQueue = _state.value.queue)
+                    } else if (timelineChanged) {
+                        checkpointQueuePosition(player)
                     }
                 }
 
@@ -296,7 +354,7 @@ object PlaybackController {
             }
             return
         }
-        val verified = audioSpec?.verifiedStreamQuality(resolution?.sourceQuality)
+        val verified = audioSpec?.verifiedStreamQuality(resolution?.sourceQuality ?: resolution?.quality)
         if (resourceId != null && verified != null &&
             resourceId.startsWith("lx:") &&
             confirmedAudio != (resourceId to verified)
@@ -311,10 +369,47 @@ object PlaybackController {
         }
     }
 
-    private fun publish(resetPosition: Boolean = false) {
+    internal fun onPlaybackTimelineChanged(player: Player, timeline: Timeline) {
+        val presentation = presentationTimeline?.takeIf { it.owner.get() === player }
+            ?: PresentationTimeline(player).also { presentationTimeline = it }
+        val change = presentation.writing
+        presentation.writing = null
+        presentation.written = change?.takeIf { update ->
+            val window = update.windowIn(timeline)
+            window != null && window.mediaItem === update.item &&
+                update.previous.isSameItem(PlaybackWindow(window.uid, update.item))
+        }
+        if (presentation.written == null) presentation.queueIdentity = Any()
+    }
+
+    internal fun clearPresentationMetadata(player: Player) {
+        if (presentationTimeline?.owner?.get() === player) presentationTimeline = null
+    }
+
+    /** 标记同一真实播放窗口中的展示更新；兼容错过或合并事件时的完整队列投影。 */
+    internal fun replacePresentationMetadata(player: Player, index: Int, item: MediaItem) {
+        val presentation = presentationTimeline?.takeIf { it.owner.get() === player }
+        if (presentation != null) {
+            val timeline = player.currentTimeline
+            if (index in 0 until timeline.windowCount) {
+                val window = timeline.getWindow(index, Timeline.Window())
+                presentation.writing = PresentationChange(index, item, PlaybackWindow(window.uid, window.mediaItem), timeline.windowCount)
+            }
+        }
+        try {
+            player.replaceMediaItem(index, item)
+        } finally {
+            presentation?.writing = null
+        }
+    }
+
+    internal fun publish(resetPosition: Boolean = false, refreshQueue: Boolean = true, refreshOrder: Boolean = true) {
         if (editingQueue) return
         val player = controller?.takeIf { it.isConnected } ?: return
-        val queue = (0 until player.mediaItemCount).map { index ->
+        val previous = _state.value
+        val reuseQueue = previous.ready && previous.queue.size == player.mediaItemCount && (!refreshQueue ||
+            previous.queue.indices.all { i -> TrackRegistry.get(player.getMediaItemAt(i).mediaId) === previous.queue[i] })
+        val queue = if (reuseQueue) previous.queue else (0 until player.mediaItemCount).map { index ->
             val item = player.getMediaItemAt(index)
             TrackRegistry.get(item.mediaId) ?: UiTrack(
                 uid = item.mediaId,
@@ -342,7 +437,6 @@ object PlaybackController {
         val audioSpec = selectedSpec?.withKnownFileFields(fileSpec)
         val isPlayingIntent = player.playWhenReady &&
             (player.playbackState == Player.STATE_READY || player.playbackState == Player.STATE_BUFFERING)
-        val previous = _state.value
         _state.value = previous.samplePosition(
             positionMs = player.currentPosition.coerceAtLeast(0),
             nowMs = SystemClock.elapsedRealtime(),
@@ -352,7 +446,7 @@ object PlaybackController {
             ready = true,
             current = currentTrack,
             queue = queue,
-            queueOrder = player.playbackQueueOrder(),
+            queueOrder = if (refreshOrder || !reuseQueue) player.playbackQueueOrder() else previous.queueOrder,
             currentIndex = if (index in queue.indices) index else -1,
             playing = isPlayingIntent && hasItems,
             buffering = hasItems && player.playbackState == Player.STATE_BUFFERING,
@@ -423,13 +517,15 @@ object PlaybackController {
             RebufferRecovery.Action.FIND_ALTERNATIVE -> {
                 val context = appContext ?: return
                 if (!NetworkState.isConnected(context)) return
-                val item = player.currentMediaItem ?: return
+                val window = player.currentPlaybackWindow() ?: return
+                val item = window.item
                 val song = TrackRegistry.get(item.mediaId)?.raw?.let(OnlineSong::from) ?: return
                 val previousResource = resolution?.resourceId ?: return
-                val actual = readAudioSpec(player)?.verifiedStreamQuality(resolution.sourceQuality) ?: resolution.quality
+                val actual = readAudioSpec(player)?.verifiedStreamQuality(resolution.sourceQuality ?: resolution.quality) ?: resolution.quality
                 val quality = SourceResolver.effectiveQuality(actual, resolution.sourceQuality)
                 val preference = NetworkState.playQuality(context)
                 val generation = recoveryGeneration
+                val resolverGeneration = SourceResolver.cacheGeneration
                 rebufferRecovery.attemptStarted(previousResource)
                 val excludedResources = rebufferRecovery.excludedResources
                 recoveryJob = scope.launch(start = CoroutineStart.LAZY) {
@@ -441,12 +537,11 @@ object PlaybackController {
                         }
                         if (generation != recoveryGeneration || controller !== player ||
                             !MeloraSettings.autoSwitchSource.value || !player.isCurrentMediaItemSeekable ||
-                            NetworkState.playQuality(context) != preference || player.currentMediaItem != item ||
-                            !player.playWhenReady || player.playbackSuppressionReason != Player.PLAYBACK_SUPPRESSION_REASON_NONE ||
-                            player.playbackState != Player.STATE_BUFFERING ||
+                            NetworkState.playQuality(context) != preference ||
                             TrackRegistry.resolved(item.mediaId)?.resourceId != previousResource) return@launch
-                        SourceResolver.selectForPlayback(song, preference, alternative)
-                        if (restartBufferedMediaItem(player, item)) {
+                        if (restartBufferedMediaItem(player, window) {
+                            SourceResolver.selectForRebuffer(song, preference, alternative, resolverGeneration)
+                        }) {
                             completed = true
                             _state.value = _state.value.copy(message = "当前音源较慢，已尝试同音质备用资源")
                         }
@@ -470,7 +565,8 @@ object PlaybackController {
     }
 
     private fun updateRecentPlayback(player: Player) {
-        val track = player.currentMediaItem?.mediaId?.let(TrackRegistry::get)
+        val item = player.currentMediaItem
+        val track = item?.mediaId?.let(TrackRegistry::get)
         val song = OnlineSong.from(track?.raw)
         val shouldRecord = recentPlaybackTracker.update(
             uid = track?.uid.takeIf { song != null },
@@ -479,12 +575,11 @@ object PlaybackController {
             nowMs = SystemClock.elapsedRealtime(),
         )
         if (shouldRecord && song != null && track != null) {
-            scope.launch(Dispatchers.IO) { UserLibrary.markPlayed(song) }
-            appContext?.takeUnless { TrackRegistry.isLocalResource(track.uid) }?.let { context ->
-                val quality = player.currentMediaItem?.localConfiguration?.uri
-                    ?.getQueryParameter("q")
-                    ?: NetworkState.playQuality(context)
-                AudioCacheStore.prefetchCurrent(context, track.uid, song, quality)
+            UserLibrary.enqueueWrite { UserLibrary.markPlayed(song) }
+            if (!song.isBookChapter) {
+                val resource = TrackRegistry.cacheResourceFor(track.uid, item.localConfiguration?.uri)
+                val context = appContext
+                if (context != null && resource != null) AudioCacheStore.prefetchCurrent(context, resource)
             }
         }
     }
@@ -543,6 +638,10 @@ object PlaybackController {
         val expectedUid = player.currentMediaItem?.mediaId ?: return
         val stall = error.cause as? AudioOutputProbe.Failure
         if (stall != null && (stall.uid != expectedUid || stall.itemIndex != player.currentMediaItemIndex ||
+                player.playbackState != Player.STATE_IDLE || player.playerError?.timestampMs != error.timestampMs)) return
+        val preview = error.cause as? AudioOutputMonitor.PreviewFailure
+        if (preview != null && (preview.uid != expectedUid || preview.itemIndex != player.currentMediaItemIndex ||
+                TrackRegistry.resolved(expectedUid)?.resourceId != preview.resourceId ||
                 player.playbackState != Player.STATE_IDLE || player.playerError?.timestampMs != error.timestampMs)) return
         val resumeAt = stall?.takeIf { it.recoveryGeneration == recoveryGeneration }?.resumePositionMs
         interruptRecovery()
@@ -603,7 +702,8 @@ object PlaybackController {
                     failedResource, SystemClock.elapsedRealtime(), MeloraSettings.autoSwitchSource.value,
                 )) {
                 TrackRegistry.clearResolved(track.uid)
-                return@launch prepare("播放链接失效，正在尝试其它可用资源…")
+                return@launch prepare(if (error.errorCode == ERROR_CODE_AUDIO_PREVIEW) "当前音源只有试听片段，正在尝试其它可用资源…"
+                    else "播放链接失效，正在尝试其它可用资源…")
             }
             // 按已耗尽恢复机会的曲目计数，而不是把同曲第二次换源当成第三首失败。
             consecutiveErrors++
@@ -612,6 +712,7 @@ object PlaybackController {
                 return@launch stop("多个播放链接解析失败，已停止播放")
             }
             val reason = when {
+                error.errorCode == ERROR_CODE_AUDIO_PREVIEW -> "音源只有试听片段"
                 error.errorCodeName.contains("TIMEOUT", ignoreCase = true) -> "网络连接超时"
                 error.errorCodeName.contains("NETWORK", ignoreCase = true) -> "网络连接失败"
                 error.errorCodeName.contains("IO", ignoreCase = true) -> "音源无法访问"
@@ -651,7 +752,13 @@ object PlaybackController {
             .build()
     }
 
-    private fun playQueueNow(tracks: List<UiTrack>, startIndex: Int, queueId: String?, startPositionMs: Long? = null) {
+    private fun playQueueNow(
+        tracks: List<UiTrack>,
+        startIndex: Int,
+        queueId: String?,
+        startPositionMs: Long? = null,
+        sourceUids: List<String>? = null,
+    ) {
         interruptRecovery()
         if (tracks.isEmpty()) return
         val player = controller
@@ -660,14 +767,15 @@ object PlaybackController {
             _state.value = _state.value.copy(pendingQueueId = queueId)
             return
         }
+        val index = startIndex.coerceIn(tracks.indices)
         bookQueue?.stop()
         errorRecovery.reset()
         consecutiveErrors = 0
         currentQueueId = queueId
+        if (queueId != null) collectionSource = CollectionQueueSource(sourceUids ?: tracks.map(UiTrack::uid))
         _state.value = _state.value.copy(pendingQueueId = null, message = null)
         TrackRegistry.registerAll(tracks)
         val items = tracks.map(::buildItem)
-        val index = startIndex.coerceIn(0, items.lastIndex)
         prefetchTrack(tracks[index])
         if (startPositionMs == 0L) {
             // 相同章节重建队列前先归零，避免离场事件把旧位置写回刚清除的断点。
@@ -759,9 +867,8 @@ object PlaybackController {
     fun playBook(context: Context, playlist: OnlinePlaylist) {
         val id = playlist.id.removePrefix("kw:").removePrefix("book_album_")
         if (id.isBlank()) return
-        UserLibrary.markContainerPlayed(
-            UserLibrary.PlayContainer("book", playlist.id, playlist.name, playlist.img, playlist.source, bookQueueId(id), artist = playlist.author),
-        )
+        val container = UserLibrary.PlayContainer("book", playlist.id, playlist.name, playlist.img, playlist.source, bookQueueId(id), artist = playlist.author)
+        UserLibrary.enqueueWrite { UserLibrary.markContainerPlayed(container) }
         requestQueue<KwBookApi.BookChapters>(
             context, bookQueueId(id), "playlistDetail.book.book_album_$id", { it.items },
         ) { KwBookApi.album(id, 1) }
@@ -865,7 +972,7 @@ object PlaybackController {
         }
     }
 
-    /** 仅用于明确的播放全部、随机播放或批量播放操作；单曲入口使用 playTrack。 */
+    /** 播放全部、随机或批量播放，始终使用调用方给出的完整顺序。 */
     fun playQueue(
         context: Context,
         tracks: List<UiTrack>,
@@ -877,6 +984,77 @@ object PlaybackController {
         requestPlayback(context, tracks[startIndex.coerceIn(tracks.indices)], container) {
             playQueueNow(tracks, startIndex, queueId ?: container?.queueId)
         }
+    }
+
+    /** 点选集合中的一行。UID 和按索引取曲的函数必须来自该行渲染时的同一份快照。 */
+    fun playFromCollection(
+        context: Context,
+        selected: UiTrack,
+        startIndex: Int,
+        queueId: String? = null,
+        container: UserLibrary.PlayContainer? = null,
+        sourceUids: List<String>,
+        trackAt: (Int) -> UiTrack,
+    ) {
+        if (sourceUids.getOrNull(startIndex) != selected.uid) return
+        if (OnlineSong.from(selected.raw)?.isBookChapter == true) {
+            playTrack(context, selected)
+            return
+        }
+        requestPlayback(context, selected, container) {
+            playCollectionNow(selected, startIndex, queueId ?: container?.queueId, sourceUids, trackAt)
+        }
+    }
+
+    private fun playCollectionNow(
+        selected: UiTrack,
+        startIndex: Int,
+        queueId: String?,
+        sourceUids: List<String>,
+        trackAt: (Int) -> UiTrack,
+    ) {
+        val player = controller
+        if (player == null) {
+            // 连接就绪后才知道能否复用已保存的队列。列表仍可按索引检查和裁剪。
+            val pendingTracks = object : AbstractList<UiTrack>() {
+                override val size = sourceUids.size
+                override fun get(index: Int) = if (index == startIndex) selected else trackAt(index)
+            }
+            pendingPlayback = PendingPlaybackSelection(pendingTracks, startIndex, queueId, collectionUids = sourceUids)
+            _state.value = _state.value.copy(pendingQueueId = queueId)
+            return
+        }
+        restoreQueue(player, autoPlay = false)
+        val source = collectionSource
+        if (source == null || queueId == null || queueId != currentQueueId || bookQueue?.albumId != null || player.mediaItemCount == 0) {
+            playQueueNow(sourceUids.indices.map(trackAt), startIndex, queueId, sourceUids = sourceUids)
+            return
+        }
+        interruptRecovery()
+        val update = collectionQueueUpdate(source, sourceUids, startIndex, player.mediaItemCount) { player.getMediaItemAt(it).mediaId }
+        collectionSource = update.source
+        for (insertion in update.insertions.asReversed()) {
+            val additions = insertion.sourceIndices.map(trackAt)
+            TrackRegistry.registerAll(additions)
+            player.addMediaItems(insertion.index, additions.map(::buildItem))
+        }
+        _state.value = _state.value.copy(pendingQueueId = null, message = null)
+        TrackRegistry.register(selected)
+        if (player.playerError != null) { errorRecovery.reset(); consecutiveErrors = 0 }
+        if (player.currentMediaItemIndex != update.targetIndex || player.playbackState == Player.STATE_IDLE) prefetchTrack(selected)
+        if (player.currentMediaItemIndex != update.targetIndex || player.playbackState == Player.STATE_ENDED) {
+            player.seekToDefaultPosition(update.targetIndex)
+        }
+        player.prepareAndPlay()
+        val sourceChanged = update.source !== source || update.insertions.isNotEmpty()
+        val saved = lastSavedQueue
+        if (!sourceChanged && saved?.index == update.targetIndex && saved.uid == selected.uid) {
+            checkpointQueuePosition(player)
+        } else {
+            saveQueue(force = sourceChanged)
+        }
+        publish()
+        if (update.insertions.isNotEmpty()) appContext?.let(::checkLocalQueue)
     }
 
     /** 无源只拦截新网络解析；离线资源先检查，失败时不改队列、不打断当前音乐。 */
@@ -910,11 +1088,11 @@ object PlaybackController {
         appContext = context.applicationContext
         cancelPendingPlayback()
         _state.value = _state.value.copy(message = null)
-        if (container != null) UserLibrary.markContainerPlayed(container)
+        if (container != null) UserLibrary.enqueueWrite { UserLibrary.markContainerPlayed(container) }
         if (controllerFuture == null) init(context)
     }
 
-    /** 保留现有队列；已有曲目直接跳转，否则仅在当前曲目后插入这一首。 */
+    /** 单曲与听书章节入口（搜索结果、榜单卡片预览、零散单曲及听书章节）：保留现有队列，已有曲目直接跳转，否则在当前曲目后插入一首；听书章节进入目录续播。 */
     fun playTrack(context: Context, track: UiTrack, container: UserLibrary.PlayContainer? = null) {
         val bookId = OnlineSong.from(track.raw)?.bookId()
         val origin = container ?: bookId?.let {
@@ -935,11 +1113,9 @@ object PlaybackController {
         // 冷启动直接点歌曲也保留上次队列，但不能先触发旧歌自动播放/解析。
         restoreQueue(player, autoPlay = false)
         bookQueue?.stop()
-        val target = singleTrackQueueTarget(
-            (0 until player.mediaItemCount).map { player.getMediaItemAt(it).mediaId },
-            player.currentMediaItemIndex,
-            track.uid,
-        )
+        val target = singleTrackQueueTarget(player.mediaItemCount, player.currentMediaItemIndex, track.uid) {
+            player.getMediaItemAt(it).mediaId
+        }
         TrackRegistry.register(track)
         val changingTrack = player.currentMediaItem?.mediaId != track.uid
         if (player.playerError != null) { errorRecovery.reset(); consecutiveErrors = 0 }
@@ -1022,9 +1198,7 @@ object PlaybackController {
             player.currentMediaItemIndex,
             uid,
         )
-        if (target.fromIndex == target.toIndex &&
-            (!player.shuffleModeEnabled || player.nextMediaItemIndex == target.toIndex)
-        ) return "已设为下一首播放"
+        if (target.fromIndex == target.toIndex && !player.shuffleModeEnabled) return "已设为下一首播放"
         // 听书退出时也直接恢复实际播放器的音乐模式，不能等异步控制器命令回来才开启随机。
         bookQueue?.stop(player)
         val shuffleOrder = if (player.shuffleModeEnabled) {
@@ -1032,9 +1206,7 @@ object PlaybackController {
         } else null
         if (target.fromIndex < 0) player.addMediaItem(target.toIndex, buildItem(checkNotNull(TrackRegistry.get(uid))))
         else if (target.fromIndex != target.toIndex) player.moveMediaItem(target.fromIndex, target.toIndex)
-        if (shuffleOrder != null && player.playbackQueueOrder() != shuffleOrder) {
-            player.setShuffleOrder(ShuffleOrder.DefaultShuffleOrder(shuffleOrder.toIntArray(), System.nanoTime()))
-        }
+        if (shuffleOrder != null) player.setShuffleOrder(shuffleWithNextTrack(shuffleOrder.toIntArray(), target.toIndex))
         saveQueue(force = true, player = player)
         return "已设为下一首播放"
     }
@@ -1260,6 +1432,8 @@ object PlaybackController {
         localQueueCheck = null
         interruptRecovery()
         cancelPendingPlayback()
+        urlPrefetchJob?.cancel()
+        urlPrefetchUid = null
         AudioCacheStore.cancelPrefetch()
         editingQueue = true
         try {
@@ -1304,6 +1478,7 @@ object PlaybackController {
         val previousFuture = controllerFuture
         controller = null
         controllerFuture = null
+        presentationTimeline = null
         positionJob?.cancel()
         positionJob = null
         localQueueCheck?.cancel()
@@ -1314,6 +1489,8 @@ object PlaybackController {
         errorRecovery.reset()
         consecutiveErrors = 0
         cancelPendingPlayback()
+        urlPrefetchJob?.cancel()
+        urlPrefetchUid = null
         AudioCacheStore.cancelPrefetch()
         clearCurrentTrackLyrics()
         artworkJob?.cancel()
@@ -1338,12 +1515,13 @@ object PlaybackController {
 
     /** 供下载/歌单等外围操作向全局提示通道投递消息。 */
     fun postMessage(context: Context?, text: String) {
-        _state.value = _state.value.copy(message = text)
+        scope.launch { _state.value = _state.value.copy(message = text) }
     }
 
     private const val PREFS_QUEUE = "melora-queue"
     private const val KEY_QUEUE = "queue"
     private const val KEY_QUEUE_INDEX = "index"
+    private const val KEY_REMOVED_SOURCE_UIDS = "removedSourceUids"
     internal const val KEY_QUEUE_POSITION = "positionMs"
     private const val MAX_SAVED_QUEUE = 200
 
@@ -1374,7 +1552,9 @@ object PlaybackController {
     }
 
     /** 持久化当前队列（超长队列只保存当前位置附近的窗口），供冷启动恢复 mini 播放条。 */
-    internal fun saveQueue(force: Boolean = false, player: Player? = controller?.takeIf { it.isConnected }) {
+    internal fun saveQueue(
+        force: Boolean = false, player: Player? = controller?.takeIf { it.isConnected }, publishedQueue: List<UiTrack>? = null,
+    ) {
         if (editingQueue || player == null) return
         val prefs = queuePrefs() ?: return
         val count = player.mediaItemCount
@@ -1383,12 +1563,20 @@ object PlaybackController {
             return
         }
         val index = player.currentMediaItemIndex.coerceAtLeast(0)
-        val all = (0 until count).mapNotNull { i -> TrackRegistry.get(player.getMediaItemAt(i).mediaId) }
+        val bookId = bookQueue?.albumId ?: player.bookAlbumId(currentQueueId, TrackRegistry::get)
+        val owner = "${bookId}:${currentQueueId}:"
+        val saved = lastSavedQueue
+        if (!force && publishedQueue != null && saved != null && saved.published === publishedQueue && saved.index == index && saved.owner == owner) {
+            checkpointQueuePosition(player)
+            return
+        }
+        val all = publishedQueue?.takeIf { it.size == count && it.all { track -> TrackRegistry.get(track.uid) === track } }
+            ?: (0 until count).mapNotNull { i -> TrackRegistry.get(player.getMediaItemAt(i).mediaId) }
         if (all.size != count) return
-        val bookId = bookQueue?.albumId ?: player.bookAlbumId(TrackRegistry::get)
-        val fingerprint = "${bookId}:${currentQueueId}:" + playbackQueueFingerprint(all, index)
+        val fingerprint = owner + playbackQueueFingerprint(all, index)
         val position = player.currentPosition.coerceAtLeast(0L)
-        if (!force && fingerprint == lastSavedQueue?.fingerprint) {
+        if (!force && saved != null && fingerprint == saved.fingerprint) {
+            lastSavedQueue = saved.copy(owner = owner, published = publishedQueue?.takeIf { it === all })
             checkpointQueuePosition(player)
             return
         }
@@ -1400,14 +1588,21 @@ object PlaybackController {
         }
         val array = JSONArray()
         all.subList(window.first, window.second).forEach { array.put(trackToJson(it)) }
+        // 只保存用户从来源曲目中移除的部分。冷恢复后，200 首落盘窗口以外的曲目仍可从页面补回。
+        val known = collectionSource?.knownUids.orEmpty()
+        val removed = if (known.size == all.size && all.indices.all { known[it] == all[it].uid }) {
+            emptyList()
+        } else missingCollectionUids(known, all.asSequence().map(UiTrack::uid))
         prefs.edit {
+            if (removed.isEmpty()) remove(KEY_REMOVED_SOURCE_UIDS)
+            else putString(KEY_REMOVED_SOURCE_UIDS, JSONArray(removed).toString())
             putString(KEY_QUEUE, array.toString())
             putInt(KEY_QUEUE_INDEX, (index - window.first).coerceAtLeast(0))
             putLong(KEY_QUEUE_POSITION, position)
             putString("bookId", bookId)
             putString("queueId", currentQueueId)
         }
-        lastSavedQueue = SavedQueueSelection(fingerprint, all[index].uid, index)
+        lastSavedQueue = SavedQueueSelection(fingerprint, all[index].uid, index, owner, publishedQueue?.takeIf { it === all })
     }
 
     /** 服务定时只更新现有快照的位置；曲目/索引不一致时等待结构保存，绝不把B的断点写给A。 */
@@ -1433,7 +1628,7 @@ object PlaybackController {
     private fun restoreQueue(player: Player, autoPlay: Boolean = MeloraSettings.autoPlayOnStart.value) {
         if (player.mediaItemCount > 0) {
             // 重连仍存活的服务时先恢复听书上下文，再应用音乐偏好，不能把章节改为随机播放。
-            if (bookQueue?.albumId == null) player.bookAlbumId(TrackRegistry::get)?.let { bookQueue?.start(it, player) }
+            if (bookQueue?.albumId == null) player.bookAlbumId(currentQueueId, TrackRegistry::get)?.let { bookQueue?.start(it, player) }
             return
         }
         val prefs = queuePrefs() ?: return
@@ -1448,9 +1643,20 @@ object PlaybackController {
         val sameSelection = entries[index].first == savedIndex
         val tracks = entries.map { it.second }
         TrackRegistry.registerAll(tracks)
-        currentQueueId = prefs.getString("queueId", null)
+        val savedQueueId = prefs.getString("queueId", null)
         val bookId = prefs.getString("bookId", null)?.takeIf { id ->
-            tracks.all { OnlineSong.from(it.raw)?.bookId() == id }
+            (savedQueueId == null || savedQueueId == bookQueueId(id)) && tracks.all { OnlineSong.from(it.raw)?.bookId() == id }
+        }
+        currentQueueId = savedQueueId ?: bookId?.let(::bookQueueId)
+        if (currentQueueId != null) {
+            // 旧听书快照缺少来源，只补这个字段，保留原队列、索引和断点。
+            if (savedQueueId == null) prefs.edit { putString("queueId", currentQueueId) }
+            val windowUids = tracks.map(UiTrack::uid)
+            val removed = prefs.getString(KEY_REMOVED_SOURCE_UIDS, null)?.let { json ->
+                runCatching { JSONArray(json) }.getOrNull()
+            }
+            val known = if (removed == null) windowUids else windowUids + (0 until removed.length()).mapNotNull { removed.opt(it) as? String }
+            collectionSource = CollectionQueueSource(windowUids, known)
         }
         // 无效条目过滤后按原位置映射（不能按uid去重）；替代曲目不继承失效条目的断点。
         val position = if (sameSelection && MeloraSettings.rememberProgress.value) {
@@ -1534,10 +1740,13 @@ internal fun notificationLyricLine(
 /** 单曲队列策略：按 uid 去重，不把来源列表隐式变成播放队列。 */
 internal data class SingleTrackQueueTarget(val index: Int, val insert: Boolean)
 
-internal fun singleTrackQueueTarget(queueUids: List<String>, currentIndex: Int, uid: String): SingleTrackQueueTarget {
-    val existing = queueUids.indexOf(uid)
-    return if (existing >= 0) SingleTrackQueueTarget(existing, insert = false)
-    else SingleTrackQueueTarget((currentIndex + 1).coerceIn(0, queueUids.size), insert = true)
+internal fun singleTrackQueueTarget(
+    currentSize: Int, currentIndex: Int, uid: String, currentUidAt: (Int) -> String,
+): SingleTrackQueueTarget {
+    val existing = currentIndex.takeIf { it in 0 until currentSize && currentUidAt(it) == uid }
+        ?: (0 until currentSize).firstOrNull { currentUidAt(it) == uid }
+    return if (existing != null) SingleTrackQueueTarget(existing, insert = false)
+    else SingleTrackQueueTarget((currentIndex + 1).coerceIn(0, currentSize), insert = true)
 }
 
 /** fromIndex=-1 表示新增；已有项只移动，不重建当前曲目或清理队列中原有的重复项。 */

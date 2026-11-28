@@ -79,6 +79,34 @@ class PlaybackResourceRecoveryInstrumentedTest {
     @Test fun exhaustedSingleItemLoopDoesNotTreatItselfAsASuccessor() =
         assertRecoveryStopsWithoutSuccessor(Player.REPEAT_MODE_ALL)
 
+    @Test fun shortCachedAudioCanRecoverWhenTheUserStartsPlayback() =
+        withPlayer(failures = 0, preview = true, catalogInterval = "00:20") { player, controller, source, uid ->
+            main { controller.seekTo(0, 500L); controller.prepare() }
+            await { player.playbackState == Player.STATE_READY && player.duration == 2_000L }
+            assertFalse(SourceResolver.isRejected(source.previewId))
+
+            main { controller.play() }
+            await { player.isPlaying && player.duration == 20_000L }
+            assertTrue(SourceResolver.isRejected(source.previewId))
+            main {
+                assertEquals(uid, player.currentMediaItem?.mediaId)
+                assertTrue(player.currentPosition >= 500L)
+                assertEquals(2, player.mediaItemCount)
+                assertNull(player.playerError)
+            }
+        }
+
+    @Test fun shortAudioWithUnknownCatalogDurationCanPlay() = withPlayer(failures = 0, preview = true) { player, controller, source, uid ->
+        main { controller.prepare(); controller.play() }
+        await { player.isPlaying && player.currentPosition >= 200L }
+        assertFalse(SourceResolver.isRejected(source.previewId))
+        main {
+            assertEquals(uid, player.currentMediaItem?.mediaId)
+            assertEquals(2_000L, player.duration)
+            assertNull(player.playerError)
+        }
+    }
+
     private fun assertRecoveryStopsWithoutSuccessor(repeatMode: Int) =
         withPlayer(failures = 10, includeSuccessor = false, repeatMode = repeatMode) { player, controller, source, uid ->
             main { controller.prepare(); controller.play() }
@@ -97,12 +125,14 @@ class PlaybackResourceRecoveryInstrumentedTest {
         holdFailure: Boolean = false,
         includeSuccessor: Boolean = true,
         repeatMode: Int = Player.REPEAT_MODE_OFF,
+        preview: Boolean = false,
+        catalogInterval: String = "00:00",
         test: (ExoPlayer, MediaController, Resources, String) -> Unit,
     ) {
         val song = OnlineSong(JSONObject().put("source", "kw").put("songmid", "recovery-${System.nanoTime()}")
-            .put("name", "Fixture").put("singer", "Fixture Artist"))
+            .put("name", "Fixture").put("singer", "Fixture Artist").put("interval", catalogInterval))
         val track = UiTrack.fromOnline(song)
-        val resources = Resources(track.uid, failures, repeatResource, holdFailure)
+        val resources = Resources(track.uid, failures, repeatResource, holdFailure, preview)
         val factory = ProgressiveMediaSource.Factory(DataSource.Factory { resources.newSource() })
             .setLoadErrorHandlingPolicy(object : DefaultLoadErrorHandlingPolicy() {
                 override fun getMinimumLoadableRetryCount(dataType: Int): Int = 0
@@ -110,6 +140,7 @@ class PlaybackResourceRecoveryInstrumentedTest {
                     androidx.media3.common.C.TIME_UNSET
             })
         val player = main { ExoPlayer.Builder(context).build().apply { volume = 0f } }
+        val monitor = main { AudioOutputMonitor(player, AudioOutputProbe()) }
         val session = main { MediaSession.Builder(context, player).setId("recovery-${System.nanoTime()}").build() }
         val controller = main { MediaController.Builder(context, session.token).buildAsync() }.get(5, TimeUnit.SECONDS)
         val fields = listOf("controller", "appContext", "consecutiveErrors").associateWith(::field)
@@ -148,6 +179,7 @@ class PlaybackResourceRecoveryInstrumentedTest {
                 fields.forEach { (name, field) -> field.set(PlaybackController, originals[name]) }
                 state.value = originalState
                 MeloraSettings.autoSwitchSource.value = originalSwitch
+                monitor.close()
                 controller.release(); session.release(); player.release()
                 TrackRegistry.clearResolved(track.uid)
                 SourceResolver.clearCache()
@@ -166,18 +198,22 @@ class PlaybackResourceRecoveryInstrumentedTest {
         return requireNotNull(result).getOrThrow()
     }
 
-    private class Resources(val uid: String, val failures: Int, val repeatResource: Boolean, val holdFailure: Boolean) {
+    private class Resources(val uid: String, val failures: Int, val repeatResource: Boolean, val holdFailure: Boolean, val preview: Boolean) {
         val failedOpens = AtomicInteger()
         val entered = CountDownLatch(1)
         val release = CountDownLatch(if (holdFailure) 1 else 0)
-        private val wav = ByteBuffer.allocate(44 + 320_000).order(ByteOrder.LITTLE_ENDIAN).apply {
+        val previewId = "lx:fixture:$uid:preview"
+        private val fullWav = wav(20)
+        private val previewWav = wav(2)
+        private fun wav(seconds: Int) = ByteBuffer.allocate(44 + 16_000 * seconds).order(ByteOrder.LITTLE_ENDIAN).apply {
             put("RIFF".toByteArray()); putInt(capacity() - 8); put("WAVEfmt ".toByteArray())
             putInt(16); putShort(1); putShort(1); putInt(8000); putInt(16000)
-            putShort(2); putShort(16); put("data".toByteArray()); putInt(320_000)
+            putShort(2); putShort(16); put("data".toByteArray()); putInt(capacity() - 44)
         }.array()
         fun newSource() = object : DataSource {
             private var position = 0
             private var uri: Uri? = null
+            private var wav = fullWav
             override fun addTransferListener(transferListener: TransferListener) = Unit
             override fun getUri(): Uri? = uri
             override fun open(dataSpec: DataSpec): Long {
@@ -185,7 +221,10 @@ class PlaybackResourceRecoveryInstrumentedTest {
                 if (uri?.lastPathSegment == uid) {
                     val attempt = failedOpens.get()
                     val resource = if (repeatResource) "same" else attempt.toString()
-                    TrackRegistry.notifyResolved(uid, "320k", "lx:fixture:$resource")
+                    val cachedClip = preview && !SourceResolver.isRejected(previewId)
+                    wav = if (cachedClip) previewWav else fullWav
+                    TrackRegistry.notifyResolved(uid, "320k", if (cachedClip) previewId else "lx:fixture:$resource",
+                        fromCompleteCache = cachedClip)
                     if (attempt < failures) {
                         entered.countDown()
                         check(release.await(5, TimeUnit.SECONDS)) { "fixture wait expired" }

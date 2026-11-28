@@ -15,6 +15,8 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.MediaSession
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.leyu.melora.playback.sdk.OnlineSong
+import com.leyu.melora.playback.sdk.SourceResolver
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -120,35 +122,78 @@ class PlaybackPauseInstrumentedTest {
             assertEquals(1L, stream.release.count)
         }
 
-    @Test fun resourceRestartKeepsQueueIndexAndPositionWithoutRestartingSong() =
-        withPlayer { player, controller, _ ->
-            onMain {
-                player.addMediaItem(MediaItem.Builder().setMediaId("second").setUri("https://example.test/second.wav").build())
-                player.seekTo(0, 7500)
-                player.prepare(); player.play()
-            }
-            await { controller.playbackState == Player.STATE_BUFFERING && controller.playWhenReady }
-            onMain {
-                val current = requireNotNull(controller.currentMediaItem)
-                assertTrue(restartBufferedMediaItem(controller, current))
-                assertEquals(2, controller.mediaItemCount)
-                assertEquals(0, controller.currentMediaItemIndex)
-                assertEquals(7500L, controller.currentPosition)
-                assertTrue(controller.playWhenReady)
-            }
-            await { player.playWhenReady && player.playbackState == Player.STATE_BUFFERING && player.currentPosition == 7500L }
+    @Test fun onlyAValidCurrentGenerationReplacementRestartsAtTheSameQueuePosition() =
+        withPlayer { player, controller, stream ->
+            val song = OnlineSong(JSONObject().put("source", "kw").put("songmid", "pause-fixture"))
+            val candidate = SourceResolver.Resolved("https://example.test/backup.wav", "flac", song, false, "lx:fixture:backup")
+            val rejected = candidate.copy(resourceId = "lx:fixture:rejected")
+            val oldGeneration = SourceResolver.cacheGeneration
+            SourceResolver.clearCache()
+            val generation = SourceResolver.cacheGeneration
+            try {
+                SourceResolver.rejectResource(rejected.resourceId)
+                onMain {
+                    player.addMediaItem(MediaItem.Builder().setMediaId("second").setUri("https://example.test/second.wav").build())
+                    player.seekTo(0, 7500)
+                    player.prepare(); player.play()
+                }
+                await { controller.playbackState == Player.STATE_BUFFERING && controller.playWhenReady }
+                assertTrue(stream.blocked.await(3, TimeUnit.SECONDS))
+                val buffered = onMain {
+                    val current = requireNotNull(controller.currentPlaybackWindow())
+                    assertFalse(restartBufferedMediaItem(controller, current) {
+                        SourceResolver.selectForRebuffer(song, "flac", candidate, oldGeneration)
+                    })
+                    assertFalse(restartBufferedMediaItem(controller, current) {
+                        SourceResolver.selectForRebuffer(song, "flac", rejected, generation)
+                    })
+                    assertNull(SourceResolver.peek(song, "flac"))
+                    assertEquals(1, stream.opens.get())
+
+                    val item = requireNotNull(player.currentMediaItem)
+                    val lyrics = item.mediaMetadata.buildUpon().setTitle("当前歌词").setArtist("原歌名 - 歌手").build()
+                    player.replaceMediaItem(0, item.buildUpon().setMediaMetadata(lyrics).build())
+                    current
+                }
+                await { controller.currentMediaItem?.mediaMetadata?.title == "当前歌词" }
+                onMain {
+                    assertTrue(restartBufferedMediaItem(controller, buffered) {
+                        SourceResolver.selectForRebuffer(song, "flac", candidate, generation)
+                    })
+                    assertEquals(candidate, SourceResolver.peek(song, "flac"))
+                    assertEquals(2, controller.mediaItemCount)
+                    assertEquals(0, controller.currentMediaItemIndex)
+                    assertEquals(7500L, controller.currentPosition)
+                    assertTrue(controller.playWhenReady)
+                }
+                await { stream.opens.get() >= 2 && player.playWhenReady && player.currentPosition == 7500L }
+                stream.release.countDown()
+                await { player.isPlaying && player.currentPosition >= 7500L }
+            } finally { SourceResolver.clearCache() }
         }
 
-    @Test fun replacementCannotOverridePauseOrAnotherSong() = withPlayer { player, controller, _ ->
-        onMain { player.prepare(); player.play() }
-        await { controller.playbackState == Player.STATE_BUFFERING && controller.playWhenReady }
-        onMain {
-            val original = requireNotNull(controller.currentMediaItem)
-            val other = original.buildUpon().setMediaId("other").build()
-            assertFalse(restartBufferedMediaItem(controller, other))
-            controller.pause()
-            assertFalse(restartBufferedMediaItem(controller, original))
-            assertEquals(original, controller.currentMediaItem)
+    @Test fun replacementCannotOverridePauseOrAnotherOccurrenceOfTheSameSong() = withPlayer { player, controller, _ ->
+        val duplicateStream = SlowWavDataSource(0)
+        try {
+            onMain {
+                val item = requireNotNull(player.currentMediaItem)
+                player.addMediaSource(ProgressiveMediaSource.Factory(DataSource.Factory { duplicateStream }).createMediaSource(item))
+                player.prepare(); player.play()
+            }
+            await { controller.mediaItemCount == 2 && controller.playbackState == Player.STATE_BUFFERING && controller.playWhenReady }
+            val original = onMain {
+                requireNotNull(controller.currentPlaybackWindow()).also { player.seekTo(1, 0L) }
+            }
+            await { controller.currentMediaItemIndex == 1 && controller.playbackState == Player.STATE_BUFFERING && controller.playWhenReady }
+            onMain {
+                val current = requireNotNull(controller.currentPlaybackWindow())
+                assertEquals(original.item, current.item)
+                assertFalse(restartBufferedMediaItem(controller, original) { error("重复曲目另一位置不能提交备选资源") })
+                controller.pause()
+                assertFalse(restartBufferedMediaItem(controller, current) { error("暂停后不能提交备选资源") })
+            }
+        } finally {
+            duplicateStream.release.countDown()
         }
     }
 
@@ -156,7 +201,11 @@ class PlaybackPauseInstrumentedTest {
         stream.release.countDown()
         onMain { player.prepare(); player.play() }
         await { controller.playbackState == Player.STATE_READY }
-        onMain { assertFalse(restartBufferedMediaItem(controller, requireNotNull(controller.currentMediaItem))) }
+        onMain {
+            assertFalse(restartBufferedMediaItem(controller, requireNotNull(controller.currentPlaybackWindow())) {
+                error("播放器恢复后不能提交迟到的备选资源")
+            })
+        }
         assertEquals(1, stream.opens.get())
     }
 

@@ -92,11 +92,13 @@ class LocalQueueCleanupTest {
     }
 
     @Test fun pendingQueueIsPrunedBeforeServiceConnects() {
-        val pending = PendingPlaybackSelection(listOf(local("a"), local("b"), local("c")), index = 1, queueId = "fixture")
+        val tracks = listOf(local("a"), local("b"), local("c"))
+        val pending = PendingPlaybackSelection(tracks, index = 1, queueId = "fixture", collectionUids = tracks.map(UiTrack::uid))
         val kept = pending.without(DeletedLocalFiles(setOf("b"), emptySet()))
         assertEquals(listOf("local_a", "local_c"), kept.tracks.map { it.uid })
         assertEquals(1, kept.index)
         assertEquals("fixture", kept.queueId)
+        assertEquals(kept.tracks.map(UiTrack::uid), kept.collectionUids)
     }
 
     @Test fun explicitRestartSurvivesColdSelectionUntilItsTargetIsDeleted() {

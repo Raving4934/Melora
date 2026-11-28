@@ -30,7 +30,10 @@ import java.nio.ByteOrder
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
@@ -57,15 +60,261 @@ class PlaybackQueueAppendInstrumentedTest {
     private val prefs get() = testContext.getSharedPreferences("melora-queue", 0)
     private fun track(id: String) = UiTrack(id, "同名歌曲", "测试歌手", "测试专辑")
 
+    @Test fun localLibraryTapReplacesFilteredAndSelectedQueues() =
+        withCollectionPlayback { player, _, fileTrack ->
+            val tracks = listOf("a", "b", "c").map(fileTrack)
+            val selected = tracks[1]
+            val sourceUids = tracks.map(UiTrack::uid)
+            for (subqueueId in listOf("local.search", "local.selection")) {
+                main { PlaybackController.playQueue(testContext, listOf(selected), queueId = subqueueId) }
+                await { uids(player) == listOf(selected.uid) }
+                main {
+                    PlaybackController.playFromCollection(
+                        testContext, selected, 1, "local.songs", sourceUids = sourceUids, trackAt = tracks::get,
+                    )
+                }
+                await { uids(player) == sourceUids && player.currentMediaItemIndex == 1 }
+            }
+        }
+
+    @Test fun selectingTheEndOfFirstPagePlaysIntoTheLoadedSecondPage() =
+        withCollectionPlayback { player, _, fileTrack ->
+            val tracks = listOf("a", "b", "c", "d").map(fileTrack)
+            val firstPage = tracks.take(2)
+            val selected = firstPage.last()
+            val queueId = "board.wy.fixture"
+            main {
+                PlaybackController.playFromCollection(
+                    testContext, selected, 1, queueId, sourceUids = firstPage.map(UiTrack::uid), trackAt = firstPage::get,
+                )
+            }
+            await { uids(player) == firstPage.map(UiTrack::uid) && player.currentMediaItemIndex == 1 }
+            val sourceUids = tracks.map(UiTrack::uid)
+            main {
+                PlaybackController.playFromCollection(
+                    testContext, selected, 1, queueId, sourceUids = sourceUids, trackAt = tracks::get,
+                )
+            }
+            await {
+                uids(player) == sourceUids && player.currentMediaItemIndex == 1 && player.nextMediaItemIndex == 2
+            }
+        }
+
+    @Test fun extendingACollectionKeepsQueueEditsAndOnlyMaterializesNewSongs() =
+        withCollectionPlayback { player, _, fileTrack ->
+            val tracks = listOf("a", "b", "c", "d", "e").map(fileTrack)
+            val firstPage = tracks.take(3)
+            val selected = firstPage[1]
+            val next = fileTrack("manual-next")
+            val queueId = "user_playlist.fixture"
+            main { PlaybackController.playQueue(testContext, firstPage, 1, queueId) }
+            await { uids(player) == firstPage.map(UiTrack::uid) && player.currentMediaItemIndex == 1 }
+            main { PlaybackController.removeFromQueue(0) }
+            await { uids(player) == firstPage.drop(1).map(UiTrack::uid) }
+            main { PlaybackController.addToQueueNext(testContext, next) }
+            val edited = listOf(selected, next, firstPage.last()).map(UiTrack::uid)
+            await { uids(player) == edited }
+
+            val created = mutableListOf<Int>()
+            main {
+                PlaybackController.playFromCollection(
+                    testContext, selected, 1, queueId, sourceUids = tracks.map(UiTrack::uid),
+                ) { index ->
+                    created += index
+                    tracks[index]
+                }
+            }
+            val appended = edited + tracks.drop(firstPage.size).map(UiTrack::uid)
+            await { uids(player) == appended && player.currentMediaItem?.mediaId == selected.uid }
+            main { assertEquals(listOf(3, 4), created) }
+        }
+
+    @Test fun shufflePageExtensionPreservesTheManualNextSuccessor() =
+        withCollectionPlayback { player, controller, fileTrack ->
+            val firstPage = listOf("a", "b", "c").map(fileTrack)
+            val tracks = firstPage + List(24) { index -> fileTrack("page-two-$index") }
+            val selected = firstPage[1]
+            val next = fileTrack("manual-next")
+            val queueId = "board.wy.shuffle-fixture"
+            main { PlaybackController.playQueue(testContext, firstPage, 1, queueId) }
+            await { uids(player) == firstPage.map(UiTrack::uid) && player.currentMediaItemIndex == 1 }
+            main {
+                player.setShuffleOrder(ShuffleOrder.DefaultShuffleOrder(intArrayOf(1, 2, 0), 7L))
+                controller.shuffleModeEnabled = true
+            }
+            await { player.shuffleModeEnabled && controller.shuffleModeEnabled }
+            main { PlaybackController.addToQueueNext(testContext, next) }
+            await {
+                player.mediaItemCount == 4 && player.hasNextMediaItem() &&
+                    player.getMediaItemAt(player.nextMediaItemIndex).mediaId == next.uid
+            }
+
+            main {
+                PlaybackController.playFromCollection(
+                    testContext, selected, 1, queueId, sourceUids = tracks.map(UiTrack::uid), trackAt = tracks::get,
+                )
+            }
+            // Media3 先发布包含新条目的时间线，随后才同步 WAV 的可定位状态和会话命令。
+            await(onTimeout = {
+                "Waiting for seekable playback after appending ${tracks.size + 1} items. " +
+                    "Player ${describePlayback(player)}. Controller ${describePlayback(controller)}"
+            }) {
+                player.mediaItemCount == tracks.size + 1 && controller.mediaItemCount == tracks.size + 1 &&
+                    player.isPlaying && controller.isPlaying &&
+                    player.isCurrentMediaItemSeekable && controller.isCurrentMediaItemSeekable &&
+                    controller.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)
+            }
+            main {
+                assertTrue(player.shuffleModeEnabled)
+                assertEquals(selected.uid, player.currentMediaItem?.mediaId)
+                assertEquals(next.uid, player.getMediaItemAt(player.nextMediaItemIndex).mediaId)
+                controller.seekTo(59_500L)
+            }
+            await(onTimeout = {
+                "Expected ${next.uid} after ${selected.uid}. " +
+                    "Player ${describePlayback(player)}. Controller ${describePlayback(controller)}"
+            }) { player.currentMediaItem?.mediaId == next.uid && player.isPlaying }
+        }
+
+    @Test fun restoredCollectionAddsNewPageWithoutResurrectingRemovedSong() =
+        withCollectionPlayback { player, controller, fileTrack ->
+            val tracks = listOf("a", "b", "c", "d").map(fileTrack)
+            val firstPage = tracks.take(3)
+            val selected = firstPage[1]
+            val queueId = "user_playlist.fixture"
+            main { PlaybackController.playQueue(testContext, firstPage, 1, queueId) }
+            await { uids(player) == firstPage.map(UiTrack::uid) }
+            main { PlaybackController.removeFromQueue(0) }
+            val edited = firstPage.drop(1).map(UiTrack::uid)
+            await { uids(player) == edited }
+            main {
+                // 模拟进程停止，只保留实际播放控制器写入的本地快照。
+                controller.clearMediaItems()
+                field("currentQueueId").set(PlaybackController, null)
+                field("collectionSource").set(PlaybackController, null)
+                field("lastSavedQueue").set(PlaybackController, null)
+            }
+            await { player.mediaItemCount == 0 }
+            restoreQueue(controller, autoPlay = false)
+            await { uids(player) == edited && player.currentMediaItem?.mediaId == selected.uid }
+
+            val sourceUids = tracks.map(UiTrack::uid)
+            main {
+                PlaybackController.playFromCollection(
+                    testContext, selected, 1, queueId, sourceUids = sourceUids, trackAt = tracks::get,
+                )
+            }
+            await { uids(player) == edited + tracks.last().uid && player.currentMediaItem?.mediaId == selected.uid }
+        }
+
+    @Test fun repeatLocalTapInLargeQueuePreservesNextAndSkipsTrackConversion() =
+        withCollectionPlayback { player, _, fileTrack ->
+            val tracks = listOf(fileTrack("b")) + List(9_999) { index -> fileTrack("local-$index") }
+            val selected = tracks.first()
+            val sourceUids = tracks.map(UiTrack::uid)
+            val queueId = "local.songs"
+            main {
+                PlaybackController.playFromCollection(
+                    testContext, selected, 0, queueId, sourceUids = sourceUids, trackAt = tracks::get,
+                )
+            }
+            await { player.mediaItemCount == 10_000 && player.currentMediaItem?.mediaId == selected.uid }
+            val next = fileTrack("manual-next")
+            main { PlaybackController.addToQueueNext(testContext, next) }
+            await { player.mediaItemCount == 10_001 && player.getMediaItemAt(1).mediaId == next.uid }
+
+            main {
+                PlaybackController.playFromCollection(testContext, selected, 0, queueId, sourceUids = sourceUids) {
+                    error("重复点播不应转换列表曲目")
+                }
+            }
+            await { player.currentMediaItem?.mediaId == selected.uid && player.getMediaItemAt(1).mediaId == next.uid }
+            main { assertEquals(10_001, player.mediaItemCount) }
+        }
+
     @Test fun emptyControllerTimelinePublishesAnEmptyQueueOrder() = withPlayer(empty = true, listen = true) { _, controller ->
         main {
             assertEquals(0, controller.currentTimeline.windowCount)
             assertTrue(controller.playbackQueueOrder().isEmpty())
-            PlaybackController.javaClass.getDeclaredMethod("publish", Boolean::class.javaPrimitiveType!!)
-                .apply { isAccessible = true }
-                .invoke(PlaybackController, false)
+            PlaybackController.publish()
             assertTrue(PlaybackController.state.value.queue.isEmpty())
             assertTrue(PlaybackController.state.value.queueOrder.isEmpty())
+        }
+    }
+
+    @Test fun presentationRefreshReusesQueueProjectionWithoutHidingARealMove() = withPlayer(empty = true, listen = true) { player, controller ->
+        val ids = listOf("repeat", "b", "repeat", "d") + (4 until 256).map { "presentation-$it" }
+        val movedIds = ids.toMutableList().apply { add(3, removeAt(2)) }
+        val observer = object : Player.Listener {
+            override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+                PlaybackController.onPlaybackTimelineChanged(player, timeline)
+            }
+        }
+        fun replaceTitle(title: String) {
+            val item = requireNotNull(player.currentMediaItem)
+            val metadata = item.mediaMetadata.buildUpon().setTitle(title).build()
+            PlaybackController.replacePresentationMetadata(
+                player, player.currentMediaItemIndex, item.buildUpon().setMediaMetadata(metadata).build(),
+            )
+        }
+        fun refresh(title: String) {
+            val previousSample = PlaybackController.state.value.positionSampleRealtimeMs
+            await { SystemClock.elapsedRealtime() > previousSample }
+            main { replaceTitle(title) }
+            await {
+                controller.currentMediaItem?.mediaMetadata?.title == title &&
+                    PlaybackController.state.value.positionSampleRealtimeMs > previousSample
+            }
+        }
+
+        main {
+            player.addListener(observer)
+            TrackRegistry.registerAll(ids.distinct().map(::track))
+            // 时间线通过真实会话传输。保持空闲以避免准备音源时的独立时间线更新。
+            val items = ids.map { id ->
+                MediaItem.Builder().setMediaId(id).setUri("https://example.test/presentation.wav").build()
+            }
+            player.setMediaItems(items, /* startIndex= */ 1, /* startPositionMs= */ 12_000L)
+        }
+        try {
+            await {
+                controller.playbackState == Player.STATE_IDLE && controller.currentMediaItemIndex == 1 &&
+                    PlaybackController.state.value.queue.map { it.uid } == ids
+            }
+            refresh("初始展示")
+            val previous = PlaybackController.state.value
+            val generation = main { PlaybackController.recoveryGeneration }
+            repeat(3) { index ->
+                refresh("歌词行 ${index + 1}")
+                main {
+                    val projected = PlaybackController.state.value
+                    assertSame(previous.queue, projected.queue)
+                    assertSame(previous.queueOrder, projected.queueOrder)
+                    assertEquals(previous.current, projected.current)
+                    assertEquals(generation, PlaybackController.recoveryGeneration)
+                }
+            }
+            main {
+                player.moveMediaItem(2, 3)
+                replaceTitle("移动同时更新展示")
+            }
+            await {
+                controller.currentMediaItem?.mediaMetadata?.title == "移动同时更新展示" &&
+                    PlaybackController.state.value.queue.map { it.uid } == movedIds
+            }
+            main {
+                val projected = PlaybackController.state.value
+                assertEquals(1, projected.currentIndex)
+                assertEquals(projected.queue.indices.toList(), projected.queueOrder)
+            }
+            val afterMove = PlaybackController.state.value
+            refresh("移动后的歌词")
+            assertSame(afterMove.queueOrder, PlaybackController.state.value.queueOrder)
+        } finally {
+            main {
+                player.removeListener(observer)
+                PlaybackController.clearPresentationMetadata(player)
+            }
         }
     }
 
@@ -909,6 +1158,103 @@ class PlaybackQueueAppendInstrumentedTest {
         }
     }
 
+    @Test fun restoreLegacyBookSnapshotPersistsSourceAndContinuesAfterReconnect() =
+        withPlayer(empty = true) { player, controller ->
+            val albumId = "legacy-book-reconnect"
+            val chapters = (95..100).map { bookChapter(albumId, it) }
+            val following = (101..105).map { bookChapter(albumId, it) }
+            val requests = AtomicInteger()
+            val scope = CoroutineScope(Dispatchers.Main.immediate)
+            val rememberProgress = main {
+                MeloraSettings.rememberProgress.value.also { MeloraSettings.rememberProgress.value = true }
+            }
+            try {
+                writeQueueSnapshot(chapters, index = 1, positionMs = 17_000L)
+                prefs.edit().putString("bookId", albumId).commit()
+                val oldSnapshot = prefs.all
+                val coldBook = main {
+                    field("controllerFuture").set(PlaybackController, Futures.immediateFuture(controller))
+                    installBookQueue(controller, scope)
+                }
+                restoreQueue(controller, autoPlay = false)
+                await { player.mediaItemCount == chapters.size && player.currentMediaItemIndex == 1 }
+                assertEquals(oldSnapshot + ("queueId" to bookQueueId(albumId)), prefs.all)
+                val token = main {
+                    assertEquals(albumId, coldBook.albumId)
+                    assertEquals(17_000L, player.currentPosition)
+                    assertFalse(player.playWhenReady)
+                    requireNotNull(controller.connectedToken).also { controller.release() }
+                }
+                await { field("controller").get(PlaybackController) == null }
+
+                val reconnected = main {
+                    MediaController.Builder(context, token)
+                        .setListener(field("controllerListener").get(PlaybackController) as MediaController.Listener)
+                        .buildAsync()
+                }.get(5, TimeUnit.SECONDS)
+                try {
+                    val book = main {
+                        assertEquals(chapters.map(UiTrack::uid), uids(reconnected))
+                        field("controller").set(PlaybackController, reconnected)
+                        installBookQueue(reconnected, scope) { id, page ->
+                            assertEquals(albumId, id)
+                            assertEquals(2, page)
+                            requests.incrementAndGet()
+                            KwBookApi.BookChapters(following.map { OnlineSong.from(it.raw)!! }, hasMore = false, page = page)
+                        }
+                    }
+                    restoreQueue(reconnected, autoPlay = false)
+                    main {
+                        assertEquals(albumId, book.albumId)
+                        assertEquals(17_000L, reconnected.currentPosition)
+                        assertEquals(Player.REPEAT_MODE_OFF, reconnected.repeatMode)
+                        reconnected.seekTo(chapters.lastIndex, 0L)
+                    }
+                    await { reconnected.currentMediaItem?.mediaId == chapters.last().uid }
+                    main { book.check() }
+                    await { player.mediaItemCount == chapters.size + following.size }
+                    main { assertEquals(following.first().uid, player.getMediaItemAt(player.nextMediaItemIndex).mediaId) }
+                    assertEquals(1, requests.get())
+                } finally {
+                    main { reconnected.release() }
+                }
+            } finally {
+                main {
+                    scope.cancel()
+                    MeloraSettings.rememberProgress.value = rememberProgress
+                }
+            }
+        }
+
+    @Test fun restoreBookHintPreservesExplicitPlaylistAndDoesNotTurnMixedQueuesIntoBooks() {
+        val albumId = "legacy-non-book-queue"
+        val first = bookChapter(albumId, 1)
+        val cases = listOf(
+            listOf(first, bookChapter(albumId, 2)) to "user_playlist.book-chapters",
+            listOf(first, track("legacy-mixed-music")) to null,
+            listOf(first, bookChapter("different-book", 2)) to null,
+        )
+        for ((tracks, source) in cases) {
+            withPlayer(empty = true) { player, controller ->
+                val scope = CoroutineScope(Dispatchers.Main.immediate)
+                try {
+                    writeQueueSnapshot(tracks, index = 0, positionMs = null)
+                    prefs.edit().putString("bookId", albumId).putString("queueId", source).commit()
+                    val book = main { installBookQueue(controller, scope) }
+                    restoreQueue(controller, autoPlay = false)
+                    await { uids(player) == tracks.map(UiTrack::uid) }
+                    main {
+                        assertNull(book.albumId)
+                        assertEquals(source, field("currentQueueId").get(PlaybackController))
+                    }
+                    assertEquals(source, prefs.getString("queueId", null))
+                } finally {
+                    main { scope.cancel() }
+                }
+            }
+        }
+    }
+
     @Test fun restoreQueueIgnoresSavedPositionWhenRememberProgressIsDisabled() = withPlayer(empty = true) { _, controller ->
         val previousRememberProgress = main {
             MeloraSettings.rememberProgress.value.also { MeloraSettings.rememberProgress.value = false }
@@ -966,8 +1312,7 @@ class PlaybackQueueAppendInstrumentedTest {
         }
         main {
             // 空队列重复发布/清理应幂等，不得重新挂起旧身份。
-            PlaybackController.javaClass.getDeclaredMethod("publish", Boolean::class.javaPrimitiveType!!).apply { isAccessible = true }
-                .invoke(PlaybackController, false)
+            PlaybackController.publish()
             PlaybackController.clearQueue()
             assertTrue(lyricJob.isCancelled)
             assertNull(field("lyricJob").get(PlaybackController))
@@ -1267,6 +1612,21 @@ class PlaybackQueueAppendInstrumentedTest {
         }
     }
 
+    private fun bookChapter(albumId: String, number: Int): UiTrack = UiTrack.fromOnline(OnlineSong(JSONObject()
+        .put("source", "kw").put("songmid", "$albumId-$number").put("name", "测试章节 $number")
+        .put("albumId", albumId).put("isBookChapter", true)
+        .put("bookPage", (number - 1) / 100 + 1).put("bookPageEnd", number % 100 == 0).put("bookHasMore", true)))
+
+    private fun installBookQueue(
+        controller: MediaController,
+        scope: CoroutineScope,
+        load: suspend (String, Int) -> KwBookApi.BookChapters = { _, _ -> error("本场景无需载入后续目录") },
+    ): BookPlaybackQueue = BookPlaybackQueue(
+        controller, scope, TrackRegistry::get,
+        { MediaItem.Builder().setMediaId(it.uid).setUri(TrackRegistry.songUri(it.uid)).build() },
+        load, {}, { error(it) },
+    ).also { field("bookQueue").set(PlaybackController, it) }
+
     private fun writeQueueSnapshot(tracks: List<UiTrack>, index: Int, positionMs: Long?) {
         val queue = JSONArray().apply {
             tracks.forEach { track ->
@@ -1321,6 +1681,35 @@ class PlaybackQueueAppendInstrumentedTest {
             super.getSharedPreferences(if (name == "lx-sources") "queue-test-empty-sources" else name, mode)
     }.also { it.getSharedPreferences("lx-sources", 0).edit().clear().commit() }
 
+    private fun withCollectionPlayback(
+        test: (ExoPlayer, MediaController, (String) -> UiTrack) -> Unit,
+    ) = withPlayer { player, controller ->
+        val audioUri = main { player.getMediaItemAt(0).localConfiguration!!.uri }
+        val touched = mutableSetOf<String>()
+        fun fixtureTrack(name: String): UiTrack =
+            track(audioUri.buildUpon().fragment(name).build().toString()).also { touched += it.uid }
+
+        val selected = fixtureTrack("b")
+        try {
+            main {
+                field("controllerFuture").set(PlaybackController, Futures.immediateFuture(controller))
+                TrackRegistry.register(selected)
+                controller.setMediaItem(MediaItem.Builder().setMediaId(selected.uid).setUri(selected.uid).build())
+                controller.prepare()
+            }
+            await { player.playbackState == Player.STATE_READY && player.currentMediaItem?.mediaId == selected.uid }
+            test(player, controller, ::fixtureTrack)
+        } finally {
+            main {
+                PlaybackController.clearQueue()
+                @Suppress("UNCHECKED_CAST")
+                val registry = TrackRegistry::class.java.getDeclaredField("tracks").apply { isAccessible = true }
+                    .get(TrackRegistry) as MutableMap<String, UiTrack>
+                touched.forEach(registry::remove)
+            }
+        }
+    }
+
     private fun withPlayer(empty: Boolean = false, listen: Boolean = false, test: (ExoPlayer, MediaController) -> Unit) {
         val audio = silentWav()
         val player = main { ExoPlayer.Builder(context).build().apply { volume = 0f } }
@@ -1330,7 +1719,7 @@ class PlaybackQueueAppendInstrumentedTest {
         }
         val session = main {
             MediaSession.Builder(context, player).setId("append-${System.nanoTime()}")
-                .setCallback(PlaybackSessionCallback(onFavorite = {}, onExit = {})).build()
+                .setCallback(PlaybackSessionCallback(onFavorite = { error("unexpected favorite command") }, onExit = {})).build()
         }
         val controller = main {
             MediaController.Builder(context, session.token)
@@ -1339,7 +1728,7 @@ class PlaybackQueueAppendInstrumentedTest {
         }.get(5, TimeUnit.SECONDS)
         val fields = listOf(
             "controller", "controllerFuture", "bookQueue", "appContext", "lastSavedQueue", "detailUid",
-            "currentQueueId", "playbackPreflight", "queueLoadJob", "pendingPlayback", "lyricJob", "positionJob",
+            "currentQueueId", "collectionSource", "playbackPreflight", "queueLoadJob", "pendingPlayback", "lyricJob", "positionJob",
             "lyricPrefetchUid", "lyricPrefetchJob",
         ).associateWith(::field)
         val previous = main { fields.mapValues { it.value.get(PlaybackController) } }
@@ -1410,9 +1799,20 @@ class PlaybackQueueAppendInstrumentedTest {
 
     private fun field(name: String) = PlaybackController.javaClass.getDeclaredField(name).apply { isAccessible = true }
     private fun uids(player: Player) = (0 until player.mediaItemCount).map { player.getMediaItemAt(it).mediaId }
-    private fun await(predicate: () -> Boolean) {
+    private fun describePlayback(player: Player): String =
+        "count=${player.mediaItemCount}, index=${player.currentMediaItemIndex}, uid=${player.currentMediaItem?.mediaId}, " +
+            "position=${player.currentPosition}/${player.duration}, state=${player.playbackState}, " +
+            "playing=${player.isPlaying}, playWhenReady=${player.playWhenReady}, suppression=${player.playbackSuppressionReason}, " +
+            "seekable=${player.isCurrentMediaItemSeekable}, seekCommand=${player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)}, " +
+            "next=${player.nextMediaItemIndex}, speed=${player.playbackParameters.speed}, shuffle=${player.shuffleModeEnabled}, " +
+            "repeat=${player.repeatMode}, error=${player.playerError?.errorCodeName}/${player.playerError?.cause}"
+
+    private fun await(onTimeout: () -> String = { "Media3 append timed out" }, predicate: () -> Boolean) {
         val deadline = SystemClock.elapsedRealtime() + 8_000
-        while (!main(predicate)) { assertTrue("Media3 append timed out", SystemClock.elapsedRealtime() < deadline); Thread.sleep(10) }
+        while (!main(predicate)) {
+            if (SystemClock.elapsedRealtime() >= deadline) fail(main(onTimeout))
+            Thread.sleep(10)
+        }
     }
     private fun <T> main(block: () -> T): T {
         var result: Result<T>? = null

@@ -9,7 +9,10 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaController
 import androidx.media3.session.MediaSession
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -18,6 +21,7 @@ import com.google.common.util.concurrent.Futures
 import com.leyu.melora.playback.sdk.KwBookApi
 import com.leyu.melora.playback.local.LocalMediaStore
 import com.leyu.melora.playback.local.LocalSong
+import com.leyu.melora.playback.sdk.OnlineCache
 import com.leyu.melora.playback.sdk.OnlineSong
 import java.io.File
 import java.io.RandomAccessFile
@@ -43,6 +47,67 @@ import org.junit.runner.RunWith
 class BookPlaybackInstrumentedTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
+
+    @Test fun mixedPlaylistChapterTapOpensBookAndPlayAllKeepsMusic() {
+        val bookId = "mixed-queue-${System.nanoTime()}"
+        val chapters = (1..2).map { number ->
+            OnlineSong(JSONObject(track(number).raw.toString())
+                .put("songmid", "$bookId-$number")
+                .put("albumId", bookId)
+                .put("singer", "夹具主播")
+                .put("bookHasMore", false)
+                .put("bookPageEnd", number == 2))
+        }
+        val page = KwBookApi.BookChapters(chapters, hasMore = false)
+        val cacheKey = "playlistDetail.book.book_album_$bookId"
+        OnlineCache.put(cacheKey, page)
+        try {
+            withBook(load = { _, _ -> page }, resolveQueueItems = true) { player, controller, queue, item ->
+                val testContext = isolatedContext()
+                val initial = UiTrack.fromOnline(chapters.first())
+                val initialItem = item(initial)
+                val uri = initialItem.localConfiguration!!.uri
+                val music = UiTrack(uri.buildUpon().fragment("music").build().toString(), "歌曲 A", "测试歌手", "测试专辑")
+                val mixed = listOf(initial, music)
+                val playlistId = "user_playlist.mixed-fixture"
+                val local = LocalSong(
+                    id = bookId, uri = uri.toString(), title = initial.title, artist = initial.artist, album = initial.album,
+                    durationMs = 60_000L, sizeBytes = 960_044L, mimeType = "audio/wav", sampleRate = 8_000,
+                    bitrate = 128_000, modifiedAt = 0L, addedAt = 0L, folder = "",
+                )
+                withIsolatedUserLibrary {
+                    LocalMediaStore.replaceAll(LocalMediaStore.songs.value + local)
+                    try {
+                        withInjectedPlaybackController(testContext, controller, queue, detailUid = initial.uid) {
+                            main {
+                                PlaybackController.playFromCollection(
+                                    testContext, initial, 0, playlistId, sourceUids = mixed.map(UiTrack::uid),
+                                ) { error("点播章节应由书本目录提供曲目") }
+                            }
+                            await {
+                                queue.albumId == bookId && player.currentMediaItem?.mediaId == initial.uid &&
+                                    player.mediaItemCount == 2 && player.getMediaItemAt(1).mediaId == chapters[1].uid &&
+                                    player.isPlaying
+                            }
+                            main { PlaybackController.playQueue(testContext, mixed, 0, playlistId) }
+                            await {
+                                queue.albumId == null && player.currentMediaItem?.mediaId == initial.uid &&
+                                    player.mediaItemCount == 2 && player.getMediaItemAt(1).mediaId == music.uid &&
+                                    player.playbackState == Player.STATE_READY
+                            }
+                            main { controller.seekTo(59_500L) }
+                            await { player.currentMediaItem?.mediaId == music.uid && player.isPlaying }
+                        }
+                    } finally {
+                        LocalMediaStore.discardIndexEntry(local.id)
+                        testContext.getSharedPreferences("melora-queue", Context.MODE_PRIVATE).edit().clear().commit()
+                    }
+                }
+            }
+        } finally {
+            OnlineCache.clear(cacheKey)
+        }
+    }
 
     @Test fun chapter100AutomaticallyContinues101WithoutOldMusicQueue() = withBook { player, controller, queue, item ->
         main {
@@ -353,11 +418,21 @@ class BookPlaybackInstrumentedTest {
 
     private fun withBook(
         load: suspend (String, Int) -> KwBookApi.BookChapters = { _, p -> page(p) },
+        resolveQueueItems: Boolean = false,
         test: (ExoPlayer, MediaController, BookPlaybackQueue, (UiTrack) -> MediaItem) -> Unit,
     ) {
         val file = silentWav()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-        val player = main { ExoPlayer.Builder(context).build().apply { volume = 0f } }
+        val player = main {
+            val builder = ExoPlayer.Builder(context)
+            if (resolveQueueItems) {
+                val source = ResolvingDataSource.Factory(DefaultDataSource.Factory(context)) { spec ->
+                    if (spec.uri.scheme == "melora") spec.withUri(Uri.fromFile(file)) else spec
+                }
+                builder.setMediaSourceFactory(DefaultMediaSourceFactory(source))
+            }
+            builder.build().apply { volume = 0f }
+        }
         val session = main { MediaSession.Builder(context, player).setId("book-test-${System.nanoTime()}").build() }
         var controller: MediaController? = null
         var queue: BookPlaybackQueue? = null
@@ -448,9 +523,9 @@ class BookPlaybackInstrumentedTest {
         block: () -> Unit,
     ) {
         val names = listOf(
-            "controller", "controllerFuture", "bookQueue", "appContext", "currentQueueId",
+            "controller", "controllerFuture", "bookQueue", "appContext", "currentQueueId", "collectionSource",
             "lastSavedQueue", "playbackPreflight", "queueLoadJob", "urlPrefetchJob",
-            "urlPrefetchUid", "pendingPlayback", "detailUid",
+            "urlPrefetchUid", "pendingPlayback", "detailUid", "localQueueCheck", "lyricPrefetchUid", "lyricPrefetchJob",
         )
         val fields = names.associateWith { name ->
             PlaybackController.javaClass.getDeclaredField(name).apply { isAccessible = true }
@@ -486,7 +561,7 @@ class BookPlaybackInstrumentedTest {
             }
         } finally {
             main {
-                listOf("playbackPreflight", "queueLoadJob", "urlPrefetchJob").forEach { name ->
+                listOf("playbackPreflight", "queueLoadJob", "urlPrefetchJob", "localQueueCheck", "lyricPrefetchJob").forEach { name ->
                     (fields.getValue(name).get(PlaybackController) as? Job)
                         ?.takeIf { it !== previous[name] }?.cancel()
                 }

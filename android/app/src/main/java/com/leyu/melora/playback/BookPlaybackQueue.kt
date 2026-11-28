@@ -72,8 +72,9 @@ internal suspend fun followingBookChapters(
 
 /** 仅完整属于同一专辑的章节队列才采用听书规则；缺少登记信息或混合曲目不能猜测。 */
 @androidx.annotation.OptIn(UnstableApi::class)
-internal fun Player.bookAlbumId(trackFor: (String) -> UiTrack?): String? {
+internal fun Player.bookAlbumId(queueId: String?, trackFor: (String) -> UiTrack?): String? {
     val albumId = currentMediaItem?.mediaId?.let(trackFor)?.raw?.let(OnlineSong::from)?.bookId() ?: return null
+    if (queueId != bookQueueId(albumId)) return null
     return albumId.takeIf { id -> (0 until mediaItemCount).all { index ->
         trackFor(getMediaItemAt(index).mediaId)?.raw?.let(OnlineSong::from)?.bookId() == id
     } }

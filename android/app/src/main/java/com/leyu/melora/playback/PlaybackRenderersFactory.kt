@@ -1,9 +1,12 @@
 package com.leyu.melora.playback
 
 import android.content.Context
+import android.media.AudioDeviceInfo
+import android.media.AudioRouting
 import android.media.AudioTrack
 import android.os.Build
 import android.os.Handler
+import android.os.Looper
 import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
@@ -25,6 +28,8 @@ import androidx.media3.exoplayer.mediacodec.DefaultMediaCodecAdapterFactory
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.MediaSource
 import java.nio.ByteBuffer
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /** 即时解码唤醒与位置采样共用一条播放循环，不以关闭动态调度换取歌词刷新。 */
 @androidx.annotation.OptIn(UnstableApi::class)
@@ -33,7 +38,8 @@ internal class PlaybackRenderersFactory(
     private val effects: PcmEffectsAudioProcessor,
 ) : DefaultRenderersFactory(context) {
     val outputProbe = AudioOutputProbe()
-    private var platformTrack: AudioTrack? = null
+    private val outputRoute = AudioOutputRoute(AudioTrack::routedOutputTypes)
+    val bluetoothOutput = outputRoute.bluetoothOutput
 
     override fun buildAudioRenderers(
         context: Context,
@@ -56,7 +62,7 @@ internal class PlaybackRenderersFactory(
         ) {
             override fun onStreamChanged(formats: Array<Format>, startPositionUs: Long, offsetUs: Long,
                 mediaPeriodId: MediaSource.MediaPeriodId) {
-                outputProbe.reset()
+                outputProbe.reset(mediaPeriodId.periodUid)
                 super.onStreamChanged(formats, startPositionUs, offsetUs, mediaPeriodId)
             }
 
@@ -65,7 +71,7 @@ internal class PlaybackRenderersFactory(
                     super.handleMessage(messageType, message)
                     return
                 }
-                val track = platformTrack
+                val track = outputRoute.track
                 outputProbe.sample(track?.playbackHeadPosition, track?.let { (it.sampleRate / 20).coerceAtLeast(1) } ?: 1)
                 val failure = message as? AudioOutputProbe.Failure ?: return
                 // 有效播放令牌由主线程暂停/切项时取消；renderer提前disabled本身可能就是故障，不能永久排除。
@@ -101,9 +107,27 @@ internal class PlaybackRenderersFactory(
         val outputs = object : ForwardingAudioOutputProvider(tracks) {
             override fun getAudioOutput(config: AudioOutputProvider.OutputConfig): AudioOutput {
                 val output = tracks.getAudioOutput(config)
-                platformTrack = output.audioTrack
+                val track = output.audioTrack
+                outputRoute.attach(track)
                 outputProbe.reset()
+                val routeListener = AudioRouting.OnRoutingChangedListener { outputRoute.refresh(track) }
+                track.addOnRoutingChangedListener(routeListener, Handler(checkNotNull(Looper.myLooper())))
                 return object : ForwardingAudioOutput(output) {
+                    override fun play() {
+                        super.play()
+                        outputRoute.refresh(track)
+                    }
+
+                    override fun pause() {
+                        super.pause()
+                        outputRoute.refresh(track)
+                    }
+
+                    override fun stop() {
+                        super.stop()
+                        outputRoute.refresh(track)
+                    }
+
                     override fun write(buffer: ByteBuffer, encodedAccessUnitCount: Int, presentationTimeUs: Long): Boolean {
                         val before = buffer.position()
                         val handled = super.write(buffer, encodedAccessUnitCount, presentationTimeUs)
@@ -112,7 +136,8 @@ internal class PlaybackRenderersFactory(
                     }
 
                     override fun release() {
-                        if (platformTrack === output.audioTrack) platformTrack = null
+                        outputRoute.detach(track)
+                        track.removeOnRoutingChangedListener(routeListener)
                         super.release()
                     }
                 }
@@ -146,6 +171,48 @@ internal class PlaybackRenderersFactory(
             override fun setOffloadMode(offloadMode: Int) = super.setOffloadMode(AudioSink.OFFLOAD_MODE_DISABLED)
         }
     }
+}
+
+/** 持有播放线程当前的输出。旧轨释放或已入队的重路由回调不得覆盖新轨状态。 */
+internal class AudioOutputRoute<T : Any>(private val readOutputTypes: (T) -> List<Int>) {
+    var track: T? = null
+        private set
+    private val mutableBluetoothOutput = MutableStateFlow(false)
+    val bluetoothOutput = mutableBluetoothOutput.asStateFlow()
+
+    fun attach(track: T) {
+        this.track = track
+        mutableBluetoothOutput.value = false
+    }
+
+    fun refresh(track: T) {
+        if (this.track === track) {
+            mutableBluetoothOutput.value = readOutputTypes(track).any(::isBluetoothAudioOutputDevice)
+        }
+    }
+
+    fun detach(track: T) {
+        if (this.track === track) {
+            this.track = null
+            mutableBluetoothOutput.value = false
+        }
+    }
+}
+
+internal fun isBluetoothAudioOutputDevice(type: Int): Boolean = when (type) {
+    AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+    AudioDeviceInfo.TYPE_BLE_HEADSET,
+    AudioDeviceInfo.TYPE_BLE_SPEAKER,
+    AudioDeviceInfo.TYPE_BLE_BROADCAST,
+    AudioDeviceInfo.TYPE_BLE_HEARING_AID,
+    AudioDeviceInfo.TYPE_HEARING_AID -> true
+    else -> false
+}
+
+private fun AudioTrack.routedOutputTypes(): List<Int> = when {
+    playState != AudioTrack.PLAYSTATE_PLAYING -> emptyList()
+    Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA -> routedDevices.map { it.type }
+    else -> routedDevice?.let { listOf(it.type) }.orEmpty()
 }
 
 /** 保留更早的即时工作；暂停/结束遵循SDK休眠策略，只有播放中限制位置采样间隔。 */
