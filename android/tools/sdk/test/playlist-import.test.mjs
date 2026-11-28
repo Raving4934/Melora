@@ -182,6 +182,8 @@ test('Netease v6 preview and song detail keep their respective artist and qualit
   const preview = await api.getListDetail('42')
   const completed = await api.getListDetail('43')
   const sizes = ['1.00 KiB', '2.00 KiB', '4.00 KiB', '8.00 KiB']
+  assert.equal(preview.list[0].interval, '03:30')
+  assert.equal(completed.list[0].interval, '03:30')
   assert.equal(preview.list[0].singer, 'A & B、C')
   assert.equal(completed.list[0].singer, 'A &amp; B、、C')
   assert.deepEqual(preview.list[0].types.map(entry => entry.size), [sizes[0], sizes[1], null, sizes[3]])

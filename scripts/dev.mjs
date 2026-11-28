@@ -6,7 +6,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const version = spawnSync('node', [path.join(root, 'scripts/project-version.mjs')], { encoding: 'utf8' })
 if (version.status !== 0) process.exit(version.status || 1)
 const versionLdflag = `-X melora/internal/version.Value=${version.stdout.trim()}`
-const dir = path.join(root, '.superpowers/tmp')
+const dir = path.join(root, 'dist', 'dev')
 mkdirSync(dir, { recursive: true })
 // 先编译再启动可执行文件，避免退出 go run 后遗留无人管理的后端进程。
 const binary = path.join(dir, 'melora-dev')

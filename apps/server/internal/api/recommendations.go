@@ -51,11 +51,6 @@ func discoveryIssueCode(err error) string {
 	return "upstream_unavailable"
 }
 
-type discoverySeed struct {
-	name, source string
-	weight       int
-}
-
 func normalizedMusicName(value string) string {
 	return strings.Map(func(r rune) rune {
 		if unicode.IsSpace(r) || unicode.IsPunct(r) {
@@ -64,54 +59,8 @@ func normalizedMusicName(value string) string {
 		return unicode.ToLower(r)
 	}, value)
 }
-func recommendationSeeds(favorites, history []model.Track) []discoverySeed {
-	scores := map[string]discoverySeed{}
-	add := func(track model.Track, weight int) {
-		if catalog.PlatformNames[track.ProviderID] == "" {
-			return
-		}
-		credited := map[string]bool{}
-		for _, artist := range strings.Split(track.Artist, " / ") {
-			name := strings.TrimSpace(artist)
-			key := normalizedMusicName(name)
-			if key == "" || len([]rune(name)) > 80 || strings.IndexFunc(name, unicode.IsControl) >= 0 || credited[key] {
-				continue
-			}
-			switch key {
-			case "未知歌手", "未知艺术家", "unknownartist", "variousartists", "群星":
-				continue
-			}
-			credited[key] = true
-			seed := scores[key]
-			if seed.name == "" {
-				seed.name = name
-				seed.source = track.ProviderID
-			}
-			seed.weight += weight
-			scores[key] = seed
-		}
-	}
-	for _, track := range favorites[:min(len(favorites), 80)] {
-		add(track, 3)
-	}
-	for _, track := range history[:min(len(history), 40)] {
-		add(track, 2)
-	}
-	out := []discoverySeed{}
-	for _, seed := range scores {
-		out = append(out, seed)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].weight == out[j].weight {
-			return out[i].name < out[j].name
-		}
-		return out[i].weight > out[j].weight
-	})
-	return out[:min(len(out), 3)]
-}
 
 const discoveryTrackLimit = 18
-const discoveryArtistLimit = 6
 
 // 只折叠有明确分隔符的版本后缀，不删除歌曲名中有语义的括号或相似歌手名。
 var discoveryVersionSuffix = regexp.MustCompile(`(?i)(?:\s*[-–—]\s*|\s*[（(\[【])(?:live|现场(?:版)?|演唱会(?:版)?|伴奏(?:版)?|instrumental|remix|remastered|remaster|重制(?:版)?|acoustic|不插电(?:版)?|demo)(?:[\s:：-][^()（）\[\]【】]*)?[）)\]】]?\s*$`)
@@ -140,107 +89,16 @@ func recommendationTrackKey(track model.Track) string {
 	}
 	return normalizedMusicName(title) + "|" + strings.Join(recommendationArtists(track.Artist), "/")
 }
-func recommendationMatches(track model.Track, seed discoverySeed) bool {
+func recommendationMatches(track model.Track, name string) bool {
+	key := normalizedMusicName(name)
 	for _, artist := range recommendationArtists(track.Artist) {
-		if artist == normalizedMusicName(seed.name) {
+		if artist == key {
 			return true
 		}
 	}
 	return false
 }
 
-// 保留旧的单 seed 选择入口；实际发现页使用下方多 seed 轮转。
-func selectRecommendedTracks(related, fresh, known []model.Track, seed *discoverySeed) ([]model.Track, bool) {
-	if seed == nil {
-		return selectDiverseRecommendations(nil, fresh, known, nil)
-	}
-	return selectDiverseRecommendations([][]model.Track{related}, fresh, known, []discoverySeed{*seed})
-}
-func selectDiverseRecommendations(related [][]model.Track, fresh, known []model.Track, seeds []discoverySeed) ([]model.Track, bool) {
-	seen, ids := map[string]bool{}, map[string]bool{}
-	for _, track := range known {
-		seen[recommendationTrackKey(track)] = true
-		ids[track.ID] = true
-	}
-	out := []model.Track{}
-	counts := map[string]int{}
-	personalized := false
-	add := func(track model.Track, personal bool) bool {
-		key := recommendationTrackKey(track)
-		if track.ID == "" || strings.TrimSpace(track.Title) == "" || ids[track.ID] || seen[key] || len(out) >= discoveryTrackLimit {
-			return false
-		}
-		artists := recommendationArtists(track.Artist)
-		if len(artists) == 0 {
-			artists = []string{""}
-		}
-		for _, artist := range artists {
-			if counts[artist] >= discoveryArtistLimit {
-				return false
-			}
-		}
-		seen[key], ids[track.ID] = true, true
-		for _, artist := range artists {
-			counts[artist]++
-		}
-		out = append(out, track)
-		personalized = personalized || personal
-		return true
-	}
-	// 每轮每位真实 seed 至多取一首；至少为公开补位留出 6 个位置。
-	n := min(len(seeds), len(related), 3)
-	offsets := make([]int, n)
-	for len(out) < discoveryTrackLimit-discoveryArtistLimit {
-		added := false
-		for i := 0; i < n && len(out) < discoveryTrackLimit-discoveryArtistLimit; i++ {
-			for offsets[i] < len(related[i]) {
-				track := related[i][offsets[i]]
-				offsets[i]++
-				if recommendationMatches(track, seeds[i]) && add(track, true) {
-					added = true
-					break
-				}
-			}
-		}
-		if !added {
-			break
-		}
-	}
-	for _, track := range fresh {
-		add(track, false)
-	}
-	return out, personalized
-}
-func interleavePlaylists(items []model.Collection, limit int) []model.Collection {
-	groups := map[string][]model.Collection{}
-	for _, item := range items {
-		groups[item.ProviderID] = append(groups[item.ProviderID], item)
-	}
-	out := []model.Collection{}
-	seen := map[string]bool{}
-	for row := 0; len(out) < limit; row++ {
-		found := false
-		for _, source := range catalog.PlatformOrder {
-			list := groups[source]
-			if row >= len(list) {
-				continue
-			}
-			found = true
-			item := list[row]
-			if !seen[item.ID] {
-				out = append(out, item)
-				seen[item.ID] = true
-			}
-			if len(out) == limit {
-				break
-			}
-		}
-		if !found {
-			break
-		}
-	}
-	return out
-}
 func (s *Server) buildLiveRecommendations(w http.ResponseWriter, r *http.Request, batch int) {
 	favorites, err := s.store.FavoriteTracksWithTime(r.Context())
 	if err != nil {
@@ -370,7 +228,7 @@ func (s *Server) buildLiveRecommendations(w http.ResponseWriter, r *http.Request
 		for i, seed := range seeds {
 			matched := 0
 			for _, track := range related[i] {
-				if recommendationMatches(track, discoverySeed{name: seed.name, source: seed.source}) {
+				if recommendationMatches(track, seed.name) {
 					matched++
 				}
 			}

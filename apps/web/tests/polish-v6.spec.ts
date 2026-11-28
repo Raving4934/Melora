@@ -1,6 +1,4 @@
-import fs from 'node:fs/promises'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { writeFile } from 'node:fs/promises'
 import { expect, test as base, type Locator, type Page, type TestInfo } from '@playwright/test'
 import type { Collection, DownloadJob, Provider, SearchResult, Settings, Track } from '../src/lib/types'
 
@@ -8,9 +6,6 @@ import type { Collection, DownloadJob, Provider, SearchResult, Settings, Track }
 // 所有 API 均为浏览器内 mock，只有既有3781入口的静态 GET 通行；不借用旧tests的可写fixture。
 const demoOrigin = 'http://127.0.0.1:3781'
 const artOrigin = 'https://polish-v6-art.invalid'
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
-const runName = `run-${new Date().toISOString().replaceAll(':', '-')}-${process.pid}`
-const evidenceRoot = path.join(root, '.superpowers/tmp/polish-v6-extra', runName)
 const knownBadCDN = /^img[1-4]\.kwcdn\.kuwo\.cn$/i
 
 // 预期值独立于被测 normalizeCoverURL；不在测试里调用生产 helper 生成自己的断言。
@@ -149,12 +144,6 @@ type Harness = {
 async function installMock(page: Page, baseURL: string | undefined, info: TestInfo): Promise<Harness> {
   expect(baseURL, '必须复用主线已启动的静态入口').toBeTruthy()
   expect(new URL(baseURL!).origin, '仅允许3781的静态入口，禁止误连真实3780').toBe(demoOrigin)
-  const directory = path.join(
-    evidenceRoot,
-    info.project.name,
-    `${page.viewportSize()?.width}-${info.title.replace(/[^\p{L}\p{N}-]+/gu, '-').slice(0, 75)}`,
-  )
-  await fs.mkdir(directory, { recursive: true })
   const pageErrors: string[] = []
   const failedRequests: string[] = []
   const consoleErrors: string[] = []
@@ -183,7 +172,7 @@ async function installMock(page: Page, baseURL: string | undefined, info: TestIn
       return gate
     },
     async shot(name) {
-      const file = path.join(directory, `${name}.png`)
+      const file = info.outputPath(`${name}.png`)
       await page.screenshot({ path: file, fullPage: true, animations: 'disabled' })
       await info.attach(name, { path: file, contentType: 'image/png' })
     },
@@ -353,23 +342,17 @@ async function installMock(page: Page, baseURL: string | undefined, info: TestIn
         /* 页面异常仍保留JSON/trace。 */
       }
     }
-    const file = path.join(directory, 'audit.json')
-    await fs.writeFile(
-      file,
-      JSON.stringify(
-        {
-          title: info.title,
-          status: info.status,
-          viewport: page.viewportSize(),
-          requests: harness.requests,
-          unexpected: harness.unexpected,
-          writes: harness.writes,
-          evidence: { ...harness.evidence, finish: undefined },
-        },
-        null,
-        2,
-      ),
-    )
+    const audit = {
+      title: info.title,
+      status: info.status,
+      viewport: page.viewportSize(),
+      requests: harness.requests,
+      unexpected: harness.unexpected,
+      writes: harness.writes,
+      evidence: { ...harness.evidence, finish: undefined },
+    }
+    const file = info.outputPath('audit.json')
+    await writeFile(file, JSON.stringify(audit, null, 2))
     await info.attach('network-and-layout-audit', { path: file, contentType: 'application/json' })
   }
   return harness

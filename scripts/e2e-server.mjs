@@ -7,7 +7,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const version = spawnSync('node', [path.join(root, 'scripts/project-version.mjs')], { encoding: 'utf8' })
 if (version.status !== 0) process.exit(version.status || 1)
 const versionLdflag = `-X melora/internal/version.Value=${version.stdout.trim()}`
-const tmp = path.join(root, '.superpowers/tmp')
+const tmp = path.join(root, 'test-results')
 mkdirSync(tmp, { recursive: true })
 const dir = mkdtempSync(path.join(tmp, 'e2e-'))
 const music = path.join(dir, 'music')

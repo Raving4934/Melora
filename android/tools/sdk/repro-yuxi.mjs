@@ -5,7 +5,10 @@ import { createNative, invokeLx, waitForLx } from './native-node.mjs'
 const REWRITE_STATUS = process.env.REWRITE_STATUS === '1'
 
 globalThis.__lxNative = createNative({})
-const shim = fs.readFileSync('../../app/src/main/assets/lx-shim.js', 'utf8')
+const sourcePath = process.argv[2]
+if (!sourcePath) throw new Error('请通过命令行参数指定本地音源脚本路径')
+
+const shim = fs.readFileSync(new URL('../../app/src/main/assets/lx-shim.js', import.meta.url), 'utf8')
 ;(0, eval)(shim)
 globalThis.lx.currentScriptInfo = { name: '屿溪-终章', description: '', version: '0.0.0', author: '屿溪', homepage: '' }
 
@@ -45,7 +48,7 @@ globalThis.lx.request = (url, options, callback) => {
   return origRequest(url, options, callback)
 }
 
-const code = fs.readFileSync('/tmp/opencode/phone-sources/屿溪-终章__v_0.0.0.js', 'utf8')
+const code = fs.readFileSync(sourcePath, 'utf8')
 ;(0, eval)(`(function(){ ${code} })()`)
 
 await waitForLx(() => globalThis.__lxInited, 12_000)

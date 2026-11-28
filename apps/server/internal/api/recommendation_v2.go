@@ -103,9 +103,10 @@ func buildPreferenceProfile(
 			break
 		}
 	}
-	addArtists := func(artist string, weight float64) {
+	display := map[string]scoredSeed{}
+	addArtists := func(track model.Track, weight float64) {
 		credited := map[string]bool{}
-		for _, name := range strings.Split(artist, " / ") {
+		for _, name := range strings.Split(track.Artist, " / ") {
 			name = strings.TrimSpace(name)
 			key := normalizedMusicName(name)
 			if key == "" || len([]rune(name)) > 80 || strings.IndexFunc(name, func(r rune) bool { return r < 0x20 }) >= 0 || credited[key] {
@@ -117,12 +118,15 @@ func buildPreferenceProfile(
 			}
 			credited[key] = true
 			profile.artistScores[key] += weight
+			if display[key].name == "" && catalog.PlatformNames[track.ProviderID] != "" {
+				display[key] = scoredSeed{name: name, source: track.ProviderID}
+			}
 		}
 	}
 	for _, item := range favorites[:min(len(favorites), 80)] {
 		age := now.Sub(time.Unix(0, item.At)).Seconds()
 		// 主动收藏保留权重下限，避免很久以前的收藏被完全遗忘。
-		addArtists(item.Track.Artist, 3*math.Max(0.35, decayFactor(age, favoriteHalfLifeSeconds)))
+		addArtists(item.Track, 3*math.Max(0.35, decayFactor(age, favoriteHalfLifeSeconds)))
 	}
 	for _, entry := range musicHistory {
 		age := now.Sub(time.Unix(0, entry.PlayedAt)).Seconds()
@@ -137,7 +141,7 @@ func buildPreferenceProfile(
 			// 仅在已有 outcome 信号时轻量修正，旧数据缺失 listened_ms 不被误判为低兴趣。
 			listeningDepth = 0.85 + 0.3*depth
 		}
-		addArtists(entry.Track.Artist, 2*decayFactor(age, playHalfLifeSeconds)*strength*skipPenalty*completionBonus*listeningDepth)
+		addArtists(entry.Track, 2*decayFactor(age, playHalfLifeSeconds)*strength*skipPenalty*completionBonus*listeningDepth)
 		credited := map[string]bool{}
 		for _, name := range strings.Split(entry.Track.Artist, " / ") {
 			key := normalizedMusicName(strings.TrimSpace(name))
@@ -160,9 +164,9 @@ func buildPreferenceProfile(
 		name  string
 		score float64
 	}
-	rankedSeeds := make([]ranked, 0, len(profile.artistScores))
-	for key, score := range profile.artistScores {
-		rankedSeeds = append(rankedSeeds, ranked{name: key, score: score})
+	rankedSeeds := make([]ranked, 0, len(display))
+	for key := range display {
+		rankedSeeds = append(rankedSeeds, ranked{name: key, score: profile.artistScores[key]})
 	}
 	sort.Slice(rankedSeeds, func(i, j int) bool {
 		if rankedSeeds[i].score == rankedSeeds[j].score {
@@ -170,33 +174,10 @@ func buildPreferenceProfile(
 		}
 		return rankedSeeds[i].score > rankedSeeds[j].score
 	})
-	// 种子需要保留原始显示名与来源平台；从收藏/历史里回找。
-	display := map[string]discoverySeed{}
-	remember := func(track model.Track, weight int) {
-		for _, name := range strings.Split(track.Artist, " / ") {
-			name = strings.TrimSpace(name)
-			key := normalizedMusicName(name)
-			if key == "" || display[key].name != "" {
-				continue
-			}
-			if _, ok := profile.artistScores[key]; !ok {
-				continue
-			}
-			display[key] = discoverySeed{name: name, source: track.ProviderID, weight: weight}
-		}
-	}
-	for _, item := range favorites[:min(len(favorites), 80)] {
-		remember(item.Track, 3)
-	}
-	for _, entry := range musicHistory {
-		remember(entry.Track, 2)
-	}
 	for _, item := range rankedSeeds[:min(len(rankedSeeds), 3)] {
-		seed, ok := display[item.name]
-		if !ok || catalog.PlatformNames[seed.source] == "" {
-			continue
-		}
-		profile.seeds = append(profile.seeds, scoredSeed{name: seed.name, source: seed.source, score: item.score})
+		seed := display[item.name]
+		seed.score = item.score
+		profile.seeds = append(profile.seeds, seed)
 	}
 	return profile
 }
@@ -383,7 +364,7 @@ func selectDiscoveryV2(
 			seed := profile.seeds[i]
 			for offsets[i] < len(rankedRelated[i]) {
 				candidate := rankedRelated[i][offsets[i]]
-				if !recommendationMatches(candidate.track, discoverySeed{name: seed.name, source: seed.source}) {
+				if !recommendationMatches(candidate.track, seed.name) {
 					offsets[i]++
 					continue
 				}

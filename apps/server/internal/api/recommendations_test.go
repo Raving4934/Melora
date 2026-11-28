@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"melora/internal/catalog"
 	"melora/internal/model"
+	"melora/internal/store"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -97,9 +98,10 @@ func TestDiscoveryPartialFailureKeepsOtherPlatformsAndAllFailureErrors(t *testin
 	assertStatus(t, w, 502)
 }
 func TestRecommendationFilterKeepsVersionsAndArtistIdentityDistinct(t *testing.T) {
-	seed := discoverySeed{name: "歌手", source: "wy"}
+	seed := scoredSeed{name: "歌手", source: "wy"}
 	related := []model.Track{{ID: "wy:1", Title: "新曲", Artist: "歌手"}, {ID: "wy:2", Title: "新曲", Artist: "歌手"}, {ID: "wy:3", Title: "新曲Live", Artist: "歌手"}, {ID: "wy:4", Title: "新曲", Artist: "歌手B"}}
-	tracks, personal := selectRecommendedTracks(related, nil, nil, &seed)
+	profile := preferenceProfile{seeds: []scoredSeed{seed}}
+	tracks, personal := selectDiscoveryV2(profile, [][]model.Track{related}, nil, nil, nil)
 	if !personal || len(tracks) != 2 || tracks[1].Title != "新曲Live" {
 		t.Fatal(tracks)
 	}
@@ -387,7 +389,7 @@ func TestDiscoveryUsesAtMostThreeSeedsAndPublicFill(t *testing.T) {
 	}
 }
 func TestRecommendationDiversityVersionsKnownIDsAndCollaborations(t *testing.T) {
-	seed := discoverySeed{name: "真实歌手", source: "tx"}
+	seed := scoredSeed{name: "真实歌手", source: "tx"}
 	related := []model.Track{}
 	for i := 0; i < 24; i++ {
 		related = append(related, model.Track{ID: fmt.Sprintf("tx:%d", i), Title: fmt.Sprintf("作品%d", i), Artist: seed.name})
@@ -396,14 +398,15 @@ func TestRecommendationDiversityVersionsKnownIDsAndCollaborations(t *testing.T) 
 	for i := 0; i < 18; i++ {
 		fresh = append(fresh, model.Track{ID: fmt.Sprintf("wy:%d", i), Title: fmt.Sprintf("公开%d", i), Artist: fmt.Sprintf("歌手%d", i)})
 	}
-	out, personal := selectRecommendedTracks(related, fresh, nil, &seed)
+	profile := preferenceProfile{seeds: []scoredSeed{seed}}
+	out, personal := selectDiscoveryV2(profile, [][]model.Track{related}, fresh, nil, nil)
 	count := 0
 	for _, track := range out {
 		if track.Artist == seed.name {
 			count++
 		}
 	}
-	if len(out) != 18 || !personal || count != discoveryArtistLimit {
+	if len(out) != 18 || !personal || count != discoveryArtistCap {
 		t.Fatal("single artist monopolized target feed")
 	}
 	known := []model.Track{{ID: "tx:known", Title: "代表作", Artist: seed.name}}
@@ -414,13 +417,13 @@ func TestRecommendationDiversityVersionsKnownIDsAndCollaborations(t *testing.T) 
 		{ID: "tx:known", Title: "元数据标题变更", Artist: seed.name},
 		{ID: "tx:real", Title: "独立作品（第一章）", Artist: seed.name},
 	}
-	out, personal = selectRecommendedTracks(versions, nil, known, &seed)
+	out, personal = selectDiscoveryV2(profile, [][]model.Track{versions}, nil, nil, known)
 	if len(out) != 1 || out[0].ID != "tx:real" || !personal {
 		t.Fatal("known/version filtering failed", out)
 	}
 	// 合作歌手顺序不应形成重复；不同真实歌手的同名作品可共存。
 	tracks := []model.Track{{ID: "tx:1", Title: "歌", Artist: "甲 / 乙"}, {ID: "tx:2", Title: "歌", Artist: "乙 / 甲"}, {ID: "wy:1", Title: "歌", Artist: "丙"}}
-	out, personal = selectRecommendedTracks(nil, tracks, nil, nil)
+	out, personal = selectDiscoveryV2(preferenceProfile{}, nil, tracks, nil, nil)
 	if len(out) != 2 || personal {
 		t.Fatal("artist identity/version dedup wrong")
 	}
@@ -552,22 +555,33 @@ func TestRecommendationSeedsAreRealUniqueAndBounded(t *testing.T) {
 			favorites = append(favorites, model.Track{ProviderID: "tx", Artist: name})
 		}
 	}
-	seeds := recommendationSeeds(favorites, []model.Track{{ProviderID: "wy", Artist: "丙"}})
-	if len(seeds) != 3 || seeds[0].name != "丙" || seeds[0].weight != 5 {
+	now := time.Now()
+	timed := make([]store.TimedTrack, 0, len(favorites))
+	for _, favorite := range favorites {
+		timed = append(timed, store.TimedTrack{Track: favorite, At: now.UnixNano()})
+	}
+	history := []model.HistoryEntry{{Track: model.Track{ProviderID: "wy", Artist: "丙"}, Kind: model.HistoryKindTrack, PlayedAt: now.UnixNano(), PlayCount: 1}}
+	profile := buildPreferenceProfile(timed, history, nil, now, 0)
+	seeds := profile.seeds
+	if len(seeds) != 3 || seeds[0].name != "丙" || seeds[0].score != 5 {
 		t.Fatal("invalid weighting or unbounded seeds", seeds)
 	}
 	for _, seed := range seeds {
-		if seed.name != "丙" && seed.weight != 3 {
-			t.Fatal("duplicate credits overcounted", seeds)
+		if seed.source == "demo" || seed.name != "丙" && seed.score != 3 {
+			t.Fatal("invalid source or duplicate credits overcounted", seeds)
 		}
+	}
+	if profile.artistScores["甲"] != 3 {
+		t.Fatal("duplicate artist in a track must count once", profile.artistScores)
 	}
 }
 func TestRecommendationKnownRelatedCannotClaimPersonalization(t *testing.T) {
-	seed := discoverySeed{name: "歌手", source: "tx"}
+	seed := scoredSeed{name: "歌手", source: "tx"}
 	known := []model.Track{{ID: "tx:known", Title: "听过的歌", Artist: seed.name}}
 	related := []model.Track{{ID: "tx:live", Title: "听过的歌 (Live)", Artist: seed.name}}
 	fresh := []model.Track{{ID: "wy:public", Title: "公开作品", Artist: "其他歌手"}}
-	out, personal := selectRecommendedTracks(related, fresh, known, &seed)
+	profile := preferenceProfile{seeds: []scoredSeed{seed}}
+	out, personal := selectDiscoveryV2(profile, [][]model.Track{related}, fresh, nil, known)
 	if len(out) != 1 || personal {
 		t.Fatal("filtered related tracks falsely claimed personalization")
 	}
