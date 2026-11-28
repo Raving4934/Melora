@@ -19,6 +19,8 @@ from unittest.mock import patch
 from textwrap import dedent
 import xml.etree.ElementTree as ET
 
+from test_recover_android_test_transport import FAILURE as DEVICE_TRANSPORT_LOSS, REPORT as DEVICE_INTERRUPTED_REPORT
+
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github/workflows"
 RELEASE_STEPS = (
@@ -949,7 +951,7 @@ class DeviceWorkflowTest(unittest.TestCase):
         self.assertIn('-Pandroid.testInstrumentationRunnerArguments.numShards="$TEST_SHARD_COUNT"', connected)
         self.assertIn('-Pandroid.testInstrumentationRunnerArguments.shardIndex="$TEST_SHARD_INDEX"', connected)
 
-    def test_device_test_retries_only_maven_rate_limit_before_tests_start(self) -> None:
+    def test_device_test_retry_is_limited_to_early_maven_rate_limits_and_adb_transport_loss(self) -> None:
         script = shell_script(step(self.workflow, "执行完整 Android 设备回归"))
         rate_limit = dedent("""\
             > Task :app:connectedDebugAndroidTest FAILED
@@ -961,6 +963,7 @@ class DeviceWorkflowTest(unittest.TestCase):
             """)
         success = (0, "Running tests on devices: melora-ci(AVD) - 15\nBUILD SUCCESSFUL\n", True)
         limited = (7, rate_limit, False)
+        interrupted = (11, DEVICE_TRANSPORT_LOSS, DEVICE_INTERRUPTED_REPORT)
         for name, attempts, expected_exit, expected_waits in (
             ("success", [success], 0, []),
             ("recovery", [limited, success], 0, ["10"]),
@@ -973,9 +976,16 @@ class DeviceWorkflowTest(unittest.TestCase):
             ("different task", [(16, rate_limit.replace(":app:connectedDebugAndroidTest", ":app:assembleDebug"), False)], 16, []),
             ("non-retryable HTTP error", [(17, rate_limit.replace("429", "404"), False)], 17, []),
             ("mixed HTTP errors", [(18, rate_limit + rate_limit.replace("429", "401"), False)], 18, []),
+            ("ADB recovered", [interrupted, success], 0, []),
+            ("ADB retry once", [interrupted, interrupted], 11, []),
+            ("ADB with prior assertion", [(19, DEVICE_TRANSPORT_LOSS,
+                 DEVICE_INTERRUPTED_REPORT.replace("Test failed with status -1", "AssertionError"))], 19, []),
+            ("Maven retries and ADB recovery", [limited, limited, interrupted, success], 0, ["10", "20"]),
         ):
             with self.subTest(name=name), tempfile.TemporaryDirectory(prefix="melora connected tests ") as directory:
-                root = Path(directory)
+                root = Path(directory) / "android"
+                root.mkdir()
+                (root.parent / "scripts").symlink_to(ROOT / "scripts", target_is_directory=True)
                 gradle = root / "gradlew"
                 gradle.write_text(dedent("""\
                     #!/usr/bin/env python3
@@ -989,10 +999,11 @@ class DeviceWorkflowTest(unittest.TestCase):
                     with calls.open("a") as output:
                         output.write(json.dumps(sys.argv[1:]) + "\\n")
                     status, message, report = json.loads(os.environ["GRADLE_RESULTS"])[attempt]
+                    assert not Path("app/build/outputs/androidTest-results/connected").exists()
                     if report:
                         reports = Path("app/build/outputs/androidTest-results/connected/debug")
                         reports.mkdir(parents=True)
-                        (reports / "TEST-device.xml").write_text("<testsuite/>")
+                        (reports / "TEST-device.xml").write_text(report if isinstance(report, str) else "<testsuite/>")
                     print(message, end="")
                     sys.exit(status)
                     """))
@@ -1000,12 +1011,33 @@ class DeviceWorkflowTest(unittest.TestCase):
                 sleep = root / "sleep"
                 sleep.write_text('#!/bin/bash\nprintf \'%s\\n\' "$@" >> sleep-calls.log\n')
                 sleep.chmod(0o755)
+                adb = root / "adb"
+                adb.write_text(dedent("""\
+                    #!/usr/bin/env python3
+                    from pathlib import Path
+                    import sys
+
+                    args = sys.argv[1:]
+                    with Path("adb-calls.log").open("a") as calls:
+                        calls.write(" ".join(args) + "\\n")
+                    if args == ["devices", "-l"]:
+                        attempts = Path("gradle-calls.jsonl")
+                        transport = 1 + (len(attempts.read_text().splitlines()) if attempts.exists() else 0)
+                        print(f"emulator-5554\\tdevice transport_id:{transport}")
+                    elif args[-2:] == ["getprop", "ro.boot.qemu.avd_name"]:
+                        print("melora-ci")
+                    elif args[-3:] == ["pm", "clear", "com.leyu.melora.debug"]:
+                        print("Success")
+                    elif args[-3:] == ["get", "com.leyu.melora.debug", "SYSTEM_ALERT_WINDOW"]:
+                        print("SYSTEM_ALERT_WINDOW: allow")
+                    """))
+                adb.chmod(0o755)
                 result = subprocess.run(
                     ["bash", "-euc", script], cwd=root, capture_output=True, text=True, timeout=10,
-                    env={**os.environ, "PATH": directory + os.pathsep + os.environ["PATH"],
+                    env={**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
                          "DEVICE_LOG_DIR": directory, "CI_GRADLE_JVM_ARGS": "-Xmx4G",
                          "TEST_SHARD_COUNT": "2", "TEST_SHARD_INDEX": "1",
-                         "GRADLE_RESULTS": json.dumps(attempts)},
+                         "ANDROID_SERIAL": "emulator-5554", "GRADLE_RESULTS": json.dumps(attempts)},
                 )
                 self.assertEqual(result.returncode, expected_exit, result.stdout + result.stderr)
                 calls = [json.loads(line) for line in (root / "gradle-calls.jsonl").read_text().splitlines()]
@@ -1015,8 +1047,13 @@ class DeviceWorkflowTest(unittest.TestCase):
                 self.assertEqual(calls, [calls[0]] * len(attempts))
                 waits = root / "sleep-calls.log"
                 self.assertEqual(waits.read_text().splitlines() if waits.exists() else [], expected_waits)
+                should_recover = any(attempt == interrupted for attempt in attempts)
+                archived = root.parent / "android-test-results-interrupted/debug/TEST-device.xml"
+                self.assertEqual(archived.exists(), should_recover)
+                restart_calls = (root / "adb-calls.log").read_text().count("wait-for-device")
+                self.assertEqual(restart_calls, int(should_recover))
                 for attempt, (_, message, _) in enumerate(attempts, start=1):
-                    self.assertEqual((root / f"connected-tests-attempt-{attempt}.log").read_text(), message)
+                    self.assertEqual((root.parent / f"connected-tests-attempt-{attempt}.log").read_text(), message)
 
     def test_prebuilt_install_failure_cannot_continue_to_overlay_setup(self) -> None:
         script = shell_script(step(self.workflow, "安装测试目标并预置 overlay 权限"))
