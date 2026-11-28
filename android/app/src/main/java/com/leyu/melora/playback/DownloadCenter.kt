@@ -1,6 +1,5 @@
 package com.leyu.melora.playback
 
-import android.content.Context
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.sdk.SourceResolver
 import com.leyu.melora.playback.local.LocalSong
@@ -39,16 +38,18 @@ object DownloadCenter {
 
     private const val MAX_FINISHED_RECORDS = 200
     private lateinit var file: File
+    private var hasReadablePrimary = false
     private val lock = Any()
     private val _records = MutableStateFlow<List<Record>>(emptyList())
     val records: StateFlow<List<Record>> = _records
 
-    fun init(context: Context) = synchronized(lock) {
+    internal fun init(directory: File) = synchronized(lock) {
         if (::file.isInitialized) return@synchronized
-        file = File(context.applicationContext.filesDir, "downloads.json")
-        val loaded = read(file)
-        // 上次进程被杀时仍在下载的条目，恢复为“已中断”；下次正常状态提交时再落盘。
-        // 即使恢复时存储暂时不可写，也不会把内存状态谎报成已持久化。
+        file = directory.resolve("downloads.json")
+        val primary = read(file)
+        hasReadablePrimary = primary != null
+        val loaded = primary ?: read(file.resolveSibling("${file.name}.bak")).orEmpty()
+        // 上次中断的下载恢复成暂停，下次正常状态提交时落盘。
         _records.value = retainActiveAndRecentFinished(loaded.map(::restoreInterrupted))
     }
 
@@ -239,21 +240,22 @@ object DownloadCenter {
         val next = retainActiveAndRecentFinished(change(current))
         if (next == current) return@synchronized true
         val saved = !persist || !::file.isInitialized || runCatching {
-            writeTextAtomically(file, toJson(next).toString())
+            val payload = JSONArray().apply { next.forEach { put(recordToJson(it)) } }.toString()
+            // 主文件损坏时保留上次可读的备份，直到新的主文件写入成功。
+            writeTextAtomically(file, payload, keepBackup = hasReadablePrimary)
+            hasReadablePrimary = true
         }.isSuccess
         // 完成态必须先落盘；失败/暂停等瞬时状态仍要反馈，不能因磁盘满永远显示下载中。
         if (saved || !requireSaved) _records.value = next
         saved
     }
 
-    private fun read(source: File): List<Record> {
-        if (!source.isFile) return emptyList()
+    private fun read(source: File): List<Record>? {
+        if (!source.isFile) return null
         return runCatching {
             val array = JSONArray(source.readText())
-            (0 until array.length()).mapNotNull { index ->
-                array.optJSONObject(index)?.let(::recordFromJson)
-            }
-        }.getOrDefault(emptyList())
+            (0 until array.length()).mapNotNull { array.optJSONObject(it)?.let(::recordFromJson) }
+        }.getOrNull()
     }
 
     private fun retainActiveAndRecentFinished(records: List<Record>): List<Record> {
@@ -265,10 +267,6 @@ object DownloadCenter {
                 finished++ < MAX_FINISHED_RECORDS
             }
         }
-    }
-
-    private fun toJson(records: List<Record>): JSONArray = JSONArray().apply {
-        records.forEach { put(recordToJson(it)) }
     }
 
     /** 读取旧记录时把顶层 img 一次性迁入 song.img；新格式不再保存重复字段。 */

@@ -61,13 +61,14 @@ internal object FlacMetadataWriter {
         val rewritten = File(file.parentFile, "${file.name}.tag")
         try {
             file.inputStream().buffered(AUDIO_TRANSFER_BUFFER_BYTES).use { input ->
-                require(input.readExact(marker.size).contentEquals(marker)) { "不是有效的 FLAC 文件" }
-                val original = readBlocks(input)
-                require(original.firstOrNull()?.let { it.type == STREAM_INFO && it.data.size == 34 } == true) {
-                    "FLAC STREAMINFO 缺失或损坏"
-                }
-                val merged = mergeBlocks(original, title, artist, album, cover, lyric, year)
                 rewritten.outputStream().buffered(AUDIO_TRANSFER_BUFFER_BYTES).use { output ->
+                    input.skipId3Prefix(output)
+                    require(input.readExact(marker.size).contentEquals(marker)) { "不是有效的 FLAC 文件" }
+                    val original = readBlocks(input)
+                    require(original.firstOrNull()?.let { it.type == STREAM_INFO && it.data.size == 34 } == true) {
+                        "FLAC STREAMINFO 缺失或损坏"
+                    }
+                    val merged = mergeBlocks(original, title, artist, album, cover, lyric, year)
                     output.write(marker)
                     merged.forEachIndexed { index, block -> writeBlock(output, block, index == merged.lastIndex) }
                     input.copyTo(output, AUDIO_TRANSFER_BUFFER_BYTES)
@@ -189,17 +190,9 @@ internal object FlacMetadataWriter {
     }
 
     private fun buildPicture(cover: ByteArray): ByteArray {
-        val mime = when {
-            cover.size >= 8 && cover.copyOfRange(0, 8).contentEquals(
-                byteArrayOf(0x89.toByte(), 'P'.code.toByte(), 'N'.code.toByte(), 'G'.code.toByte(), 0x0D, 0x0A, 0x1A, 0x0A),
-            ) -> "image/png"
-            cover.size >= 12 && cover.copyOfRange(0, 4).toString(Charsets.US_ASCII) == "RIFF" &&
-                cover.copyOfRange(8, 12).toString(Charsets.US_ASCII) == "WEBP" -> "image/webp"
-            else -> "image/jpeg"
-        }
         val output = ByteArrayOutputStream(cover.size + 64)
         output.writeBe32(FRONT_COVER)
-        output.writeBeUtf8(mime)
+        output.writeBeUtf8(embeddedCoverMime(cover))
         output.writeBeUtf8("")
         repeat(4) { output.writeBe32(0) } // 宽、高、色深、调色板颜色数未知时写 0
         output.writeBe32(cover.size)
@@ -295,4 +288,13 @@ internal object FlacMetadataWriter {
             ((bytes[offset + 1].toInt() and 0xFF) shl 16) or
             ((bytes[offset + 2].toInt() and 0xFF) shl 8) or
             (bytes[offset + 3].toInt() and 0xFF)
+}
+
+internal fun embeddedCoverMime(cover: ByteArray): String = when {
+    cover.size >= 8 && cover.copyOfRange(0, 8).contentEquals(
+        byteArrayOf(0x89.toByte(), 'P'.code.toByte(), 'N'.code.toByte(), 'G'.code.toByte(), 0x0D, 0x0A, 0x1A, 0x0A),
+    ) -> "image/png"
+    cover.size >= 12 && String(cover, 0, 4, Charsets.US_ASCII) == "RIFF" &&
+        String(cover, 8, 4, Charsets.US_ASCII) == "WEBP" -> "image/webp"
+    else -> "image/jpeg"
 }

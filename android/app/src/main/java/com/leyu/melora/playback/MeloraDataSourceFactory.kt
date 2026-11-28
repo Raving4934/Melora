@@ -11,18 +11,29 @@ import androidx.media3.datasource.ResolvingDataSource
 import com.leyu.melora.playback.local.LocalMediaIoCoordinator
 import com.leyu.melora.playback.local.LocalMediaStore
 import com.leyu.melora.playback.local.LocalSong
+import com.leyu.melora.playback.sdk.LxScriptPool
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.sdk.SourceResolver
 import java.io.FileNotFoundException
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.runBlocking
 
 /** 曲目注册表：MediaItem 的 melora:// 虚拟 URI 与真实曲目信息之间的桥梁。 */
 object TrackRegistry {
     private val tracks = ConcurrentHashMap<String, UiTrack>()
-    data class Resolution(
+    private val nextPlaybackId = AtomicLong()
+
+    class NetworkPlayback internal constructor(
+        internal val itemUri: Uri,
+        internal val confirmation: LxScriptPool.PlaybackConfirmation,
+    ) {
+        @Volatile internal var firstNetworkByteMs: Long? = null
+    }
+
+    internal data class Resolution(
         val quality: String,
         val resourceId: String?,
         val requestedQuality: String? = null,
@@ -31,6 +42,9 @@ object TrackRegistry {
         val localFile: LocalSong? = null,
         val downloadUri: String? = null,
         val sourceQuality: String? = null,
+        internal val networkPlayback: NetworkPlayback? = null,
+        val cacheResource: AudioCacheResource? = null,
+        val cacheItemUri: Uri? = null,
     )
     // 音质与解析器必须同一次更新，缓存命中/重解析不能留下另一条链路的旧来源。
     private val resolutions = ConcurrentHashMap<String, Resolution>()
@@ -52,7 +66,10 @@ object TrackRegistry {
         resolutions.clear()
     }
 
-    fun resolved(uid: String): Resolution? = resolutions[uid]
+    internal fun resolved(uid: String): Resolution? = resolutions[uid]
+
+    internal fun cacheResourceFor(uid: String, itemUri: Uri?): AudioCacheResource? =
+        itemUri?.let { current -> resolutions[uid]?.takeIf { it.cacheItemUri == current }?.cacheResource }
 
     /** 本地资源（下载文件或本地媒体文件）：播放层据此跳过网络预取/重试。 */
     fun isLocalResource(uid: String): Boolean = resolutions[uid]?.resourceId in LOCAL_RESOURCE_IDS
@@ -84,12 +101,20 @@ object TrackRegistry {
         artworkListeners.forEach { it(uid, url) }
     }
 
-    fun notifyResolved(uid: String, quality: String, resourceId: String?, requestedQuality: String? = null, platform: String? = null, fromCompleteCache: Boolean = false, localFile: LocalSong? = null, downloadUri: String? = null, sourceQuality: String? = null) {
-        resolutions[uid] = Resolution(quality, resourceId, requestedQuality, platform, fromCompleteCache, localFile, downloadUri, sourceQuality)
+    internal fun notifyResolved(
+        uid: String, quality: String, resourceId: String?, requestedQuality: String? = null,
+        platform: String? = null, fromCompleteCache: Boolean = false, localFile: LocalSong? = null,
+        downloadUri: String? = null, sourceQuality: String? = null, networkPlayback: NetworkPlayback? = null,
+        cacheResource: AudioCacheResource? = null, cacheItemUri: Uri? = null,
+    ) {
+        resolutions[uid] = Resolution(quality, resourceId, requestedQuality, platform, fromCompleteCache,
+            localFile, downloadUri, sourceQuality, networkPlayback, cacheResource, cacheItemUri)
         resolvedListeners.forEach { it(uid) }
     }
 
-    fun songUri(uid: String): Uri = "melora://song/$uid".toUri()
+    // 队列可以重复出现同一首歌，每次建项单独标记，以区分实际播放与另一项预读。
+    fun songUri(uid: String): Uri = Uri.Builder().scheme("melora").authority("song").appendPath(uid)
+        .appendQueryParameter("play", nextPlaybackId.incrementAndGet().toString()).build()
 
     val LOCAL_RESOURCE_IDS = setOf("local", "localmedia")
 }
@@ -175,8 +200,11 @@ class MeloraDataSourceFactory(context: Context, base: DataSource.Factory) : Data
             )
         }
         val resource = AudioCacheStore.registerResolved(appContext, uid, preferredQuality, resolved)
+        val playback = resolved.playbackConfirmation?.let { TrackRegistry.NetworkPlayback(uri, it) }
         TrackRegistry.notifyResolved(uid, resource.actualQuality, resolved.resourceId, preferredQuality,
-            resolved.song.source, sourceQuality = resource.sourceQuality)
-        return AudioCacheStore.applyToDataSpec(resource, dataSpec)
+            resolved.song.source, sourceQuality = resource.sourceQuality, networkPlayback = playback,
+            cacheResource = resource, cacheItemUri = uri)
+        val spec = AudioCacheStore.applyToDataSpec(resource, dataSpec)
+        return if (playback == null) spec else spec.buildUpon().setCustomData(playback).build()
     }
 }

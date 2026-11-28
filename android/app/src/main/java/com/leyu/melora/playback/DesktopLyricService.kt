@@ -108,7 +108,6 @@ class DesktopLyricService : Service() {
         if (lyricView != null) return START_STICKY
 
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        updateScreenBounds()
         screenInteractive = getSystemService(PowerManager::class.java).isInteractive
         if (!addOverlay()) {
             MeloraSettings.updateShowDesktopLyrics(false)
@@ -143,7 +142,6 @@ class DesktopLyricService : Service() {
 
     private fun addOverlay(): Boolean {
         val view = DesktopLyricViewport(this).apply { layoutDirection = resources.configuration.layoutDirection }
-        lyricView = view
         panelView = buildControlPanel(resources.displayMetrics.density)
         layoutParams = overlayParams(MeloraSettings.lockLyrics.value)
         panelParams = overlayParams(false)
@@ -155,9 +153,12 @@ class DesktopLyricService : Service() {
             if (oldWidth != screenWidth || oldHeight != screenHeight) applyVisualSettings()
             insets
         }
+        lyricView = view
+        updatePlaybackSnapshot(PlaybackController.state.value, PlaybackController.lyric.value)
         applyVisualSettings()
-        updatePlayback(PlaybackController.state.value, PlaybackController.lyric.value)
-        return runCatching { windowManager.addView(view, layoutParams) }.isSuccess
+        return runCatching { windowManager.addView(view, layoutParams) }
+            .onFailure { removeOverlay() }
+            .isSuccess
     }
 
     @SuppressLint("RtlHardcoded") // 物理窗口坐标，文字与拖动锚点单独处理RTL。
@@ -348,7 +349,6 @@ class DesktopLyricService : Service() {
 
         // 播放/暂停：品牌蓝实心圆 + 白色图标，作为视觉焦点
         playPauseButton = ImageButton(this).apply {
-            setImageResource(R.drawable.ic_lyric_play)
             setColorFilter(AndroidColor.WHITE)
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
@@ -362,6 +362,7 @@ class DesktopLyricService : Service() {
             }
             setOnClickListener { PlaybackController.toggle() }
         }
+        updatePlayPauseIcon(latestState.playing)
         panel.addView(playPauseButton)
 
         iconButton(R.drawable.ic_lyric_next, iconSize, touchSize, idle).apply {
@@ -466,22 +467,23 @@ class DesktopLyricService : Service() {
     private fun observeLyrics() {
         scope.launch {
             combine(PlaybackController.state, PlaybackController.lyric) { state, lyric -> state to lyric }
-                .collect { (state, lyric) -> updatePlayback(state, lyric) }
+                .collect { (state, lyric) ->
+                    updatePlaybackSnapshot(state, lyric)
+                    renderLyrics()
+                    scheduleUpdates()
+                }
         }
     }
 
-    private fun updatePlayback(state: PlayerUiState, lyric: PlayerLyric?) {
+    private fun updatePlaybackSnapshot(state: PlayerUiState, lyric: PlayerLyric?) {
         if (latestState.playing != state.playing) updatePlayPauseIcon(state.playing)
         latestState = state
-        val lines = lyric?.takeIf { it.uid == state.current?.uid }?.lines.orEmpty()
-        lyricLines = lines
-        renderLyrics()
-        scheduleUpdates()
+        lyricLines = lyric?.takeIf { it.uid == state.current?.uid }?.lines.orEmpty()
     }
 
     private fun scheduleUpdates() {
         val view = lyricView
-        val visible = view?.isShown == true && view.windowVisibility == View.VISIBLE
+        val visible = view?.isAttachedToWindow == true && view.isShown && view.windowVisibility == View.VISIBLE
         val active = desktopLyricNeedsFrames(latestState, true, screenInteractive,
             visible)
         val now = SystemClock.elapsedRealtime()
@@ -531,13 +533,13 @@ class DesktopLyricService : Service() {
         applyVisualSettings()
     }
 
-    override fun onDestroy() {
+    private fun removeOverlay() {
         lyricView?.removeCallbacks(lineTick)
         lyricView?.removeCallbacks(hidePanelRunnable)
         Choreographer.getInstance().removeFrameCallback(frameCallback)
-        if (screenReceiverRegistered) unregisterReceiver(screenReceiver)
-        finishDrag()
-        scope.cancel()
+        framePosted = false
+        lineTickPosted = false
+        dragEnabled = null
         panelView?.animate()?.cancel()
         panelView?.takeIf { it.isAttachedToWindow }?.let { runCatching { windowManager.removeViewImmediate(it) } }
         lyricView?.takeIf { it.isAttachedToWindow }?.let { runCatching { windowManager.removeViewImmediate(it) } }
@@ -545,6 +547,13 @@ class DesktopLyricService : Service() {
         playPauseButton = null
         lockButton = null
         lyricView = null
+    }
+
+    override fun onDestroy() {
+        if (screenReceiverRegistered) unregisterReceiver(screenReceiver)
+        finishDrag()
+        scope.cancel()
+        removeOverlay()
         super.onDestroy()
     }
 

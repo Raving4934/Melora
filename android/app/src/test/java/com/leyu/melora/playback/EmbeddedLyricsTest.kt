@@ -113,7 +113,7 @@ class EmbeddedLyricsTest {
             DownloadMetadataWriter.write(file, ".mp3", "Title", "Artist", "Album", null, expected)
 
             val actual = file.inputStream().use { input ->
-                LocalTagReader.readEmbeddedLyrics(input, "audio/mpeg")
+                LocalTagReader.readEmbeddedLyrics(input)
             }
 
             assertEquals(expected.plain, actual?.plain)

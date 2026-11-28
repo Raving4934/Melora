@@ -17,6 +17,7 @@ import androidx.media3.extractor.SeekMap
 import androidx.media3.extractor.TrackOutput
 import androidx.media3.extractor.mp3.Mp3Extractor
 import java.io.ByteArrayInputStream
+import java.io.BufferedInputStream
 import java.io.DataInputStream
 import java.io.EOFException
 import androidx.media3.extractor.FlacStreamMetadata
@@ -25,6 +26,7 @@ import com.leyu.melora.playback.local.LocalTagReader
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.sdk.SourceResolver
 import java.io.InputStream
+import java.io.OutputStream
 import org.json.JSONObject
 
 /** 仅在下载任务IO线程检查单个候选/临时文件，不参与首播、列表或全库扫描。 */
@@ -72,11 +74,81 @@ internal fun sameDownloadedQuality(a: AudioSpecification, b: AudioSpecification)
     return SourceResolver.sameQualityTier(first, second) || SourceResolver.sameQualityTier(second, first)
 }
 
+internal fun isPreviewDuration(expectedSeconds: Int, actualDurationMs: Long): Boolean =
+    expectedSeconds > 0 && actualDurationMs > 0 && actualDurationMs < expectedSeconds * 650L
+
+private const val ID3_HEADER_BYTES = 10
+
+private fun ByteArray.id3BodySize(offset: Int): Int? {
+    if (this[offset] != 73.toByte() || this[offset + 1] != 68.toByte() || this[offset + 2] != 51.toByte() ||
+        this[offset + 3].toInt() !in 2..4 || (offset + 6..offset + 9).any { this[it] < 0 }
+    ) return null
+    return (offset + 6..offset + 9).fold(0) { size, index -> (size shl 7) + this[index].toInt() }
+}
+
+private fun ByteArray.id3FooterSize(offset: Int): Int =
+    if (this[offset + 3].toInt() == 4 && this[offset + 5].toInt() and 0x10 != 0) ID3_HEADER_BYTES else 0
+
+internal class Id3Prefix(val header: ByteArray, val bodySize: Int) {
+    val footerSize = header.id3FooterSize(0)
+}
+
+internal fun BufferedInputStream.readId3Prefix(): Id3Prefix? {
+    val header = ByteArray(ID3_HEADER_BYTES)
+    mark(header.size)
+    try {
+        DataInputStream(this).readFully(header)
+    } catch (_: EOFException) {
+        reset()
+        return null
+    }
+    val bodySize = header.id3BodySize(0)
+    if (bodySize == null) {
+        reset()
+        return null
+    }
+    return Id3Prefix(header, bodySize)
+}
+
+internal fun InputStream.skipId3Bytes(size: Int) {
+    var remaining = size
+    while (remaining > 0) {
+        // 文件流可以 seek 超出 EOF，读取最后一个字节才能确认 tag 完整。
+        val skipped = if (remaining > 1) skip((remaining - 1).toLong()).toInt() else 0
+        if (skipped > 0) remaining -= skipped
+        else if (read() < 0) throw EOFException("ID3 tag truncated")
+        else remaining--
+    }
+}
+
+/** 跳过容器前的 ID3 标签，写标签时可把原有前缀逐字节保留。 */
+internal fun BufferedInputStream.skipId3Prefix(copyTo: OutputStream? = null): Long {
+    var offset = 0L
+    while (true) {
+        val tag = readId3Prefix() ?: return offset
+        var remaining = tag.bodySize + tag.footerSize
+        offset += tag.header.size + remaining
+        if (copyTo == null) {
+            skipId3Bytes(remaining)
+        } else {
+            copyTo.write(tag.header)
+            val buffer = ByteArray(minOf(8192, remaining))
+            val data = DataInputStream(this)
+            while (remaining > 0) {
+                val count = minOf(buffer.size, remaining)
+                data.readFully(buffer, 0, count)
+                copyTo.write(buffer, 0, count)
+                remaining -= count
+            }
+        }
+    }
+}
+
 /** 校验没有 PCM 摘要的文件时，流式比较音频，避免标签变化制造重复文件。 */
 internal fun sameDownloadedBytes(first: InputStream, second: InputStream, flac: Boolean): Boolean {
-    val a = DataInputStream(first)
-    val b = DataInputStream(second)
     try {
+        val a = DataInputStream(first.buffered().apply { if (flac) skipId3Prefix() })
+        val b = DataInputStream(second.buffered().apply { if (flac) skipId3Prefix() })
         if (flac && (!a.skipFlacMetadata() || !b.skipFlacMetadata())) return false
 
         val left = ByteArray(AUDIO_TRANSFER_BUFFER_BYTES)
@@ -126,13 +198,16 @@ internal fun isBetterDownloadQuality(
         (candidate.bitDepth > local.bitDepth || candidate.sampleRate > local.sampleRate)
 }
 
-private const val DOWNLOAD_UPGRADE_PREFIX_LIMIT = 128 * 1024
+internal const val AUDIO_PREFIX_PROBE_BYTES = 128 * 1024
 
 internal data class DownloadUpgradeProbe(
     val prefix: ByteArray,
     val spec: AudioSpecification?,
     val flac: DownloadAudio? = null,
+    val durationMs: Long? = flac?.durationMs?.takeIf { it > 0 },
 )
+
+private data class PrefixAudioInfo(val spec: AudioSpecification, val durationMs: Long?)
 
 /**
  * 从下载器已经打开的同一个流读取有限前缀；前缀必须原样回写，不能让预检吞掉正文。
@@ -140,20 +215,25 @@ internal data class DownloadUpgradeProbe(
  */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 internal fun probeDownloadUpgrade(input: InputStream): DownloadUpgradeProbe {
-    var prefix = readDownloadUpgradePrefix(input, limit = 8 * 1024)
-    if (hasFlacSignature(prefix)) {
-        val flac = flacDownloadAudio(prefix)
-        return DownloadUpgradeProbe(prefix, flac?.spec, flac)
-    }
-    var spec = mp3PrefixAudioSpec(prefix) ?: mediaPrefixAudioSpec(prefix)
-    if (spec?.verifiedQuality == null && prefix.size == 8 * 1024) {
+    val initialLimit = 8 * 1024
+    var prefix = readDownloadUpgradePrefix(input, limit = initialLimit)
+    var audioOffset = prefix.audioPayloadOffset()
+    // 第一段可能在 ID3 内或只读到容器头的一部分，先补齐再交给解封装器。
+    if (audioOffset > 0 && prefix.size - audioOffset < 42 && prefix.size == initialLimit) {
         prefix = readDownloadUpgradePrefix(input, prefix)
-        spec = mp3PrefixAudioSpec(prefix) ?: mediaPrefixAudioSpec(prefix)
+        audioOffset = prefix.audioPayloadOffset()
     }
-    return DownloadUpgradeProbe(prefix, spec)
+    probeFlacPrefix(prefix, audioOffset)?.let { return it }
+    var info = mp3PrefixAudioInfo(prefix) ?: mediaPrefixAudioInfo(prefix)
+    if (info?.spec?.verifiedQuality == null && prefix.size == initialLimit) {
+        prefix = readDownloadUpgradePrefix(input, prefix)
+        probeFlacPrefix(prefix, prefix.audioPayloadOffset())?.let { return it }
+        info = mp3PrefixAudioInfo(prefix) ?: mediaPrefixAudioInfo(prefix)
+    }
+    return DownloadUpgradeProbe(prefix, info?.spec, durationMs = info?.durationMs)
 }
 
-internal fun readDownloadUpgradePrefix(input: InputStream, initial: ByteArray = byteArrayOf(), limit: Int = DOWNLOAD_UPGRADE_PREFIX_LIMIT): ByteArray {
+internal fun readDownloadUpgradePrefix(input: InputStream, initial: ByteArray = byteArrayOf(), limit: Int = AUDIO_PREFIX_PROBE_BYTES): ByteArray {
     val buffer = ByteArray(limit)
     initial.copyInto(buffer)
     var count = initial.size
@@ -175,14 +255,30 @@ internal fun readDownloadUpgradePrefix(input: InputStream, initial: ByteArray = 
     return buffer.copyOf(count)
 }
 
-private fun hasFlacSignature(prefix: ByteArray): Boolean =
-    prefix.size >= 4 && prefix[0] == 102.toByte() && prefix[1] == 76.toByte() &&
-        prefix[2] == 97.toByte() && prefix[3] == 67.toByte()
+private fun hasFlacSignature(prefix: ByteArray, offset: Int = 0): Boolean =
+    prefix.size - offset >= 4 && prefix[offset] == 102.toByte() && prefix[offset + 1] == 76.toByte() &&
+        prefix[offset + 2] == 97.toByte() && prefix[offset + 3] == 67.toByte()
 
-/** 复用Media3的CBR/Xing/VBRI识别和平均码率，不用MP3首帧码率代替VBR全曲规格。 */
+private fun ByteArray.audioPayloadOffset(): Int {
+    var offset = 0
+    while (size - offset >= ID3_HEADER_BYTES) {
+        val bodySize = id3BodySize(offset) ?: break
+        offset += ID3_HEADER_BYTES + bodySize + id3FooterSize(offset)
+    }
+    return offset
+}
+
+private fun probeFlacPrefix(prefix: ByteArray, offset: Int): DownloadUpgradeProbe? {
+    if (prefix.size - offset < 42 || !hasFlacSignature(prefix, offset)) return null
+    val flac = flacDownloadAudio(if (offset == 0) prefix else prefix.copyOfRange(offset, offset + 42))
+    return DownloadUpgradeProbe(prefix, flac?.spec, flac)
+}
+
+/** 复用 Media3 的 MP3 识别。输入总长保持未知，让时长只来自音频自身的信息。 */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-private fun mp3PrefixAudioSpec(prefix: ByteArray): AudioSpecification? {
+private fun mp3PrefixAudioInfo(prefix: ByteArray): PrefixAudioInfo? {
     var format: Format? = null
+    var durationUs = C.TIME_UNSET
     val extractor = Mp3Extractor(Mp3Extractor.FLAG_DISABLE_ID3_METADATA)
     val reader = ByteArrayInputStream(prefix)
     val input = DefaultExtractorInput(DataReader(reader::read), 0, C.LENGTH_UNSET.toLong())
@@ -191,7 +287,7 @@ private fun mp3PrefixAudioSpec(prefix: ByteArray): AudioSpecification? {
             override fun format(value: Format) { format = value }
         }
         override fun endTracks() = Unit
-        override fun seekMap(seekMap: SeekMap) = Unit
+        override fun seekMap(seekMap: SeekMap) { durationUs = seekMap.durationUs }
     })
     try {
         if (!extractor.sniff(input)) return null
@@ -201,37 +297,47 @@ private fun mp3PrefixAudioSpec(prefix: ByteArray): AudioSpecification? {
     } catch (_: java.io.IOException) {
         // 有界前缀耗尽不等于网络读取失败；真正的输入异常已在读取前缀时原样抛出。
     } finally { extractor.release() }
-    return format?.takeIf { it.averageBitrate > 0 }?.let(AudioSpecification::fromFormat)
+    val spec = format?.let(AudioSpecification::fromFormat) ?: return null
+    return PrefixAudioInfo(spec, durationUs.takeIf { it >= 1_000 }?.div(1_000))
 }
 
 /** MediaExtractor只接触已读入内存的前缀，绝不会因预检再次访问网络或原始输入流。 */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-private fun mediaPrefixAudioSpec(prefix: ByteArray): AudioSpecification? {
+private fun mediaPrefixAudioInfo(prefix: ByteArray): PrefixAudioInfo? {
     if (prefix.isEmpty()) return null
     return runCatching {
         val source = PrefixMediaDataSource(prefix)
         val extractor = MediaExtractor()
         try {
             extractor.setDataSource(source)
-            extractor.downloadAudioSpec()?.let { spec ->
+            extractor.readAudioFormat()?.let { format ->
+                val spec = format.downloadAudioSpec()
                 // MP3只接受上面的Media3 CBR/Xing/VBRI结果，不使用平台前缀估码率。
-                if (spec.mimeType == "audio/mpeg") spec.copy(bitrate = -1) else spec
+                val measured = if (spec.mimeType == "audio/mpeg") spec.copy(bitrate = -1) else spec
+                // MP4 容器的音轨时长来自元数据。其它格式可能按前缀大小估算。
+                val durationMs = if (prefix.size >= 12 && String(prefix, 4, 4, Charsets.US_ASCII) == "ftyp" &&
+                    format.containsKey(MediaFormat.KEY_DURATION)
+                ) format.getLong(MediaFormat.KEY_DURATION).div(1_000).takeIf { it > 0 } else null
+                PrefixAudioInfo(measured, durationMs)
             }
         } finally { extractor.release(); source.close() }
     }.getOrNull()
 }
 
-/** 前缀预检与完整文件校验使用同一份音轨字段映射，未知位深不能推断为16bit。 */
-@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-private fun MediaExtractor.downloadAudioSpec(tag: LocalTagReader.Tag? = null): AudioSpecification? {
+private fun MediaExtractor.readAudioFormat(): MediaFormat? {
     val track = (0 until trackCount).firstOrNull {
         getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
     } ?: return null
     selectTrack(track)
     if (sampleTime < 0) return null
-    val format = getTrackFormat(track)
+    return getTrackFormat(track)
+}
+
+/** 前缀预检与完整文件校验使用同一份音轨字段映射，未知位深不能推断为16bit。 */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+private fun MediaFormat.downloadAudioSpec(tag: LocalTagReader.Tag? = null): AudioSpecification {
     fun number(key: String, fallback: Int = -1): Int =
-        if (format.containsKey(key)) format.getInteger(key).takeIf { it > 0 } ?: fallback else fallback
+        if (containsKey(key)) getInteger(key).takeIf { it > 0 } ?: fallback else fallback
     val depth = when (number(MediaFormat.KEY_PCM_ENCODING, C.ENCODING_INVALID)) {
         C.ENCODING_PCM_8BIT -> 8
         C.ENCODING_PCM_16BIT, C.ENCODING_PCM_16BIT_BIG_ENDIAN -> 16
@@ -240,7 +346,7 @@ private fun MediaExtractor.downloadAudioSpec(tag: LocalTagReader.Tag? = null): A
         else -> tag?.bitDepth ?: -1
     }
     return AudioSpecification(
-        mimeType = format.getString(MediaFormat.KEY_MIME),
+        mimeType = getString(MediaFormat.KEY_MIME),
         sampleRate = number(MediaFormat.KEY_SAMPLE_RATE, tag?.sampleRate ?: -1),
         bitrate = number(MediaFormat.KEY_BIT_RATE, tag?.bitrate ?: -1),
         bitDepth = depth,
@@ -285,8 +391,10 @@ internal fun downloadVariantName(baseName: String, extension: String, spec: Audi
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 internal fun inspectDownloadAudio(context: Context, uri: Uri): DownloadAudio? = LocalMediaIoCoordinator.withRead(context, uri) {
     val tag = LocalTagReader.read(context, uri.toString())
+    var id3Bytes = 0L
     val flac = runCatching {
-        context.contentResolver.openInputStream(uri)?.use { input ->
+        context.contentResolver.openInputStream(uri)?.buffered()?.use { input ->
+            id3Bytes = input.skipId3Prefix()
             val header = ByteArray(42)
             var count = 0
             while (count < header.size) {
@@ -297,31 +405,54 @@ internal fun inspectDownloadAudio(context: Context, uri: Uri): DownloadAudio? = 
             flacDownloadAudio(header.copyOf(count))
         }
     }.getOrNull()
-    // M4A容器名不能证明AAC/ALAC；MP3也不能仅凭文件体积估码率，读取实际音频轨格式。
-    val extracted = runCatching {
+    fun extract(offset: Long): MediaFormat? = runCatching {
         val extractor = MediaExtractor()
         try {
-            extractor.setDataSource(context, uri, null)
+            if (offset == 0L) {
+                extractor.setDataSource(context, uri, null)
+            } else {
+                val asset = context.contentResolver.openAssetFileDescriptor(uri, "r") ?: return@runCatching null
+                asset.use {
+                    val length = it.length
+                    if (length <= offset) return@runCatching null
+                    extractor.setDataSource(it.fileDescriptor, it.startOffset + offset, length - offset)
+                }
+            }
             // 声明了时长不代表存在音频帧；共享校验会拒绝只剩STREAMINFO的损坏FLAC。
-            extractor.downloadAudioSpec(tag)
+            extractor.readAudioFormat()
         } finally { extractor.release() }
     }.getOrNull()
-    if (flac != null && extracted == null) return@withRead null
+    // 有些平台提取器按文件首字节探测。已识别 FLAC 标记时直接在容器起始处验证音轨。
+    val format = if (flac != null && id3Bytes > 0L) {
+        extract(id3Bytes) ?: extract(0L)
+    } else {
+        extract(0L) ?: if (id3Bytes > 0L) extract(id3Bytes) else null
+    }
+    val extracted = format?.downloadAudioSpec(tag)
+    // 系统 FLACExtractor 可能直接输出 PCM，容器与位深仍由 STREAMINFO 确定。
+    if (flac != null && extracted?.mimeType != "audio/flac" && extracted?.mimeType != "audio/raw") {
+        return@withRead null
+    }
     val spec = flac?.spec?.withKnownFileFields(extracted)
         ?: extracted ?: tag?.let { AudioSpecification(it.mimeType, it.sampleRate, it.bitrate, it.bitDepth) }
     if (spec?.mimeType?.startsWith("audio/") != true) return@withRead null
-    val duration = flac?.durationMs?.takeIf { it > 0 } ?: tag?.durationMs ?: 0L
+    val duration = flac?.durationMs?.takeIf { it > 0 } ?: tag?.durationMs?.takeIf { it > 0 }
+        ?: format?.takeIf { it.containsKey(MediaFormat.KEY_DURATION) }
+            ?.getLong(MediaFormat.KEY_DURATION)?.div(1_000)?.coerceAtLeast(0L) ?: 0L
     DownloadAudio(spec, duration, tag, flac?.flacPcmChecksum)
 }
 
 /** 从真实STREAMINFO读位深/采样率，兼容无法回传位深的旧系统，不从文件名或请求推断。 */
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 internal fun flacDownloadAudio(header: ByteArray): DownloadAudio? {
-    if (header.size < 42 || !header.copyOfRange(0, 4).contentEquals(byteArrayOf(102, 76, 97, 67)) ||
-        header[4].toInt() and 0x7f != 0 || header[5] != 0.toByte() || header[6] != 0.toByte() || header[7] != 34.toByte()) return null
+    if (header.size < 42 || !hasFlacSignature(header) ||
+        header[4].toInt() and 0x7f != 0 || header[5] != 0.toByte() ||
+        header[6] != 0.toByte() || header[7] != 34.toByte()
+    ) return null
     val metadata = FlacStreamMetadata(header, 8)
     if (metadata.sampleRate <= 0 || metadata.bitsPerSample !in 4..32) return null
-    val checksum = header.copyOfRange(26, 42).takeIf { bytes -> bytes.any { it != 0.toByte() } }?.toHexString()
+    val checksum = header.copyOfRange(26, 42)
+        .takeIf { bytes -> bytes.any { it != 0.toByte() } }?.toHexString()
     return DownloadAudio(
         AudioSpecification("audio/flac", metadata.sampleRate, -1, metadata.bitsPerSample, metadata.channels),
         metadata.totalSamples * 1000 / metadata.sampleRate,

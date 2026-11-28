@@ -11,6 +11,9 @@ import org.xml.sax.InputSource
 
 /** 统一歌词解析入口：LRC、增强/LX 逐字歌词与 Apple/AMLL 风格 TTML。 */
 object LyricParser {
+    private val ttmlDeclarations = Regex("""(?is)<!\s*(?:DOCTYPE|ENTITY)\b""")
+    private val roleDelimiter = Regex("[\\s,]+")
+    private val timeWithUnit = Regex("""^([+-]?(?:\d+(?:\.\d*)?|\.\d+))(ms|s|m|h)$""")
     private val lrcTimeTag = Regex("""\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?]""")
     private val wordTag = Regex("""<(?:(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?|([+-]?\d+),([+-]?\d+))>""")
     private val offsetTag = Regex("""(?i)\[offset\s*:\s*([+-]?\d+)\s*]""")
@@ -309,7 +312,7 @@ object LyricParser {
     }.getOrElse { emptyList() }
 
     private fun secureDocument(raw: String): Document {
-        require(!Regex("""(?is)<!\s*(?:DOCTYPE|ENTITY)\b""").containsMatchIn(raw)) {
+        require(!ttmlDeclarations.containsMatchIn(raw)) {
             "DTD and entity declarations are not supported in lyric XML"
         }
         val factory = DocumentBuilderFactory.newInstance()
@@ -592,7 +595,7 @@ object LyricParser {
 
     private fun roleNames(element: Element): Set<String> {
         val role = attribute(element, "role").orEmpty()
-        val roles = role.split(Regex("[\\s,]+"))
+        val roles = role.split(roleDelimiter)
             .map { it.trim().lowercase() }
             .filter { it.isNotBlank() }
             .toMutableSet()
@@ -644,7 +647,7 @@ object LyricParser {
     private fun parseTtmlTime(value: String): Long? {
         val text = value.trim()
         if (text.isEmpty()) return null
-        val unitMatch = Regex("""^([+-]?(?:\d+(?:\.\d*)?|\.\d+))(ms|s|m|h)$""").matchEntire(text)
+        val unitMatch = timeWithUnit.matchEntire(text)
         if (unitMatch != null) {
             val number = unitMatch.groupValues[1].toBigDecimalOrNull() ?: return null
             val multiplier = when (unitMatch.groupValues[2]) {

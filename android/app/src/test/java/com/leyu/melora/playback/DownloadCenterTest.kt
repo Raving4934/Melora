@@ -3,7 +3,9 @@ package com.leyu.melora.playback
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.local.LocalSong
 import java.io.File
+import java.io.IOException
 import java.nio.file.Files
+import java.nio.file.Path
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
@@ -15,134 +17,161 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DownloadCenterTest {
-    @Test
-    fun repeatedPreparationDoesNotWriteOrReorderAnotherActiveTask() {
-        val directory = Files.createTempDirectory("melora-download-prepare").toFile()
-        val fileField = DownloadCenter.javaClass.getDeclaredField("file").apply { isAccessible = true }
-        val records = DownloadCenter.records as MutableStateFlow<List<DownloadCenter.Record>>
-        val previousRecords = records.value
-        val previousFile = fileField.get(DownloadCenter)
-        val storage = File(directory, "downloads.json")
-        val song = OnlineSong(songJson(null))
-        val other = OnlineSong(songJson(null).put("songmid", "another"))
-        try {
-            records.value = emptyList()
-            fileField.set(DownloadCenter, storage)
-            assertTrue(DownloadCenter.start(song, "等待下载…"))
-            assertTrue(DownloadCenter.start(song, "准备下载…"))
-            assertTrue(DownloadCenter.start(other, "等待下载…"))
-            val previous = records.value
-            val saved = storage.readText()
-            val backup = File(directory, "downloads.json.bak").readText()
-            assertTrue(File(directory, "downloads.json.tmp").mkdir())
+    private val fileField = DownloadCenter.javaClass.getDeclaredField("file").apply { isAccessible = true }
 
-            assertTrue(DownloadCenter.start(song, "准备下载…"))
-            assertSame(previous, records.value)
-            assertEquals(saved, storage.readText())
-            assertEquals(backup, File(directory, "downloads.json.bak").readText())
-        } finally {
-            fileField.set(DownloadCenter, previousFile)
-            records.value = previousRecords
-            directory.deleteRecursively()
+    @Test
+    fun validEmptyPrimaryDoesNotRestorePreviousRecords() = withRestartableStorage { storage, restart ->
+        storage.writeText("[]")
+        storage.resolveSibling("${storage.name}.bak").writeText(JSONArray(listOf(recordJson(songJson(null)))).toString())
+
+        restart()
+
+        assertTrue(DownloadCenter.records.value.isEmpty())
+    }
+
+    @Test
+    fun missingOrCorruptPrimaryRecoversPausedBatchAndLegacySavedResource() = withRestartableStorage { storage, restart ->
+        val pendingIds = (0 until 205).map { "kw_batch-$it" }
+        val legacy = JSONArray().apply {
+            pendingIds.forEach { id ->
+                put(recordJson(songJson(null).put("songmid", id.removePrefix("kw_")))
+                    .put("id", id).put("status", "Downloading").put("percent", 70))
+            }
+            put(recordJson(songJson("https://img.example/old.jpg")))
+        }
+        storage.resolveSibling("${storage.name}.bak").writeText(legacy.toString())
+
+        repeat(2) { attempt ->
+            if (attempt == 1) storage.writeText("{")
+            restart()
+
+            val records = DownloadCenter.records.value
+            assertEquals(pendingIds, records.dropLast(1).map { it.id })
+            assertTrue(records.dropLast(1).all { it.status == DownloadCenter.Status.Paused && it.percent == 0 })
+            assertEquals("测试歌曲.flac", DownloadCenter.saved("kw_123")?.fileName)
+            assertEquals("https://img.example/old.jpg", DownloadCenter.saved("kw_123")?.img)
         }
     }
 
     @Test
-    fun failedDoneCommitKeepsPreviousRecordAcrossRestartAndCanBeRetried() {
-        val directory = Files.createTempDirectory("melora-download-record-commit").toFile()
-        val fileField = DownloadCenter.javaClass.getDeclaredField("file").apply { isAccessible = true }
-        val records = DownloadCenter.records as MutableStateFlow<List<DownloadCenter.Record>>
-        val recordsBefore = records.value
-        val fileBefore = fileField.get(DownloadCenter)
+    fun failedPublicationAfterRecoveryKeepsLastValidSnapshotForRetry() = withRestartableStorage { storage, restart ->
+        val song = OnlineSong(songJson(null))
+        val backup = storage.resolveSibling("${storage.name}.bak")
+        val interrupted = recordJson(song.raw).put("status", "Downloading")
+        val previous = JSONArray(listOf(interrupted)).toString()
+        backup.writeText(previous)
+        storage.writeText("{")
+        // 在真实暂存写入和备份轮换之后，阻止最终替换主文件。
+        val blockedPublication = object : File(storage.path) {
+            override fun toPath(): Path = throw IOException("模拟下载记录替换失败")
+        }
+        restart()
+        fileField.set(DownloadCenter, blockedPublication)
+
+        assertEquals(DownloadCenter.Status.Paused, DownloadCenter.records.value.single().status)
+        assertFalse(DownloadCenter.start(song, "重试下载"))
+        assertEquals("{", storage.readText())
+        assertEquals(previous, backup.readText())
+
+        restart()
+        assertEquals(DownloadCenter.Status.Paused, DownloadCenter.records.value.single().status)
+        assertTrue(DownloadCenter.start(song, "重试下载"))
+        val published = storage.readText()
+        assertEquals(previous, backup.readText())
+        assertTrue(DownloadCenter.paused(song.uid))
+        assertEquals(published, backup.readText())
+        restart()
+        assertEquals("已暂停", DownloadCenter.records.value.single().detail)
+    }
+
+    @Test
+    fun repeatedPreparationDoesNotWriteOrReorderAnotherActiveTask() = withRestartableStorage { storage, _ ->
+        val song = OnlineSong(songJson(null))
+        val other = OnlineSong(songJson(null).put("songmid", "another"))
+        assertTrue(DownloadCenter.start(song, "等待下载…"))
+        assertTrue(DownloadCenter.start(song, "准备下载…"))
+        assertTrue(DownloadCenter.start(other, "等待下载…"))
+        val previous = DownloadCenter.records.value
+        val saved = storage.readText()
+        val backup = storage.resolveSibling("${storage.name}.bak").readText()
+        assertTrue(storage.resolveSibling("${storage.name}.tmp").mkdir())
+
+        assertTrue(DownloadCenter.start(song, "准备下载…"))
+        assertSame(previous, DownloadCenter.records.value)
+        assertEquals(saved, storage.readText())
+        assertEquals(backup, storage.resolveSibling("${storage.name}.bak").readText())
+    }
+
+    @Test
+    fun failedDoneCommitKeepsPreviousRecordAcrossRestartAndCanBeRetried() = withRestartableStorage { storage, _ ->
+        val directory = storage.parentFile
         val id = "download-record-commit-test"
         val song = OnlineSong(songJson(null).put("songmid", id))
         val oldAudio = File(directory, "old.flac").apply { writeText("old audio") }
         val newAudio = File(directory, "new.flac").apply { writeText("new audio") }
         val oldUri = "file://${oldAudio.absolutePath}"
         val newUri = "file://${newAudio.absolutePath}"
-        val storage = File(directory, "downloads.json")
-        try {
-            records.value = emptyList()
-            fileField.set(DownloadCenter, storage)
-            DownloadCenter.start(song, "旧文件", id = id)
-            DownloadCenter.done(id, "旧文件完成", oldAudio.name, oldUri)
-            DownloadCenter.start(song, "升级中", id = id)
-            val inFlight = DownloadCenter.records.value.single { it.id == id }
-            val durableInFlight = storage.readText()
+        DownloadCenter.start(song, "旧文件", id = id)
+        DownloadCenter.done(id, "旧文件完成", oldAudio.name, oldUri)
+        DownloadCenter.start(song, "升级中", id = id)
+        val inFlight = DownloadCenter.records.value.single { it.id == id }
+        val durableInFlight = storage.readText()
 
-            val blockedParent = File(directory, "not-a-directory").apply { writeText("block") }
-            fileField.set(DownloadCenter, File(blockedParent, "downloads.json"))
-            assertFalse("persistence failure must reach the caller without crashing UI",
-                DownloadCenter.done(id, "新文件完成", newAudio.name, newUri))
-            assertEquals("failed commit must not publish Done", inFlight, DownloadCenter.records.value.single())
-            assertEquals("failed commit must preserve the previous durable record", durableInFlight, storage.readText())
-            assertTrue("the old audio remains intact", oldAudio.isFile)
-            assertTrue("the caller still owns the new file until its rollback completes", newAudio.isFile)
+        val blockedParent = File(directory, "not-a-directory").apply { writeText("block") }
+        fileField.set(DownloadCenter, File(blockedParent, storage.name))
+        assertFalse("persistence failure must reach the caller without crashing UI",
+            DownloadCenter.done(id, "新文件完成", newAudio.name, newUri))
+        assertEquals("failed commit must not publish Done", inFlight, DownloadCenter.records.value.single())
+        assertEquals("failed commit must preserve the previous durable record", durableInFlight, storage.readText())
+        assertTrue("the old audio remains intact", oldAudio.isFile)
+        assertTrue("the caller still owns the new file until its rollback completes", newAudio.isFile)
 
-            val persisted = JSONArray(storage.readText()).getJSONObject(0)
-            val afterRestart = DownloadCenter.restoreInterrupted(DownloadCenter.recordFromJson(persisted)!!)
-            assertEquals(DownloadCenter.Status.Paused, afterRestart.status)
-            assertEquals(oldUri, afterRestart.savedUri)
+        val persisted = JSONArray(storage.readText()).getJSONObject(0)
+        val afterRestart = DownloadCenter.restoreInterrupted(DownloadCenter.recordFromJson(persisted)!!)
+        assertEquals(DownloadCenter.Status.Paused, afterRestart.status)
+        assertEquals(oldUri, afterRestart.savedUri)
 
-            assertFalse(DownloadCenter.failed(id, "磁盘不可写"))
-            assertEquals(DownloadCenter.Status.Failed, DownloadCenter.records.value.single().status)
-            assertEquals("失败反馈不能丢失之前的资源", oldUri, DownloadCenter.saved(id)?.savedUri)
-            fileField.set(DownloadCenter, storage)
-            assertTrue(DownloadCenter.done(id, "新文件完成", newAudio.name, newUri))
-            assertTrue(DownloadCenter.done(id, "新文件完成", newAudio.name, newUri))
-            assertEquals(1, DownloadCenter.records.value.count { it.id == id })
-            assertEquals(newUri, DownloadCenter.saved(id)?.savedUri)
-            assertEquals(newUri, DownloadCenter.recordFromJson(JSONArray(storage.readText()).getJSONObject(0))?.savedUri)
-            assertTrue("replacing the record must not delete the old audio", oldAudio.isFile)
-        } finally {
-            records.value = recordsBefore
-            fileField.set(DownloadCenter, fileBefore)
-            directory.deleteRecursively()
-        }
+        assertFalse(DownloadCenter.failed(id, "磁盘不可写"))
+        assertEquals(DownloadCenter.Status.Failed, DownloadCenter.records.value.single().status)
+        assertEquals("失败反馈不能丢失之前的资源", oldUri, DownloadCenter.saved(id)?.savedUri)
+        fileField.set(DownloadCenter, storage)
+        assertTrue(DownloadCenter.done(id, "新文件完成", newAudio.name, newUri))
+        assertTrue(DownloadCenter.done(id, "新文件完成", newAudio.name, newUri))
+        assertEquals(1, DownloadCenter.records.value.count { it.id == id })
+        assertEquals(newUri, DownloadCenter.saved(id)?.savedUri)
+        assertEquals(newUri, DownloadCenter.recordFromJson(JSONArray(storage.readText()).getJSONObject(0))?.savedUri)
+        assertTrue("replacing the record must not delete the old audio", oldAudio.isFile)
     }
 
     @Test
-    fun recordRemovalAndClearOnlyPublishAfterPersistence() {
-        val directory = Files.createTempDirectory("melora-download-record-delete").toFile()
-        val fileField = DownloadCenter.javaClass.getDeclaredField("file").apply { isAccessible = true }
-        val records = DownloadCenter.records as MutableStateFlow<List<DownloadCenter.Record>>
-        val recordsBefore = records.value
-        val fileBefore = fileField.get(DownloadCenter)
-        val storage = File(directory, "downloads.json")
+    fun recordRemovalAndClearOnlyPublishAfterPersistence() = withRestartableStorage { storage, _ ->
+        val directory = storage.parentFile
         val finished = OnlineSong(songJson(null).put("songmid", "delete-finished"))
         val paused = OnlineSong(songJson(null).put("songmid", "delete-paused"))
-        try {
-            records.value = emptyList()
-            fileField.set(DownloadCenter, storage)
-            DownloadCenter.start(finished, "test")
-            DownloadCenter.done(finished.uid, "saved", "old.mp3", "file:///fixture/old.mp3")
-            DownloadCenter.start(paused, "test")
-            DownloadCenter.paused(paused.uid)
-            val before = records.value
-            val durable = storage.readText()
-            val saved = requireNotNull(DownloadCenter.saved(finished.uid))
-            val blockedParent = File(directory, "blocked").apply { writeText("not a directory") }
-            fileField.set(DownloadCenter, File(blockedParent, "downloads.json"))
+        DownloadCenter.start(finished, "test")
+        DownloadCenter.done(finished.uid, "saved", "old.mp3", "file:///fixture/old.mp3")
+        DownloadCenter.start(paused, "test")
+        DownloadCenter.paused(paused.uid)
+        val before = DownloadCenter.records.value
+        val durable = storage.readText()
+        val saved = requireNotNull(DownloadCenter.saved(finished.uid))
+        val blockedParent = File(directory, "blocked").apply { writeText("not a directory") }
+        fileField.set(DownloadCenter, File(blockedParent, storage.name))
 
-            for (remove in listOf<() -> Boolean>(
-                { DownloadCenter.remove(finished.uid) },
-                { DownloadCenter.removeDeletedResource(saved) },
-                { DownloadCenter.clearFinished() },
-            )) {
-                assertFalse(remove())
-                assertEquals("未落盘不能让记录暂时消失", before, records.value)
-                assertEquals(durable, storage.readText())
-            }
-            fileField.set(DownloadCenter, storage)
-            assertTrue(DownloadCenter.clearFinished())
-            assertEquals(listOf(paused.uid), records.value.map { it.id })
-            assertEquals(paused.uid, JSONArray(storage.readText()).getJSONObject(0).getString("id"))
-            assertTrue("重复移除保持幂等", DownloadCenter.remove(finished.uid))
-        } finally {
-            records.value = recordsBefore
-            fileField.set(DownloadCenter, fileBefore)
-            directory.deleteRecursively()
+        for (remove in listOf<() -> Boolean>(
+            { DownloadCenter.remove(finished.uid) },
+            { DownloadCenter.removeDeletedResource(saved) },
+            { DownloadCenter.clearFinished() },
+        )) {
+            assertFalse(remove())
+            assertEquals("未落盘不能让记录暂时消失", before, DownloadCenter.records.value)
+            assertEquals(durable, storage.readText())
         }
+        fileField.set(DownloadCenter, storage)
+        assertTrue(DownloadCenter.clearFinished())
+        assertEquals(listOf(paused.uid), DownloadCenter.records.value.map { it.id })
+        assertEquals(paused.uid, JSONArray(storage.readText()).getJSONObject(0).getString("id"))
+        assertTrue("重复移除保持幂等", DownloadCenter.remove(finished.uid))
     }
 
     @Test fun upgradeIntentSurvivesPauseAndJsonRoundTrip() {
@@ -685,6 +714,28 @@ class DownloadCenterTest {
             assertFalse(running.hasSavedResource)
             assertNull(running.audioSpec)
         } finally { DownloadCenter.remove(song.uid) }
+    }
+
+    private fun withRestartableStorage(block: (File, () -> Unit) -> Unit) {
+        val directory = Files.createTempDirectory("melora-download-recovery").toFile()
+        val primaryField = DownloadCenter.javaClass.getDeclaredField("hasReadablePrimary").apply { isAccessible = true }
+        val records = DownloadCenter.records as MutableStateFlow<List<DownloadCenter.Record>>
+        val previousRecords = records.value
+        val previousFile = fileField.get(DownloadCenter)
+        val previousPrimary = primaryField.getBoolean(DownloadCenter)
+        fun restart() {
+            fileField.set(DownloadCenter, null)
+            DownloadCenter.init(directory)
+        }
+        try {
+            restart()
+            block(directory.resolve("downloads.json"), ::restart)
+        } finally {
+            fileField.set(DownloadCenter, previousFile)
+            primaryField.setBoolean(DownloadCenter, previousPrimary)
+            records.value = previousRecords
+            directory.deleteRecursively()
+        }
     }
 
     private fun record(songRaw: JSONObject) = DownloadCenter.Record(

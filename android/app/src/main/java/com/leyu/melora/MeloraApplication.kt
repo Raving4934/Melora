@@ -77,7 +77,7 @@ class MeloraApplication : Application(), SingletonImageLoader.Factory {
                 coroutineScope {
                     listOf(
                         async { runStartupStep("用户库") { UserLibrary.init(this@MeloraApplication) } },
-                        async { runStartupStep("下载记录") { DownloadCenter.init(this@MeloraApplication) } },
+                        async { runStartupStep("下载记录") { DownloadCenter.init(filesDir) } },
                         async { runStartupStep("本地媒体") { LocalMediaStore.init(this@MeloraApplication) } },
                         async { runStartupStep("历史音源迁移") { removeLegacyPresetSources() } },
                     ).forEach { it.await() }

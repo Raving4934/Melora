@@ -69,7 +69,7 @@ class DownloadTransferInstrumentedTest {
         MeloraSettings.downloadEmbedCover.value = false
         MeloraSettings.downloadEmbedLyric.value = false
         MeloraSettings.downloadFileNameFormat.value = "song-artist"
-        DownloadCenter.init(context)
+        DownloadCenter.init(context.filesDir)
         LocalMediaStore.init(context)
         LocalMediaStore.clear()
         SourceResolver.clearCache()
@@ -240,7 +240,7 @@ class DownloadTransferInstrumentedTest {
         val firstBytes = asset("audio/fixture-128.mp3")
         val fallbackBytes = asset("audio/fixture-320.mp3")
         LoopbackAudioServer(mapOf(
-            "/interrupted" to HttpResponse(200, firstBytes, bytesToSend = 512),
+            "/interrupted" to HttpResponse(200, firstBytes, bytesToSend = 512, supportsProbe = false),
             "/fallback" to HttpResponse(200, fallbackBytes),
         )).use { server ->
             installSources(server, Source("primary", "/interrupted"), Source("backup", "/fallback"))
@@ -331,7 +331,8 @@ class DownloadTransferInstrumentedTest {
         )).use { server ->
             installSources(server, Source("primary", "/blocked"))
             val song = song("prefetch-cancel")
-            AudioCacheStore.prefetchCurrent(context, song.uid, song, "320k")
+            val resolved = SourceResolver.resolve(context, song, "320k")
+            AudioCacheStore.prefetchCurrent(context, AudioCacheStore.registerResolved(context, song.uid, "320k", resolved))
             val job = AudioCacheStore.javaClass.getDeclaredField("prefetchJob").apply { isAccessible = true }
                 .get(AudioCacheStore) as kotlinx.coroutines.Job
             try {
@@ -382,6 +383,44 @@ class DownloadTransferInstrumentedTest {
             assertTrue(result.isFailure)
             assertEquals(1, server.count("/forbidden"))
             assertEquals(0, server.count("/unused"))
+        }
+    }
+
+    @Test fun retryWithAutoSwitchDownloadsTheFullTrackInsteadOfThePreview() = runBlocking<Unit> {
+        requireValidatedNetworkForRetry()
+        LoopbackAudioServer(mapOf(
+            "/preview" to HttpResponse(200, asset("audio/fixture-128.mp3"), supportsProbe = false),
+            "/full" to HttpResponse(200, asset("audio/scheduling-12s.mp3")),
+        )).use { server ->
+            installSources(server, Source("primary", "/preview"), Source("backup", "/full"))
+            MeloraSettings.downloadQuality.value = "128k"
+            MeloraSettings.updateDownloadAutoSwitchSource(false)
+            val song = song("transfer-audio-preview", interval = "00:12")
+
+            val failed = withTimeout(15_000) { download(song) }
+
+            assertTrue(failed.exceptionOrNull()?.message.orEmpty().contains("试听片段"))
+            assertEquals(1, server.count("/preview"))
+            assertEquals(0, server.count("/full"))
+            assertTrue(listFiles().isEmpty())
+            assertTemporaryFilesClean()
+
+            val record = requireNotNull(DownloadCenter.records.value.firstOrNull { it.id == song.uid })
+            // 清掉短片缓存并重新门控，确认打开开关的尝试实际收到试听全文件，随后才下载备用资源。
+            AudioCacheStore.clearAll(context)
+            SourceResolver.clearCache()
+            server.resetGate("/preview")
+            MeloraSettings.updateDownloadAutoSwitchSource(true)
+
+            withTimeout(25_000) { Downloader.retry(context, record).await() }.getOrThrow()
+
+            assertEquals(2, server.count("/preview"))
+            assertEquals(1, server.count("/full"))
+            assertEquals(1, listFiles().size)
+            val saved = requireNotNull(DownloadCenter.saved(song.uid)?.savedUri)
+            val audio = requireNotNull(inspectDownloadAudio(context, Uri.parse(saved)))
+            assertTrue("full track expected, got ${audio.durationMs} ms", audio.durationMs >= 11_000L)
+            assertTemporaryFilesClean()
         }
     }
 
@@ -483,16 +522,16 @@ class DownloadTransferInstrumentedTest {
         """.trimIndent()
     }
 
-    private fun song(uid: String): OnlineSong {
+    private fun song(uid: String, interval: String = "00:01"): OnlineSong {
         return OnlineSong(JSONObject().put("source", "kw").put("songmid", uid)
-            .put("name", "Fixture").put("singer", "Test Artist").put("albumName", "Fixture Album").put("interval", "00:01"))
+            .put("name", "Fixture").put("singer", "Test Artist").put("albumName", "Fixture Album").put("interval", interval))
             .also { songs += it.uid }
     }
 
     private fun asset(path: String): ByteArray = instrumentation.context.assets.open(path).use { it.readBytes() }
 
     private suspend fun download(song: OnlineSong): Result<String> {
-        return Downloader.download(context, song)
+        return Downloader.enqueue(context, song).await()
     }
 
     private fun requireValidatedNetworkForRetry() = assumeTrue("retry policy requires a validated active network", NetworkState.isConnected(context))
@@ -514,6 +553,7 @@ class DownloadTransferInstrumentedTest {
         val bytesToSend: Int = body.size,
         val headersSent: CountDownLatch? = null,
         val waitBeforeBody: CountDownLatch? = null,
+        val supportsProbe: Boolean = true,
     )
 
     private class LoopbackAudioServer(private val responses: Map<String, HttpResponse>) : Closeable {
@@ -522,7 +562,7 @@ class DownloadTransferInstrumentedTest {
         private val running = AtomicInteger(1)
         private val counts = ConcurrentHashMap<String, AtomicInteger>()
         private val requestsStarted = ConcurrentHashMap<String, CountDownLatch>()
-        private val gates = ConcurrentHashMap<String, CountDownLatch>()
+        private val gates = ConcurrentHashMap<String, String>()
         private val clients = ConcurrentHashMap.newKeySet<Socket>()
         val port: Int get() = server.localPort
         private val acceptThread = Thread({
@@ -544,37 +584,70 @@ class DownloadTransferInstrumentedTest {
 
         fun gateAfterRequest(path: String): String {
             val gate = "/__resolve_gate/${gates.size}"
-            gates[gate] = requestsStarted.computeIfAbsent(path) { CountDownLatch(1) }
+            gates[gate] = path
             return gate
+        }
+
+        fun resetGate(path: String) {
+            requestsStarted.remove(path)
         }
 
         private fun serve(socket: Socket) {
             socket.use { client ->
                 client.soTimeout = 5_000
                 val reader = BufferedReader(InputStreamReader(client.getInputStream(), StandardCharsets.US_ASCII))
-                val path = reader.readLine()?.split(' ')?.getOrNull(1)?.substringBefore('?') ?: return
-                while (!reader.readLine().isNullOrEmpty()) { /* 消费请求头 */ }
+                val request = reader.readLine()?.split(' ') ?: return
+                val path = request.getOrNull(1)?.substringBefore('?') ?: return
+                var range: String? = null
+                while (true) {
+                    val header = reader.readLine()?.takeIf { it.isNotEmpty() } ?: break
+                    if (header.substringBefore(':').equals("Range", ignoreCase = true)) {
+                        range = header.substringAfter(':').trim()
+                    }
+                }
+                val probeLimit = 128 * 1024
+                val probing = request.firstOrNull() == "GET" && range == "bytes=0-${probeLimit - 1}"
                 val gate = gates[path]
                 if (gate != null) {
                     // 超时只关闭连接，绝不能让未发生音频请求的备源胜出；关闭服务器会中断等待。
-                    if (!gate.await(8, TimeUnit.SECONDS)) return
-                } else if (path in responses) {
+                    if (!requestsStarted.computeIfAbsent(gate) { CountDownLatch(1) }.await(8, TimeUnit.SECONDS)) return
+                } else if (path in responses && !probing) {
                     counts.computeIfAbsent(path) { AtomicInteger() }.incrementAndGet()
-                    requestsStarted[path]?.countDown()
+                    requestsStarted.computeIfAbsent(path) { CountDownLatch(1) }.countDown()
                 }
-                // 门控不进入音频请求计数，也不返回任何音频数据。
+                // 候选探测不计入真实传输，不触发主备门控或故障注入。
                 val response = if (gate != null) HttpResponse(200, byteArrayOf()) else
                     responses[path] ?: HttpResponse(404, byteArrayOf())
-                val reason = if (response.status == 200) "OK" else if (response.status == 403) "Forbidden" else "Not Found"
+                val status = when {
+                    !probing || response.status != 200 -> response.status
+                    !response.supportsProbe || response.body.isEmpty() -> 416
+                    else -> 206
+                }
+                val reason = when (status) {
+                    200 -> "OK"
+                    206 -> "Partial Content"
+                    403 -> "Forbidden"
+                    416 -> "Range Not Satisfiable"
+                    else -> "Not Found"
+                }
+                val length = when (status) {
+                    206 -> minOf(probeLimit, response.body.size)
+                    416 -> 0
+                    else -> response.body.size
+                }
+                val contentRange = if (status == 206) "Content-Range: bytes 0-${length - 1}/${response.body.size}\r\n" else ""
                 val output = client.getOutputStream()
-                output.write(("HTTP/1.1 ${response.status} $reason\r\n" +
-                    "Content-Type: audio/mpeg\r\nContent-Length: ${response.body.size}\r\nConnection: close\r\n\r\n")
+                output.write(("HTTP/1.1 $status $reason\r\n" +
+                    "Content-Type: audio/mpeg\r\nContent-Length: $length\r\n${contentRange}Connection: close\r\n\r\n")
                     .toByteArray(StandardCharsets.US_ASCII))
                 output.flush()
-                response.headersSent?.countDown()
-                response.waitBeforeBody?.await(10, TimeUnit.SECONDS)
-                if (response.bytesToSend > 0) {
-                    output.write(response.body, 0, response.bytesToSend.coerceAtMost(response.body.size))
+                if (!probing) {
+                    response.headersSent?.countDown()
+                    response.waitBeforeBody?.await(10, TimeUnit.SECONDS)
+                }
+                val bytesToSend = if (probing) length else response.bytesToSend.coerceAtMost(length)
+                if (bytesToSend > 0) {
+                    output.write(response.body, 0, bytesToSend)
                     output.flush()
                 }
             }

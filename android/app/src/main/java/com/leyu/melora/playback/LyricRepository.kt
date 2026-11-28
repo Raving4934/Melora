@@ -16,7 +16,6 @@ import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.BasicFileAttributes
-import java.security.MessageDigest
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.CancellationException
@@ -43,8 +42,6 @@ enum class LyricSourceMode(val storageValue: String) {
 /** 唯一渐进加载链路：先显示已有歌词，匹配结果只更新缓存；物理标签写入由用户单独确认。 */
 object LyricRepository {
     private val cache = LyricCacheStore()
-    private val misses = mutableMapOf<String, Long>()
-    private const val MISS_COOLDOWN_MS = 30 * 60 * 1000L
 
     private fun choices(context: Context) = LyricChoiceStore(File(context.filesDir, "lyric_choices"))
 
@@ -84,16 +81,8 @@ object LyricRepository {
             val app = context.applicationContext
             val local = LocalMediaStore.matchTrack(track)
             val version = matchedVersion(app, local)
-            val key = lyricCacheKey(track.uid, version)
-            val now = System.currentTimeMillis()
-            val cooling = synchronized(misses) {
-                misses.entries.removeAll { now >= it.value }
-                if (force) misses.remove(key)
-                misses.containsKey(key)
-            }
             val directory = File(app.cacheDir, "lyrics")
-            if (cooling) return@withContext cache.peek(directory, track.uid, version)
-            val result = recoverableOrNull {
+            recoverableOrNull {
                 cache.load(directory, track.uid, version, force = force) {
                     val song = local?.toOnlineSong() ?: OnlineSong.from(track.raw)
                     val remote = song?.let { SourceResolver.lyric(app, it, background, preferWordTimings = local != null, force = force) }
@@ -102,11 +91,6 @@ object LyricRepository {
                         remote?.song?.name ?: track.title, remote?.song?.singer ?: track.artist, lines, remote!!.source)
                 }
             }
-            if (result == null) synchronized(misses) {
-                if (misses.size >= 128) misses.remove(misses.keys.first())
-                misses[key] = now + MISS_COOLDOWN_MS
-            }
-            result
         }
 
     suspend fun prefetch(context: Context, track: UiTrack) {
@@ -114,12 +98,12 @@ object LyricRepository {
     }
 
     suspend fun clear(context: Context) = withContext(Dispatchers.IO) {
-        synchronized(misses) { misses.clear() }
+        com.leyu.melora.playback.sdk.OnlineCache.clear(SourceResolver.LYRIC_LOOKUP_PREFIX)
         cache.clear(File(context.cacheDir, "lyrics"))
     }
 
     private fun readEmbedded(context: Context, track: UiTrack, local: LocalSong): PlayerLyric? {
-        val lines = LocalTagReader.embeddedLyrics(context, local.uri, local.mimeType)?.parse().orEmpty()
+        val lines = LocalTagReader.embeddedLyrics(context, local.uri)?.parse().orEmpty()
         return lines.takeIf { it.isNotEmpty() }?.let { PlayerLyric(track.uid, track.title, track.artist, it, "本地文件") }
     }
 
@@ -345,8 +329,7 @@ private fun writeLyricFile(directory: File, key: String, bytes: ByteArray): File
     return target
 }
 
-internal fun lyricCacheKey(uid: String, version: String): String = MessageDigest.getInstance("SHA-256")
-    .digest("$uid\u0000$version".toByteArray()).toHexString()
+internal fun lyricCacheKey(uid: String, version: String): String = "$uid\u0000$version".sha256Hex()
 
 /** 磁盘缓存编码集中在边界，避免业务模型携带旧字段兼容逻辑。 */
 internal fun encodePlayerLyric(lyric: PlayerLyric): JSONObject {

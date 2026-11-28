@@ -53,7 +53,7 @@ class DownloadQualityInstrumentedTest {
         MeloraSettings.downloadEmbedCover.value = false
         MeloraSettings.downloadEmbedLyric.value = false
         MeloraSettings.downloadFileNameFormat.value = "song-artist"
-        DownloadCenter.init(context)
+        DownloadCenter.init(context.filesDir)
         DownloadCenter.remove(song.uid)
         LocalMediaStore.init(context)
         LocalMediaStore.clear()
@@ -191,7 +191,7 @@ class DownloadQualityInstrumentedTest {
     }
     private suspend fun download(quality: String): String {
         MeloraSettings.downloadQuality.value = quality
-        return Downloader.download(context, song).getOrThrow()
+        return Downloader.enqueue(context, song).await().getOrThrow()
     }
     private fun files(): List<String> = context.contentResolver.query(
         DocumentsContract.buildChildDocumentsUriUsingTree(tree, "root"),
@@ -222,7 +222,7 @@ class DownloadQualityInstrumentedTest {
         MeloraSettings.downloadConcurrentTasks.value = 1
         val gate = downloadGate()
         gate.acquire()
-        val task = async { Downloader.download(context, song) }
+        val task = async { Downloader.enqueue(context, song).await() }
         try {
             awaitQueuedRecord()
         } finally {
@@ -290,7 +290,7 @@ class DownloadQualityInstrumentedTest {
         val gate = downloadGate()
         gate.acquire()
         var slotReleased = false
-        val task = async { Downloader.download(context, song) }
+        val task = async { Downloader.enqueue(context, song).await() }
         try {
             val oldRecord = awaitQueuedRecord()
             assertEquals(DownloadCenter.Status.Downloading, oldRecord.status)
@@ -396,7 +396,7 @@ class DownloadQualityInstrumentedTest {
         MeloraSettings.downloadConcurrentTasks.value = 1
         val gate = downloadGate()
         gate.acquire()
-        val ordinary = async { Downloader.download(context, song) }
+        val ordinary = async { Downloader.enqueue(context, song).await() }
         try {
             awaitQueuedRecord()
             MeloraSettings.downloadQuality.value = "flac24bit"
@@ -541,7 +541,7 @@ class DownloadQualityInstrumentedTest {
         seed("flac24bit", "fixture-24.flac")
         context.contentResolver.call(tree, "failNextWrite", null, null)
         MeloraSettings.downloadQuality.value = "flac24bit"
-        assertTrue(Downloader.download(context, song).isFailure)
+        assertTrue(Downloader.enqueue(context, song).await().isFailure)
         assertEquals(old.savedUri, DownloadCenter.saved(song.uid)?.savedUri)
         assertEquals(16, DownloadCenter.saved(song.uid)?.audioSpec?.bitDepth)
         assertArrayEquals(original, bytes(old.savedUri))

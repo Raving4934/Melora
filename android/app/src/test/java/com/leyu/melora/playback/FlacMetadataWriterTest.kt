@@ -1,5 +1,6 @@
 package com.leyu.melora.playback
 
+import com.leyu.melora.playback.local.LocalTagReader
 import com.leyu.melora.playback.sdk.OnlineLyric
 import com.leyu.melora.playback.sdk.OnlineSong
 import org.json.JSONObject
@@ -194,6 +195,92 @@ class FlacMetadataWriterTest {
         file.writeBytes(header + ByteArray(4) + ByteArray(10) + audio)
         Id3Writer.write(file, "title", "artist", "album", null, null)
         assertArrayEquals(audio, id3Audio(file.readBytes()))
+    }
+
+    @Test
+    fun usltWithEmptyDescriptionUsesTheTextBom() {
+        val lyric = "真实歌词"
+        val payload = byteArrayOf(1, 101, 110, 103, 0, 0, 0xFF.toByte(), 0xFE.toByte()) +
+            lyric.toByteArray(Charsets.UTF_16LE)
+        val frame = id3Frame("USLT", payload)
+        val bytes = id3Header(frame.size) + frame
+        assertEquals(lyric, LocalTagReader.embeddedLyricsFromBytes(bytes)?.plain)
+        assertNull(LocalTagReader.embeddedLyricsFromBytes(bytes.copyOf(bytes.size - 1)))
+    }
+
+    @Test
+    fun replacesFrontCoverWithWebpWhilePreservingOtherPictures() {
+        val webp = java.util.Base64.getDecoder().decode(
+            "UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA",
+        )
+        val oldPicture = byteArrayOf(0) + "image/png".toByteArray(Charsets.US_ASCII)
+        val oldFront = oldPicture + byteArrayOf(0, 3, 0) + pngCover
+        val oldBack = oldPicture + byteArrayOf(0, 4, 0) + pngCover
+        withMp3(audioFrames, id3Frame("APIC", oldFront) + id3Frame("APIC", oldBack)) { file ->
+            Id3Writer.write(file, "标题", "", "", webp, null)
+
+            val pictures = id3FramePayloads(id3Body(file.readBytes())).filter { it.first == "APIC" }.map { it.second }
+            assertEquals(2, pictures.size)
+            assertArrayEquals(oldBack, pictures.first())
+            val apic = pictures.last()
+            val mimeEnd = (1 until apic.size).first { apic[it] == 0.toByte() }
+            assertEquals("image/webp", String(apic, 1, mimeEnd - 1, Charsets.US_ASCII))
+            assertArrayEquals(webp, apic.copyOfRange(mimeEnd + 3, apic.size))
+            assertArrayEquals(audioFrames, id3Audio(file.readBytes()))
+        }
+    }
+
+    @Test
+    fun updatesLyricsInId3WithBomOnlyOnTheOldTextValue() {
+        val oldTtml = "<ttml>旧版歌词</ttml>"
+        val description = EmbeddedLyrics.TTML_FIELD.toByteArray(Charsets.UTF_16BE)
+        val frame = id3Frame(
+            "TXXX",
+            byteArrayOf(1) + description + byteArrayOf(0, 0, 0xFF.toByte(), 0xFE.toByte()) +
+                oldTtml.toByteArray(Charsets.UTF_16LE),
+        )
+        withMp3(audioFrames, frame) { file ->
+            assertEquals(oldTtml, LocalTagReader.embeddedLyricsFromBytes(file.readBytes())?.ttml)
+            val newLyrics = EmbeddedLyrics(plain = "[00:01.00]新歌词", ttml = "<ttml>新歌词</ttml>")
+            Id3Writer.write(file, "标题", "", "", null, newLyrics)
+            assertEquals(newLyrics, LocalTagReader.embeddedLyricsFromBytes(file.readBytes()))
+            assertEquals(1, id3FrameIds(id3Body(file.readBytes())).count { it == "TXXX" })
+        }
+    }
+
+    @Test
+    fun rewritingPrefixedFlacKeepsUnknownId3FramesAndSupportsBothLyricContainers() = withFlac(
+        comments = listOf("GENRE=流行", "X_CUSTOM=保留"),
+    ) { file ->
+        val id3Body = id3Frame("PRIV", byteArrayOf(8, 6, 7, 5, 3, 0, 9)) +
+            id3Frame("USLT", usltPayloadForTest("旧版内嵌歌词"))
+        val prefix = id3Header(id3Body.size) + id3Body
+        val raw = file.readBytes()
+        file.writeBytes(prefix + raw)
+        assertEquals(".flac", detectAudioExtension(file))
+        assertEquals("旧版内嵌歌词", LocalTagReader.embeddedLyricsFromBytes(file.readBytes())?.plain)
+
+        val updated = EmbeddedLyrics(plain = "[00:01.00]新歌词")
+        DownloadMetadataWriter.write(file, ".flac", "标题", "歌手", "专辑", null, updated)
+        val saved = file.readBytes()
+        assertArrayEquals(prefix, saved.copyOfRange(0, prefix.size))
+        assertEquals(updated, LocalTagReader.embeddedLyricsFromBytes(saved))
+        val parsed = parseFlac(file, offset = prefix.size)
+        assertTrue(parsed.comments().containsAll(listOf("GENRE=流行", "X_CUSTOM=保留")))
+        assertArrayEquals(audioFrames, parsed.audio)
+        assertTrue(sameDownloadedBytes(raw.inputStream(), saved.inputStream(), flac = true))
+    }
+
+    @Test
+    fun truncatedPrefixedFlacCannotReplaceOriginal() = withFlac { file ->
+        val original = id3Header(0x10_000) + file.readBytes()
+        file.writeBytes(original)
+
+        assertTrue(runCatching {
+            FlacMetadataWriter.write(file, "标题", "歌手", "专辑", null, null)
+        }.isFailure)
+        assertArrayEquals(original, file.readBytes())
+        assertFalse(File(file.parentFile, file.name + ".tag").exists())
     }
 
     @Test
@@ -435,8 +522,9 @@ class FlacMetadataWriterTest {
         }.toByteArray()
     }
 
-    private fun parseFlac(file: File): ParsedFlac {
+    private fun parseFlac(file: File, offset: Int = 0): ParsedFlac {
         file.inputStream().buffered().use { input ->
+            if (offset > 0) input.readN(offset)
             assertEquals("fLaC", input.readN(4).toString(Charsets.US_ASCII))
             val blocks = mutableListOf<Block>()
             var last: Boolean

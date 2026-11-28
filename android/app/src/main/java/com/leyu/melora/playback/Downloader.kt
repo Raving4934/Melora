@@ -15,6 +15,7 @@ import android.provider.DocumentsContract
 import com.leyu.melora.playback.local.LocalMediaStore
 import com.leyu.melora.playback.local.LocalMediaIoCoordinator
 import com.leyu.melora.playback.local.LocalSong
+import com.leyu.melora.playback.local.LocalTagReader
 import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -45,6 +46,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.async
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -55,11 +57,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import okhttp3.OkHttpClient
-import okhttp3.Request
 
 internal const val MAX_DOWNLOAD_TRANSFER_RESOURCES = 3
-/** 首次 HTTP 传输失败后启动的墙钟重试窗口，覆盖后续解析及传输；不限制首次下载或正在进行中的传输。 */
+/** 首个音频资源失败后启动的重试窗口，限制新尝试的启动与换源解析，不打断已开始的传输。 */
 internal const val DOWNLOAD_RETRY_WINDOW_MS = 20_000L
 
 internal fun shouldRetryDownloadTransfer(
@@ -91,7 +91,7 @@ internal fun findDownloadHttpTransferFailure(failure: Throwable): DownloadHttpTr
 /** 下载器：解析直链后流式写入系统媒体库或用户选择的 SAF 目录，支持跳过同名、嵌入封面/歌词。 */
 object Downloader {
     internal const val TEMP_DIRECTORY = "download_tmp"
-    private val client = OkHttpClient.Builder()
+    private val client = sharedNetworkClient.newBuilder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .build()
@@ -129,22 +129,23 @@ object Downloader {
     }
 
     /** 下载归应用级作用域所有；关闭操作面板或离开页面只停止等待，不会中断实际任务。 */
-    suspend fun download(context: Context, song: OnlineSong): Result<String> =
-        submit(context, song).await()
+    fun enqueue(context: Context, song: OnlineSong): Deferred<Result<String>> {
+        val app = context.applicationContext
+        val task = submit(app, song)
+        taskScope.launch {
+            val message = task.await().fold({ it }, { it.message ?: "下载失败" })
+            PlaybackController.postMessage(app, message)
+        }
+        return task
+    }
 
     /** 升级检查与下载共用任务去重/并发/缓存，检查期间不创建下载记录。 */
     fun upgrade(context: Context, song: OnlineSong, local: LocalSong): Deferred<Result<String>> =
-        submit(context, song, local) {
-            PlaybackController.postMessage(context.applicationContext, CONFLICT_MESSAGE)
-        }
+        submit(context, song, local)
 
     /** 继续/重试保留原任务ID与升级下限，不因本地歌曲已匹配到在线ID而另建记录。 */
     fun retry(context: Context, record: DownloadCenter.Record): Deferred<Result<String>> =
-        submit(context, requireNotNull(record.song), record.upgradeFrom, record.id,
-            onConflict = if (record.upgradeFrom != null) {
-                { PlaybackController.postMessage(context.applicationContext, CONFLICT_MESSAGE) }
-            } else null,
-        )
+        submit(context, requireNotNull(record.song), record.upgradeFrom, record.id)
 
     /** 取消指定歌曲的唯一在途任务；终态由调用方明确写入，旧任务不得覆盖新状态。 */
     private fun cancel(uid: String): Boolean {
@@ -208,11 +209,7 @@ object Downloader {
      */
     fun enqueue(context: Context, songs: List<OnlineSong>): Int {
         val uniqueSongs = distinctDownloadSongs(songs)
-        uniqueSongs.forEach {
-            submit(context, it) {
-                PlaybackController.postMessage(context.applicationContext, CONFLICT_MESSAGE)
-            }
-        }
+        uniqueSongs.forEach { submit(context, it, reportConflict = true) }
         return uniqueSongs.size
     }
 
@@ -221,52 +218,45 @@ object Downloader {
         song: OnlineSong,
         upgradeFrom: LocalSong? = null,
         taskId: String = song.uid,
-        onConflict: (() -> Unit)? = null,
+        reportConflict: Boolean = upgradeFrom != null,
     ): Deferred<Result<String>> {
         val appContext = context.applicationContext
         val request = DownloadRequest(MeloraSettings.downloadQuality.value, MeloraSettings.downloadPath.value,
             MeloraSettings.downloadFileNameFormat.value, MeloraSettings.downloadSkipSameName.value,
             MeloraSettings.downloadAutoSwitchSource.value, MeloraSettings.downloadEmbedCover.value, MeloraSettings.downloadEmbedLyric.value, upgradeFrom)
-        var created = false
-        var conflicted = false
         val task = synchronized(taskLock) {
             val active = tasks[taskId]?.takeUnless { it.task.isCompleted }
-            when {
-                taskId in deletingTasks -> {
-                    conflicted = true
-                    CompletableDeferred<Result<String>>().apply {
-                        complete(Result.failure(IllegalStateException(DELETE_IN_PROGRESS_MESSAGE)))
+            val rejection = when {
+                taskId in deletingTasks -> DELETE_IN_PROGRESS_MESSAGE
+                active != null && active.request != request -> CONFLICT_MESSAGE
+                else -> null
+            }
+            if (rejection != null) {
+                val failure = Result.failure<String>(IllegalStateException(rejection))
+                return@synchronized if (reportConflict) {
+                    taskScope.async(Dispatchers.Main, start = CoroutineStart.LAZY) {
+                        PlaybackController.postMessage(appContext, rejection)
+                        failure
                     }
-                }
-                active == null -> {
-                    val token = ++nextTaskToken
-                    val deferred = taskScope.async(start = CoroutineStart.LAZY) {
-                        performDownload(appContext, song, request, token, taskId)
-                    }
-                    tasks[taskId] = ActiveDownload(token, deferred, request, upgradeFrom == null,
-                        DownloadCenter.records.value.firstOrNull { it.id == taskId })
-                    deferred.invokeOnCompletion {
-                        synchronized(taskLock) {
-                            if (tasks[taskId]?.token == token) tasks.remove(taskId)
-                        }
-                    }
-                    created = true
-                    deferred
-                }
-                active.request == request -> active.task
-                else -> {
-                    conflicted = true
-                    CompletableDeferred<Result<String>>().apply {
-                        complete(Result.failure(IllegalStateException(CONFLICT_MESSAGE)))
-                    }
+                } else CompletableDeferred(failure)
+            }
+            if (active != null) return@synchronized active.task
+
+            val token = ++nextTaskToken
+            val deferred = taskScope.async(start = CoroutineStart.LAZY) {
+                if (upgradeFrom != null) postCurrentMessage(appContext, taskId, token, "正在检查更高音质…")
+                performDownload(appContext, song, request, token, taskId)
+            }
+            tasks[taskId] = ActiveDownload(token, deferred, request, upgradeFrom == null,
+                DownloadCenter.records.value.firstOrNull { it.id == taskId })
+            deferred.invokeOnCompletion {
+                synchronized(taskLock) {
+                    if (tasks[taskId]?.token == token) tasks.remove(taskId)
                 }
             }
+            deferred
         }
-        if (conflicted) onConflict?.invoke()
-        if (created) {
-            if (upgradeFrom != null) PlaybackController.postMessage(appContext, "正在检查更高音质…")
-            task.start()
-        }
+        task.start()
         return task
     }
 
@@ -314,12 +304,19 @@ object Downloader {
             slots.release()
         }
     }.onSuccess {
-        if (request.upgradeFrom != null) updateCurrent(taskId, token) { PlaybackController.postMessage(context, it) }
+        if (request.upgradeFrom != null) postCurrentMessage(context, taskId, token, it)
     }.onFailure {
         if (it is CancellationException) throw it
         failCurrent(context, taskId, token, it)
-        if (request.upgradeFrom != null) updateCurrent(taskId, token) {
-            PlaybackController.postMessage(context, it.message ?: "音质检查失败，请稍后重试")
+        if (request.upgradeFrom != null) {
+            postCurrentMessage(context, taskId, token, it.message ?: "音质检查失败，请稍后重试")
+        }
+    }
+
+    private suspend fun postCurrentMessage(context: Context, taskId: String, token: Long, message: String) {
+        // 等主线程发布提示再完成回执，并在投递时确认任务仍有效。
+        withContext(Dispatchers.Main) {
+            updateCurrent(taskId, token) { PlaybackController.postMessage(context, message) }
         }
     }
 
@@ -351,9 +348,10 @@ object Downloader {
         val sourceQuality: String? = null,
     )
     private sealed interface DownloadTransfer {
-        data class Copied(val file: File, val input: CachedAudioInput) : DownloadTransfer
+        data class Copied(val file: File, val input: CachedAudioInput, val audio: DownloadAudio) : DownloadTransfer
         data class Reused(val description: String) : DownloadTransfer
     }
+    private class InvalidDownloadedAudio(message: String) : IOException(message)
 
     private suspend fun downloadToTarget(
         context: Context,
@@ -447,14 +445,9 @@ object Downloader {
             is DownloadTransfer.Reused -> return result.description
             is DownloadTransfer.Copied -> result
         }
-        val temp = transfer.file
-        val input = transfer.input
+        val (temp, input, audio) = transfer
         try {
             ensureCurrent(recordId, token)
-            val audio = inspectDownloadAudio(context, Uri.fromFile(temp)) ?: error("下载内容不是可识别的音频，原文件未修改")
-            check(audio.durationMs > 0 && (song.intervalSeconds <= 0 || audio.durationMs >= song.intervalSeconds * 650L)) {
-                "下载音频时长异常，可能是试听片段；原文件未修改"
-            }
             if (upgradeBaseline != null && isBetterDownloadQuality(audio.spec, upgradeBaseline, request.prefersMaster) != true) {
                 updateCurrent(recordId, token) {
                     val active = tasks.getValue(recordId)
@@ -466,7 +459,6 @@ object Downloader {
             }
             val extension = detectAudioExtension(temp) ?: audioExtensionFromContentType(audio.spec.mimeType)
                 ?: error("无法识别实际音频格式，原文件未修改")
-            AudioCacheStore.rememberExtension(context, input.resourceKey, extension)
             audio.spec.verifiedQuality?.let { quality ->
                 audioResourceId(input.resourceKey)?.let { resource ->
                     SourceResolver.confirmQuality(resource, quality)
@@ -572,7 +564,7 @@ object Downloader {
         }
     }
 
-    /** 每个资源独立落入临时文件；仅 HTTP upstream open/read 故障可排除资源并尝试换源。 */
+    /** 每个资源在独立临时文件中完成传输和音频校验，失败可换源，存储故障直接退出。 */
     private suspend fun downloadAudioTransfer(
         context: Context,
         song: OnlineSong,
@@ -634,31 +626,38 @@ object Downloader {
                     }
                 }
                 ensureCurrent(recordId, token)
-                check(temp.length() > 0 &&
-                    (downloadInput.contentLength == null || downloadInput.contentLength <= 0 || temp.length() == downloadInput.contentLength)) {
-                    "音频下载不完整，原文件未修改"
+                val size = temp.length()
+                val expectedSize = downloadInput.contentLength
+                if (size <= 0 || (expectedSize != null && expectedSize > 0 && size != expectedSize)) {
+                    throw InvalidDownloadedAudio("音频下载不完整，原文件未修改")
                 }
+                val audio = inspectDownloadAudio(context, Uri.fromFile(temp))
+                    ?: throw InvalidDownloadedAudio("下载内容不是可识别的音频，原文件未修改")
+                if (audio.durationMs <= 0 || isPreviewDuration(song.intervalSeconds, audio.durationMs)) {
+                    throw InvalidDownloadedAudio("下载音频时长异常，可能是试听片段，原文件未修改")
+                }
+                ensureCurrent(recordId, token)
                 keepTemporaryFile = true
-                return DownloadTransfer.Copied(temp, downloadInput)
+                return DownloadTransfer.Copied(temp, downloadInput, audio)
             } catch (failure: Throwable) {
-                val transferFailure = findDownloadHttpTransferFailure(failure) ?: throw failure
+                val failedResource = if (failure is InvalidDownloadedAudio) input?.resourceKey?.let(::audioResourceId)
+                    else findDownloadHttpTransferFailure(failure)?.resourceId
+                if (failedResource == null) throw failure
                 currentCoroutineContext().ensureActive()
                 ensureCurrent(recordId, token)
                 val now = System.nanoTime()
                 val deadline = retryDeadlineNanos ?: (now + TimeUnit.MILLISECONDS.toNanos(DOWNLOAD_RETRY_WINDOW_MS))
                     .also { retryDeadlineNanos = it }
                 val remaining = TimeUnit.NANOSECONDS.toMillis(deadline - now).coerceAtLeast(0L)
-                val isNewResource = transferFailure.resourceId !in excludedResources
-                val attemptedResources = excludedResources.size + if (isNewResource) 1 else 0
-                if (!isNewResource || !shouldRetryDownloadTransfer(
+                if (failedResource in excludedResources || !shouldRetryDownloadTransfer(
                         request.autoSwitch,
                         NetworkState.isConnected(context),
-                        attemptedResources,
+                        excludedResources.size + 1,
                         remaining,
                     )) {
                     throw failure
                 }
-                excludedResources += transferFailure.resourceId
+                excludedResources += failedResource
                 updateCurrent(recordId, token) {
                     // 升级尚在探测阶段时，不能把旧的已完成记录进度改成0或提前显示下载通知。
                     if (tasks.getValue(recordId).recordStarted) {
@@ -870,16 +869,7 @@ object Downloader {
     private suspend fun fetchCover(context: Context, recordId: String, song: OnlineSong): ByteArray? {
         val url = CoverLoader.resolve(context, song) ?: return null
         DownloadCenter.updateArtwork(recordId, url)
-        val request = Request.Builder().url(url)
-            .header("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36")
-            .build()
-        return client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) return@use null
-            val body = response.body
-            if (body.contentLength() > MAX_EMBEDDED_COVER_BYTES) return@use null
-            val bytes = body.byteStream().use { it.readBoundedBytes(MAX_EMBEDDED_COVER_BYTES) } ?: return@use null
-            if (bytes.size < 200) null else bytes
-        }
+        return CoverLoader.fetchBytes(url, client)
     }
 
     @RequiresApi(Build.VERSION_CODES.Q)
@@ -1101,12 +1091,14 @@ internal object Id3Writer {
             if (artist.isNotBlank()) add("TPE1")
             if (album.isNotBlank()) add("TALB")
             if (validYear != null) addAll(listOf("TYER", "TDRC"))
-            if (usableCover != null) add("APIC")
             if (lyric != null) add("USLT")
         }
         val frames = existing.frames.filterNot { frame ->
             frame.id in replacedFrameIds ||
-                (lyric != null && frame.id == "TXXX" && txxxDescription(frame.payload)?.equals(EmbeddedLyrics.TTML_FIELD, ignoreCase = true) == true)
+                (usableCover != null && frame.id == "APIC" && isFrontCover(frame.payload)) ||
+                (lyric != null && frame.id == "TXXX" && LocalTagReader.decodeId3Fields(
+                    frame.payload, 0, frame.payload.size, prefixLength = 1, readValue = false,
+                )?.first.equals(EmbeddedLyrics.TTML_FIELD, ignoreCase = true))
         }.toMutableList()
         addText(frames, "TIT2", title)
         addText(frames, "TPE1", artist)
@@ -1196,28 +1188,9 @@ internal object Id3Writer {
         )
     }
 
-    private fun txxxDescription(payload: ByteArray): String? {
-        if (payload.isEmpty()) return null
-        val encoding = payload[0].toInt() and 0xFF
-        val descriptionStart = when (encoding) {
-            0, 3 -> 1
-            1 -> 3 // UTF-16 with BOM
-            2 -> 1 // UTF-16BE
-            else -> return null
-        }
-        val delimiter = when (encoding) {
-            0, 3 -> (descriptionStart until payload.size).firstOrNull { payload[it] == 0.toByte() }
-            else -> (descriptionStart until payload.size - 1 step 2).firstOrNull {
-                payload[it] == 0.toByte() && payload[it + 1] == 0.toByte()
-            }
-        } ?: return null
-        val charset = when (encoding) {
-            0 -> Charsets.ISO_8859_1
-            1 -> if (payload[1] == 0xFF.toByte() && payload[2] == 0xFE.toByte()) Charsets.UTF_16LE else Charsets.UTF_16BE
-            2 -> Charsets.UTF_16BE
-            else -> Charsets.UTF_8
-        }
-        return String(payload, descriptionStart, delimiter - descriptionStart, charset)
+    private fun isFrontCover(payload: ByteArray): Boolean {
+        val mimeEnd = (1 until payload.size).firstOrNull { payload[it] == 0.toByte() } ?: return false
+        return payload.getOrNull(mimeEnd + 1) == 3.toByte()
     }
 
     private fun txxxPayload(description: String, value: String): ByteArray =
@@ -1234,8 +1207,7 @@ internal object Id3Writer {
         }.toByteArray()
 
     private fun apicPayload(cover: ByteArray): ByteArray {
-        val isPng = cover.size > 8 && cover[0] == 0x89.toByte() && cover[1] == 'P'.code.toByte()
-        val mime = if (isPng) "image/png" else "image/jpeg"
+        val mime = embeddedCoverMime(cover)
         val out = java.io.ByteArrayOutputStream()
         out.write(0) // ISO-8859-1 编码（mime/描述均 ASCII）
         out.write(mime.toByteArray(Charsets.ISO_8859_1))
@@ -1400,12 +1372,18 @@ internal class DynamicDownloadGate(private val limit: StateFlow<Int>) {
 
 internal fun detectAudioExtension(file: File): String? {
     val header = ByteArray(12)
-    val count = file.inputStream().use { it.read(header) }
+    val count = try {
+        file.inputStream().buffered().use { input ->
+            input.skipId3Prefix()
+            input.read(header)
+        }
+    } catch (_: java.io.EOFException) {
+        return null
+    }
     if (count < 3) return null
     fun ascii(start: Int, end: Int): String = header.copyOfRange(start, end).toString(Charsets.US_ASCII)
     return when {
         count >= 4 && ascii(0, 4) == "fLaC" -> ".flac"
-        ascii(0, 3) == "ID3" -> ".mp3"
         (header[0].toInt() and 0xff) == 0xff &&
             (header[1].toInt() and 0xe0) == 0xe0 &&
             (header[1].toInt() and 0x06) == 0 -> ".aac"

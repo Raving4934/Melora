@@ -64,8 +64,7 @@ class DynamicCacheEvictor(private val maxBytesProvider: () -> Long) : CacheEvict
     }
 
     /** 立即按当前设置值收缩缓存（设置页调整大小时调用）。 */
-    fun trimNow() {
-        val target = synchronized(this) { cache } ?: return
+    fun trimNow(target: Cache) {
         withCacheLock(target) {
             refreshFromCacheLocked(target)
             trimLocked(target)

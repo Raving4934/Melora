@@ -80,7 +80,7 @@ class DynamicCacheEvictorInstrumentedTest {
         Thread.sleep(5)
         assertTrue(requireNotNull(cache.startReadWriteNonBlocking("first", 0, 1)).isCached)
         limit = 64 * MB
-        evictor.trimNow()
+        evictor.trimNow(cache)
         assertEquals(setOf("first"), cache.keys)
         assertEquals(CHUNK, evictor.trackedBytes())
     }

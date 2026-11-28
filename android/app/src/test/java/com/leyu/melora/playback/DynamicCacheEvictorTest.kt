@@ -54,7 +54,7 @@ class DynamicCacheEvictorTest {
         timestamps["first"] = 30L
         evictor.onSpanTouched(cache, old, cache.getCachedSpans("first").first())
         limit = 64L * 1024 * 1024
-        evictor.trimNow()
+        evictor.trimNow(cache)
         assertEquals(setOf("first"), cache.keys)
     }
 
@@ -69,7 +69,7 @@ class DynamicCacheEvictorTest {
         assertEquals(104 * mib, evictor.trackedBytes())
 
         limit = 8 * mib
-        evictor.trimNow()
+        evictor.trimNow(cache)
         assertEquals(setOf("recent"), cache.keys)
         assertEquals(4 * mib, evictor.trackedBytes())
     }

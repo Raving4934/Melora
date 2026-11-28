@@ -10,7 +10,6 @@ import android.util.Log
 import androidx.core.net.toUri
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
-import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.datasource.cache.Cache
 import androidx.media3.datasource.cache.CacheDataSink
@@ -29,7 +28,7 @@ import java.net.URLEncoder
 import java.util.PriorityQueue
 import java.util.concurrent.TimeUnit
 import okhttp3.Call
-import okhttp3.OkHttpClient
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Protocol
 import okhttp3.Request
 import kotlinx.coroutines.currentCoroutineContext
@@ -54,13 +53,18 @@ internal fun isNonAudioResponseContentType(contentType: String?): Boolean {
 
 internal const val AUDIO_TRANSFER_BUFFER_BYTES = 64 * 1024
 
+internal data class PlaybackCandidateProbe(
+    val spec: AudioSpecification? = null,
+    val durationMs: Long? = null,
+    val nonAudio: Boolean = false,
+)
+
 private const val META_PREFIX = ContentMetadata.KEY_CUSTOM_PREFIX + "melora."
 private const val META_SOURCE_URL = META_PREFIX + "source_url"
 private const val META_SOURCE_IDENTITY = META_PREFIX + "source_identity"
 private const val META_ACTUAL_QUALITY = META_PREFIX + "actual_quality"
 private const val META_SOURCE_QUALITY = META_PREFIX + "source_quality"
 private const val META_VERIFIED_QUALITY = META_PREFIX + "verified_quality"
-private const val META_EXTENSION = META_PREFIX + "extension"
 private const val META_ALIAS_RESOURCE = META_PREFIX + "alias_resource"
 private const val META_RECORDING = META_PREFIX + "recording"
 
@@ -76,7 +80,7 @@ object AudioCacheStore {
     private const val CACHE_FRAGMENT_BYTES = 1024L * 1024L
     internal const val USER_AGENT = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36"
 
-    internal val mediaHttpClient = OkHttpClient.Builder()
+    internal val mediaHttpClient = sharedNetworkClient.newBuilder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .followSslRedirects(true)
@@ -84,24 +88,48 @@ object AudioCacheStore {
         .protocols(listOf(Protocol.HTTP_1_1))
         .build()
 
-    /** 竞速时只排除 GET 也确认的错误页面。正常地址只读 HEAD，签名链接仍由播放器打开。 */
-    internal suspend fun returnsNonAudioPage(url: String): Boolean {
-        val request = Request.Builder().url(url).header("User-Agent", USER_AGENT).head().build()
+    /** 竞速时最多读取一个前缀。网络错误、限时未读到或不支持 Range 时交给正常播放。 */
+    internal suspend fun probePlaybackCandidate(url: String): PlaybackCandidateProbe? {
+        val address = url.toHttpUrlOrNull() ?: return null
+        val request = Request.Builder().url(address)
+            .header("User-Agent", USER_AGENT)
+            .header("Accept-Encoding", "identity")
+            .header("Range", "bytes=0-${AUDIO_PREFIX_PROBE_BYTES - 1}")
+            .build()
         return try {
             withTimeoutOrNull(450L) {
-                fun isPage(response: okhttp3.Response) = response.isSuccessful &&
-                    isNonAudioResponseContentType(response.header("Content-Type"))
-                if (!mediaHttpClient.newCall(request).readResponse(::isPage)) return@withTimeoutOrNull false
-                // 部分 CDN 的 HEAD 返回通用网页，GET 却能正常播放。
-                val call = mediaHttpClient.newCall(request.newBuilder().get().header("Range", "bytes=0-511").build())
+                val call = mediaHttpClient.newCall(request)
                 call.readResponse { response ->
-                    val page = isPage(response)
-                    if (response.body.contentLength() !in 0L..512L) call.cancel()
-                    page
+                    var readBytes = 0
+                    try {
+                        if (response.code != 200 && response.code != 206) return@readResponse null
+                        if (response.code == 206 &&
+                            response.header("Content-Range")?.startsWith("bytes 0-", ignoreCase = true) != true
+                        ) return@readResponse null
+                        if (isNonAudioResponseContentType(response.header("Content-Type"))) {
+                            return@readResponse PlaybackCandidateProbe(nonAudio = true)
+                        }
+                        val lead = response.peekBody(512).string().trimStart { it.isWhitespace() || it == '\uFEFF' }
+                        if (lead.startsWith("<!doctype html", ignoreCase = true) ||
+                            lead.startsWith("<html", ignoreCase = true)
+                        ) return@readResponse PlaybackCandidateProbe(nonAudio = true)
+                        if (lead.startsWith("#EXTM3U")) return@readResponse null
+                        val probe = probeDownloadUpgrade(response.body.byteStream())
+                        readBytes = probe.prefix.size
+                        val spec = probe.spec ?: return@readResponse null
+                        // 没有整个文件的时长证据时，Media3 的 MP3 前缀码率可能只来自首帧。
+                        val measured = if (spec.mimeType == "audio/mpeg" && probe.durationMs == null) {
+                            spec.copy(bitrate = -1)
+                        } else spec
+                        PlaybackCandidateProbe(measured, probe.durationMs)
+                    } finally {
+                        // 服务端忽略 Range 或正文未读完时，阻止关闭响应前继续吞下整个文件。
+                        if (response.body.contentLength() !in 0L..readBytes.toLong()) call.cancel()
+                    }
                 }
-            } ?: false
+            }
         } catch (_: IOException) {
-            false
+            null
         }
     }
 
@@ -198,29 +226,17 @@ object AudioCacheStore {
     }
 
     /** 普通歌曲形成有效播放记录后，在非计费网络后台补齐当前实际资源。 */
-    fun prefetchCurrent(context: Context, uid: String, song: OnlineSong, preferredQuality: String) {
+    internal fun prefetchCurrent(context: Context, resource: AudioCacheResource) {
         val appContext = context.applicationContext
-        if (song.isBookChapter || !NetworkState.isUnmetered(appContext)) return
-        val logicalKey = audioCacheKey(uid, preferredQuality)
-
+        if (!NetworkState.isUnmetered(appContext)) return
         synchronized(prefetchLock) {
-            if (prefetchKey == logicalKey && prefetchJob?.isActive == true) return
+            if (prefetchKey == resource.key && prefetchJob?.isActive == true) return
             val previous = prefetchJob
             previous?.cancel()
-            prefetchKey = logicalKey
+            prefetchKey = resource.key
             prefetchJob = scope.launch(start = CoroutineStart.LAZY) {
                 previous?.join()
                 try {
-                    val resource = AudioCacheIndex(obtainCache(appContext)).find(song, preferredQuality, online = true) ?: run {
-                        val resolved = SourceResolver.resolve(
-                            context = appContext,
-                            song = song,
-                            preferredQuality = preferredQuality,
-                            allowSwitch = MeloraSettings.autoSwitchSource.value,
-                            purpose = SourceResolver.Purpose.CACHE_FILL,
-                        )
-                        registerResolved(appContext, uid, preferredQuality, resolved)
-                    }
                     if (!isComplete(appContext, resource.key) && NetworkState.isUnmetered(appContext)) {
                         cacheWhole(appContext, resource)
                     }
@@ -228,7 +244,7 @@ object AudioCacheStore {
                     throw cancelled
                 } catch (error: Throwable) {
                     // 智能补齐属于体验优化，失败不得影响当前播放。
-                    Log.d(TAG, "后台补齐失败：$uid", error)
+                    Log.d(TAG, "后台补齐失败：${resource.sourceIdentity}", error)
                 }
             }.also { it.start() }
         }
@@ -244,9 +260,18 @@ object AudioCacheStore {
     }
 
     /** 设置变化后按当前容量上限在 IO 线程收缩。 */
-    fun trimNow(): Job = scope.launch {
-        evictor?.trimNow()
-        CacheManager.invalidateCachedStats()
+    fun trimNow(context: Context): Job = scope.launch {
+        try {
+            val target = obtainCache(context.applicationContext)
+            checkNotNull(evictor).trimNow(target)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            Log.w(TAG, "音频缓存裁剪失败", error)
+            PlaybackController.postMessage(context, "缓存上限已保存，暂时无法整理缓存")
+        } finally {
+            CacheManager.invalidateCachedStats()
+        }
     }
 
     /** 等待后台补齐完全退出后安全清空共享缓存。 */
@@ -272,19 +297,6 @@ object AudioCacheStore {
         .setFlags(dataSpec.flags or DataSpec.FLAG_ALLOW_CACHE_FRAGMENTATION)
         .build()
 
-    /** 下载完成后用真实文件头识别结果回写扩展名，供后续零网络导出复用。 */
-    internal fun rememberExtension(context: Context, key: String, extension: String) {
-        val sharedCache = obtainCache(context.applicationContext)
-        synchronized(metadataLock) {
-            runCatching {
-                sharedCache.applyContentMetadataMutations(
-                    key,
-                    ContentMetadataMutations().set(META_EXTENSION, extension),
-                )
-            }.onFailure { Log.d(TAG, "缓存格式写入失败：$key", it) }
-        }
-    }
-
     /** 首次识别实际音轨后落盘；只改元信息，物理文件/片段key保持稳定。 */
     internal fun recordObservedQuality(context: Context, resourceId: String, quality: String) {
         synchronized(metadataLock) {
@@ -304,7 +316,6 @@ object AudioCacheStore {
             sourceUrl = metadata.sourceUrl(),
             sourceIdentity = "legacy",
             actualQuality = preferredQuality,
-            extension = metadata.string(META_EXTENSION),
         )
     }
 
@@ -456,7 +467,7 @@ object AudioCacheStore {
             .setUserAgent(USER_AGENT)
             .setContentTypePredicate { !isNonAudioResponseContentType(it) }
         // 所有媒体网络读取走同一个边界：完整缓存被清理/淘汰后也不能绕过脚本使用历史直链。
-        return DefaultDataSource.Factory(context, DataSource.Factory {
+        return DataSource.Factory {
             val upstream = http.createDataSource()
             object : DataSource by upstream {
                 private var resourceId: String? = null
@@ -483,7 +494,7 @@ object AudioCacheStore {
                     }
                 }
             }
-        })
+        }
     }
 
     private fun DataSource.openAsInput(
@@ -493,21 +504,12 @@ object AudioCacheStore {
         onClose: () -> Unit = {},
     ): CachedAudioInput = try {
         val length = open(dataSpec)
-        val contentType = responseHeaders.entries
-            .firstOrNull { it.key.equals("Content-Type", ignoreCase = true) }
-            ?.value
-            ?.firstOrNull()
-            ?.substringBefore(';')
-            ?.trim()
         CachedAudioInput(
             stream = OpenedDataSourceInputStream(this, onClose),
             resourceKey = resource.key,
-            sourceUrl = resource.sourceUrl,
             sourceIdentity = resource.sourceIdentity,
             actualQuality = resource.actualQuality,
             sourceQuality = resource.sourceQuality,
-            contentType = contentType,
-            extension = resource.extension ?: audioExtensionFromContentType(contentType),
             contentLength = length.takeIf { it > 0L },
             completeCacheHit = completeCacheHit,
         )
@@ -523,7 +525,6 @@ object AudioCacheStore {
             sourceIdentity = metadata.string(META_SOURCE_IDENTITY) ?: sourceIdentity,
             actualQuality = quality,
             sourceQuality = SourceResolver.verifiedSourceQuality(quality, sourceQuality ?: metadata.string(META_SOURCE_QUALITY)),
-            extension = metadata.string(META_EXTENSION) ?: extension,
         )
     }
 
@@ -546,7 +547,7 @@ internal class AudioCacheIndex(private val cache: Cache) {
         val sourceQuality = SourceResolver.verifiedSourceQuality(
             quality, resolved.sourceQuality ?: cache.getContentMetadata(key).string(META_SOURCE_QUALITY),
         )
-        val resource = AudioCacheResource(key, resolved.url, resolved.song.uid, quality, audioExtensionFromUrl(resolved.url), sourceQuality)
+        val resource = AudioCacheResource(key, resolved.url, resolved.song.uid, quality, sourceQuality)
         val metadata = ContentMetadataMutations()
             .set(META_SOURCE_URL, resolved.url)
             .set(META_SOURCE_IDENTITY, resolved.song.uid)
@@ -563,7 +564,6 @@ internal class AudioCacheIndex(private val cache: Cache) {
                 put("interval", song.interval)
                 put("isBookChapter", song.isBookChapter)
             }.toString())
-            .apply { resource.extension?.let { set(META_EXTENSION, it) } }
         runCatching {
             cache.applyContentMetadataMutations(key, metadata)
             cache.applyContentMetadataMutations(audioCacheKey(uid, preferredQuality), ContentMetadataMutations()
@@ -599,7 +599,7 @@ internal class AudioCacheIndex(private val cache: Cache) {
             if ((online || crossSource) && !SourceResolver.sameQualityTier(preferredQuality, sourceQuality ?: quality)) return null
             val length = ContentMetadata.getContentLength(metadata)
             if (length <= 0L || !cache.isCached(key, 0L, length)) return null
-            return AudioCacheResource(key, metadata.string(META_SOURCE_URL), source, quality, metadata.string(META_EXTENSION), sourceQuality)
+            return AudioCacheResource(key, metadata.string(META_SOURCE_URL), source, quality, sourceQuality)
         }
         // SimpleCache 重启后可能回收只有元数据的偏好别名。两种 HR 文件都完整时，
         // 按所选来源档位命中；离线仍允许使用本曲已缓存的其它档位。
@@ -656,18 +656,14 @@ internal data class AudioCacheResource(
     val sourceUrl: String?,
     val sourceIdentity: String,
     val actualQuality: String,
-    val extension: String?,
     val sourceQuality: String? = null,
 )
 
 internal data class CachedAudioInput(
     val stream: InputStream,
     val resourceKey: String,
-    val sourceUrl: String?,
     val sourceIdentity: String,
     val actualQuality: String,
-    val contentType: String?,
-    val extension: String?,
     val contentLength: Long?,
     val completeCacheHit: Boolean,
     val sourceQuality: String? = null,
@@ -720,12 +716,6 @@ internal fun audioResourceId(key: String): String? =
         runCatching { java.net.URLDecoder.decode(encoded, Charsets.UTF_8.name()) }.getOrNull()
     }
 
-internal fun audioExtensionFromUrl(url: String?): String? {
-    val path = url?.substringBefore('?')?.lowercase() ?: return null
-    return listOf(".flac", ".m4a", ".wav", ".ape", ".ogg", ".aac", ".mp3")
-        .firstOrNull(path::endsWith)
-}
-
 internal fun audioExtensionFromContentType(contentType: String?): String? = when (contentType?.lowercase()) {
     "audio/flac", "audio/x-flac" -> ".flac"
     "audio/mp4", "audio/x-m4a" -> ".m4a"
@@ -735,12 +725,4 @@ internal fun audioExtensionFromContentType(contentType: String?): String? = when
     "audio/ogg", "application/ogg" -> ".ogg"
     "audio/mpeg", "audio/mp3" -> ".mp3"
     else -> null
-}
-
-/** 只有文件头、响应类型和 URL 都无法识别时，才按实际音质做末级兜底。 */
-internal fun audioExtensionForQuality(quality: String): String = when (quality.lowercase()) {
-    "hires", "flac24bit", "flac" -> ".flac"
-    "ape" -> ".ape"
-    "wav" -> ".wav"
-    else -> ".mp3"
 }

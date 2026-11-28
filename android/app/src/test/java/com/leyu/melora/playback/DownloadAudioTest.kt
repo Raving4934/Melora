@@ -2,6 +2,9 @@ package com.leyu.melora.playback
 
 import com.leyu.melora.playback.local.LocalTagReader
 import com.leyu.melora.playback.sdk.OnlineSong
+import com.sun.net.httpserver.HttpServer
+import kotlinx.coroutines.runBlocking
+import java.net.InetSocketAddress
 import java.io.ByteArrayInputStream
 import java.io.IOException
 import java.io.InputStream
@@ -40,6 +43,60 @@ class DownloadAudioTest {
         assertEquals("audio/flac", probe.spec?.mimeType)
         assertEquals(24, probe.spec?.bitDepth)
         assertEquals(2, probe.spec?.channelCount)
+        assertEquals(1000L, probe.durationMs)
+    }
+
+    @Test
+    fun prefixedFlacProbeHandlesShortReadsAndReplaysEveryByte() {
+        // 首段只包含 ID3 标签以及不完整的 STREAMINFO；扩充到探测上限后才能识别格式。
+        val tagSize = 8_180
+        val id3 = byteArrayOf(73, 68, 51, 4, 0, 0, 0, 0, (tagSize ushr 7).toByte(), (tagSize and 0x7F).toByte())
+        val payload = id3 + ByteArray(tagSize) + flacHeader(24) + ByteArray(140_000) { it.toByte() }
+        val input = object : ByteArrayInputStream(payload) {
+            override fun read(target: ByteArray, offset: Int, length: Int): Int =
+                super.read(target, offset, minOf(length, 31))
+        }
+        val probe = probeDownloadUpgrade(input)
+
+        assertEquals("audio/flac", probe.spec?.mimeType)
+        assertEquals(24, probe.spec?.bitDepth)
+        assertEquals(1_000L, probe.durationMs)
+        assertArrayEquals(payload, probe.prefix + input.readBytes())
+        assertTrue(probe.prefix.size <= AUDIO_PREFIX_PROBE_BYTES)
+    }
+
+    @Test fun rangeProbeUsesPayloadForQualityAndDurationEvenWhenUrlPromisesHiRes() = runBlocking {
+        val header = flacHeader(16)
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/master") { exchange ->
+            exchange.use {
+                if (it.requestHeaders.getFirst("Range") != "bytes=0-${AUDIO_PREFIX_PROBE_BYTES - 1}") {
+                    it.sendResponseHeaders(416, -1)
+                } else {
+                    it.responseHeaders.add("Content-Range", "bytes 0-41/42")
+                    it.sendResponseHeaders(206, header.size.toLong())
+                    it.responseBody.write(header)
+                }
+            }
+        }
+        server.start()
+        try {
+            val result = requireNotNull(AudioCacheStore.probePlaybackCandidate("http://127.0.0.1:${server.address.port}/master"))
+            assertEquals("flac", result.spec?.verifiedQuality)
+            assertEquals(1_000L, result.durationMs)
+            assertTrue(isPreviewDuration(12, requireNotNull(result.durationMs)))
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test fun previewRequiresAConfirmedDurationShorterThanTheCatalogTolerance() {
+        assertTrue(isPreviewDuration(180, 30_000))
+        assertTrue(isPreviewDuration(180, 116_999))
+        assertFalse(isPreviewDuration(180, 117_000))
+        assertFalse(isPreviewDuration(1, 1_000))
+        assertFalse(isPreviewDuration(0, 30_000))
+        assertFalse(isPreviewDuration(180, 0))
     }
 
     @Test fun unknownPrefixIsBoundedAndReplayedWithoutLosingBytes() {

@@ -59,28 +59,19 @@ class AudioCacheStoreTest {
     }
 
     @Test
-    fun qualityFallbackUsesOnlyUnambiguousLosslessExtensions() {
-        assertEquals(".mp3", audioExtensionForQuality("320k"))
-        assertEquals(".flac", audioExtensionForQuality("flac24bit"))
-        assertEquals(".flac", audioExtensionForQuality("hires"))
-        assertEquals(".ape", audioExtensionForQuality("ape"))
-        assertEquals(".wav", audioExtensionForQuality("wav"))
-        assertEquals(".mp3", audioExtensionForQuality("atmos"))
-    }
-
-    @Test
     fun contentTypeAndUrlHintsRecognizeCommonContainers() {
         assertEquals(".flac", audioExtensionFromContentType("audio/flac"))
         assertEquals(".m4a", audioExtensionFromContentType("audio/mp4"))
         assertEquals(".aac", audioExtensionFromContentType("audio/aac"))
-        assertEquals(".ape", audioExtensionFromUrl("https://cdn.example/song.APE?token=1"))
-        assertEquals(null, audioExtensionFromUrl("https://cdn.example/play?id=1"))
     }
 
     @Test
     fun fileHeaderOverridesAmbiguousUrlHints() {
         assertHeaderExtension("fLaC00000000".toByteArray(), ".flac")
-        assertHeaderExtension("ID3\u0004\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000".toByteArray(), ".mp3")
+        val tag = byteArrayOf(73, 68, 51, 3, 0, 0, 0, 0, 0, 1, 0)
+        assertHeaderExtension(tag + "fLaC".toByteArray(), ".flac")
+        assertHeaderExtension(tag + tag + byteArrayOf(0xff.toByte(), 0xf1.toByte(), 0), ".aac")
+        assertHeaderExtension(tag, null)
         assertHeaderExtension(byteArrayOf(0xff.toByte(), 0xfb.toByte(), 0, 0), ".mp3")
         assertHeaderExtension(byteArrayOf(0xff.toByte(), 0xf1.toByte(), 0, 0), ".aac")
         assertHeaderExtension("0000ftypM4A ".toByteArray(), ".m4a")
@@ -88,7 +79,7 @@ class AudioCacheStoreTest {
         assertHeaderExtension("MAC 00000000".toByteArray(), ".ape")
     }
 
-    private fun assertHeaderExtension(header: ByteArray, expected: String) {
+    private fun assertHeaderExtension(header: ByteArray, expected: String?) {
         val file = File.createTempFile("melora-audio-header-", ".part")
         try {
             file.writeBytes(header)
