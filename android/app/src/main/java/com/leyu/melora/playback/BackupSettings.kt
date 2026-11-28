@@ -16,7 +16,12 @@ internal object BackupSettings {
     ) {
         fun current(): Any = encode(state.value)
         fun normalize(value: Any): Any = encode(decode(value))
-        fun publish(value: Any) { state.value = decode(value) }
+        fun stage(raw: Any, values: MutableMap<String, Any>): () -> Unit {
+            val decoded = decode(raw)
+            val value = encode(decoded)
+            values[key] = if (value is JSONArray || value is JSONObject) value.toString() else value
+            return { state.value = decoded }
+        }
     }
     private fun <T : Any> field(
         name: String, key: String, state: MutableStateFlow<T>,
@@ -64,7 +69,9 @@ internal object BackupSettings {
         field("downloadQuality", MeloraSettings.KEY_DOWNLOAD_QUALITY, MeloraSettings.downloadQuality, ::backupString),
         field("downloadSkipSameName", MeloraSettings.KEY_DL_SKIP_SAME, MeloraSettings.downloadSkipSameName, ::backupBoolean),
         field("downloadAutoSwitchSource", MeloraSettings.KEY_DL_AUTO_SWITCH, MeloraSettings.downloadAutoSwitchSource, ::backupBoolean),
-        field("downloadConcurrentTasks", MeloraSettings.KEY_DL_CONCURRENT, MeloraSettings.downloadConcurrentTasks, { backupNumber("downloadConcurrentTasks", it).toInt() }),
+        field("downloadConcurrentTasks", MeloraSettings.KEY_DL_CONCURRENT, MeloraSettings.downloadConcurrentTasks, {
+            backupNumber("downloadConcurrentTasks", it).toInt().coerceIn(MeloraSettings.DOWNLOAD_TASKS)
+        }),
         field("downloadFileNameFormat", MeloraSettings.KEY_DL_NAME_FORMAT, MeloraSettings.downloadFileNameFormat, ::backupString),
         field("downloadEmbedCover", MeloraSettings.KEY_DL_EMBED_COVER, MeloraSettings.downloadEmbedCover, ::backupBoolean),
         field("downloadEmbedLyric", MeloraSettings.KEY_DL_EMBED_LYRIC, MeloraSettings.downloadEmbedLyric, ::backupBoolean),
@@ -79,39 +86,36 @@ internal object BackupSettings {
         field("showDesktopLyrics", MeloraSettings.KEY_DESKTOP_LYRICS, MeloraSettings.showDesktopLyrics, ::backupBoolean),
         field("lockLyrics", MeloraSettings.KEY_LYRICS_LOCK, MeloraSettings.lockLyrics, ::backupBoolean),
         field("singleLineLyric", MeloraSettings.KEY_LYRICS_SINGLE_LINE, MeloraSettings.singleLineLyric, ::backupBoolean),
-        field("lyricFontSize", MeloraSettings.KEY_LYRICS_FONT_SIZE, MeloraSettings.lyricFontSize, { backupNumber("lyricFontSize", it).toFloat() }),
-        field("lyricMaxLines", MeloraSettings.KEY_LYRICS_MAX_LINES, MeloraSettings.lyricMaxLines, { backupNumber("lyricMaxLines", it).toFloat() }),
-        field("lyricAlpha", MeloraSettings.KEY_LYRICS_ALPHA, MeloraSettings.lyricAlpha, { backupNumber("lyricAlpha", it).toFloat() }),
+        field("lyricFontSize", MeloraSettings.KEY_LYRICS_FONT_SIZE, MeloraSettings.lyricFontSize, {
+            backupNumber("lyricFontSize", it).toFloat().coerceIn(MeloraSettings.DESKTOP_LYRIC_FONT_SIZE)
+        }),
+        field("lyricMaxLines", MeloraSettings.KEY_LYRICS_MAX_LINES, MeloraSettings.lyricMaxLines, {
+            backupNumber("lyricMaxLines", it).toFloat().coerceIn(MeloraSettings.DESKTOP_LYRIC_LINES)
+        }),
+        field("lyricAlpha", MeloraSettings.KEY_LYRICS_ALPHA, MeloraSettings.lyricAlpha, {
+            backupNumber("lyricAlpha", it).toFloat().coerceIn(MeloraSettings.DESKTOP_LYRIC_ALPHA)
+        }),
         field("lyricHAlign", MeloraSettings.KEY_LYRICS_H_ALIGN, MeloraSettings.lyricHAlign, { backupNumber("lyricHAlign", it).toInt() }),
         field("lyricVAlign", MeloraSettings.KEY_LYRICS_V_ALIGN, MeloraSettings.lyricVAlign, { backupNumber("lyricVAlign", it).toInt() }),
         field("desktopLyricPosition", MeloraSettings.KEY_DESKTOP_LYRIC_POSITION, MeloraSettings.desktopLyricPosition,
             { DesktopLyricPosition.fromJson(it as? JSONObject ?: error("桌面歌词位置无效")) }, DesktopLyricPosition::toJson),
-        field("lyricColorIndex", MeloraSettings.KEY_LYRICS_COLOR_INDEX, MeloraSettings.lyricColorIndex, { backupNumber("lyricColorIndex", it).toInt() }),
+        field("lyricColorIndex", MeloraSettings.KEY_LYRICS_COLOR_INDEX, MeloraSettings.lyricColorIndex, {
+            backupNumber("lyricColorIndex", it).toInt().coerceIn(MeloraSettings.DESKTOP_LYRIC_COLORS)
+        }),
         field("playlistTagId", MeloraSettings.KEY_PLAYLIST_TAG_ID, MeloraSettings.playlistTagId, ::backupString),
         field("playlistTagName", MeloraSettings.KEY_PLAYLIST_TAG_NAME, MeloraSettings.playlistTagName, ::backupString),
         field("playlistSort", MeloraSettings.KEY_PLAYLIST_SORT, MeloraSettings.playlistSort, { backupNumber("playlistSort", it).toInt() }),
+        field("playlistAutoUpdate", MeloraSettings.KEY_PLAYLIST_AUTO_UPDATE, MeloraSettings.playlistAutoUpdate, ::backupBoolean),
         field("lyricBackground", MeloraSettings.KEY_LYRICS_BACKGROUND, MeloraSettings.lyricBackground, ::backupBoolean),
         field("notificationLyrics", MeloraSettings.KEY_NOTIFICATION_LYRICS, MeloraSettings.notificationLyrics, ::backupBoolean),
+        field("bluetoothLyrics", MeloraSettings.KEY_BLUETOOTH_LYRICS, MeloraSettings.bluetoothLyrics, ::backupBoolean),
     )
 
     fun collect(): JSONObject = JSONObject().apply { fields.forEach { put(it.name, it.current()) } }
 
     /** 旧备份可只含部分字段；未知枚举沿用旧兼容策略，损坏类型/数值拒绝整份导入。 */
     fun prepare(node: JSONObject, readable: Set<String>, writable: Set<String>): Pair<JSONObject, String> {
-        val input = JSONObject(node.toString())
-        val legacyTheme = input.opt("followSystemTheme").let {
-            (it as? Boolean) ?: (it as? String)?.lowercase()?.toBooleanStrictOrNull()
-        }
-        input.put("themeMode", ThemeMode.restore(input.opt("themeMode") as? String, legacyTheme, MeloraSettings.themeMode.value).storageValue)
-        if (!input.has("componentBlurMode") && input.has("blurTopBar")) {
-            val mode = ComponentBlurMode.fromLegacy(backupBoolean(input.get("blurTopBar")))
-            input.put("componentBlurMode", mode.storageValue)
-        }
-        if (!input.has("playQualityWifi") && input.has("playQuality")) input.put("playQualityWifi", input.get("playQuality"))
-        val prepared = JSONObject()
-        fields.forEach { field ->
-            if (input.has(field.name)) prepared.put(field.name, field.normalize(input.get(field.name)))
-        }
+        val prepared = normalize(node)
         var notice = ""
         if (prepared.has("downloadPath")) {
             val saved = prepared.getString("downloadPath")
@@ -128,19 +132,27 @@ internal object BackupSettings {
         return prepared to notice
     }
 
-    fun validate(node: JSONObject) {
-        // 权限只在真正导入时过滤；这里只完成所有已知字段的类型/范围校验。
-        prepare(node, backupFolders(node.optJSONArray("localFolders") ?: JSONArray()).toSet(),
-            setOf(node.optString("downloadPath")))
+    /** 只遍历已知字段。先投影历史别名，再按同一张字段表处理，不修改调用方的 JSON。 */
+    fun normalize(node: JSONObject): JSONObject = JSONObject().apply {
+        if (node.has("followSystemTheme")) {
+            val value = node.opt("followSystemTheme")
+            val legacy = value as? Boolean ?: (value as? String)?.lowercase()?.toBooleanStrictOrNull()
+            put("themeMode", ThemeMode.restore(node.opt("themeMode") as? String, legacy, MeloraSettings.themeMode.value).storageValue)
+        }
+        if (!node.has("componentBlurMode")) node.opt("blurTopBar")?.let {
+            put("componentBlurMode", ComponentBlurMode.fromLegacy(backupBoolean(it)).storageValue)
+        }
+        if (!node.has("playQualityWifi")) put("playQualityWifi", node.opt("playQuality"))
+        fields.forEach { field ->
+            (opt(field.name) ?: node.opt(field.name))?.let { put(field.name, field.normalize(it)) }
+        }
     }
 
     fun apply(prepared: JSONObject) {
-        val values = fields.filter { prepared.has(it.name) }
-        MeloraSettings.commitBackupValues(values.associate { field ->
-            val value = field.normalize(prepared.get(field.name))
-            field.key to if (value is JSONArray || value is JSONObject) value.toString() else value
-        })
-        values.forEach { it.publish(prepared.get(it.name)) }
+        val values = mutableMapOf<String, Any>()
+        val publish = fields.mapNotNull { field -> prepared.opt(field.name)?.let { field.stage(it, values) } }
+        MeloraSettings.commitBackupValues(values)
+        publish.forEach { it() }
     }
 }
 
@@ -178,6 +190,19 @@ private fun backupNumber(name: String, value: Any): Number {
         require(number == number.toInt().toDouble()) { "$name 必须为整数" }
     }
     return number
+}
+
+/** 调用方串行持有该配置文件。提交失败可能已改内存，返回前同步还原旧快照。 */
+@SuppressLint("UseKtx")
+internal inline fun SharedPreferences.commitOrRestore(message: String, change: SharedPreferences.Editor.() -> Unit) {
+    val previous = all
+    if (edit().apply(change).commit()) return
+    try {
+        replaceValues(previous, clear = true)
+    } catch (rollback: Exception) {
+        throw IllegalStateException(message, rollback)
+    }
+    error(message)
 }
 
 /** SharedPreferences只在一个commit中写入；同样用于事务回滚，失败必须显式上报。 */

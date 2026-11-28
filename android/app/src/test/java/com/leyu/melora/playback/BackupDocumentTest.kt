@@ -117,7 +117,7 @@ class BackupDocumentTest {
     @Test
     fun completeSettingsCatalogIncludesPreviouslyMissingPreferences() {
         val settings = BackupSettings.collect()
-        for (name in listOf("playlistTagId", "playlistTagName", "playlistSort", "lyricBackground", "notificationLyrics")) assertTrue(name, settings.has(name))
+        for (name in listOf("playlistTagId", "playlistTagName", "playlistSort", "lyricBackground", "notificationLyrics", "bluetoothLyrics")) assertTrue(name, settings.has(name))
         assertFalse(settings.has("unknownObjectSetting"))
         assertFalse(settings.has("unknownArraySetting"))
         assertFalse(settings.has("followSystemTheme"))

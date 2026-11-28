@@ -30,7 +30,7 @@ class LocalBackupInstrumentedTest {
     @Before
     fun selectGrantedDirectory() {
         DownloadFixtureProvider.grantTree(instrumentation, true)
-        LocalBackup.selectDirectory(context, tree)
+        resolver.takePersistableUriPermission(tree, flags)
         resolver.call(tree, "reset", null, null)
         assertTrue(resolver.persistedUriPermissions.any { it.uri == tree && it.isReadPermission && it.isWritePermission })
     }
@@ -87,7 +87,15 @@ class LocalBackupInstrumentedTest {
         }
     }
 
+    @Test
+    fun unreadableNetworkConfigKeepsTheAccountBoundSnapshotForRetry() = runBlocking {
+        checkLocalBackupDuringNetworkRetry(networkScope = "previously-readable-account") { prefs, _, _ ->
+            prefs.edit().remove("success.LOCAL").apply()
+        }
+    }
+
     private suspend fun checkLocalBackupDuringNetworkRetry(
+        networkScope: String = "",
         makeLocalDue: (SharedPreferences, BackupSnapshot, Long) -> Unit,
     ) {
         val directory = File(context.cacheDir, "scheduled-backup-${UUID.randomUUID()}").apply { mkdirs() }
@@ -104,7 +112,7 @@ class LocalBackupInstrumentedTest {
             // 放入旧版只包含网络目的地的待重试快照。隔离目录没有 WebDAV 配置，网络会持续失败。
             val staged = snapshot(now)
             File(directory, "auto-backup-snapshot.json").writeText(staged.text)
-            prefs.edit().putString("pending", JSONObject().put("name", staged.id.localName).put("NETWORK", "").toString()).apply()
+            prefs.edit().putString("pending", JSONObject().put("name", staged.id.localName).put("NETWORK", networkScope).toString()).apply()
 
             assertTrue(BackupSchedule.runAutomatic(fixture, 0x4D4201))
             assertEquals(emptySet<String>(), names())
@@ -118,6 +126,10 @@ class LocalBackupInstrumentedTest {
             assertEquals(staged.id.uuid.toString(), prefs.getString("done.LOCAL", null))
             val pending = JSONObject(requireNotNull(prefs.getString("pending", null)))
             assertEquals(staged.id.localName, pending.getString("name"))
+            val oldBackup = File(directory, "auto-backup-snapshot.json.bak").apply { writeText(staged.text) }
+            BackupSchedule.setAutomatic(fixture, BackupDestination.OFF)
+            assertTrue(!oldBackup.exists() && !File(directory, "auto-backup-snapshot.json").exists())
+            assertTrue(!prefs.contains("pending"))
         } finally {
             fixture.deleteSharedPreferences("${directory.name}-melora-backup-schedule")
             directory.deleteRecursively()

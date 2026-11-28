@@ -125,7 +125,7 @@ class WebDavSyncLedgerTest {
 
         val previous = server.files.keys.single()
         val incompatible = JSONObject(server.files.getValue(previous)).put("sequence", 2).put("version", 3).toString()
-        val next = "melora-records-v2-${phone.id}-2-${RecordReplica.hash(incompatible)}.json"
+        val next = "melora-records-v2-${phone.id}-2-${incompatible.sha256Hex()}.json"
         server.listing = listOf(next)
         tablet.sync(server)
         assertEquals(setOf("old"), ids(tablet.data))
@@ -144,7 +144,7 @@ class WebDavSyncLedgerTest {
         phone.sync(server)
         val full = server.files.values.single()
         val other = full + "\n"
-        val fork = "melora-records-v2-${phone.id}-1-${RecordReplica.hash(other)}.json"
+        val fork = "melora-records-v2-${phone.id}-1-${other.sha256Hex()}.json"
         server.files[fork] = other.take(8)
         assertTrue(runCatching { device(2).sync(server) }.exceptionOrNull()?.message.orEmpty().contains("互斥"))
     }

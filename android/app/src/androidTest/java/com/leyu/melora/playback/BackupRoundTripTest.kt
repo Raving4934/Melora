@@ -12,14 +12,20 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.leyu.melora.playback.local.LocalSortField
 import com.leyu.melora.playback.lx.LxScriptStore
+import com.leyu.melora.playback.sdk.OnlineSong
 import java.io.File
 import java.io.IOException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -34,6 +40,9 @@ import org.junit.runner.RunWith
 class BackupRoundTripTest {
     companion object {
         private val context by lazy { BackupContext(InstrumentationRegistry.getInstrumentation().targetContext) }
+        private val transactionPreferences = listOf(MeloraSettings.PREFS, LxScriptStore.PREFS, BookListeningProgress.PREFS)
+        private val fixturePreferences = transactionPreferences + listOf(PlaylistAutoUpdate.PREFS, "melora-backup-schedule")
+        private const val PROGRESS_FIXTURE_UID = "kw_backup_fixture"
         private val libraryFile = UserLibrary.javaClass.getDeclaredField("file").apply { isAccessible = true }
         private val settingsPrefs = MeloraSettings.javaClass.getDeclaredField("prefs").apply { isAccessible = true }
         private val settingsInitialized = MeloraSettings.javaClass.getDeclaredField("initialized").apply { isAccessible = true }
@@ -82,7 +91,7 @@ class BackupRoundTripTest {
         BackupManager.recoverInterruptedRestore(context)
         context.filesDir.deleteRecursively(); context.filesDir.mkdirs()
         context.cacheDir.deleteRecursively(); context.cacheDir.mkdirs()
-        for (name in listOf(MeloraSettings.PREFS, LxScriptStore.PREFS)) {
+        for (name in fixturePreferences) {
             assertTrue(context.getSharedPreferences(name, Context.MODE_PRIVATE).edit().clear().commit())
         }
         MeloraSettings.init(context)
@@ -90,6 +99,79 @@ class BackupRoundTripTest {
         UserLibrary.init(context)
         UserLibrary.replaceFromBackup("{}")
         LxScriptStore(context)
+    }
+
+    @Test
+    fun backupWaitsForAPreviouslySubmittedLibraryEdit() = runBlocking<Unit> {
+        val editing = CompletableDeferred<Unit>()
+        val allowCommit = CountDownLatch(1)
+        val write = UserLibrary.enqueueWrite {
+            editing.complete(Unit)
+            check(allowCommit.await(5, TimeUnit.SECONDS))
+            UserLibrary.createPlaylist("已排队的歌单")
+        }
+        editing.await()
+        val backup = async { BackupManager.snapshot(context) }
+        try {
+            assertNull(withTimeoutOrNull(300L) { backup.await() })
+        } finally {
+            allowCommit.countDown()
+        }
+
+        val saved = write.await()
+        val library = JSONObject(requireNotNull(parseBackupDocument(backup.await().text).library))
+        assertEquals(saved.id, library.getJSONArray("playlists").getJSONObject(0).getString("id"))
+    }
+
+    @Test
+    fun fullBackupRestoresEarlierChaptersAndLegacyBackupKeepsExistingPoints() = runBlocking<Unit> {
+        fun chapter(id: String) = OnlineSong(JSONObject().put("source", "kw").put("songmid", id)
+            .put("name", id).put("albumId", "backup-book").put("isBookChapter", true))
+        val first = chapter("first")
+        val current = chapter("current")
+        val prefs = context.getSharedPreferences(BookListeningProgress.PREFS, Context.MODE_PRIVATE)
+        BookListeningProgress.persist(prefs, first, 60_000L, 60_000L, completed = true)
+        BookListeningProgress.persist(prefs, current, 31_000L, 60_000L, completed = false)
+
+        val snapshot = BackupManager.snapshot(context)
+        BackupManager.restoreText(context, """{"settings":{"showExitButton":false}}""")
+        assertEquals(31_000L, BookListeningProgress.readAlbum(context, "kw", "backup-book")?.positionMs)
+        assertTrue(prefs.edit().clear().commit())
+        assertNull(BookListeningProgress.readAlbum(context, "kw", "backup-book"))
+
+        BackupManager.restoreText(context, snapshot.text)
+        assertEquals(current.uid, BookListeningProgress.readAlbum(context, "kw", "backup-book")?.song?.uid)
+        assertEquals(31_000L, BookListeningProgress.readChapter(context, current).positionMs)
+        assertTrue(BookListeningProgress.readChapter(context, first).completed)
+    }
+
+    @Test
+    fun failedRestoreRollsBackPlaybackProgress() {
+        val prefs = context.getSharedPreferences(BookListeningProgress.PREFS, Context.MODE_PRIVATE)
+        assertTrue(prefs.edit().putLong("kw_saved", 42_000L).commit())
+        val original = prefs.all
+        assertThrows(IOException::class.java) {
+            BackupRestoreTransaction.run(context, {}) {
+                BookListeningProgress.restoreBackup(context, mapOf("kw_replacement" to 1_000L))
+                throw IOException("fixture aborts after restoring progress")
+            }
+        }
+        assertEquals(original, prefs.all)
+    }
+
+    @Test
+    fun corruptedDeviceIdKeepsTheOriginalReplicaIdentity() {
+        val directory = context.noBackupFilesDir
+        val id = java.util.UUID.randomUUID().toString()
+        val current = File(directory, "webdav-device-id").apply { writeText("truncated") }
+        File(directory, "webdav-device-id.bak").delete()
+        val ledger = File(directory, "records-fixture").apply { mkdirs() }
+        File(ledger, "confirmed").writeText("melora-records-v2-$id-1-${"0".repeat(64)}.json")
+        assertEquals(id, WebDavConfigStore.deviceId(context))
+        assertEquals(id, current.readText())
+        ledger.deleteRecursively()
+        current.writeText("truncated again")
+        assertEquals(id, WebDavConfigStore.deviceId(context))
     }
 
     @Test
@@ -450,15 +532,17 @@ class BackupRoundTripTest {
     }
 
     @Test
-    fun retainingMemoryFirstCommitFailurePersistsBothSnapshotsBeforeAllowingWrites() = runBlocking<Unit> {
+    fun retainingMemoryFirstCommitFailurePersistsEverySnapshotBeforeAllowingWrites() = runBlocking<Unit> {
         failCommitAndRollback(memoryFirstFailure = true)
         val settings = context.getSharedPreferences(MeloraSettings.PREFS, Context.MODE_PRIVATE).all
         val scripts = context.getSharedPreferences(LxScriptStore.PREFS, Context.MODE_PRIVATE).all
+        val progress = context.getSharedPreferences(BookListeningProgress.PREFS, Context.MODE_PRIVATE).all
         assertEquals(true, settings[MeloraSettings.KEY_SHOW_EXIT])
         assertFalse(MeloraSettings.showExitButton.value)
         assertEquals(false, context.persistedPreferenceValues(MeloraSettings.PREFS)[MeloraSettings.KEY_SHOW_EXIT])
         assertTrue(scripts.containsKey("new.js"))
         assertFalse(context.persistedPreferenceValues(LxScriptStore.PREFS).containsKey("new.js"))
+        assertEquals(42_000L, progress[PROGRESS_FIXTURE_UID])
 
         val journal = File(context.filesDir, "backup-restore")
         val commits = mutableListOf<String>()
@@ -470,10 +554,11 @@ class BackupRoundTripTest {
         }
         val retained = BackupRestoreTransaction.retain(context)
         context.commitAction = null
-        assertEquals(setOf(MeloraSettings.PREFS, LxScriptStore.PREFS), commits.toSet())
+        assertEquals(transactionPreferences.toSet(), commits.toSet())
         assertNull(BackupRestoreTransaction.failure.value)
         assertEquals(settings, context.persistedPreferenceValues(MeloraSettings.PREFS))
         assertEquals(scripts, context.persistedPreferenceValues(LxScriptStore.PREFS))
+        assertEquals(progress, context.persistedPreferenceValues(BookListeningProgress.PREFS))
 
         // 丢弃进程可读值后，只从故障模型已确认持久化的快照恢复。
         context.reloadPersistedPreferences()
@@ -481,6 +566,7 @@ class BackupRoundTripTest {
         assertTrue(MeloraSettings.showExitButton.value)
         assertEquals(settings, context.getSharedPreferences(MeloraSettings.PREFS, Context.MODE_PRIVATE).all)
         assertEquals(scripts, context.getSharedPreferences(LxScriptStore.PREFS, Context.MODE_PRIVATE).all)
+        assertEquals(progress, context.getSharedPreferences(BookListeningProgress.PREFS, Context.MODE_PRIVATE).all)
         val saved = UserLibrary.createPlaylist("after-memory-first-retention")
         BackupManager.recoverInterruptedRestore(context)
         UserLibrary.reloadAfterRestore()
@@ -489,8 +575,8 @@ class BackupRoundTripTest {
     }
 
     @Test
-    fun retentionCommitFailureKeepsJournalAndWritesBlockedForEitherPreferenceStore() = runBlocking<Unit> {
-        for (failedName in listOf(MeloraSettings.PREFS, LxScriptStore.PREFS)) {
+    fun retentionCommitFailureKeepsJournalAndWritesBlockedForEveryPreferenceStore() = runBlocking<Unit> {
+        for (failedName in transactionPreferences) {
             failCommitAndRollback(memoryFirstFailure = true)
             val journal = File(context.filesDir, "backup-restore")
             val bytes = journal.walkTopDown().filter(File::isFile)
@@ -773,6 +859,27 @@ class BackupRoundTripTest {
     }
 
     @Test
+    fun bluetoothLyricsSurviveReloadAndRoundTripsAndOlderBackupsLeaveThemAlone() = runBlocking<Unit> {
+        for (enabled in listOf(true, false)) {
+            MeloraSettings.updateBluetoothLyrics(enabled)
+            MeloraSettings.bluetoothLyrics.value = !enabled
+            MeloraSettings.reloadAfterRestore()
+            assertEquals(enabled, MeloraSettings.bluetoothLyrics.value)
+            withLocalBackup { backup ->
+                MeloraSettings.updateBluetoothLyrics(!enabled)
+                BackupManager.import(context, backup).getOrThrow()
+                assertEquals(enabled, MeloraSettings.bluetoothLyrics.value)
+            }
+        }
+        MeloraSettings.updateBluetoothLyrics(true)
+        val older = document("before-bluetooth-lyrics.json")
+        File(older.path!!).writeText("""{"settings":{"notificationLyrics":false}}""")
+        BackupManager.import(context, older).getOrThrow()
+        assertTrue(MeloraSettings.bluetoothLyrics.value)
+        assertFalse(MeloraSettings.notificationLyrics.value)
+    }
+
+    @Test
     fun unknownFieldsAreIgnoredAndOtherSettingsStillRestore() = runBlocking<Unit> {
         MeloraSettings.updateEInkMode(true)
         val uri = document("legacy.json")
@@ -845,11 +952,46 @@ class BackupRoundTripTest {
         context.contentResolver.call(uri, "reset", null, null)
     }
 
+    @Test
+    fun failedBackupDirectorySaveRestoresPreferencesAndOnlyReleasesNewGrants() = runBlocking<Unit> {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val tree = DocumentsContract.buildTreeDocumentUri("${instrumentation.context.packageName}.download-fixture", "root")
+        val resolver = context.contentResolver
+        val read = Intent.FLAG_GRANT_READ_URI_PERMISSION
+        val write = Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        val name = "melora-backup-schedule"
+        val prefs = context.getSharedPreferences(name, Context.MODE_PRIVATE)
+        DownloadFixtureProvider.grantTree(instrumentation, true)
+        resolver.takePersistableUriPermission(tree, read)
+        try {
+            val original = prefs.all
+            context.emulateMemoryFirstCommitFailures()
+            context.commitAction = { it != name }
+            repeat(2) {
+                val error = requireNotNull(runCatching { BackupSchedule.chooseDirectory(context, tree) }.exceptionOrNull())
+                assertEquals("无法保存备份设置", error.message)
+                assertNotNull("二次写盘失败应保留原因", error.cause)
+                assertEquals(original, prefs.all)
+                val grant = resolver.persistedUriPermissions.single { it.uri == tree }
+                assertTrue(grant.isReadPermission)
+                assertFalse(grant.isWritePermission)
+            }
+            context.commitAction = null
+            assertEquals(tree, BackupSchedule.chooseDirectory(context, tree).directory)
+            assertEquals(tree.toString(), prefs.getString("directory", null))
+        } finally {
+            context.commitAction = null
+            resolver.releasePersistableUriPermission(tree, read or write)
+            prefs.edit().clear().commit()
+            BackupSchedule.load(context)
+        }
+    }
+
     private suspend fun withLocalBackup(verify: suspend (Uri) -> Unit) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val tree = DocumentsContract.buildTreeDocumentUri("${instrumentation.context.packageName}.download-fixture", "root")
         DownloadFixtureProvider.grantTree(instrumentation, true)
-        LocalBackup.selectDirectory(context, tree)
+        context.contentResolver.takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         try {
             val snapshot = BackupManager.snapshot(context)
             LocalBackup.write(context, tree, snapshot, keepLatest = false)
@@ -864,11 +1006,14 @@ class BackupRoundTripTest {
         MeloraSettings.updateShowExit(true)
         UserLibrary.replaceFromBackup(library("existing").toString())
         LxScriptStore(context).import("existing.js", "// existing test source")
+        assertTrue(context.getSharedPreferences(BookListeningProgress.PREFS, Context.MODE_PRIVATE)
+            .edit().putLong(PROGRESS_FIXTURE_UID, 19_000L).commit())
     }
     private fun incoming(): Uri = document("incoming.json").also { uri ->
         File(uri.path!!).writeText(JSONObject().put("version", 1)
             .put("settings", JSONObject().put("showExitButton", false))
             .put("library", library("incoming"))
+            .put("playbackProgress", JSONObject().put(PROGRESS_FIXTURE_UID, 42_000L))
             .put("scripts", JSONArray().put(JSONObject().put("fileName", "new.js").put("code", "// new test source").put("enabled", false)))
             .toString())
     }
@@ -877,7 +1022,7 @@ class BackupRoundTripTest {
     private fun document(name: String): Uri = Uri.fromFile(File(context.cacheDir, name).apply { createNewFile() })
     private fun diskSnapshot(): Map<String, String> = buildMap {
         context.filesDir.walkTopDown().filter { it.isFile }.forEach { put(it.relativeTo(context.filesDir).path, it.readText()) }
-        for (name in listOf(MeloraSettings.PREFS, LxScriptStore.PREFS)) {
+        for (name in transactionPreferences) {
             put("prefs:$name", context.getSharedPreferences(name, Context.MODE_PRIVATE).all.toSortedMap().toString())
         }
     }
@@ -890,7 +1035,7 @@ class BackupRoundTripTest {
 
         fun emulateMemoryFirstCommitFailures() {
             memoryFirstCommitFailure = true
-            for (name in listOf(MeloraSettings.PREFS, LxScriptStore.PREFS)) {
+            for (name in transactionPreferences) {
                 persistedPreferences[name] = super.getSharedPreferences("isolated-backup-tests.$name", Context.MODE_PRIVATE).all
             }
         }
@@ -913,13 +1058,14 @@ class BackupRoundTripTest {
             commitAction = null
             resetPreferenceFailureModel()
             root.deleteRecursively()
-            for (name in listOf(MeloraSettings.PREFS, LxScriptStore.PREFS)) {
+            for (name in fixturePreferences) {
                 super.deleteSharedPreferences("isolated-backup-tests.$name")
             }
         }
         override fun getApplicationContext(): Context = this
         override fun getFilesDir(): File = File(root, "files").apply { mkdirs() }
         override fun getCacheDir(): File = File(root, "cache").apply { mkdirs() }
+        override fun getNoBackupFilesDir(): File = File(root, "no-backup").apply { mkdirs() }
         override fun startService(service: Intent): ComponentName? = service.component
         override fun startForegroundService(service: Intent): ComponentName? = service.component
         override fun stopService(name: Intent): Boolean = true

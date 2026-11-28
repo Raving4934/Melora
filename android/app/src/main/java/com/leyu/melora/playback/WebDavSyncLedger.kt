@@ -50,11 +50,11 @@ internal class WebDavSyncLedger(private val directory: File) {
     private fun view(name: String) = RecordSyncMerge.parse(cachedText(name))
     private fun snapshot(records: JSONObject): String {
         val text = boundedBackupJson(records)
-        return "view-${RecordReplica.hash(text)}".also { store(it, text) }
+        return "view-${text.sha256Hex()}".also { store(it, text) }
     }
     private fun stage(replica: RecordReplica): String {
         val text = replica.encode()
-        val name = "melora-records-v2-${replica.device}-${replica.sequence}-${RecordReplica.hash(text)}.json"
+        val name = "melora-records-v2-${replica.device}-${replica.sequence}-${text.sha256Hex()}.json"
         // 本机与远端遵循相同的文件验证规则，上传前即发现大小、内容和版本错误。
         RecordReplica.decode(name, text)
         store(name, text)
@@ -141,7 +141,7 @@ internal class WebDavSyncLedger(private val directory: File) {
         val seeds = heads.filterKeys { it.startsWith(LEGACY_PREFIX) }.toMutableMap()
         if (legacy != null && heads.isEmpty()) {
             val doc = RecordSyncMerge.validateRemote(legacy)
-            val digest = RecordReplica.hash(boundedBackupJson(doc))
+            val digest = boundedBackupJson(doc).sha256Hex()
             val actor = LEGACY_PREFIX + digest.take(4) + "-" + digest.substring(4, 16)
             val origin = RecordHeads(emptyList()).edit(RecordReplica(actor), recordDocument(), doc).copy(sequence = 1L)
             val name = stage(origin)

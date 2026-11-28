@@ -2,7 +2,6 @@ package com.leyu.melora.playback
 
 import org.json.JSONArray
 import org.json.JSONObject
-import java.security.MessageDigest
 
 /** 一个安装只发布自己的累积修改。同一记录的版本向量区分先后编辑与离线分叉。 */
 internal typealias RecordClock = Map<String, Long>
@@ -36,12 +35,9 @@ internal data class RecordReplica(
     companion object {
         val actor = Regex("[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}")
         val filename = Regex("""melora-records-v2-(${actor.pattern})-([1-9][0-9]{0,18})-([0-9a-f]{64})\.json""")
-        fun hash(text: String): String = MessageDigest.getInstance("SHA-256")
-            .digest(text.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
-
         fun decode(name: String, text: String): RecordReplica {
             val (device, sequence, digest) = requireNotNull(filename.matchEntire(name)).destructured
-            if (hash(text) != digest) {
+            if (text.sha256Hex() != digest) {
                 if (runCatching { backupObject(text) }.isFailure) throw IncompleteRecordReplica()
                 throw IllegalArgumentException("同步文件内容与文件名校验值不一致，请重试")
             }

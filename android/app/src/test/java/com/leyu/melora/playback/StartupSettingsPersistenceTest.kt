@@ -101,7 +101,7 @@ class StartupSettingsPersistenceTest {
         MeloraSettings.updateLastTab(6)
         for (value in listOf("invalid", "", 0, 1, JSONObject.NULL, JSONArray(), JSONObject())) {
             val backup = JSONObject().put("restoreLastPage", value).put("lastTab", 2)
-            assertThrows(RuntimeException::class.java) { BackupSettings.validate(backup) }
+            assertThrows(RuntimeException::class.java) { BackupSettings.normalize(backup) }
             assertFalse(MeloraSettings.restoreLastPage.value)
             assertEquals(6, MeloraSettings.lastTab.value)
         }
@@ -111,7 +111,7 @@ class StartupSettingsPersistenceTest {
     fun backupCannotSupplyAPageOutsideTheStartupChoices() = withStartupSettings {
         for (value in listOf(-1, 7, 8, 1.5, "invalid")) {
             val backup = JSONObject().put("startupTab", value)
-            assertThrows(RuntimeException::class.java) { BackupSettings.validate(backup) }
+            assertThrows(RuntimeException::class.java) { BackupSettings.normalize(backup) }
         }
         assertEquals(StartupPage.LocalSongs, MeloraSettings.startupPage.value)
     }

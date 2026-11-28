@@ -1,6 +1,5 @@
 package com.leyu.melora.playback
 
-import android.annotation.SuppressLint
 import android.app.job.JobInfo
 import android.app.job.JobScheduler
 import android.content.ComponentName
@@ -22,6 +21,7 @@ import org.json.JSONObject
 private const val DAY_MS = 24 * 60 * 60 * 1000L
 
 internal object BackupSchedule {
+    private const val SAVE_ERROR = "无法保存备份设置"
     private const val FIRST_JOB = 0x4D4201
     private const val SECOND_JOB = 0x4D4202
     private const val PREFS = "melora-backup-schedule"
@@ -55,12 +55,13 @@ internal object BackupSchedule {
     suspend fun chooseDirectory(context: Context, tree: Uri): BackupPreferences = locked {
         val prefs = preferences(context)
         val old = prefs.readSettings()
-        val name = LocalBackup.selectDirectory(context, tree)
-        prefs.save {
-            putString(DIRECTORY, tree.toString())
-            putString(DIRECTORY_NAME, name)
+        val resolver = context.contentResolver
+        val updated = resolver.withPersistableTreeAccess(tree, "无法获得备份目录的长期读写权限，请重新选择", "请选择本地备份文件夹") {
+            val (_, name) = LocalBackup.writableDirectory(resolver, tree)
+            prefs.commitOrRestore(SAVE_ERROR) { putString(DIRECTORY, tree.toString()).putString(DIRECTORY_NAME, name) }
+            old.copy(directory = tree, directoryName = name)
         }
-        val updated = prefs.readSettings().also { mutableSettings.value = it }
+        mutableSettings.value = updated
         if (old.directory != tree && updated.automatic.local) updateJob(prefs) { restartSchedule(context, updated.automatic) }
         updated
     }
@@ -68,11 +69,14 @@ internal object BackupSchedule {
     suspend fun setAutomatic(context: Context, destination: BackupDestination): BackupPreferences = locked {
         val prefs = preferences(context)
         val current = prefs.readSettings()
-        require(!destination.local || current.directory != null) { "请先选择本地备份目录" }
+        if (destination.local) {
+            val directory = requireNotNull(current.directory) { "请先选择本地备份目录" }
+            LocalBackup.writableDirectory(context.contentResolver, directory)
+        }
         if (destination.network) loadWebDav(context)
         restartSchedule(context, destination)
         try {
-            prefs.save {
+            prefs.commitOrRestore(SAVE_ERROR) {
                 putString(AUTOMATIC, destination.name)
                 if (current.automatic != destination) remove(PENDING)
             }
@@ -81,7 +85,7 @@ internal object BackupSchedule {
             throw failure
         }
         val updated = prefs.readSettings().also { mutableSettings.value = it }
-        if (current.automatic != destination) deleteStagedSnapshot(context)
+        if (current.automatic != destination) discardPending(context, prefs)
         updated
     }
 
@@ -93,7 +97,7 @@ internal object BackupSchedule {
 
     suspend fun setKeepLatest(context: Context, keepLatest: Boolean): BackupPreferences = locked {
         val prefs = preferences(context)
-        prefs.save { putBoolean(KEEP_LATEST, keepLatest) }
+        prefs.commitOrRestore(SAVE_ERROR) { putBoolean(KEEP_LATEST, keepLatest) }
         prefs.readSettings().also { mutableSettings.value = it }
     }
 
@@ -121,12 +125,12 @@ internal object BackupSchedule {
             val remote = if (mode.network) attempt { loadWebDav(context) } else null
             val scopes = targetScopes(destinations.filter { mode.includes(it) }, settings, remote)
             val due = scopes.filter { (target, scope) -> prefs.delayFor(target, scope, now) == 0L }
-            val pending = attempt { readPending(prefs) }.getOrNull()?.takeIf { saved ->
-                snapshotFile(context).isFile &&
-                backupDelay(saved.id.createdAt, now) > 0L && saved.scopes.all { (target, scope) -> scopes[target] == scope }
-            }
-            val run = pending ?: if (due.isEmpty()) null else prepare(context, prefs, due)
-            if (run != null) {
+            if (due.isNotEmpty()) {
+                val run = attempt { readPending(prefs) }.getOrNull()?.takeIf { saved ->
+                    val bound = if (remote?.isFailure == true) saved.scopes - BackupDestination.NETWORK else saved.scopes
+                    snapshotFile(context).isFile && backupDelay(saved.id.createdAt, now) > 0L &&
+                        scopes.entries.containsAll(bound.entries)
+                } ?: prepare(context, prefs, due)
                 // 复用本次快照，独立核对每个当前到期的目的地。手动备份也满足该目的地周期。
                 val remaining = due.filterNot { (target, scope) ->
                     prefs.lastSuccessScope(target) == scope &&
@@ -145,10 +149,8 @@ internal object BackupSchedule {
                     publishResult(prefs, outcomes.joinToString(" · ") { it.message })
                     if (outcomes.any { it.failed }) return@locked true
                 }
-                discardPending(context, prefs)
-            } else if (prefs.contains(PENDING)) {
-                discardPending(context, prefs)
             }
+            discardPending(context, prefs)
             val nextDelay = scopes.minOf { (target, scope) -> prefs.delayFor(target, scope, System.currentTimeMillis()) }
             schedule(context, if (jobId == FIRST_JOB) SECOND_JOB else FIRST_JOB, mode, nextDelay)
             false
@@ -190,7 +192,7 @@ internal object BackupSchedule {
     private fun publishResult(prefs: SharedPreferences, status: String) {
         val recorded = "${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date())} · $status"
         mutableLastAutomaticResult.value = recorded
-        prefs.save { putString(LAST_RESULT, recorded) }
+        prefs.commitOrRestore(SAVE_ERROR) { putString(LAST_RESULT, recorded) }
     }
 
     private inline fun updateJob(prefs: SharedPreferences, update: () -> Unit) {
@@ -236,7 +238,7 @@ internal object BackupSchedule {
         writeTextAtomically(file, snapshot.text)
         val metadata = JSONObject().put("name", snapshot.id.localName)
         scopes.forEach { (target, scope) -> metadata.put(target.name, scope) }
-        prefs.save { putString(PENDING, metadata.toString()) }
+        prefs.commitOrRestore(SAVE_ERROR) { putString(PENDING, metadata.toString()) }
         return Pending(snapshot.id, scopes)
     }
 
@@ -248,11 +250,7 @@ internal object BackupSchedule {
     }
 
     private fun discardPending(context: Context, prefs: SharedPreferences) {
-        if (prefs.contains(PENDING)) prefs.save { remove(PENDING) }
-        deleteStagedSnapshot(context)
-    }
-
-    private fun deleteStagedSnapshot(context: Context) {
+        if (prefs.contains(PENDING)) prefs.commitOrRestore(SAVE_ERROR) { remove(PENDING) }
         val file = snapshotFile(context)
         file.delete()
         File(file.parentFile, "${file.name}.bak").delete()
@@ -267,17 +265,12 @@ internal object BackupSchedule {
         keepLatest = getBoolean(KEEP_LATEST, false),
     )
 
-    @SuppressLint("UseKtx") // 任务启动前需要确认目的地与完成状态已保存。
-    private inline fun SharedPreferences.save(revise: SharedPreferences.Editor.() -> Unit) {
-        check(edit().apply(revise).commit()) { "无法保存备份设置" }
-    }
-
     private fun SharedPreferences.delayFor(target: BackupDestination, scope: String, now: Long): Long =
         if (lastSuccessScope(target) != scope) 0L else backupDelay(getLong("success.${target.name}", 0L), now)
 
     private fun SharedPreferences.lastSuccessScope(target: BackupDestination) = getString("scope.${target.name}", null)
 
-    private fun SharedPreferences.recordSuccess(target: BackupDestination, scope: String, id: BackupFileId) = save {
+    private fun SharedPreferences.recordSuccess(target: BackupDestination, scope: String, id: BackupFileId) = commitOrRestore(SAVE_ERROR) {
         putString("done.${target.name}", id.uuid.toString())
         putString("scope.${target.name}", scope)
         putLong("success.${target.name}", System.currentTimeMillis())

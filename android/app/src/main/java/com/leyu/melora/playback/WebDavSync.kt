@@ -1,6 +1,5 @@
 package com.leyu.melora.playback
 
-import android.annotation.SuppressLint
 import android.content.Context
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -23,7 +22,6 @@ import java.text.DateFormat
 import java.util.Date
 
 internal object WebDavSync {
-    private const val SCOPE = "enabled-scope"
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val changes = Channel<Unit>(Channel.CONFLATED)
     private val operations = Mutex()
@@ -37,13 +35,11 @@ internal object WebDavSync {
     private val _conflicts = MutableStateFlow<List<RecordConflict>>(emptyList())
     val conflicts = _conflicts.asStateFlow()
 
-    private fun preferences(context: Context) = context.getSharedPreferences("webdav-sync", Context.MODE_PRIVATE)
-
     @Synchronized
     fun init(context: Context) {
         if (started) return
         val app = context.applicationContext
-        _enabled.value = preferences(app).contains(SCOPE)
+        syncConfig(app).onFailure(::showFailure)
         started = true
         scope.launch {
             UserLibrary.revisions.drop(1).collect { if (enabled.value) changes.trySend(Unit) }
@@ -82,12 +78,9 @@ internal object WebDavSync {
 
     suspend fun saveConfig(context: Context, config: WebDavConfig): WebDavConfig = withContext(Dispatchers.IO) {
         operations.withLock {
-            val saved = WebDavConfigStore.save(context, config)
-            if (preferences(context).getString(SCOPE, null) != saved.scopeKey) {
-                setEnabledScope(context, null)
-                _status.value = ""
+            WebDavConfigStore.save(context, config).also { saved ->
+                publishEnabled(WebDavConfigStore.enabledScope(context) == saved.scopeKey)
             }
-            saved
         }.also { BackupSchedule.onWebDavConfigSaved(context) }
     }
 
@@ -99,46 +92,66 @@ internal object WebDavSync {
                 WebDavBackup.test(config)
                 config.scopeKey
             } else null
-            setEnabledScope(context, key)
-            _status.value = if (value) "正在等待首次合并" else ""
+            WebDavConfigStore.setEnabledScope(context, key)
+            publishEnabled(value)
+            if (value) {
+                _status.value = "正在等待首次合并"
+                onForeground(context)
+            }
         }
-        if (value) onForeground(context)
     }
 
-    @SuppressLint("UseKtx") // 开启同步前必须确认选定账号已持久化，KTX.edit 不返回 commit 的结果。
-    private fun setEnabledScope(context: Context, key: String?) {
-        check(preferences(context).edit().putString(SCOPE, key).commit()) { "无法保存同步开关" }
-        _enabled.value = key != null
-        if (key == null) _conflicts.value = emptyList()
+    private fun publishEnabled(value: Boolean) {
+        _enabled.value = value
+        if (!value) {
+            _conflicts.value = emptyList()
+            _status.value = ""
+        }
+    }
+
+    private fun syncConfig(context: Context): Result<WebDavConfig?> {
+        val scope = WebDavConfigStore.enabledScope(context)
+        return runCatching {
+            scope?.let {
+                requireNotNull(WebDavConfigStore.load(context)) { "请重新保存 WebDAV 配置" }
+                    .takeIf { config -> config.scopeKey == scope }
+            }
+        }.also { result ->
+            // 暂时无法解密时保留开关供用户关闭，重试必须重新核对目标。
+            publishEnabled(result.fold({ it != null }, { true }))
+        }
     }
 
     suspend fun syncNow(context: Context) = withContext(Dispatchers.IO) { attempt(context) }
 
     suspend fun resolve(context: Context, choices: Map<String, Boolean>) = withContext(Dispatchers.IO) {
         operations.withLock {
-            check(enabled.value) { "请先开启同步我的记录" }
-            synchronize(context, choices)
+            val config = checkNotNull(syncConfig(context).getOrThrow()) { "请先开启同步我的记录" }
+            synchronize(context, config, choices)
         }
     }
 
     private suspend fun attempt(context: Context): Boolean = operations.withLock {
-        if (!enabled.value) return@withLock true
         try {
-            synchronize(context, emptyMap())
+            syncConfig(context).getOrThrow()?.let { synchronize(context, it, emptyMap()) }
             true
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
-            _status.value = "同步失败 · ${error.localizedMessage ?: "请检查网络和配置"}"
+            showFailure(error)
             false
         }
     }
 
-    private suspend fun synchronize(context: Context, choices: Map<String, Boolean>) {
-        val config = requireNotNull(WebDavConfigStore.load(context)) { "请重新保存 WebDAV 配置" }
-        check(config.scopeKey == preferences(context).getString(SCOPE, null)) { "目标目录已变更，请重新开启同步" }
+    private fun showFailure(error: Throwable) {
+        _status.value = "同步失败 · ${error.localizedMessage ?: "请检查网络和配置"}"
+    }
+
+    private suspend fun synchronize(context: Context, config: WebDavConfig, choices: Map<String, Boolean>) {
         val client = WebDavClient(config)
         client.ensureFolder()
+        // 手动同步包含已提交但尚未落盘的页面操作。
+        UserLibrary.enqueueWrite { }.await()
         val ledger = WebDavSyncLedger(File(context.noBackupFilesDir, "records-${config.scopeKey}"))
         val conflicts = ledger.sync(WebDavConfigStore.deviceId(context), client,
             capture = { capture(context).portable },

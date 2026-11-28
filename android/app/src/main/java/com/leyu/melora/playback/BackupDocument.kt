@@ -22,7 +22,12 @@ internal data class BackupScript(
     val enabled: Boolean,
     val originUrl: String? = null,
 )
-internal data class ParsedBackup(val settings: JSONObject?, val library: String?, val scripts: List<BackupScript>?)
+internal data class ParsedBackup(
+    val settings: JSONObject?,
+    val library: String?,
+    val scripts: List<BackupScript>?,
+    val playbackProgress: Map<String, Any>?,
+)
 
 /** 不信任provider报告的长度：实际读取计数有上限，取消检查覆盖每个块。 */
 internal fun InputStream.readBackupBytes(limit: Int = MAX_BACKUP_BYTES, checkCancelled: () -> Unit = {}): ByteString {
@@ -77,10 +82,10 @@ internal fun parseBackupDocument(text: String): ParsedBackup {
         val version = root.get("version")
         require((version is Number && version.toDouble() == 1.0) || version == "1") { "不支持的备份版本" }
     }
-    require(listOf("settings", "library", "scripts").any(root::has)) { "文件不包含可恢复的备份内容" }
+    require(listOf("settings", "library", "scripts", "playbackProgress").any(root::has)) { "文件不包含可恢复的备份内容" }
     val settings = root.opt("settings")?.let {
         require(it is JSONObject) { "settings 格式无效" }
-        BackupSettings.validate(it)
+        BackupSettings.normalize(it)
         it
     }
     val library = root.opt("library")?.let {
@@ -117,7 +122,11 @@ internal fun parseBackupDocument(text: String): ParsedBackup {
             )
         }
     }
-    return ParsedBackup(settings, library, scripts)
+    val progress = root.opt("playbackProgress")?.let { value ->
+        require(value is JSONObject && value.length() <= MAX_ITEMS) { "播放断点格式无效或条目过多" }
+        BookListeningProgress.parseBackup(value)
+    }
+    return ParsedBackup(settings, library, scripts, progress)
 }
 
 internal fun validateBackupLibrary(root: JSONObject) {

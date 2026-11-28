@@ -68,6 +68,69 @@ class PlaybackProgressInstrumentedTest {
     }
 
     @Test
+    fun openPlayerCannotOverwriteRestoredPointUntilUserSeeks() {
+        val track = onlineTrack("test_restore_active", book = true, interval = "12:00")
+        withSession { player, controller ->
+            val progress = progressFor(player, mapOf(track.uid to track))
+            try {
+                prepare(controller, listOf(track to longWav))
+                seekPaused(controller, 27_000L)
+                awaitSaved(track.uid, 26_000L, 29_000L)
+
+                onMain {
+                    synchronized(BackupStateLock.monitor) {
+                        assertTrue(progressPrefs.edit().putLong(track.uid, 55_000L).commit())
+                        BookListeningProgress.onBackupCommitted()
+                    }
+                    progress.checkpoint()
+                }
+                assertEquals(55_000L, progressPrefs.getLong(track.uid, 0L))
+
+                seekPaused(controller, 39_000L)
+                awaitSaved(track.uid, 38_000L, 41_000L)
+            } finally {
+                onMain { progress.close() }
+            }
+        }
+    }
+
+    @Test
+    fun rebuildingSameChapterAfterZeroRestoreRecordsNewProgressAndCompletion() {
+        val chapter = onlineTrack("restored_chapter", book = true, interval = "00:08")
+        val song = requireNotNull(OnlineSong.from(chapter.raw))
+        val sibling = requireNotNull(OnlineSong.from(onlineTrack("other_chapter", book = true).raw))
+        val queue = listOf(chapter to shortWav)
+        withSession { player, controller ->
+            val progress = progressFor(player, mapOf(chapter.uid to chapter), bookProgressPrefs)
+            try {
+                prepare(controller, queue)
+                seekPaused(controller, 5_000L)
+                onMain {
+                    BookListeningProgress.restoreBackup(context, emptyMap())
+                    BookListeningProgress.onBackupCommitted()
+                    progress.checkpoint()
+                }
+                assertEquals(0L, BookListeningProgress.readChapter(context, song).positionMs)
+                assertEquals(sibling.uid, BookListeningProgress.read(context, sibling).song.uid)
+
+                prepare(controller, queue)
+                await { BookListeningProgress.read(context, sibling).song.uid == chapter.uid }
+                assertEquals(0L, BookListeningProgress.readChapter(context, song).positionMs)
+                onMain {
+                    controller.setPlaybackSpeed(2f)
+                    controller.play()
+                }
+                await { player.currentPosition >= 600L }
+                onMain { progress.checkpoint() }
+                assertTrue(BookListeningProgress.readChapter(context, song).positionMs in 600L until SHORT_DURATION_MS)
+                await { BookListeningProgress.readChapter(context, song).completed }
+            } finally {
+                onMain { progress.close() }
+            }
+        }
+    }
+
+    @Test
     fun manualQueueReplacementSavesOldTrackBeforeNewSelection() {
         val oldTrack = onlineTrack("test_old", interval = null)
         val newTrack = onlineTrack("test_new", interval = null)
@@ -422,7 +485,7 @@ class PlaybackProgressInstrumentedTest {
         val actualMediaId = "legacy-media-${rawSong.uid}"
         val inconsistentTrack = consistentTrack.copy(uid = actualMediaId)
         assertNotEquals("负面对照必须制造真实 UID 不一致", rawSong.uid, actualMediaId)
-        bookProgressPrefs.edit().putLong(rawSong.uid, 83_000L).commit()
+        bookProgressPrefs.edit().putLong(rawSong.uid, 83_000L).putLong(actualMediaId, 2_000L).commit()
 
         withSession { player, controller ->
             val progress = progressFor(
@@ -434,7 +497,7 @@ class PlaybackProgressInstrumentedTest {
                 prepare(controller, listOf(inconsistentTrack to longWav))
                 onMain { controller.pause() }
                 await { !controller.playWhenReady && controller.currentMediaItem?.mediaId == actualMediaId }
-                assertTrue("不一致 raw 不得把别的 UID 断点恢复到当前章节", onMain { player.currentPosition < 5_000L })
+                assertTrue("不一致 raw 不得将普通曲目的短断点按书章策略恢复", onMain { player.currentPosition < 1_000L })
 
                 seekPaused(controller, 37_000L)
                 onMain { progress.checkpoint() }
@@ -449,6 +512,25 @@ class PlaybackProgressInstrumentedTest {
             } finally {
                 onMain { progress.close() }
             }
+        }
+    }
+
+    @Test
+    fun mismatchedCatalogDurationCannotRestoreAShortActualTrack() {
+        val catalogTrack = onlineTrack("foreign-duration", interval = "12:00")
+        val track = catalogTrack.copy(uid = "legacy-media-${catalogTrack.uid}")
+        progressPrefs.edit().putLong(track.uid, 6_000L).commit()
+
+        withSession { player, controller ->
+            val progress = progressFor(player, mapOf(track.uid to track))
+            try {
+                onMain { player.setMediaItem(mediaItem(track, shortWav)) }
+                await { controller.currentMediaItem?.mediaId == track.uid }
+                assertEquals("没有真实时长时不能用另一曲目的目录时长跳转", 0L, onMain { player.currentPosition })
+                onMain { player.prepare() }
+                await { controller.playbackState == Player.STATE_READY && controller.duration == SHORT_DURATION_MS }
+                assertEquals("实际曲目是短音频，不能误恢复旧进度", 0L, onMain { player.currentPosition })
+            } finally { onMain { progress.close() } }
         }
     }
 

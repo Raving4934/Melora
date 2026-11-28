@@ -10,11 +10,25 @@ import java.nio.file.Files
 
 class PersistenceCompatibilityTest {
     @Test
+    fun legacyValuesNormalizeToTheRuntimeRangeAndKeepTheAutoUpdateFlag() {
+        val old = JSONObject().put("downloadConcurrentTasks", 5)
+            .put("lyricColorIndex", 32).put("lyricMaxLines", 20).put("lyricAlpha", 0).put("lyricFontSize", 100)
+            .put("playlistAutoUpdate", true)
+        val (prepared, _) = BackupSettings.prepare(old, emptySet(), emptySet())
+        assertEquals(4, prepared.getInt("downloadConcurrentTasks"))
+        assertEquals(4, prepared.getInt("lyricColorIndex"))
+        assertEquals(8.0, prepared.getDouble("lyricMaxLines"), 0.0)
+        assertEquals(20.0, prepared.getDouble("lyricAlpha"), 0.0)
+        assertEquals(36.0, prepared.getDouble("lyricFontSize"), 0.0)
+        assertEquals(true, prepared.getBoolean("playlistAutoUpdate"))
+    }
+
+    @Test
     fun atomicWriteReplacesPrimaryAndKeepsPreviousSnapshot() {
         val directory = Files.createTempDirectory("melora-library").toFile()
         try {
             val target = directory.resolve("user-library.json").apply { writeText("old") }
-            writeTextAtomically(target, "new")
+            writeTextAtomically(target, "new", keepBackup = true)
             assertEquals("new", target.readText())
             assertEquals("old", directory.resolve("user-library.json.bak").readText())
             assertFalse(directory.resolve("user-library.json.tmp").exists())

@@ -12,9 +12,9 @@ import javax.net.ssl.SSLPeerUnverifiedException
 import javax.xml.parsers.DocumentBuilderFactory
 import okhttp3.CacheControl
 import okhttp3.Credentials
+import okhttp3.Dispatcher
 import okhttp3.HttpUrl
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -167,7 +167,8 @@ internal class WebDavClient(config: WebDavConfig) : RecordFiles {
     private companion object {
         const val MAX_LIST_BYTES = 4 * 1024 * 1024
 
-        val httpClient = OkHttpClient.Builder()
+        val httpClient = sharedNetworkClient.newBuilder()
+            .dispatcher(Dispatcher())
             .followRedirects(false)
             .followSslRedirects(false)
             .retryOnConnectionFailure(false)

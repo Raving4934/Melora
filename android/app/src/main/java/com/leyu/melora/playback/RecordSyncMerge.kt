@@ -6,7 +6,6 @@ import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.sdk.PlaylistImportLink
 import org.json.JSONArray
 import org.json.JSONObject
-import java.security.MessageDigest
 import java.util.UUID
 
 internal data class RecordConflict(
@@ -550,10 +549,9 @@ internal object RecordSyncMerge {
             fingerprint: (T) -> Any? = { it },
             describe: (T) -> String,
         ): T {
-            val bytes = buildString {
+            val key = buildString {
                 appendCanonical(listOf(field, id, property, fingerprint(left), fingerprint(right)))
-            }.toByteArray(Charsets.UTF_8)
-            val key = MessageDigest.getInstance("SHA-256").digest(bytes).toHexString()
+            }.sha256Hex()
             val conflict = RecordConflict(key, title, describe(left), describe(right))
             val decision = choose(conflict)
             if (decision == null) conflicts.add(conflict)

@@ -1,11 +1,15 @@
 package com.leyu.melora.playback
 
 import android.content.Context
+import android.content.SharedPreferences
+import android.os.Build
+import android.security.KeyStoreException
 import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
 import java.io.File
 import java.security.KeyStore
-import java.security.MessageDigest
+import java.security.UnrecoverableKeyException
 import java.util.Base64
 import java.util.UUID
 import javax.crypto.Cipher
@@ -47,8 +51,7 @@ internal data class WebDavConfig(
         get() {
             val config = validated()
             val identity = "${config.server}\n${config.account}\n${config.folder}"
-            return MessageDigest.getInstance("SHA-256").digest(identity.toByteArray(Charsets.UTF_8))
-                .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+            return identity.sha256Hex()
         }
 
     // 避免配置在日志或异常上下文中输出凭据。
@@ -65,20 +68,23 @@ internal object WebDavConfigStore {
     private const val KEYSTORE = "AndroidKeyStore"
     private const val CIPHER = "AES/GCM/NoPadding"
     private const val LIMIT = 64 * 1024
+    private const val PREFS = "webdav-sync"
+    private const val CONFIG = "encrypted-config"
+    private const val SCOPE = "enabled-scope"
     private val lock = Any()
 
     fun load(context: Context): WebDavConfig? = synchronized(lock) {
-        val file = configFile(context)
-        if (!file.isFile) return@synchronized null
+        val prefs = preferences(context)
         try {
-            val envelope = JSONObject(file.inputStream().use { it.readBackupText(LIMIT) })
-            val decoder = Base64.getDecoder()
-            val cipher = Cipher.getInstance(CIPHER)
-            val key = keyStore().getKey(KEY_ALIAS, null) as? SecretKey ?: error("缺少本机密钥")
-            cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, decoder.decode(envelope.getString("iv"))))
-            val json = JSONObject(cipher.doFinal(decoder.decode(envelope.getString("data"))).toString(Charsets.UTF_8))
-            WebDavConfig(json.getString("server"), json.getString("account"), json.getString("password"),
-                json.getString("folder")).validated()
+            prefs.getString(CONFIG, null)?.let { return@synchronized decode(it) }
+            val oldFile = legacyFile(context)
+            val text = oldFile.readEncrypted() ?: return@synchronized null
+            val config = decode(text)
+            runCatching {
+                prefs.saveConnection(text, prefs.getString(SCOPE, null)?.takeIf { it == config.scopeKey })
+                oldFile.delete()
+            }
+            config
         } catch (_: Exception) {
             throw IllegalStateException("无法读取本机 WebDAV 配置，请重新填写并保存")
         }
@@ -86,28 +92,103 @@ internal object WebDavConfigStore {
 
     fun save(context: Context, config: WebDavConfig): WebDavConfig = synchronized(lock) {
         val validated = config.validated()
+        val prefs = preferences(context)
+        val scope = prefs.getString(SCOPE, null)?.takeIf { requested ->
+            requested == validated.scopeKey && (prefs.contains(CONFIG) || runCatching {
+                legacyFile(context).readEncrypted()?.let(::decode)?.scopeKey == requested
+            }.getOrDefault(false))
+        }
         try {
-            val key = keyStore().getKey(KEY_ALIAS, null) as? SecretKey ?: createKey()
-            val cipher = Cipher.getInstance(CIPHER).apply { init(Cipher.ENCRYPT_MODE, key) }
             val json = JSONObject().put("server", validated.server).put("account", validated.account)
                 .put("password", validated.password).put("folder", validated.folder)
-            val encoder = Base64.getEncoder()
-            val envelope = JSONObject().put("iv", encoder.encodeToString(cipher.iv))
-                .put("data", encoder.encodeToString(cipher.doFinal(json.toString().toByteArray(Charsets.UTF_8))))
-            writeTextAtomically(configFile(context), envelope.toString())
-        } catch (_: Exception) {
-            throw IllegalStateException("无法在本机保存 WebDAV 配置")
+            val plain = json.toString().toByteArray(Charsets.UTF_8)
+            val store = keyStore()
+            val envelope = try {
+                encrypt(plain, store.getKey(KEY_ALIAS, null) as? SecretKey ?: createKey())
+            } catch (error: Exception) {
+                val causes = generateSequence<Throwable>(error) { it.cause }.toList()
+                val invalidated = causes.any { it is KeyPermanentlyInvalidatedException }
+                val unavailable = causes.any { it is UnrecoverableKeyException }
+                val canReplace = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    causes.filterIsInstance<KeyStoreException>().firstOrNull()?.let {
+                        it.numericErrorCode in setOf(KeyStoreException.ERROR_KEY_CORRUPTED, KeyStoreException.ERROR_KEY_DOES_NOT_EXIST)
+                    } ?: unavailable
+                } else unavailable
+                if (!invalidated && !canReplace) throw error
+                store.deleteEntry(KEY_ALIAS)
+                encrypt(plain, createKey())
+            }
+            prefs.saveConnection(envelope.toString(), scope)
+        } catch (error: Exception) {
+            throw IllegalStateException("无法在本机保存 WebDAV 配置", error)
         }
+        runCatching { legacyFile(context).delete() }
         validated
     }
 
-    fun deviceId(context: Context): String = synchronized(lock) {
-        val file = File(context.noBackupFilesDir, "webdav-device-id")
-        if (file.isFile) return@synchronized UUID.fromString(file.readText()).toString()
-        UUID.randomUUID().toString().also { writeTextAtomically(file, it) }
+    fun enabledScope(context: Context): String? = synchronized(lock) { preferences(context).getString(SCOPE, null) }
+
+    fun setEnabledScope(context: Context, scope: String?) = synchronized(lock) {
+        val prefs = preferences(context)
+        prefs.saveConnection(prefs.getString(CONFIG, null), scope)
     }
 
-    private fun configFile(context: Context) = File(context.noBackupFilesDir, "webdav-config.json")
+    private fun preferences(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    private fun SharedPreferences.saveConnection(text: String?, scope: String?) =
+        commitOrRestore("无法保存 WebDAV 设置") { putString(CONFIG, text).putString(SCOPE, scope) }
+
+    private fun File.readEncrypted(): String? = takeIf(File::isFile)?.inputStream()?.use { it.readBackupText(LIMIT) }
+
+    fun deviceId(context: Context): String = synchronized(lock) {
+        val directory = context.noBackupFilesDir
+        val file = File(directory, "webdav-device-id")
+        val backup = File(directory, "webdav-device-id.bak")
+        val current = runCatching { readDeviceId(file) }.getOrNull()
+        val saved = runCatching { readDeviceId(backup) }.getOrNull()
+        val id = current ?: saved ?: confirmedDeviceId(directory) ?: UUID.randomUUID().toString()
+        if (current != id) writeTextAtomically(file, id)
+        if (saved != id) runCatching { writeTextAtomically(backup, id) }
+        id
+    }
+
+    private fun readDeviceId(file: File): String? {
+        if (!file.isFile || file.length() !in 1..64) return null
+        val text = file.readText().trim()
+        val id = runCatching { UUID.fromString(text).toString() }.getOrNull()
+        return id?.takeIf { it.equals(text, ignoreCase = true) }
+    }
+
+    private fun confirmedDeviceId(directory: File): String? =
+        directory.listFiles { entry -> entry.isDirectory && entry.name.startsWith("records-") }
+            ?.mapNotNull { ledger ->
+                val confirmed = File(ledger, "confirmed")
+                if (!confirmed.isFile || confirmed.length() !in 1..256) return@mapNotNull null
+                val name = runCatching { confirmed.readText() }.getOrNull() ?: return@mapNotNull null
+                RecordReplica.filename.matchEntire(name)?.groupValues?.get(1)
+            }
+            ?.distinct()
+            ?.singleOrNull()
+
+    private fun legacyFile(context: Context) = File(context.noBackupFilesDir, "webdav-config.json")
+
+    private fun decode(text: String): WebDavConfig {
+        val envelope = JSONObject(text)
+        val decoder = Base64.getDecoder()
+        val cipher = Cipher.getInstance(CIPHER)
+        val key = keyStore().getKey(KEY_ALIAS, null) as? SecretKey ?: error("缺少本机密钥")
+        cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, decoder.decode(envelope.getString("iv"))))
+        val json = JSONObject(cipher.doFinal(decoder.decode(envelope.getString("data"))).toString(Charsets.UTF_8))
+        return WebDavConfig(json.getString("server"), json.getString("account"), json.getString("password"),
+            json.getString("folder")).validated()
+    }
+
+    private fun encrypt(plain: ByteArray, key: SecretKey): JSONObject {
+        val cipher = Cipher.getInstance(CIPHER).apply { init(Cipher.ENCRYPT_MODE, key) }
+        val encoder = Base64.getEncoder()
+        return JSONObject().put("iv", encoder.encodeToString(cipher.iv))
+            .put("data", encoder.encodeToString(cipher.doFinal(plain)))
+    }
 
     private fun keyStore(): KeyStore = KeyStore.getInstance(KEYSTORE).apply { load(null) }
 

@@ -194,7 +194,7 @@ class RecordReplicaTest {
 
     private fun roundTrip(replica: RecordReplica): RecordReplica {
         val text = replica.encode()
-        val name = "melora-records-v2-${replica.device}-${replica.sequence}-${RecordReplica.hash(text)}.json"
+        val name = "melora-records-v2-${replica.device}-${replica.sequence}-${text.sha256Hex()}.json"
         return RecordReplica.decode(name, text)
     }
 }

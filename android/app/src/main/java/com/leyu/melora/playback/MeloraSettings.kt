@@ -1,5 +1,6 @@
 package com.leyu.melora.playback
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
@@ -14,6 +15,11 @@ import org.json.JSONObject
  */
 object MeloraSettings {
     internal const val PREFS = "melora-settings"
+    internal val DOWNLOAD_TASKS = 1..4
+    internal val DESKTOP_LYRIC_FONT_SIZE = 12f..36f
+    internal val DESKTOP_LYRIC_LINES = 1f..8f
+    internal val DESKTOP_LYRIC_ALPHA = 20f..100f
+    internal val DESKTOP_LYRIC_COLORS = 0..4
 
     private lateinit var prefs: SharedPreferences
     private var initialized = false
@@ -21,6 +27,15 @@ object MeloraSettings {
     fun init(context: Context) {
         if (initialized) return
         prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val legacyUpdates = context.getSharedPreferences(PlaylistAutoUpdate.PREFS, Context.MODE_PRIVATE)
+        if (!prefs.contains(KEY_PLAYLIST_AUTO_UPDATE) && legacyUpdates.contains(PlaylistAutoUpdate.LEGACY_ENABLED)) {
+            val oldValue = legacyUpdates.getBoolean(PlaylistAutoUpdate.LEGACY_ENABLED, false)
+            @SuppressLint("UseKtx") // 只有确认新值写盘成功后，才能删除旧设置。
+            val migrated = prefs.edit().putBoolean(KEY_PLAYLIST_AUTO_UPDATE, oldValue).commit()
+            if (migrated) {
+                legacyUpdates.edit { remove(PlaylistAutoUpdate.LEGACY_ENABLED) }
+            }
+        }
         prefs.edit {
             remove(LEGACY_BUILTIN_KUWO_UNLOCKED)
             remove(LEGACY_BUILTIN_KUWO_ENABLED)
@@ -81,6 +96,7 @@ object MeloraSettings {
     val playlistTagId = MutableStateFlow("")
     val playlistTagName = MutableStateFlow("全部歌单")
     val playlistSort = MutableStateFlow(0)
+    internal val playlistAutoUpdate = MutableStateFlow(false)
 
     // --- 播放设置 ---
     val rememberProgress = MutableStateFlow(true)
@@ -114,6 +130,7 @@ object MeloraSettings {
     val lyricBackground = MutableStateFlow(false)
     // 通知栏歌词：开启后系统通知栏（控制中心/锁屏）实时显示当前歌词行
     val notificationLyrics = MutableStateFlow(false)
+    val bluetoothLyrics = MutableStateFlow(false)
     // 歌曲来源显示名称：默认显示别名（盒子音乐等），关闭后显示原名
     val sourceAliasEnabled = MutableStateFlow(true)
     internal val autoCheckAppUpdates = MutableStateFlow(false)
@@ -146,7 +163,7 @@ object MeloraSettings {
         downloadQuality.value = prefs.getString(KEY_DOWNLOAD_QUALITY, "320k") ?: "320k"
         downloadSkipSameName.value = prefs.getBoolean(KEY_DL_SKIP_SAME, true)
         downloadAutoSwitchSource.value = prefs.getBoolean(KEY_DL_AUTO_SWITCH, true)
-        downloadConcurrentTasks.value = prefs.getInt(KEY_DL_CONCURRENT, 2)
+        downloadConcurrentTasks.value = prefs.getInt(KEY_DL_CONCURRENT, 2).coerceIn(DOWNLOAD_TASKS)
         downloadFileNameFormat.value = prefs.getString(KEY_DL_NAME_FORMAT, "song-artist") ?: "song-artist"
         downloadEmbedCover.value = prefs.getBoolean(KEY_DL_EMBED_COVER, false)
         downloadEmbedLyric.value = prefs.getBoolean(KEY_DL_EMBED_LYRIC, false)
@@ -157,6 +174,7 @@ object MeloraSettings {
         playlistTagId.value = prefs.getString(KEY_PLAYLIST_TAG_ID, "") ?: ""
         playlistTagName.value = prefs.getString(KEY_PLAYLIST_TAG_NAME, "全部歌单") ?: "全部歌单"
         playlistSort.value = prefs.getInt(KEY_PLAYLIST_SORT, 0)
+        playlistAutoUpdate.value = prefs.getBoolean(KEY_PLAYLIST_AUTO_UPDATE, false)
         rememberProgress.value = prefs.getBoolean(KEY_REMEMBER_PROGRESS, true)
         autoClearPlayed.value = prefs.getBoolean(KEY_AUTO_CLEAR_PLAYED, false)
         pauseOnOtherAudio.value = prefs.getBoolean(KEY_PAUSE_OTHER_AUDIO, true)
@@ -183,17 +201,18 @@ object MeloraSettings {
         showDesktopLyrics.value = prefs.getBoolean(KEY_DESKTOP_LYRICS, false)
         lockLyrics.value = prefs.getBoolean(KEY_LYRICS_LOCK, false)
         singleLineLyric.value = prefs.getBoolean(KEY_LYRICS_SINGLE_LINE, false)
-        lyricFontSize.value = prefs.getFloat(KEY_LYRICS_FONT_SIZE, 20f)
-        lyricMaxLines.value = prefs.getFloat(KEY_LYRICS_MAX_LINES, 2f)
-        lyricAlpha.value = prefs.getFloat(KEY_LYRICS_ALPHA, 90f)
+        lyricFontSize.value = prefs.getFloat(KEY_LYRICS_FONT_SIZE, 20f).coerceIn(DESKTOP_LYRIC_FONT_SIZE)
+        lyricMaxLines.value = prefs.getFloat(KEY_LYRICS_MAX_LINES, 2f).coerceIn(DESKTOP_LYRIC_LINES)
+        lyricAlpha.value = prefs.getFloat(KEY_LYRICS_ALPHA, 90f).coerceIn(DESKTOP_LYRIC_ALPHA)
         lyricHAlign.value = prefs.getInt(KEY_LYRICS_H_ALIGN, 1)
         lyricVAlign.value = prefs.getInt(KEY_LYRICS_V_ALIGN, 1)
         desktopLyricPosition.value = runCatching {
             DesktopLyricPosition.fromJson(JSONObject(prefs.getString(KEY_DESKTOP_LYRIC_POSITION, null) ?: "{}"))
         }.getOrDefault(DesktopLyricPosition())
-        lyricColorIndex.value = prefs.getInt(KEY_LYRICS_COLOR_INDEX, 1)
+        lyricColorIndex.value = prefs.getInt(KEY_LYRICS_COLOR_INDEX, 1).coerceIn(DESKTOP_LYRIC_COLORS)
         lyricBackground.value = prefs.getBoolean(KEY_LYRICS_BACKGROUND, false)
         notificationLyrics.value = prefs.getBoolean(KEY_NOTIFICATION_LYRICS, false)
+        bluetoothLyrics.value = prefs.getBoolean(KEY_BLUETOOTH_LYRICS, false)
         sourceAliasEnabled.value = prefs.getBoolean(KEY_SOURCE_ALIAS, true)
         localUseMediaStore.value = prefs.getBoolean(KEY_LOCAL_MEDIA_STORE, true)
         localFolders.value = runCatching {
@@ -238,11 +257,19 @@ object MeloraSettings {
         persist { putString(KEY_PLAYLIST_TAG_ID, id); putString(KEY_PLAYLIST_TAG_NAME, name) }
     }
     fun updatePlaylistSort(value: Int) = update { playlistSort.value = value; persist { putInt(KEY_PLAYLIST_SORT, value) } }
+    internal fun updatePlaylistAutoUpdate(value: Boolean) = update {
+        playlistAutoUpdate.value = value
+        persist { putBoolean(KEY_PLAYLIST_AUTO_UPDATE, value) }
+    }
     fun updateDownloadPath(value: String) = update { downloadPath.value = value; persist { putString(KEY_DOWNLOAD_PATH, value) } }
     fun updateDownloadQuality(value: String) = update { downloadQuality.value = value; persist { putString(KEY_DOWNLOAD_QUALITY, value) } }
     fun updateDownloadSkipSameName(value: Boolean) = update { downloadSkipSameName.value = value; persist { putBoolean(KEY_DL_SKIP_SAME, value) } }
     fun updateDownloadAutoSwitchSource(value: Boolean) = update { downloadAutoSwitchSource.value = value; persist { putBoolean(KEY_DL_AUTO_SWITCH, value) } }
-    fun updateDownloadConcurrentTasks(value: Int) = update { downloadConcurrentTasks.value = value; persist { putInt(KEY_DL_CONCURRENT, value) } }
+    fun updateDownloadConcurrentTasks(value: Int) = update {
+        val count = value.coerceIn(DOWNLOAD_TASKS)
+        downloadConcurrentTasks.value = count
+        persist { putInt(KEY_DL_CONCURRENT, count) }
+    }
     fun updateDownloadFileNameFormat(value: String) = update { downloadFileNameFormat.value = value; persist { putString(KEY_DL_NAME_FORMAT, value) } }
     fun updateDownloadEmbedCover(value: Boolean) = update { downloadEmbedCover.value = value; persist { putBoolean(KEY_DL_EMBED_COVER, value) } }
     fun updateDownloadEmbedLyric(value: Boolean) = update { downloadEmbedLyric.value = value; persist { putBoolean(KEY_DL_EMBED_LYRIC, value) } }
@@ -278,6 +305,18 @@ object MeloraSettings {
         localFolders.value = value
         persist { putString(KEY_LOCAL_FOLDERS, org.json.JSONArray(value).toString()) }
     }
+    internal fun addLocalFolder(uri: String): Boolean = synchronized(BackupStateLock.monitor) {
+        check(BackupRestoreTransaction.failure.value == null) { "请先完成上一次备份恢复" }
+        if (uri in localFolders.value) return@synchronized false
+        val updated = localFolders.value + uri
+        persist {
+            putString(KEY_LOCAL_FOLDERS, org.json.JSONArray(updated).toString())
+            putBoolean(KEY_LOCAL_MEDIA_STORE, false)
+        }
+        localFolders.value = updated
+        localUseMediaStore.value = false
+        true
+    }
     fun updateLocalExcludeShort(value: Boolean) = update { localExcludeShort.value = value; persist { putBoolean(KEY_LOCAL_EXCLUDE_SHORT, value) } }
     fun updateLocalExcludeSmall(value: Boolean) = update { localExcludeSmall.value = value; persist { putBoolean(KEY_LOCAL_EXCLUDE_SMALL, value) } }
     fun updateLocalAutoFillInfo(value: Boolean) = update { localAutoFillInfo.value = value; persist { putBoolean(KEY_LOCAL_AUTO_FILL, value) } }
@@ -293,9 +332,17 @@ object MeloraSettings {
     fun updateShowDesktopLyrics(value: Boolean) = update { showDesktopLyrics.value = value; persist { putBoolean(KEY_DESKTOP_LYRICS, value) } }
     fun updateLockLyrics(value: Boolean) = update { lockLyrics.value = value; persist { putBoolean(KEY_LYRICS_LOCK, value) } }
     fun updateSingleLine(value: Boolean) = update { singleLineLyric.value = value; persist { putBoolean(KEY_LYRICS_SINGLE_LINE, value) } }
-    fun updateLyricFontSize(value: Float) = update { lyricFontSize.value = value; persist { putFloat(KEY_LYRICS_FONT_SIZE, value) } }
-    fun updateLyricMaxLines(value: Float) = update { lyricMaxLines.value = value; persist { putFloat(KEY_LYRICS_MAX_LINES, value) } }
-    fun updateLyricAlpha(value: Float) = update { lyricAlpha.value = value; persist { putFloat(KEY_LYRICS_ALPHA, value) } }
+    fun updateLyricFontSize(value: Float, persistValue: Boolean = true) =
+        updateLyricSlider(lyricFontSize, KEY_LYRICS_FONT_SIZE, value.coerceIn(DESKTOP_LYRIC_FONT_SIZE), persistValue)
+    fun updateLyricMaxLines(value: Float, persistValue: Boolean = true) =
+        updateLyricSlider(lyricMaxLines, KEY_LYRICS_MAX_LINES, value.coerceIn(DESKTOP_LYRIC_LINES), persistValue)
+    fun updateLyricAlpha(value: Float, persistValue: Boolean = true) =
+        updateLyricSlider(lyricAlpha, KEY_LYRICS_ALPHA, value.coerceIn(DESKTOP_LYRIC_ALPHA), persistValue)
+
+    private fun updateLyricSlider(state: MutableStateFlow<Float>, key: String, value: Float, persistValue: Boolean) = update {
+        state.value = value
+        if (persistValue) persist { putFloat(key, value) }
+    }
     fun updateLyricHAlign(value: Int) = update {
         if (lyricHAlign.value == value) return@update
         val position = desktopLyricPosition.value.copy(xFraction = null).normalized()
@@ -321,9 +368,14 @@ object MeloraSettings {
         desktopLyricPosition.value = normalized
         persist { putString(KEY_DESKTOP_LYRIC_POSITION, normalized.toJson().toString()) }
     }
-    fun updateLyricColorIndex(value: Int) = update { lyricColorIndex.value = value; persist { putInt(KEY_LYRICS_COLOR_INDEX, value) } }
+    fun updateLyricColorIndex(value: Int) = update {
+        val index = value.coerceIn(DESKTOP_LYRIC_COLORS)
+        lyricColorIndex.value = index
+        persist { putInt(KEY_LYRICS_COLOR_INDEX, index) }
+    }
     fun updateLyricBackground(value: Boolean) = update { lyricBackground.value = value; persist { putBoolean(KEY_LYRICS_BACKGROUND, value) } }
     fun updateNotificationLyrics(value: Boolean) = update { notificationLyrics.value = value; persist { putBoolean(KEY_NOTIFICATION_LYRICS, value) } }
+    fun updateBluetoothLyrics(value: Boolean) = update { bluetoothLyrics.value = value; persist { putBoolean(KEY_BLUETOOTH_LYRICS, value) } }
     fun updateSourceAlias(value: Boolean) = update { sourceAliasEnabled.value = value; persist { putBoolean(KEY_SOURCE_ALIAS, value) } }
     internal fun updateAutoCheckAppUpdates(enabled: Boolean) = update {
         autoCheckAppUpdates.value = enabled
@@ -358,6 +410,7 @@ object MeloraSettings {
     internal const val KEY_PLAYLIST_TAG_ID = "ui.playlistTagId"
     internal const val KEY_PLAYLIST_TAG_NAME = "ui.playlistTagName"
     internal const val KEY_PLAYLIST_SORT = "ui.playlistSort"
+    internal const val KEY_PLAYLIST_AUTO_UPDATE = "playlist.autoUpdate"
     internal const val KEY_REMEMBER_PROGRESS = "playback.rememberProgress"
     internal const val KEY_AUTO_CLEAR_PLAYED = "playback.autoClearPlayed"
     internal const val KEY_PAUSE_OTHER_AUDIO = "playback.pauseOnOtherAudio"
@@ -377,6 +430,7 @@ object MeloraSettings {
     internal const val KEY_LYRICS_LOCK = "lyrics.lock"
     internal const val KEY_LYRICS_BACKGROUND = "lyrics.background"
     internal const val KEY_NOTIFICATION_LYRICS = "lyrics.notification"
+    internal const val KEY_BLUETOOTH_LYRICS = "lyrics.bluetooth"
     private const val LEGACY_BUILTIN_KUWO_UNLOCKED = "source.builtinKuwoUnlocked"
     private const val LEGACY_BUILTIN_KUWO_ENABLED = "source.builtinKuwoEnabled"
     internal const val KEY_SOURCE_ALIAS = "source.alias"

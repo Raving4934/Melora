@@ -8,10 +8,14 @@ import com.leyu.melora.playback.sdk.OnlinePlaylist
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.sdk.PlaylistImportLink
 import com.leyu.melora.playback.sdk.PlaylistImportResult
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -85,6 +89,7 @@ object UserLibrary {
     internal const val MAX_RECENT_CONTAINERS = 30
     private lateinit var file: File
     private val lock = BackupStateLock.monitor
+    private val writes = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
     private val mutableRevisions = MutableStateFlow(0L)
     private var historyClearedAt = 0L
     // 显示窗口和入库窗口分开。设备本地播放不挤出云端最近记录。
@@ -101,6 +106,9 @@ object UserLibrary {
     val favoriteArtists = MutableStateFlow<List<FavoriteArtist>>(emptyList())
     val recentContainers = MutableStateFlow<List<RecentContainer>>(emptyList())
     val searchHistory = MutableStateFlow<List<String>>(emptyList())
+
+    /** 点击触发的写入按提交顺序执行，关闭界面不会取消已提交的操作。 */
+    internal fun <T> enqueueWrite(block: () -> T): Deferred<T> = writes.async { block() }
 
     /** 事务内的候选值：变换只改这个快照，写盘成功后才向观察者发布。 */
     private class Snapshot {
@@ -175,7 +183,7 @@ object UserLibrary {
     fun replaceFromBackup(json: String) {
         val root = JSONObject(json)
         BackupStateLock.write {
-            writeTextAtomically(file, root.toString())
+            writeTextAtomically(file, root.toString(), keepBackup = true)
             applyRoot(root)
         }
     }
@@ -312,7 +320,7 @@ object UserLibrary {
         val snapshot = Snapshot()
         val result = snapshot.change()
         if (shouldPersist(result)) {
-            writeTextAtomically(file, buildRoot(snapshot).toString())
+            writeTextAtomically(file, buildRoot(snapshot).toString(), keepBackup = true)
             publish(snapshot)
         }
         result
@@ -512,12 +520,12 @@ object UserLibrary {
         val caller = currentCoroutineContext()
         caller.ensureActive()
         return withContext(NonCancellable) {
-            withContext(Dispatchers.IO) {
+            enqueueWrite {
                 BackupStateLock.write {
                     caller.ensureActive()
                     createImportedPlaylist(name, result, allowCopy)
                 }
-            }
+            }.await()
         }
     }
 
@@ -536,7 +544,7 @@ object UserLibrary {
         val caller = currentCoroutineContext()
         caller.ensureActive()
         return withContext(NonCancellable) {
-            withContext(Dispatchers.IO) {
+            enqueueWrite {
                 mutate {
                     caller.ensureActive()
                     val current = playlists.firstOrNull { it.id == preview.expected.id }
@@ -547,7 +555,7 @@ object UserLibrary {
                     playlists = playlists.map { if (it.id == current.id) updated else it }
                     updated
                 }
-            }
+            }.await()
         }
     }
 
@@ -598,24 +606,35 @@ private fun <T> List<T>.retainHistory(limit: Int, source: (T) -> String): List<T
     return filter { if (source(it) == LocalSong.SOURCE) localLeft-- > 0 else sharedLeft-- > 0 }
 }
 
-internal fun writeTextAtomically(target: File, text: String) {
+internal fun writeTextAtomically(
+    target: File,
+    text: String,
+    keepBackup: Boolean = false,
+    requireAtomicMove: Boolean = false,
+) {
     val temp = File(target.parentFile, "${target.name}.tmp")
     val backup = File(target.parentFile, "${target.name}.bak")
     var backupCreated = false
     try {
-        temp.writeText(text)
-        if (target.isFile) {
+        temp.outputStream().use {
+            it.write(text.toByteArray(Charsets.UTF_8))
+            it.fd.sync()
+        }
+        if (keepBackup && target.isFile) {
             target.copyTo(backup, overwrite = true)
             backupCreated = true
         }
         try {
             Files.move(temp.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-        } catch (_: AtomicMoveNotSupportedException) {
-            Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        } catch (error: AtomicMoveNotSupportedException) {
+            if (requireAtomicMove) throw error
+            try {
+                Files.move(temp.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            } catch (failure: Exception) {
+                if (backupCreated) runCatching { backup.copyTo(target, overwrite = true) }
+                throw failure
+            }
         }
-    } catch (error: Throwable) {
-        if (backupCreated && backup.isFile) runCatching { backup.copyTo(target, overwrite = true) }
-        throw error
     } finally {
         temp.delete()
     }

@@ -6,40 +6,18 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
+import java.io.FileNotFoundException
+import java.io.InputStream
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import okio.ByteString
 
 internal object LocalBackup {
-    private const val GRANT_FLAGS = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-
-    fun selectDirectory(context: Context, tree: Uri): String {
-        require(DocumentsContract.isTreeUri(tree) && tree.scheme == ContentResolver.SCHEME_CONTENT) { "请选择本地备份文件夹" }
-        val resolver = context.contentResolver
-        val previous = resolver.persistedUriPermissions.firstOrNull { it.uri == tree }
-        try {
-            resolver.takePersistableUriPermission(tree, GRANT_FLAGS)
-        } catch (_: SecurityException) {
-            error("无法获得备份目录的长期读写权限，请重新选择")
-        }
-        try {
-            val root = directory(resolver, tree)
-            return resolver.query(root, arrayOf(Document.COLUMN_DISPLAY_NAME), null, null, null)?.use { names ->
-                if (names.moveToFirst()) names.getString(0) else null
-            }?.takeIf(String::isNotBlank) ?: DocumentsContract.getTreeDocumentId(tree)
-        } catch (failure: Exception) {
-            val read = if (previous?.isReadPermission == true) 0 else Intent.FLAG_GRANT_READ_URI_PERMISSION
-            val write = if (previous?.isWritePermission == true) 0 else Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            if ((read or write) != 0) runCatching { resolver.releasePersistableUriPermission(tree, read or write) }
-            throw failure
-        }
-    }
-
     /** 先核对新备份，再清理本应用生成的旧备份。保留同一目录中的用户文件及其他设备的备份。 */
     suspend fun write(context: Context, tree: Uri, snapshot: BackupSnapshot, keepLatest: Boolean): String {
         val job = currentCoroutineContext()
         val resolver = context.contentResolver
-        val root = directory(resolver, tree)
+        val (root) = writableDirectory(resolver, tree)
         val previous = managedDocuments(resolver, tree, snapshot.id.device)
         val existing = previous.firstOrNull { it.first == snapshot.id }?.second
         val prior = existing?.let {
@@ -65,15 +43,16 @@ internal object LocalBackup {
         return if (cleanupFailed) "本地已备份，部分旧文件无法删除" else "本地已备份"
     }
 
-    private fun directory(resolver: ContentResolver, tree: Uri): Uri {
+    internal fun writableDirectory(resolver: ContentResolver, tree: Uri): Pair<Uri, String> {
         val hasGrant = resolver.persistedUriPermissions.any { it.uri == tree && it.isReadPermission && it.isWritePermission }
         check(hasGrant) { "备份目录授权已失效，请重新选择" }
         val root = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
-        val writable = resolver.query(root, arrayOf(Document.COLUMN_FLAGS), null, null, null)?.use {
-            it.moveToFirst() && it.getInt(0) and Document.FLAG_DIR_SUPPORTS_CREATE != 0
-        }
-        check(writable == true) { "目录不可写，请重新选择备份目录" }
-        return root
+        val columns = arrayOf(Document.COLUMN_FLAGS, Document.COLUMN_DISPLAY_NAME)
+        return resolver.query(root, columns, null, null, null)?.use { row ->
+            if (!row.moveToFirst() || row.getInt(0) and Document.FLAG_DIR_SUPPORTS_CREATE == 0) return@use null
+            val name = row.getColumnIndex(Document.COLUMN_DISPLAY_NAME).takeIf { it >= 0 }?.let(row::getString)
+            root to (name?.takeIf(String::isNotBlank) ?: DocumentsContract.getTreeDocumentId(tree))
+        } ?: error("目录不可写，请重新选择备份目录")
     }
 
     private fun managedDocuments(resolver: ContentResolver, tree: Uri, device: String): List<Pair<BackupFileId, Uri>> {
@@ -91,6 +70,40 @@ internal object LocalBackup {
     }
 
 }
+
+internal inline fun <T> ContentResolver.withPersistableTreeAccess(
+    tree: Uri,
+    permissionError: String,
+    invalidTree: String = "请选择文件夹",
+    verify: (alreadyAuthorized: Boolean) -> T,
+): T {
+    require(tree.scheme == ContentResolver.SCHEME_CONTENT && DocumentsContract.isTreeUri(tree)) { invalidTree }
+    val read = Intent.FLAG_GRANT_READ_URI_PERMISSION
+    val write = Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+    var acquired = 0
+    return try {
+        val previous = persistedUriPermissions.firstOrNull { it.uri == tree }
+        val added = (if (previous?.isReadPermission == true) 0 else read) or
+            (if (previous?.isWritePermission == true) 0 else write)
+        if (added != 0) {
+            takePersistableUriPermission(tree, added)
+            acquired = added
+        }
+        verify(added == 0)
+    } catch (failure: Exception) {
+        if (acquired != 0) runCatching { releasePersistableUriPermission(tree, acquired) }
+        if (failure is SecurityException) throw IllegalStateException(permissionError, failure)
+        throw failure
+    }
+}
+
+internal fun ContentResolver.openPickedDocument(uri: Uri, failureMessage: String): InputStream =
+    try {
+        openInputStream(uri) ?: error(failureMessage)
+    } catch (failure: Exception) {
+        if (failure !is SecurityException && failure !is FileNotFoundException) throw failure
+        throw IllegalStateException(failureMessage, failure)
+    }
 
 internal fun ContentResolver.writeVerifiedBackup(uri: Uri, bytes: ByteString, checkCancelled: () -> Unit) {
     openOutputStream(uri, "wt")?.use { output ->

@@ -2,6 +2,7 @@ package com.leyu.melora.playback
 
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.SharedPreferences
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.Closeable
@@ -21,6 +22,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -28,12 +30,100 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class WebDavSyncInstrumentedTest {
     @Test
+    fun interruptedTargetSwitchCannotResumeThePreviouslyEnabledDestination() = runBlocking<Unit> {
+        withSyncFixture { context ->
+            LoopbackDav().use { dav ->
+                val original = WebDavSync.saveConfig(context, dav.config)
+                val replacement = original.copy(folder = "Other folder")
+                // 模拟旧版应用保存新连接后，在撤销旧同步授权之前退出。
+                WebDavConfigStore.save(context, replacement)
+                val legacy = context.useLegacyConfig()
+                assertTrue(context.syncPrefs.edit().putString("enabled-scope", original.scopeKey).commit())
+
+                assertTrue(WebDavSync.status.value, WebDavSync.syncNow(context))
+                assertFalse(WebDavSync.enabled.value)
+                assertNull(context.syncPrefs.getString("enabled-scope", null))
+                assertFalse(legacy.exists())
+                WebDavSync.saveConfig(context, original)
+                assertFalse(WebDavSync.enabled.value)
+                assertTrue(WebDavSync.syncNow(context))
+            }
+        }
+    }
+
+    @Test
+    fun failedSwitchCommitLeavesTheOriginalConfigurationAndConsent() = runBlocking<Unit> {
+        withSyncFixture { context ->
+            LoopbackDav().use { dav ->
+                val original = WebDavSync.saveConfig(context, dav.config)
+                assertTrue(context.syncPrefs.edit().putString("enabled-scope", original.scopeKey).commit())
+                assertTrue(WebDavSync.syncNow(context))
+                val previous = context.syncPrefs.all
+                val replacement = original.copy(folder = "Other folder")
+                for (failures in 1..2) {
+                    context.rejectedCommitsRemaining = failures
+                    val error = requireNotNull(runCatching { WebDavSync.saveConfig(context, replacement) }.exceptionOrNull())
+                    assertEquals("无法在本机保存 WebDAV 配置", error.message)
+                    assertEquals("无法保存 WebDAV 设置", error.cause?.message)
+                    assertEquals(failures == 2, error.cause?.cause != null)
+                    assertEquals(0, context.rejectedCommitsRemaining)
+                    assertEquals(previous, context.syncPrefs.all)
+                    assertEquals(original, WebDavConfigStore.load(context))
+                    assertTrue(WebDavSync.enabled.value)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun legacyConsentSurvivesMigrationAndChangingOnlyThePassword() = runBlocking<Unit> {
+        withSyncFixture { context ->
+            LoopbackDav().use { dav ->
+                val config = WebDavSync.saveConfig(context, dav.config.copy(account = "listener", password = "first"))
+                assertTrue(context.syncPrefs.edit().putString("enabled-scope", config.scopeKey).commit())
+                val legacy = context.useLegacyConfig()
+
+                assertTrue(WebDavSync.syncNow(context))
+                assertFalse(legacy.exists())
+                val rotated = WebDavSync.saveConfig(context, config.copy(password = "second"))
+                assertEquals(rotated, WebDavConfigStore.load(context))
+                assertEquals(config.scopeKey, context.syncPrefs.getString("enabled-scope", null))
+                assertTrue(WebDavSync.enabled.value)
+                assertTrue(WebDavSync.syncNow(context))
+            }
+        }
+    }
+
+    @Test
+    fun unreadableCredentialsPreserveRetryAndAllowExplicitDisable() = runBlocking<Unit> {
+        withSyncFixture { context ->
+            LoopbackDav().use { dav ->
+                val config = WebDavSync.saveConfig(context, dav.config)
+                assertTrue(context.syncPrefs.edit().putString("enabled-scope", config.scopeKey).commit())
+                assertTrue(WebDavSync.syncNow(context))
+                val encrypted = requireNotNull(context.syncPrefs.getString("encrypted-config", null))
+                context.replaceEncryptedConfig("unreadable")
+
+                assertFalse(WebDavSync.syncNow(context))
+                assertTrue(WebDavSync.enabled.value)
+                assertEquals(config.scopeKey, context.syncPrefs.getString("enabled-scope", null))
+                context.replaceEncryptedConfig(encrypted)
+                assertTrue(WebDavSync.syncNow(context))
+
+                context.replaceEncryptedConfig("unreadable")
+                WebDavSync.setEnabled(context, false)
+                assertFalse(WebDavSync.enabled.value)
+                assertEquals("unreadable", context.syncPrefs.getString("encrypted-config", null))
+                context.replaceEncryptedConfig(encrypted)
+                assertTrue(WebDavSync.syncNow(context))
+                assertFalse(WebDavSync.enabled.value)
+            }
+        }
+    }
+
+    @Test
     fun noEtagServerCanEnableUploadMergeAndDisableRecordSync() = runBlocking {
-        val app = InstrumentationRegistry.getInstrumentation().targetContext
-        val storage = Files.createTempDirectory(app.cacheDir.toPath(), "webdav-sync-").toFile()
-        val context = SyncFixtureContext(app, storage)
-        val restoreLibrary = bindFixtureLibrary(File(storage, "user-library.json"))
-        try {
+        withSyncFixture { context ->
             LoopbackDav().use { dav ->
                 val config = WebDavSync.saveConfig(context, dav.config)
                 val client = WebDavClient(config)
@@ -48,7 +138,7 @@ class WebDavSyncInstrumentedTest {
                 assertTrue(RecordKey("favorites", "kw_phone-only") in phone.edits)
 
                 var tablet = RecordSyncMerge.project(library("tablet-only"), JSONArray())
-                WebDavSyncLedger(File(storage, "tablet")).sync(
+                WebDavSyncLedger(File(context.noBackupFilesDir, "tablet")).sync(
                     UUID.randomUUID().toString(), client, capture = { tablet },
                     apply = { _, after, prepare, commit ->
                         prepare()
@@ -70,19 +160,30 @@ class WebDavSyncInstrumentedTest {
                 assertTrue(WebDavSync.syncNow(context))
                 assertEquals(filenames, client.listNames())
             }
-        } finally {
-            try {
-                if (WebDavSync.enabled.value) WebDavSync.setEnabled(context, false)
-            } finally {
-                restoreLibrary()
-                context.clean()
-            }
         }
     }
 
     private fun library(id: String) = JSONObject().put("favorites", JSONArray().put(
         JSONObject().put("source", "kw").put("songmid", id).put("name", id),
     ))
+
+    private suspend fun withSyncFixture(block: suspend (SyncFixtureContext) -> Unit) {
+        val app = InstrumentationRegistry.getInstrumentation().targetContext
+        val storage = Files.createTempDirectory(app.cacheDir.toPath(), "webdav-sync-").toFile()
+        val context = SyncFixtureContext(app, storage)
+        val restoreLibrary = bindFixtureLibrary(File(storage, "user-library.json"))
+        try {
+            block(context)
+        } finally {
+            context.rejectedCommitsRemaining = 0
+            try {
+                WebDavSync.setEnabled(context, false)
+            } finally {
+                restoreLibrary()
+                context.clean()
+            }
+        }
+    }
 
     private fun bindFixtureLibrary(path: File): () -> Unit = BackupStateLock.write {
         val file = UserLibrary::class.java.getDeclaredField("file").apply { isAccessible = true }
@@ -98,10 +199,42 @@ class WebDavSyncInstrumentedTest {
 
     private class SyncFixtureContext(base: Context, private val root: File) : ContextWrapper(base) {
         private val preferenceNames = ConcurrentHashMap.newKeySet<String>()
+        var rejectedCommitsRemaining = 0
+        val syncPrefs get() = getSharedPreferences("webdav-sync", Context.MODE_PRIVATE)
         override fun getApplicationContext(): Context = this
         override fun getNoBackupFilesDir() = root
-        override fun getSharedPreferences(name: String, mode: Int) =
-            super.getSharedPreferences("${root.name}.$name".also(preferenceNames::add), mode)
+        override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
+            val prefs = super.getSharedPreferences("${root.name}.$name".also(preferenceNames::add), mode)
+            if (name != "webdav-sync") return prefs
+            return object : SharedPreferences by prefs {
+                override fun edit(): SharedPreferences.Editor {
+                    val editor = prefs.edit()
+                    return object : SharedPreferences.Editor by editor {
+                        override fun putString(key: String?, value: String?): SharedPreferences.Editor {
+                            editor.putString(key, value)
+                            return this
+                        }
+
+                        override fun commit(): Boolean {
+                            if (rejectedCommitsRemaining == 0) return editor.commit()
+                            rejectedCommitsRemaining--
+                            // Android 写盘失败时也可能已更新进程内可读的偏好值。
+                            editor.apply()
+                            return false
+                        }
+                    }
+                }
+            }
+        }
+
+        fun useLegacyConfig(): File = File(root, "webdav-config.json").apply {
+            writeText(requireNotNull(syncPrefs.getString("encrypted-config", null)))
+            assertTrue(syncPrefs.edit().remove("encrypted-config").commit())
+        }
+
+        fun replaceEncryptedConfig(value: String) {
+            assertTrue(syncPrefs.edit().putString("encrypted-config", value).commit())
+        }
 
         fun clean() {
             preferenceNames.forEach(baseContext::deleteSharedPreferences)

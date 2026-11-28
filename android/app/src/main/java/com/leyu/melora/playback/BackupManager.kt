@@ -48,8 +48,8 @@ object BackupManager {
     suspend fun import(context: Context, uri: Uri): Result<String> = ioResult {
         operations.withLock {
             val job = currentCoroutineContext()
-            val text = context.contentResolver.openInputStream(uri)?.use { it.readBackupText { job.ensureActive() } }
-                ?: error("无法读取备份文件")
+            val text = context.contentResolver.openPickedDocument(uri, "无法读取备份文件，请重新选择")
+                .use { it.readBackupText { job.ensureActive() } }
             restoreSnapshot(context, text)
         }
     }
@@ -67,22 +67,27 @@ object BackupManager {
 
     private suspend fun createSnapshot(context: Context, createdAt: Long): String {
         val job = currentCoroutineContext()
-        return synchronized(BackupStateLock.monitor) {
-            check(BackupRestoreTransaction.failure.value == null) { "请先完成上一次备份恢复" }
-            val scripts = LxScriptStore(context).backupSnapshot { job.ensureActive() }
-            val root = JSONObject().put(BACKUP_ORIGIN_KEY, BackupOrigin.current().toJson())
-                .put("version", 1).put("exportedAt", createdAt)
-                .put("settings", BackupSettings.collect()).put("library", UserLibrary.backupSnapshot())
-                .put("scripts", JSONArray().apply { scripts.forEach { script ->
-                    val item = JSONObject()
-                        .put("fileName", script.fileName)
-                        .put("code", script.code)
-                        .put("enabled", script.enabled)
-                    script.originUrl?.let { item.put("originUrl", it) }
-                    put(item)
-                } })
-            boundedBackupJson(root).also(::parseBackupDocument)
-        }
+        val root = UserLibrary.enqueueWrite {
+            synchronized(BackupStateLock.monitor) {
+                job.ensureActive()
+                check(BackupRestoreTransaction.failure.value == null) { "请先完成上一次备份恢复" }
+                val scripts = LxScriptStore(context).backupSnapshot { job.ensureActive() }
+                JSONObject().put(BACKUP_ORIGIN_KEY, BackupOrigin.current().toJson())
+                    .put("version", 1).put("exportedAt", createdAt)
+                    .put("settings", BackupSettings.collect()).put("library", UserLibrary.backupSnapshot())
+                    .put("playbackProgress", BookListeningProgress.backupSnapshot(context))
+                    .put("scripts", JSONArray().apply { scripts.forEach { script ->
+                        val item = JSONObject()
+                            .put("fileName", script.fileName)
+                            .put("code", script.code)
+                            .put("enabled", script.enabled)
+                        script.originUrl?.let { item.put("originUrl", it) }
+                        put(item)
+                    } })
+            }
+        }.await()
+        job.ensureActive()
+        return boundedBackupJson(root).also(::parseBackupDocument)
     }
 
     private suspend fun restoreSnapshot(context: Context, text: String): String {
@@ -92,18 +97,30 @@ object BackupManager {
         val readable = grants.filter { it.isReadPermission }.mapTo(hashSetOf()) { it.uri.toString() }
         val writable = grants.filter { it.isReadPermission && it.isWritePermission }.mapTo(hashSetOf()) { it.uri.toString() }
         var changedScripts: Set<String> = emptySet()
-        val notice = BackupRestoreTransaction.run(context, { job.ensureActive() }) {
-            val settings = backup.settings?.let { BackupSettings.prepare(it, readable, writable) }
-            settings?.first?.let(BackupSettings::apply)
-            job.ensureActive()
-            backup.library?.let(UserLibrary::replaceFromBackup)
-            job.ensureActive()
-            backup.scripts?.let { changedScripts = LxScriptStore(context).restoreBackup(it) { job.ensureActive() } }
-            settings?.second.orEmpty()
+        val (settingsCount, notice) = withContext(NonCancellable) {
+            UserLibrary.enqueueWrite {
+                synchronized(BackupStateLock.monitor) {
+                    job.ensureActive()
+                    BackupRestoreTransaction.run(context, { job.ensureActive() }) {
+                        val settings = backup.settings?.let { BackupSettings.prepare(it, readable, writable) }
+                        settings?.first?.let(BackupSettings::apply)
+                        job.ensureActive()
+                        backup.library?.let(UserLibrary::replaceFromBackup)
+                        backup.playbackProgress?.let { BookListeningProgress.restoreBackup(context, it) }
+                        job.ensureActive()
+                        backup.scripts?.let { changedScripts = LxScriptStore(context).restoreBackup(it) { job.ensureActive() } }
+                        (settings?.first?.length() ?: 0) to settings?.second.orEmpty()
+                    }.also {
+                        if (backup.playbackProgress != null) BookListeningProgress.onBackupCommitted()
+                    }
+                }
+            }.await()
         }
         // 提交后即使取消也完成运行时同步，初始化失败只提示运行状态。
         val runtimeNotice = syncRestoredRuntime(context, changedScripts.takeIf { backup.scripts != null })
-        return "恢复完成：设置 ${backup.settings?.length() ?: 0} 项、脚本 ${backup.scripts?.size ?: 0} 个、用户库${if (backup.library == null) "未包含" else "已恢复"}。" + notice + runtimeNotice
+        val progressNotice = if (backup.playbackProgress != null) "播放断点已恢复。" else ""
+        return "恢复完成：设置 $settingsCount 项、脚本 ${backup.scripts?.size ?: 0} 个、用户库${if (backup.library == null) "未包含" else "已恢复"}。" +
+            progressNotice + notice + runtimeNotice
     }
 
     /** Application初始化任何存储/播放模块之前调用，清理已提交日志或回滚中断事务。 */
@@ -131,7 +148,8 @@ object BackupManager {
     private fun applyRuntimeSettings(context: Context) {
         PlaybackController.applyMusicPlayMode()
         AudioCacheStore.cancelPrefetch()
-        AudioCacheStore.trimNow()
+        AudioCacheStore.trimNow(context)
+        PlaylistAutoUpdate.onSettingsRestored(context)
         DesktopLyricService.setEnabled(context)
     }
 
@@ -140,9 +158,9 @@ object BackupManager {
         val previous = File.createTempFile(RECOVERY_PREFIX, ".json", context.filesDir)
         var retainOriginal = false
         try {
-            context.contentResolver.openInputStream(uri)?.use { input ->
+            context.contentResolver.openPickedDocument(uri, "无法读取备份目标以保护原文件，请新建备份文档").use { input ->
                 previous.writeText(input.readBackupText(checkCancelled = checkCancelled))
-            } ?: error("无法读取备份目标以保护原文件，请新建备份文档")
+            }
             checkCancelled()
             try {
                 context.contentResolver.writeVerifiedBackup(uri, text.encodeUtf8(), checkCancelled)

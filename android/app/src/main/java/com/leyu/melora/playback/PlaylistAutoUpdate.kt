@@ -13,42 +13,39 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 private const val PLAYLIST_UPDATE_INTERVAL_MS = 24 * 60 * 60 * 1000L
 
 /** 前台触发的自动更新与手动更新使用同一读取、预览和保存流程。 */
 internal object PlaylistAutoUpdate {
-    private const val PREFS = "melora-playlist-auto-update"
-    private const val ENABLED = "enabled"
+    internal const val PREFS = "melora-playlist-auto-update"
+    internal const val LEGACY_ENABLED = "enabled"
     private const val ATTEMPT_PREFIX = "attempt:"
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var preferences: SharedPreferences
     private var running: Job? = null
-    private val mutableEnabled = MutableStateFlow(false)
-    val enabled = mutableEnabled.asStateFlow()
 
     @Synchronized
     fun init(context: Context) {
         if (::preferences.isInitialized) return
         preferences = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        mutableEnabled.value = preferences.getBoolean(ENABLED, false)
+    }
+
+    fun setEnabled(context: Context, value: Boolean) {
+        MeloraSettings.updatePlaylistAutoUpdate(value)
+        onSettingsRestored(context)
     }
 
     @Synchronized
-    fun setEnabled(context: Context, value: Boolean) {
-        init(context)
-        preferences.edit { putBoolean(ENABLED, value) }
-        mutableEnabled.value = value
-        if (value) onForeground(context) else running?.cancel()
+    internal fun onSettingsRestored(context: Context) {
+        if (MeloraSettings.playlistAutoUpdate.value) onForeground(context) else running?.cancel()
     }
 
     @Synchronized
     fun onForeground(context: Context) {
         init(context)
-        if (!enabled.value || running?.isActive == true) return
+        if (!MeloraSettings.playlistAutoUpdate.value || running?.isActive == true) return
         val app = context.applicationContext
         running = scope.launch {
             if (!NetworkState.isConnected(app) || BackupRestoreTransaction.failure.value != null) return@launch
@@ -74,7 +71,7 @@ internal object PlaylistAutoUpdate {
 
     @Synchronized
     private fun claimAttempt(id: String): Boolean {
-        if (!enabled.value || BackupRestoreTransaction.failure.value != null) return false
+        if (!MeloraSettings.playlistAutoUpdate.value || BackupRestoreTransaction.failure.value != null) return false
         val key = ATTEMPT_PREFIX + id
         val now = System.currentTimeMillis()
         if (!isPlaylistUpdateDue(preferences.getLong(key, 0L), now)) return false

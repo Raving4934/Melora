@@ -5,8 +5,6 @@ import android.content.Context
 import android.content.SharedPreferences
 import com.leyu.melora.playback.lx.LxScriptStore
 import java.io.File
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 import java.util.UUID
 import org.json.JSONArray
 import org.json.JSONObject
@@ -39,7 +37,8 @@ internal object BackupRestoreTransaction {
 
     private fun directory(context: Context) = File(context.filesDir, "backup-restore")
     private val libraryFiles = listOf("user-library.json", "user-library.json.bak", "user-library.json.tmp")
-    private val preferenceNames = listOf(MeloraSettings.PREFS, LxScriptStore.PREFS)
+    private val requiredPreferences = listOf(MeloraSettings.PREFS, LxScriptStore.PREFS)
+    private val preferenceNames = requiredPreferences + BookListeningProgress.PREFS
 
     fun recover(context: Context) = synchronized(BackupStateLock.monitor) {
         try {
@@ -50,6 +49,7 @@ internal object BackupRestoreTransaction {
                     rollback(context, journal)
                     MeloraSettings.reloadAfterRestore()
                     UserLibrary.reloadAfterRestore()
+                    BookListeningProgress.onRestore()
                 }
                 // 先退出活动路径再删除：清理中断不能遗留可回滚已接受新业务的旧 ready 日志。
                 check(retireJournal(context, journal)) { "无法清理恢复日志" }
@@ -75,7 +75,7 @@ internal object BackupRestoreTransaction {
         preferenceNames.forEach { name ->
             preferences.put(name, encodePreferences(context.getSharedPreferences(name, Context.MODE_PRIVATE)))
         }
-        writeDurable(File(journal, "preferences.json"), preferences.toString())
+        writeTextAtomically(File(journal, "preferences.json"), preferences.toString(), requireAtomicMove = true)
         libraryFiles.forEach { name ->
             val source = File(context.filesDir, name)
             if (source.isFile) copyFile(source, File(journal, name), checkCancelled)
@@ -83,7 +83,7 @@ internal object BackupRestoreTransaction {
         val sourceDir = File(context.filesDir, LxScriptStore.DIRECTORY)
         if (sourceDir.exists()) copyTree(sourceDir, File(journal, "sources"), checkCancelled)
         checkCancelled()
-        writeDurable(File(journal, "ready"), "1")
+        writeTextAtomically(File(journal, "ready"), "1", requireAtomicMove = true)
     }
 
     fun <T> run(context: Context, checkCancelled: () -> Unit, write: () -> T): T = synchronized(BackupStateLock.monitor) {
@@ -92,7 +92,7 @@ internal object BackupRestoreTransaction {
             checkCancelled()
             val result = write()
             checkCancelled()
-            writeDurable(File(directory(context), "committed"), "1")
+            writeTextAtomically(File(directory(context), "committed"), "1", requireAtomicMove = true)
             // 提交已完成。清理失败只留下可幂等清理的committed日志，不把成功谎报为失败。
             runCatching { retireJournal(context, directory(context)) }
             result
@@ -113,13 +113,14 @@ internal object BackupRestoreTransaction {
         try {
             val journal = directory(context)
             check(journal.isDirectory) { "无法保留恢复快照，请释放存储空间后重试" }
-            // commit=false 也可能已更新 SharedPreferences 缓存，必须确认两组当前值均落盘。
+            // commit=false 也可能已更新 SharedPreferences 缓存，必须确认当前值均落盘。
             preferenceNames.forEach { name ->
                 val prefs = context.getSharedPreferences(name, Context.MODE_PRIVATE)
                 prefs.replaceValues(prefs.all, clear = true)
             }
             MeloraSettings.reloadAfterRestore()
             UserLibrary.reloadAfterRestore()
+            BookListeningProgress.onRestore()
             val retained = File(context.filesDir, "backup-restore-retained-${UUID.randomUUID()}")
             check(journal.renameTo(retained)) { "无法保留恢复快照，请释放存储空间后重试" }
             pendingRecovery = null
@@ -152,7 +153,9 @@ internal object BackupRestoreTransaction {
 
     private fun decodePreferences(journal: File): Map<String, Map<String, Any>> {
         val preferences = JSONObject(File(journal, "preferences.json").inputStream().use { it.readBackupText() })
-        return preferenceNames.associateWith { name ->
+        // 旧版未完成的恢复日志只有设置和音源偏好。
+        require(requiredPreferences.all(preferences::has)) { "无效恢复日志" }
+        return preferenceNames.filter(preferences::has).associateWith { name ->
             val saved = preferences.getJSONObject(name)
             saved.keys().asSequence().associateWith { key ->
                 val field = saved.getJSONArray(key)
@@ -210,15 +213,5 @@ internal object BackupRestoreTransaction {
         if (!journal.renameTo(retired)) return false
         runCatching { retired.deleteRecursively() }
         return true
-    }
-
-    private fun writeDurable(file: File, text: String) {
-        val staged = File(file.parentFile, "${file.name}.tmp")
-        try {
-            staged.outputStream().use { it.write(text.toByteArray(Charsets.UTF_8)); it.fd.sync() }
-            Files.move(staged.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-        } finally {
-            staged.delete()
-        }
     }
 }

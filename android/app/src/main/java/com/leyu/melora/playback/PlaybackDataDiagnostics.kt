@@ -9,7 +9,6 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.TransferListener
-import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicLong
 
 /** 每个 open 独立归属原始曲目；预读下一项不会覆盖本次读取的来源与计数。 */
@@ -21,6 +20,7 @@ internal class PlaybackDataDiagnostics(
         val startedMs = SystemClock.elapsedRealtime()
         val uid = spec.uri.takeIf { it.scheme == "melora" }?.lastPathSegment
         var resolution: TrackRegistry.Resolution? = null
+        var networkPlayback: TrackRegistry.NetworkPlayback? = null
         var key: String? = null
         var uriId = "unknown"
         var openedLength = C.LENGTH_UNSET.toLong()
@@ -40,6 +40,7 @@ internal class PlaybackDataDiagnostics(
     fun resolved(spec: DataSpec) {
         val current = attempt ?: return
         current.resolution = current.uid?.let(TrackRegistry::resolved)
+        current.networkPlayback = spec.customData as? TrackRegistry.NetworkPlayback
         current.key = spec.key
         current.uriId = playbackDiagnosticId(spec.uri.toString())
     }
@@ -57,7 +58,12 @@ internal class PlaybackDataDiagnostics(
             override fun onBytesTransferred(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean, bytesTransferred: Int) {
                 val current = attempt ?: return
                 when (transferSource(dataSpec, isNetwork)) {
-                    "network" -> current.networkBytes += bytesTransferred
+                    "network" -> {
+                        if (current.networkBytes == 0L && bytesTransferred > 0) {
+                            current.networkPlayback?.firstNetworkByteMs = SystemClock.elapsedRealtime()
+                        }
+                        current.networkBytes += bytesTransferred
+                    }
                     "cache" -> current.cacheBytes += bytesTransferred
                     else -> current.localBytes += bytesTransferred
                 }
@@ -150,10 +156,7 @@ internal class PlaybackDataDiagnostics(
 }
 
 /** 不记录直链、查询参数或本地路径；用于跨读取/输出日志关联同一物理资源。 */
-internal fun playbackDiagnosticId(value: String?): String = value?.let {
-    MessageDigest.getInstance("SHA-256").digest(it.toByteArray(Charsets.UTF_8))
-        .take(8).joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
-} ?: "unknown"
+internal fun playbackDiagnosticId(value: String?): String = value?.sha256Hex(byteCount = 8) ?: "unknown"
 
 private fun playbackDiagnosticToken(value: String?): String = value
     ?.takeIf { it.length in 1..96 && it.all { char -> char.isLetterOrDigit() || char in "_-." } }
