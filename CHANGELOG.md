@@ -2,6 +2,45 @@
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-11-28
+
+### 安卓客户端
+
+【播放队列与歌词】
+
+- 在歌单、榜单、我喜欢和本地歌曲列表中点一首歌，就能从这首开始顺序播放当前列表。列表加载新一页后，再次点歌会补入新曲，并保留手动排队的顺序。搜索结果和最近播放仍可单曲插播，听书继续按章节断点续听。
+- 「播放设置 → 通知栏与蓝牙」新增独立的「蓝牙歌词」开关，默认关闭。通过蓝牙播放时，支持显示曲目标题的车机和其他接收设备可逐行显示歌词。
+- 修复听书或听歌中途声音消失、进度仍在走的问题。检测到音轨停止输出时，播放器会尝试从最后确认出声的位置恢复。
+- 歌词页和沉浸封面都能上下滑动选句，点时间从该句起播，点当前句暂停或继续。浏览沉浸封面时可以留在原页操作。 ([`7810395`](https://github.com/Raving4934/Melora/commit/78103952fa931f77a08e378f57fa4d23bd126d98))
+
+【音质与自定义音源】
+
+- 播放和下载的音质偏好新增「母带优先」。音源支持时优先请求母带，不可用时自动降级。音质菜单增加短徽标，方便区分档位。
+- 改进切歌和自动换源。脚本可并发请求，单个平台的故障独立处理。多个源竞争时会核对音频格式和可识别的试听片段，优先选用符合音质偏好的完整资源。
+- 「有效性测试」可一次检查脚本协议和各平台的实际播放链接，分别显示结果及错误详情。通过链接导入的音源可以检查更新，导出后再导入也能继续使用原链接更新。
+
+【封面与界面】
+
+- 底部播放条与播放页共享封面，展开、收回以及快速切歌时交接更平滑。新封面长时间未到时会显示占位音符，避免一直显示上一首的封面。
+- 改善浅深主题混搭时占位音符的对比度。缺图时，封面选择器用轮廓区分方形和圆形。大屏按实际展示尺寸加载封面。
+- 统一搜索、歌单和发现等页面的音源名称显示，补齐墨水屏模式的菜单图标，并修复桌面歌词首次显示时字号、背景等设置未及时生效的问题。
+
+【下载、媒体库与备份】
+
+- 下载按实际音频格式保存并写入标签，升级音质时会校验候选文件，避免用试听片段替换原文件。关闭歌曲菜单后，已提交的下载可继续进行。
+- 本地扫描遇到外置存储暂不可访问时保留已有记录，减少重复读取标签。排序面板可切换升降序，并显示当前选项。
+- 整包备份包含听书断点和歌单自动更新设置。恢复失败时可回滚。改进 WebDAV 凭据失效后的重新保存，以及自动备份对目标目录写权限的检查。
+
+### 提交追溯
+
+Android 版本号为 0.2.8，versionCode 为 28。完整提交区间见 [android-v0.2.7 至 android-v0.2.8][Android 0.2.8]。
+
+- 播放队列、蓝牙歌词和音轨恢复。[`41ebe4d`](https://github.com/Raving4934/Melora/commit/41ebe4da562e7fbbcbd0a660482a121406bfb2f5)、[`5c20ad5`](https://github.com/Raving4934/Melora/commit/5c20ad55df307383efb7dd57f58bffc9ccce16b9)
+- 母带偏好、并发请求、音质核对与换源。[`7fe1231`](https://github.com/Raving4934/Melora/commit/7fe12312f28ba7042bfe193b3f265007fb57ba82)、[`1a2f1c9`](https://github.com/Raving4934/Melora/commit/1a2f1c90a53c9ad0d9f3bdb7c4d3642edafae457)、[`897aca3`](https://github.com/Raving4934/Melora/commit/897aca3aab560c8097ae5f60503c35f00479fe27)
+- 音源有效性测试、在线更新及导出回导。[`f43c1e3`](https://github.com/Raving4934/Melora/commit/f43c1e3d045961b8e03d2bb9cc63967bc4a10f68)、[`ea83aec`](https://github.com/Raving4934/Melora/commit/ea83aeca5aaedf52524fcbcf0a3ab7a2f6d027bc)、[`cc6c8a7`](https://github.com/Raving4934/Melora/commit/cc6c8a749bafda64cc2997b0190478832c2c63a1)
+- 播放封面交接、设备主题与页面入口。[`7536c2c`](https://github.com/Raving4934/Melora/commit/7536c2cd2838c06e7dccc9551e2587624ac9b47b)、[`838d4a1`](https://github.com/Raving4934/Melora/commit/838d4a1849c876fa8d4031c0be693d9c17200d66)、[`da782b9`](https://github.com/Raving4934/Melora/commit/da782b9511bce996fcc404b61d405f9d15991b2f)
+- 音频文件格式、媒体库、桌面歌词与备份恢复。[`a331bb2`](https://github.com/Raving4934/Melora/commit/a331bb29ddad64ad3c48566390c657958a66c7e8)、[`897aca3`](https://github.com/Raving4934/Melora/commit/897aca3aab560c8097ae5f60503c35f00479fe27)、[`e772915`](https://github.com/Raving4934/Melora/commit/e7729155fdae8b40d8ace382c1206e59bf4f4812)
+
 ## [0.2.7] - 2026-11-27
 
 ### 安卓客户端
@@ -686,7 +725,9 @@ Android 版本号为 0.2.4，versionCode 为 24。完整 Android 提交区间见
 
 **Docker 镜像：** `ghcr.io/raving4934/melora:0.1.0`（支持 `linux/amd64`、`linux/arm64`）。
 
-[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.7...HEAD
+[Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.8...HEAD
+[0.2.8]: https://github.com/Raving4934/Melora/compare/android-v0.2.7...android-v0.2.8
+[Android 0.2.8]: https://github.com/Raving4934/Melora/compare/android-v0.2.7...android-v0.2.8
 [0.2.7]: https://github.com/Raving4934/Melora/compare/android-v0.2.4...android-v0.2.7
 [Android 0.2.7]: https://github.com/Raving4934/Melora/compare/android-v0.2.4...android-v0.2.7
 [0.2.4]: https://github.com/Raving4934/Melora/compare/android-v0.2.3...android-v0.2.4
@@ -701,7 +742,7 @@ Android 版本号为 0.2.4，versionCode 为 24。完整 Android 提交区间见
 [Android 0.2.0]: https://github.com/Raving4934/Melora/compare/android-v0.1.10...android-v0.2.0
 [0.1.10]: https://github.com/Raving4934/Melora/compare/android-v0.1.9...android-v0.1.10
 [Android 0.1.10]: https://github.com/Raving4934/Melora/compare/android-v0.1.9...android-v0.1.10
-[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.7...HEAD
+[Android Unreleased]: https://github.com/Raving4934/Melora/compare/android-v0.2.8...HEAD
 [Web Unreleased]: https://github.com/Raving4934/Melora/compare/v0.1.3...HEAD
 [Web 0.1.3]: https://github.com/Raving4934/Melora/compare/v0.1.2...v0.1.3
 [Web 0.1.2]: https://github.com/Raving4934/Melora/compare/v0.1.1...v0.1.2
