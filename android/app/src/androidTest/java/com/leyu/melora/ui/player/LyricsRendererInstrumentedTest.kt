@@ -49,6 +49,7 @@ import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -798,6 +799,160 @@ class LyricsRendererInstrumentedTest {
         assertTrue("尾奏保留最后一句阅读焦点而非全屏同灰", brightPixels("下一句") > 10)
     }
 
+    @Test
+    fun scrollingShowsBrowseGuideAndPlayButtonSeeksAndPlaysCenteredLine() {
+        val lines = (0 until 20).map { LyricLine(it * 5_000L, "browse-line-$it") }
+        val position = mutableLongStateOf(0L)
+        var played: LyricLine? = null
+        var clicked: LyricLine? = null
+        setViewport(
+            lines = lines,
+            position = position,
+            height = 320.dp,
+            motionEnabled = false,
+            onLineClick = { clicked = it },
+            onPlayLine = { played = it },
+        )
+        composeRule.waitForIdle()
+        val initialLeft = textBounds("browse-line-0").left
+        composeRule.onNodeWithTag("lyric-browse-play").assertDoesNotExist()
+
+        composeRule.onNodeWithTag(VIEWPORT_TAG).performTouchInput {
+            swipe(Offset(centerX, height * 0.85f), Offset(centerX, height * 0.25f), durationMillis = 600)
+        }
+        composeRule.waitForIdle()
+
+        val centered = nearestVisibleLine(lines)
+        assertEquals("无框引导条不能改变歌词左边缘对齐", initialLeft, textBounds(centered.text).left, 1f)
+        composeRule.onNodeWithTag("lyric-browse-time", useUnmergedTree = true).assertIsDisplayed()
+        val guideNode = composeRule.onNodeWithTag("lyric-browse-play", useUnmergedTree = true).assertIsDisplayed()
+        assertEquals("引导控件应与焦点线对齐", ordinaryFocusY(), guideNode.fetchSemanticsNode().boundsInRoot.center.y, 2f)
+        guideNode.performTouchInput { click(center) }
+        composeRule.waitForIdle()
+
+        assertSame("引导条播放按钮必须按居中句发起跳播并起播", centered, played)
+        assertEquals("点引导条播放按钮不应重复回调行点击", null, clicked)
+        composeRule.onNodeWithTag("lyric-browse-play").assertDoesNotExist()
+    }
+
+    @Test
+    fun draggingFromBrowseTimeScrollsLyricsWithoutPlaying() {
+        val lines = (0 until 40).map { LyricLine(it * 1_000L, "drag-$it") }
+        var plays = 0
+        setViewport(lines, mutableLongStateOf(0L), height = 320.dp, motionEnabled = false,
+            onPlayLine = { plays++ })
+        val viewport = composeRule.onNodeWithTag(VIEWPORT_TAG)
+        viewport.performTouchInput {
+            swipe(Offset(centerX, height * 0.85f), center, durationMillis = 500)
+        }
+        val guide = composeRule.onNodeWithTag("lyric-browse-play")
+        val start = guide.fetchSemanticsNode().boundsInRoot.center - viewportBounds().topLeft
+        val before = verticalScrollValue()
+        viewport.performTouchInput {
+            swipe(start, start - Offset(0f, height * 0.25f), durationMillis = 500)
+        }
+        assertTrue("时间按钮上的纵向拖动应滚动歌词", verticalScrollValue() > before + 1f)
+        assertEquals(0, plays)
+        guide.performClick()
+        composeRule.runOnIdle { assertEquals("无障碍点击应触发一次播放", 1, plays) }
+    }
+
+    @Test
+    fun holdingBrowseTimeDuringFlingPlaysTheLineShownOnPress() {
+        val lines = (0 until 80).map { LyricLine(it * 1_000L, "hold-$it") }
+        val played = mutableListOf<LyricLine>()
+        composeRule.mainClock.autoAdvance = false
+        try {
+            setViewport(lines, mutableLongStateOf(0L), height = 320.dp, motionEnabled = false,
+                onPlayLine = { played += it })
+            val viewport = composeRule.onNodeWithTag(VIEWPORT_TAG)
+            viewport.performTouchInput {
+                swipe(Offset(centerX, height * 0.85f), Offset(centerX, height * 0.15f))
+            }
+            val released = verticalScrollValue()
+            repeat(3) { composeRule.mainClock.advanceTimeByFrame() }
+            assertTrue("按下前必须有惯性位移", verticalScrollValue() > released + 1f)
+            val guide = composeRule.onNodeWithTag("lyric-browse-play")
+            val time = composeRule.onNodeWithTag("lyric-browse-time", useUnmergedTree = true)
+                .fetchSemanticsNode().config[SemanticsProperties.Text].single().text
+            val expected = lines.single { formatClock(it.startMs) == time }
+            val start = guide.fetchSemanticsNode().boundsInRoot.center - viewportBounds().topLeft
+            viewport.performTouchInput { down(start) }
+            composeRule.mainClock.advanceTimeByFrame()
+            val stopped = verticalScrollValue()
+            composeRule.mainClock.advanceTimeBy(3_360)
+            guide.assertIsDisplayed()
+            assertEquals("按住按钮应停止惯性", stopped, verticalScrollValue(), 1f)
+            viewport.performTouchInput { up() }
+            composeRule.runOnIdle { assertEquals(listOf(expected), played) }
+        } finally {
+            composeRule.mainClock.autoAdvance = true
+        }
+    }
+
+    @Test
+    fun tappingFocusLineTogglesPlaybackWhileOtherLinesStillSeek() {
+        val lines = listOf(
+            LyricLine(0L, "focus-first"),
+            LyricLine(5_000L, "focus-second"),
+        )
+        val position = mutableLongStateOf(0L)
+        var toggles = 0
+        var clicked: LyricLine? = null
+        setViewport(
+            lines = lines,
+            position = position,
+            height = 240.dp,
+            motionEnabled = false,
+            onLineClick = {
+                clicked = it
+                position.longValue = it.startMs
+            },
+            onPlayLine = { error("点击歌词行不应触发引导按钮") },
+            onTogglePlayback = { toggles++ },
+        )
+        composeRule.waitForIdle()
+
+        touchLine("focus-first")
+        composeRule.waitForIdle()
+        assertEquals("点击当前焦点句应切换播放状态", 1, toggles)
+        assertEquals("点击当前焦点句不得触发切点定位", null, clicked)
+        composeRule.onNodeWithTag("lyric-browse-play").assertDoesNotExist()
+
+        touchLine("focus-second")
+        composeRule.waitForIdle()
+        assertSame("点击非焦点句应仅定位到该句", lines[1], clicked)
+        assertEquals("点击非焦点句不得切换播放状态", 1, toggles)
+
+        touchLine("focus-second")
+        composeRule.waitForIdle()
+        assertEquals("目标句成为当前焦点后再次点击应切换播放状态", 2, toggles)
+    }
+
+    @Test
+    fun nonSeekableLyricsNeverShowBrowseGuide() {
+        val lines = (0 until 12).map { LyricLine(it * 1_000L, "readonly-$it") }
+        var toggles = 0
+        setViewport(
+            lines = lines,
+            position = mutableLongStateOf(0L),
+            height = 260.dp,
+            motionEnabled = false,
+            onTogglePlayback = { toggles++ },
+        )
+        composeRule.waitForIdle()
+        touchLine("readonly-0")
+        composeRule.runOnIdle { assertEquals(0, toggles) }
+
+        composeRule.onNodeWithTag(VIEWPORT_TAG).performTouchInput {
+            swipe(Offset(centerX, height * 0.8f), Offset(centerX, height * 0.25f), durationMillis = 500)
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("lyric-browse-time").assertDoesNotExist()
+        composeRule.onNodeWithTag("lyric-browse-play").assertDoesNotExist()
+    }
+
     @Test fun miniRetainsReadingFocusDuringSilenceAndHandsOffAtTheNextStart() {
         val lines = listOf(LyricLine(0L, "mini上一句", endMs = 1_000L,
             words = listOf(LyricWord("mini上一句", 0L, 1_000L))), LyricLine(7_000L, "mini下一句", endMs = 8_000L))
@@ -947,6 +1102,8 @@ class LyricsRendererInstrumentedTest {
         playerDark: Boolean = true,
         onTouchMetrics: ((TouchMetrics) -> Unit)? = null,
         onLineClick: (LyricLine) -> Unit = {},
+        onPlayLine: ((LyricLine) -> Unit)? = null,
+        onTogglePlayback: (() -> Unit)? = null,
     ) {
         composeRule.setContent {
             val density = LocalDensity.current
@@ -971,6 +1128,8 @@ class LyricsRendererInstrumentedTest {
                         immersive = immersive,
                         motionEnabled = motionEnabled,
                         onLineClick = onLineClick,
+                        onPlayLine = onPlayLine,
+                        onTogglePlayback = onTogglePlayback,
                     )
                 }
                 }

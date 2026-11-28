@@ -685,10 +685,10 @@ internal fun FullPlayerPageContent(
                             },
                         )
                         1 -> if (expandedLayout && immersive) {
+                            val hasLyrics = lyricLines.isNotEmpty()
                             val immersiveLines = remember(track?.uid, track?.title, track?.artist, lyricLines) {
                                 fullPlayerLyricsOrFallback(track, lyricLines)
                             }
-                            val immersiveContentKey = remember(immersiveLines) { immersiveLines.map { it.startMs to it.text } }
                             Row(
                                 Modifier.fillMaxSize().windowInsetsPadding(playerInsets)
                                     .padding(horizontal = ExpandedPlayerPanePadding, vertical = 12.dp),
@@ -696,7 +696,7 @@ internal fun FullPlayerPageContent(
                             ) {
                                 Box(Modifier.weight(ExpandedPlayerArtworkWeight).fillMaxHeight()) { cover() }
                                 Box(Modifier.weight(1f - ExpandedPlayerArtworkWeight).fillMaxHeight()) {
-                                    key(track?.uid, immersiveContentKey) {
+                                    key(track?.uid, lyricContentKey(immersiveLines)) {
                                         LyricsViewport(
                                             lines = immersiveLines,
                                             position = lyricPosition,
@@ -706,7 +706,9 @@ internal fun FullPlayerPageContent(
                                             immersive = true,
                                             modifier = Modifier.fillMaxSize().testTag("player-full-lyrics")
                                                 .graphicsLayer { alpha = immersion.value }.lyricViewportFade(),
-                                            onLineClick = { if (lyricLines.isNotEmpty()) PlaybackController.seekTo(it.startMs) },
+                                            onLineClick = if (hasLyrics) seekToLyric else null,
+                                            onPlayLine = if (hasLyrics) playFromLyric else null,
+                                            onTogglePlayback = if (hasLyrics) PlaybackController::toggle else null,
                                         )
                                     }
                                 }
@@ -2014,6 +2016,13 @@ private fun LandscapeArtworkLayer(
     Box(modifier, contentAlignment = Alignment.Center, content = content)
 }
 
+private val seekToLyric: (LyricLine) -> Unit = { PlaybackController.seekTo(it.startMs) }
+private val playFromLyric: (LyricLine) -> Unit = { PlaybackController.seekTo(it.startMs, play = true) }
+
+// 单独更新逐字时间时保留浏览位置，更换曲目或歌词行时重置。
+@Composable
+private fun lyricContentKey(lines: List<LyricLine>) = remember(lines) { lines.map { it.startMs to it.text } }
+
 // 播放页 Page 1：默认封面歌词对齐左边沿，圆形/黑胶歌词居中。
 @Composable
 private fun PlayerCoverPage(
@@ -2038,7 +2047,8 @@ private fun PlayerCoverPage(
     frame: State<com.leyu.melora.playback.LyricFrame>,
     onNavigateToLyrics: () -> Unit,
 ) {
-    val lines = fullPlayerLyricsOrFallback(track, lyrics)
+    val lines = remember(track?.uid, track?.title, track?.artist, lyrics) { fullPlayerLyricsOrFallback(track, lyrics) }
+    val canPlayLyrics = immersive && lyrics.isNotEmpty()
     val c = roundness.value
     // 横屏的两个独立布局只报告各自端点；连续插值由共有的封面完成。
     val t = if (twoPanes) (if (immersive) 1f else 0f) else immersion.value
@@ -2096,23 +2106,31 @@ private fun PlayerCoverPage(
         val lyricHeight = lerp(if (miniLyricsEnabled) normalLyricHeight else 0.dp, immersiveLyricHeight, t)
         val lyricWidth = lerp(maxWidth * (1f - centering) + normalLyricWidth * centering, maxWidth, t)
         val lyricsContent: @Composable (Modifier) -> Unit = { lyricsModifier ->
-            LyricsViewport(
-                lines = lines, position = position,
-                config = LyricsUiConfig(fontSizeSp = miniFontSize, isWordLiftEnabled = wordLiftEnabled),
-                mini = !immersive, immersive = immersive,
-                frameState = frame, motionEnabled = motionEnabled,
-                centered = (centered && (!compact || immersive)) || largePortrait,
-                modifier = lyricsModifier.testTag("player-mini-lyrics")
-                    .then(
-                        when {
-                            immersive || roomyLyrics -> Modifier.lyricViewportFade()
-                            !compact -> Modifier.lyricViewportFade(0.14f)
-                            else -> Modifier
-                        },
-                    )
-                    .graphicsLayer { alpha = if (miniLyricsEnabled) 1f else immersion.value },
-                onLineClick = { onNavigateToLyrics() },
-            )
+            key(track?.uid, lyricContentKey(lines)) {
+                LyricsViewport(
+                    lines = lines, position = position,
+                    config = LyricsUiConfig(fontSizeSp = miniFontSize, isWordLiftEnabled = wordLiftEnabled),
+                    mini = !immersive, immersive = immersive,
+                    frameState = frame, motionEnabled = motionEnabled,
+                    centered = (centered && (!compact || immersive)) || largePortrait,
+                    modifier = lyricsModifier.testTag("player-mini-lyrics")
+                        .then(
+                            when {
+                                immersive || roomyLyrics -> Modifier.lyricViewportFade()
+                                !compact -> Modifier.lyricViewportFade(0.14f)
+                                else -> Modifier
+                            },
+                        )
+                        .graphicsLayer { alpha = if (miniLyricsEnabled) 1f else immersion.value },
+                    onLineClick = when {
+                        !immersive -> { _ -> onNavigateToLyrics() }
+                        canPlayLyrics -> seekToLyric
+                        else -> null
+                    },
+                    onPlayLine = if (canPlayLyrics) playFromLyric else null,
+                    onTogglePlayback = if (canPlayLyrics) PlaybackController::toggle else null,
+                )
+            }
         }
         if (targetLandscape != null) {
             Box(Modifier.fillMaxSize()) {
@@ -2218,9 +2236,9 @@ private fun LyricsPage(
     compactLandscape: Boolean = false,
     lyricsTestTag: String = "player-full-lyrics",
 ) {
+    val hasLyrics = lyrics.isNotEmpty()
     val lines = remember(track?.uid, track?.title, track?.artist, lyrics) { fullPlayerLyricsOrFallback(track, lyrics) }
-    // 后台只补词时间时保留浏览/滚动状态；仅歌词正文或行时间改变才重新定位视口。
-    val contentKey = remember(lines) { lines.map { it.startMs to it.text } }
+    val contentKey = lyricContentKey(lines)
     if (stageMode) {
         val eInk = MeloraAppearance.isEInk
         var controlsVisible by remember(stageMode) { mutableStateOf(false) }
@@ -2276,11 +2294,18 @@ private fun LyricsPage(
             else -> config
         }
         key(track?.uid, contentKey) {
-            LyricsViewport(lines, position, effectiveConfig, frameState = frame, motionEnabled = motionEnabled,
+            LyricsViewport(
+                lines = lines,
+                position = position,
+                config = effectiveConfig,
+                frameState = frame,
+                motionEnabled = motionEnabled,
                 immersive = immersive,
                 modifier = Modifier.weight(1f).fillMaxWidth().testTag(lyricsTestTag)
                     .lyricViewportFade(0.16f),
-                onLineClick = { if (lyrics.isNotEmpty()) PlaybackController.seekTo(it.startMs) },
+                onLineClick = if (hasLyrics) seekToLyric else null,
+                onPlayLine = if (hasLyrics) playFromLyric else null,
+                onTogglePlayback = if (hasLyrics) PlaybackController::toggle else null,
             )
         }
         Box(Modifier.immersionChrome(immersion).padding(toolsPadding), contentAlignment = Alignment.CenterStart) {

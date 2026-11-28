@@ -16,10 +16,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.onNodeWithTag
@@ -29,7 +32,6 @@ import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipe
-import androidx.compose.ui.test.swipeRight
 import androidx.compose.ui.unit.DpSize
 import kotlin.math.abs
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -67,15 +69,15 @@ class PlayerLyricsPagingTest {
         tall: Boolean = false,
         miniLyrics: Boolean = true,
         coverStyle: PlayerCoverStyle = PlayerCoverStyle.Default,
+        lines: List<LyricLine> = listOf(
+            LyricLine(0, "点击迷你歌词翻页", words = listOf(LyricWord("点击迷你歌词翻页", 0L, 3_000L))),
+            LyricLine(5_000, "下一句歌词"),
+        ),
     ) {
         coverStyleState.value = coverStyle
         immersiveState.value = immersive
         MeloraSettings.miniLyricsEnabled.value = miniLyrics
         val position = mutableLongStateOf(2_000)
-        val lines = listOf(
-            LyricLine(0, "点击迷你歌词翻页", words = listOf(LyricWord("点击迷你歌词翻页", 0L, 3_000L))),
-            LyricLine(5_000, "下一句歌词"),
-        )
         compose.setContent {
             // 在竖屏测试设备内承载720dp宽视口，不让requiredSize溢出物理屏幕影响手势坐标。
             CompositionLocalProvider(LocalDensity provides if (wide || tall) Density(1f) else LocalDensity.current) {
@@ -278,21 +280,90 @@ class PlayerLyricsPagingTest {
         assertContinuousTapAndReturn()
     }
 
-    @Test fun immersiveTapKeepsExpandedLayoutDuringPagingAndReturn() {
-        showPlayer(immersive = true)
-        assertContinuousTapAndReturn()
-        assertImmersivePreserved()
+    @Test fun immersiveCoverLyricsCanBrowseAndPlayInPlace() =
+        assertImmersiveCoverBrowse(wide = false)
+
+    @Test fun compactLandscapeCoverLyricsCanBrowseAndPlayInPlace() =
+        assertImmersiveCoverBrowse(wide = true)
+
+    @Test fun immersiveCoverLyricsCanBrowseWithNormalMiniLyricsDisabled() =
+        assertImmersiveCoverBrowse(wide = false, miniLyrics = false)
+
+    private fun assertImmersiveCoverBrowse(wide: Boolean, miniLyrics: Boolean = true) {
+        val lines = List(20) { LyricLine(it * 5_000L, "测试歌词 ${it + 1}") }
+        showPlayer(immersive = true, wide = wide, miniLyrics = miniLyrics, lines = lines)
+        val preview = compose.onNodeWithTag("player-mini-lyrics", useUnmergedTree = true).assertIsDisplayed()
+        val guide = compose.onNodeWithTag("lyric-browse-play", useUnmergedTree = true)
+        val time = compose.onNodeWithTag("lyric-browse-time", useUnmergedTree = true)
+        val list = compose.onNode(
+            hasScrollAction() and hasAnyAncestor(hasTestTag("player-mini-lyrics")),
+            useUnmergedTree = true,
+        )
+        fun scrollPosition() =
+            list.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
+
+        val before = scrollPosition()
+        compose.mainClock.autoAdvance = false
+        try {
+            val firstLine = compose.onNode(
+                hasText(lines.first().text) and hasAnyAncestor(hasTestTag("player-mini-lyrics")),
+                useUnmergedTree = true,
+            )
+            firstLine.performTouchInput { click(center) }
+            compose.mainClock.advanceTimeBy(1_500)
+            assertCoverPageSettled()
+
+            preview.performTouchInput {
+                swipe(Offset(center.x, height * 0.8f), Offset(center.x, height * 0.2f), durationMillis = 600)
+            }
+            compose.mainClock.advanceTimeBy(600)
+            assertTrue("垂直拖动应滚动封面页的沉浸歌词", scrollPosition() > before)
+            guide.assertIsDisplayed()
+            time.assertIsDisplayed().performTouchInput { click(center) }
+            compose.mainClock.advanceTimeBy(1_500)
+            guide.assertDoesNotExist()
+            assertCoverPageSettled()
+
+            compose.onNodeWithTag("player-pages").performTouchInput {
+                swipe(Offset(width * 0.8f, center.y), Offset(width * 0.2f, center.y), durationMillis = 320)
+            }
+            compose.mainClock.advanceTimeBy(1_500)
+            val pages = compose.onNodeWithTag("player-pages").getUnclippedBoundsInRoot()
+            val lyrics = compose.onNodeWithTag("player-page-2").assertIsDisplayed().getUnclippedBoundsInRoot()
+            assertEquals("向左横滑仍应进入下一页", pages.left.value, lyrics.left.value, 1f)
+            assertImmersivePreserved()
+        } finally {
+            compose.mainClock.autoAdvance = true
+        }
     }
 
-    @Test fun immersiveLyricsStayNavigableWhenNormalMiniLyricsAreDisabled() {
-        showPlayer(immersive = true, miniLyrics = false)
-        assertContinuousTapAndReturn()
-        assertImmersivePreserved()
+    @Test fun immersiveCoverWithoutLyricsStaysOnTheCover() {
+        showPlayer(immersive = true, lines = emptyList())
+        val preview = compose.onNodeWithTag("player-mini-lyrics", useUnmergedTree = true).assertIsDisplayed()
+        val placeholder = compose.onNode(
+            hasText("暂无歌词") and hasAnyAncestor(hasTestTag("player-mini-lyrics")),
+            useUnmergedTree = true,
+        )
+        compose.mainClock.autoAdvance = false
+        try {
+            placeholder.performTouchInput { click(center) }
+            compose.mainClock.advanceTimeBy(1_500)
+            assertCoverPageSettled()
+            preview.performTouchInput {
+                swipe(Offset(center.x, height * 0.8f), Offset(center.x, height * 0.2f), durationMillis = 600)
+            }
+            compose.mainClock.advanceTimeBy(600)
+            compose.onNodeWithTag("lyric-browse-play", useUnmergedTree = true).assertDoesNotExist()
+            assertCoverPageSettled()
+        } finally {
+            compose.mainClock.autoAdvance = true
+        }
     }
 
-    @Test fun wideImmersiveLayoutUsesTheSamePagingMotion() {
-        showPlayer(immersive = true, wide = true)
-        assertContinuousTapAndReturn()
+    private fun assertCoverPageSettled() {
+        val pages = compose.onNodeWithTag("player-pages").getUnclippedBoundsInRoot()
+        val cover = compose.onNodeWithTag("player-page-1").assertIsDisplayed().getUnclippedBoundsInRoot()
+        assertEquals("点击沉浸歌词后应停留在封面页", pages.left.value, cover.left.value, 1f)
         assertImmersivePreserved()
     }
 
@@ -340,12 +411,6 @@ class PlayerLyricsPagingTest {
     @Test fun fingerCanReverseClickAnimationBeforeItFinishes() {
         showPlayer()
         assertGestureTakesOver()
-    }
-
-    @Test fun immersiveFingerCanReverseClickAnimationWithoutExitingImmersion() {
-        showPlayer(immersive = true)
-        assertGestureTakesOver()
-        assertImmersivePreserved()
     }
 
     private fun assertGestureTakesOver() {

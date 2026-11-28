@@ -5,6 +5,7 @@ import com.leyu.melora.playback.LyricsUiConfig
 import android.os.Build
 import android.os.SystemClock
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -33,8 +34,12 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -55,11 +60,25 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.boundsInParent
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -68,11 +87,13 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.LineBreak
+import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.ResolvedTextDirection
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
@@ -86,6 +107,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.ceil
+import kotlin.math.roundToInt
 
 /** 同一时钟供三个展示入口读取；时间只在 draw 或时间线边界派生中消费。 */
 @Composable
@@ -474,6 +496,12 @@ private fun visibleLyricInterlude(
     }.value
 }
 
+internal data class LyricViewportItemMetrics(val index: Int, val offset: Int, val size: Int)
+
+/** 返回最贴近焦点线（offset = 0）的可见歌词索引；空列表返回 null。 */
+internal fun browseFocusedLyricIndex(items: List<LyricViewportItemMetrics>): Int? =
+    items.minByOrNull { kotlin.math.abs(it.offset + it.size / 2) }?.index
+
 /** 全屏与封面 mini 共用同一列表和行渲染。mini 固定视口、不接受拖动，只响应点击进入全屏。 */
 @Composable
 internal fun LyricsViewport(
@@ -483,10 +511,12 @@ internal fun LyricsViewport(
     modifier: Modifier = Modifier,
     mini: Boolean = false,
     centered: Boolean = false,
-    onLineClick: (LyricLine) -> Unit,
+    onLineClick: ((LyricLine) -> Unit)?,
     frameState: State<LyricFrame> = rememberLyricFrame(lines, position),
     motionEnabled: Boolean = true,
     immersive: Boolean = false,
+    onPlayLine: ((LyricLine) -> Unit)? = null,
+    onTogglePlayback: (() -> Unit)? = null,
 ) {
     val frame by frameState
     val density = LocalDensity.current
@@ -495,6 +525,7 @@ internal fun LyricsViewport(
     val ink = FullPlayerTextPrimary
     val eInk = MeloraAppearance.isEInk
     val animate = motionEnabled && !eInk
+    val seekable = !mini && onPlayLine != null
     val immersiveMode = immersive && !mini
     val forceCenter = immersive || centered || config.isCentered
     val centerFraction = animateFloatAsState(if (forceCenter) 1f else 0f,
@@ -538,12 +569,20 @@ internal fun LyricsViewport(
         val list = key(mini) { rememberLazyListState(index, offset) }
         var followedIndex by remember(list) { mutableIntStateOf(index) }
         var browsing by remember(list) { mutableStateOf(false) }
+        var showBrowseGuide by remember(list) { mutableStateOf(false) }
         var touching by remember(list) { mutableStateOf(false) }
         var tapEligible by remember(list) { mutableStateOf(true) }
         LaunchedEffect(browsing, touching) {
             if (browsing && !touching) snapshotFlow { list.isScrollInProgress }.distinctUntilChanged().collectLatest { moving ->
-                if (!moving) { delay(3_000); browsing = false }
+                if (!moving) {
+                    delay(3_000)
+                    browsing = false
+                    showBrowseGuide = false
+                }
             }
+        }
+        LaunchedEffect(seekable) {
+            if (!seekable) showBrowseGuide = false
         }
         LaunchedEffect(list, index, browsing, touching, offset, animate, focusedLine != null) {
             if (browsing || touching || focusedLine == null) {
@@ -564,6 +603,29 @@ internal fun LyricsViewport(
         val tapSlop = viewConfiguration.touchSlop
         val verticalViewConfiguration = rememberPlayerVerticalViewConfiguration()
         val focusFraction = if (!mini && !immersiveMode) ORDINARY_LYRICS_FOCUS_FRACTION else 0.5f
+        val browseIndex by remember(list, seekable) {
+            derivedStateOf {
+                if (!showBrowseGuide || !seekable) null
+                else browseFocusedLyricIndex(
+                    list.layoutInfo.visibleItemsInfo.map {
+                        LyricViewportItemMetrics(it.index, it.offset, it.size)
+                    },
+                )
+            }
+        }
+        val browseLine = browseIndex?.let(lines::getOrNull)
+        val showGuide = browseLine != null
+        val displayedLine by rememberUpdatedState(browseLine)
+        val playLine by rememberUpdatedState(onPlayLine)
+        var guideBounds by remember(list) { mutableStateOf(Rect.Zero) }
+        fun playFrom(line: LyricLine) {
+            playLine?.invoke(line)
+            browsing = false
+            showBrowseGuide = false
+        }
+        val focusYPx = (height * focusFraction).roundToInt()
+        val enter = if (animate) fadeIn(tween(150)) else EnterTransition.None
+        val exit = if (animate) fadeOut(tween(220)) else ExitTransition.None
         val rowSpacingDp = when {
             mini -> 3.dp
             immersiveMode -> (fontSize * IMMERSIVE_LYRICS_SPACING_MULTIPLIER).dp
@@ -574,6 +636,34 @@ internal fun LyricsViewport(
             position,
             eInk,
         )
+        if (seekable && height > 0) {
+            AnimatedVisibility(
+                visible = showGuide,
+                enter = enter,
+                exit = exit,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(end = 68.dp)
+                    .offset { IntOffset(0, focusYPx.coerceIn(0, (height - 1).coerceAtLeast(0))) },
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(if (eInk) 0.8.dp else 0.6.dp)
+                        .then(
+                            if (eInk) Modifier.background(Color.Black.copy(alpha = 0.20f))
+                            else Modifier.background(
+                                Brush.horizontalGradient(
+                                    0f to Color.Transparent,
+                                    0.10f to ink.copy(alpha = 0.14f),
+                                    0.85f to ink.copy(alpha = 0.14f),
+                                    1f to Color.Transparent,
+                                ),
+                            ),
+                        ),
+                )
+            }
+        }
         CompositionLocalProvider(LocalViewConfiguration provides verticalViewConfiguration) {
             LazyColumn(
                 state = list,
@@ -583,20 +673,32 @@ internal fun LyricsViewport(
                     bottom = with(density) { (height * (1f - focusFraction)).toDp() },
                 ),
                 verticalArrangement = Arrangement.spacedBy(rowSpacingDp),
-                modifier = Modifier.fillMaxSize().pointerInput(list, mini, tapSlop) {
+                modifier = Modifier.fillMaxSize().pointerInput(list, mini, seekable, tapSlop) {
                     if (mini) return@pointerInput
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                        tapEligible = !list.isScrollInProgress
+                        // 时间按钮与歌词共用列表触摸路径；按下即锁定该句，列表自身负责停止惯性。
+                        val pressedLine = displayedLine?.takeIf { guideBounds.contains(down.position) }
+                        tapEligible = pressedLine == null && !list.isScrollInProgress
+                        var moved = false
                         touching = true
                         browsing = true
                         try {
                             do {
                                 val event = awaitPointerEvent(PointerEventPass.Initial)
                                 // 一旦越过点击容差，本次触摸即使折返也不能跳播；不消费事件，以保留惯性与父层切页。
-                                if (event.changes.any { it.id != down.id ||
-                                        (it.position - down.position).getDistance() > tapSlop }) {
+                                val change = event.changes.first()
+                                val delta = change.position - down.position
+                                if (event.changes.size != 1 || change.id != down.id || delta.getDistance() > tapSlop) {
+                                    moved = true
                                     tapEligible = false
+                                    if (seekable && kotlin.math.abs(delta.y) > maxOf(tapSlop, kotlin.math.abs(delta.x))) {
+                                        showBrowseGuide = true
+                                    }
+                                }
+                                if (pressedLine != null && !moved && !change.pressed && !change.isConsumed) {
+                                    change.consume()
+                                    playFrom(pressedLine)
                                 }
                                 // 行点击在 Main 阶段执行，必须等 Final 后才能释放本次触摸资格。
                                 awaitPointerEvent(PointerEventPass.Final)
@@ -613,6 +715,7 @@ internal fun LyricsViewport(
                         val active = index in frame.activeIndices
                         // 间奏保留已唱句的阅读焦点，不改变真实演唱区间或逐字时间。
                         val emphasized = active || (frame.activeIndices.isEmpty() && index == frame.focusIndex)
+                        val browseFocused = showBrowseGuide && browseIndex == index
                         val distance = kotlin.math.abs(index - frame.focusIndex)
                         val immersiveRow = immersiveMode
                         // 对唱/背景声部可能同时在演唱，正在唱的行都应清晰，不能只照亮焦点索引。
@@ -625,12 +728,13 @@ internal fun LyricsViewport(
                         )
                         val depthEnabled = !eInk && !mini && (immersiveRow || config.isBlurEnabled)
                         val blurRadius = animateFloatAsState(
-                            if (depthEnabled) lyricsBlurRadiusDp(depthDistance, immersiveRow) else 0f,
+                            if (depthEnabled && !browseFocused) lyricsBlurRadiusDp(depthDistance, immersiveRow) else 0f,
                             if (animate) tween(180) else snap(), label = "lyricDepthBlur",
                         )
                         val depthAlpha = animateFloatAsState(
                             when {
                                 mini || eInk -> 1f
+                                browseFocused -> 0.94f
                                 immersiveRow -> immersiveLyricsAlpha(depthDistance)
                                 else -> ordinaryLyricsAlpha(depthDistance, index < frame.focusIndex)
                             },
@@ -662,12 +766,20 @@ internal fun LyricsViewport(
                                 )
                             } else Modifier
                         ).clickable(
+                            enabled = onLineClick != null,
                             interactionSource = null,
                             indication = if (mini) LocalIndication.current else null,
                         ) {
-                            if (mini || tapEligible) {
-                                onLineClick(line)
-                                if (!mini) browsing = false
+                            if (mini) {
+                                onLineClick?.invoke(line)
+                            } else if (tapEligible) {
+                                if (seekable && !showBrowseGuide && index == frame.focusIndex && onTogglePlayback != null) {
+                                    onTogglePlayback()
+                                } else {
+                                    onLineClick?.invoke(line)
+                                }
+                                browsing = false
+                                showBrowseGuide = false
                             }
                         }, horizontalAlignment = alignment) {
                             Column(Modifier.fillMaxWidth()
@@ -699,6 +811,69 @@ internal fun LyricsViewport(
                             }
                         }
                     }
+                }
+            }
+        }
+        if (seekable && height > 0) {
+            val guideHeight = 48.dp
+            val guideHeightPx = with(density) { guideHeight.roundToPx() }
+            val guideTopPx = (focusYPx - guideHeightPx / 2).coerceIn(0, (height - guideHeightPx).coerceAtLeast(0))
+            AnimatedVisibility(
+                visible = showGuide,
+                enter = enter,
+                exit = exit,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset { IntOffset(0, guideTopPx) }
+                    .onGloballyPositioned { guideBounds = it.boundsInParent() },
+            ) {
+                val line = browseLine ?: return@AnimatedVisibility
+                val timeText = formatClock(line.startMs)
+                Row(
+                    modifier = Modifier
+                        .height(guideHeight).widthIn(min = 48.dp)
+                        .onKeyEvent { event ->
+                            when (event.key) {
+                                Key.Enter, Key.NumPadEnter, Key.DirectionCenter, Key.Spacebar -> {
+                                    if (event.type == KeyEventType.KeyUp) playFrom(line)
+                                    true
+                                }
+                                else -> false
+                            }
+                        }
+                        .focusable()
+                        .semantics(mergeDescendants = true) {
+                            role = Role.Button
+                            contentDescription = "从 $timeText 播放"
+                            onClick { playFrom(line); true }
+                        }
+                        .testTag("lyric-browse-play"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.End),
+                ) {
+                    Text(
+                        text = timeText,
+                        color = if (eInk) Color.Black else ink.copy(alpha = 0.62f),
+                        fontSize = 11.sp,
+                        lineHeight = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        style = baseStyle.copy(
+                            fontFeatureSettings = "tnum",
+                            platformStyle = PlatformTextStyle(includeFontPadding = false),
+                            lineHeightStyle = LineHeightStyle(
+                                alignment = LineHeightStyle.Alignment.Center,
+                                trim = LineHeightStyle.Trim.Both,
+                            ),
+                        ),
+                        maxLines = 1,
+                        modifier = Modifier.testTag("lyric-browse-time"),
+                    )
+                    Icon(
+                        imageVector = Icons.Rounded.PlayArrow,
+                        contentDescription = null,
+                        tint = if (eInk) Color.Black else ink.copy(alpha = 0.88f),
+                        modifier = Modifier.size(18.dp),
+                    )
                 }
             }
         }
