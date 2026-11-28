@@ -11,7 +11,7 @@
 - 在歌单、榜单、我喜欢和本地歌曲列表中点一首歌，就能从这首开始顺序播放当前列表。列表加载新一页后，再次点歌会补入新曲，并保留手动排队的顺序。搜索结果和最近播放仍可单曲插播，听书继续按章节断点续听。
 - 「播放设置 → 通知栏与蓝牙」新增独立的「蓝牙歌词」开关，默认关闭。通过蓝牙播放时，支持显示曲目标题的车机和其他接收设备可逐行显示歌词。
 - 修复听书或听歌中途声音消失、进度仍在走的问题。检测到音轨停止输出时，播放器会尝试从最后确认出声的位置恢复。
-- 歌词页和沉浸封面都能上下滑动选句，点时间从该句起播，点当前句暂停或继续。浏览沉浸封面时可以留在原页操作。 ([`7810395`](https://github.com/Raving4934/Melora/commit/78103952fa931f77a08e378f57fa4d23bd126d98))
+- 歌词页和沉浸封面都能上下滑动选句，点时间从该句起播，点当前句暂停或继续。浏览沉浸封面时可以留在原页操作。
 
 【音质与自定义音源】
 
@@ -36,6 +36,7 @@
 Android 版本号为 0.2.8，versionCode 为 28。完整提交区间见 [android-v0.2.7 至 android-v0.2.8][Android 0.2.8]。
 
 - 播放队列、蓝牙歌词和音轨恢复。[`41ebe4d`](https://github.com/Raving4934/Melora/commit/41ebe4da562e7fbbcbd0a660482a121406bfb2f5)、[`5c20ad5`](https://github.com/Raving4934/Melora/commit/5c20ad55df307383efb7dd57f58bffc9ccce16b9)
+- 沉浸歌词浏览与跳播恢复。[`7810395`](https://github.com/Raving4934/Melora/commit/78103952fa931f77a08e378f57fa4d23bd126d98)、[`c151bc3`](https://github.com/Raving4934/Melora/commit/c151bc39f085474fb89355d486faea0311bd4a0d)
 - 母带偏好、并发请求、音质核对与换源。[`7fe1231`](https://github.com/Raving4934/Melora/commit/7fe12312f28ba7042bfe193b3f265007fb57ba82)、[`1a2f1c9`](https://github.com/Raving4934/Melora/commit/1a2f1c90a53c9ad0d9f3bdb7c4d3642edafae457)、[`897aca3`](https://github.com/Raving4934/Melora/commit/897aca3aab560c8097ae5f60503c35f00479fe27)
 - 音源有效性测试、在线更新及导出回导。[`f43c1e3`](https://github.com/Raving4934/Melora/commit/f43c1e3d045961b8e03d2bb9cc63967bc4a10f68)、[`ea83aec`](https://github.com/Raving4934/Melora/commit/ea83aeca5aaedf52524fcbcf0a3ab7a2f6d027bc)、[`cc6c8a7`](https://github.com/Raving4934/Melora/commit/cc6c8a749bafda64cc2997b0190478832c2c63a1)
 - 播放封面交接、设备主题与页面入口。[`7536c2c`](https://github.com/Raving4934/Melora/commit/7536c2cd2838c06e7dccc9551e2587624ac9b47b)、[`838d4a1`](https://github.com/Raving4934/Melora/commit/838d4a1849c876fa8d4031c0be693d9c17200d66)、[`da782b9`](https://github.com/Raving4934/Melora/commit/da782b9511bce996fcc404b61d405f9d15991b2f)
