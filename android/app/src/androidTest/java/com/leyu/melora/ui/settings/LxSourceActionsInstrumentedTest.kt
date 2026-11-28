@@ -348,6 +348,10 @@ class LxSourceActionsInstrumentedTest {
                 MeloraTheme { LxSourceScreen() }
             }
         }
+        // 音源列表在 IO 线程加载，Compose 空闲时可能仍在显示首屏占位。
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("已安装音源 · 1").fetchSemanticsNodes().size == 1
+        }
     }
 
     private fun openSourceMenu() {
