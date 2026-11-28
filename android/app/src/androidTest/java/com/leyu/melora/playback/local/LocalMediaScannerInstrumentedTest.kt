@@ -1,5 +1,6 @@
 package com.leyu.melora.playback.local
 
+import android.Manifest
 import android.app.PendingIntent
 import android.content.ContentResolver
 import android.content.Context
@@ -40,6 +41,7 @@ import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -79,7 +81,7 @@ class LocalMediaScannerInstrumentedTest {
                     }
                 }
                 saveField(UserLibrary, "file").set(UserLibrary, File(context.filesDir, "user-library.json"))
-                for (name in listOf("appContext", "byUri", "byId", "byMatch", "byTitle")) {
+                for (name in listOf("appContext", "byUri", "byId", "byTitle")) {
                     saveField(LocalMediaStore, name)
                 }
                 UserLibrary.replaceFromBackup("{}")
@@ -138,6 +140,67 @@ class LocalMediaScannerInstrumentedTest {
 
         assertEquals(0, result.failedSources)
         assertMediaReferences(emptySet())
+    }
+
+    @Test
+    fun unauthorizedMediaQueryIsIncompleteEvenWithoutAnExistingIndex() = runBlocking {
+        context.useMediaStore(emptyList(), mediaSong(1).folder)
+        context.mediaPermissionGranted = false
+        var queried = false
+        context.mediaProvider.onQuery = Runnable { queried = true }
+
+        assertEquals(LocalMediaScanner.ScanResult(0, 1), LocalMediaScanner.scan(context))
+        assertFalse(queried)
+    }
+
+    @Test
+    fun permissionLossDuringMediaQueryKeepsPersistedLibraryReferences() = runBlocking {
+        val primary = mediaSong(1)
+        seed(listOf(primary))
+        UserLibrary.markPlayed(primary.toOnlineSong())
+        context.useMediaStore(emptyList(), primary.folder)
+        context.mediaProvider.onQuery = Runnable { context.mediaPermissionGranted = false }
+
+        assertEquals(LocalMediaScanner.ScanResult(1, 1), LocalMediaScanner.scan(context))
+        assertMediaReferences(setOf(primary.id))
+    }
+
+    @Test
+    fun singleFileQueryOnlyConfirmsMissingWhenPermissionSurvivesTheQuery() {
+        val primary = mediaSong(1)
+        context.useMediaStore(emptyList(), primary.folder)
+
+        assertEquals(LocalFilePresence.Missing, localFilePresence(context, primary.uri, primary.folder))
+        context.mediaProvider.onQuery = Runnable { context.mediaPermissionGranted = false }
+        assertEquals(LocalFilePresence.Unknown, localFilePresence(context, primary.uri, primary.folder))
+        assertFalse(context.mediaPermissionGranted)
+    }
+
+    @Test
+    fun restrictedMediaStoreRetainsLegacyReferencesWhileAuthorizedDocumentsUpdate() = runBlocking {
+        val indexedMedia = mediaSong(1)
+        val hiddenMedia = mediaSong(2)
+        val oldDocument = song("healthy", "healthy/old")
+        val newDocument = song("healthy", "healthy/new")
+        val oldSongs = listOf(indexedMedia, hiddenMedia, oldDocument)
+        seed(oldSongs)
+        oldSongs.forEach { UserLibrary.markPlayed(it.toOnlineSong()) }
+        LocalMediaStore.discardIndexEntry(hiddenMedia.id)
+        context.useMediaStore(emptyList(), indexedMedia.folder)
+        context.mediaPermissionGranted = false
+        MeloraSettings.localFolders.value = listOf(treeUri("healthy").toString())
+        provider.setChildren("healthy", listOf(LoadingDocumentsProvider.Document("healthy/new", "new.mp3")), false)
+
+        assertEquals(LocalMediaScanner.ScanResult(2, 1), LocalMediaScanner.scan(context))
+        assertMediaReferences(setOf(indexedMedia.id, hiddenMedia.id), setOf(indexedMedia.id, newDocument.id))
+        assertEquals(listOf("healthy"), provider.childQueries)
+        assertEquals("new", LocalMediaStore.find(newDocument.id)?.title)
+
+        context.mediaPermissionGranted = true
+        repeat(2) {
+            assertEquals(LocalMediaScanner.ScanResult(1, 0), LocalMediaScanner.scan(context))
+            assertMediaReferences(emptySet(), setOf(newDocument.id))
+        }
     }
 
     @Test
@@ -235,6 +298,55 @@ class LocalMediaScannerInstrumentedTest {
     }
 
     @Test
+    fun folderlessNamedVolumeReferencesFollowAvailabilityBeforeAndAfterQuery() = runBlocking {
+        val indexed = mediaSong(1)
+        val deleted = mediaSong(2).copy(uri = "content://media/external_primary/audio/media/2")
+        val detached = mediaSong(3).copy(uri = "content://media/dead-beef/audio/media/3")
+        seedFolderlessMediaReferences(indexed, deleted, detached)
+        context.useMediaStore(listOf(1L), indexed.folder)
+        context.mediaProvider.onQuery = Runnable { context.storageAvailable = false }
+
+        assertEquals(LocalMediaScanner.ScanResult(1, 1), LocalMediaScanner.scan(context))
+        assertMediaReferences(setOf(indexed.id, deleted.id, detached.id), setOf(indexed.id))
+
+        context.storageAvailable = true
+        repeat(2) {
+            assertEquals(LocalMediaScanner.ScanResult(1, 1), LocalMediaScanner.scan(context))
+            assertMediaReferences(setOf(indexed.id, detached.id), setOf(indexed.id))
+        }
+    }
+
+    @Test
+    fun folderlessAggregateReferenceIsKeptWithoutReportingHealthySourceFailure() = runBlocking {
+        val indexed = mediaSong(1)
+        val unknown = mediaSong(2)
+        seedFolderlessMediaReferences(indexed, unknown)
+        context.useMediaStore(listOf(1L), indexed.folder)
+
+        repeat(2) {
+            assertEquals(LocalMediaScanner.ScanResult(1, 0), LocalMediaScanner.scan(context))
+            assertMediaReferences(setOf(indexed.id, unknown.id), setOf(indexed.id))
+            assertFalse(UserLibrary.favorites.value.single { it.songmid == unknown.id }.raw.has("localFolder"))
+        }
+
+        context.mediaPermissionGranted = false
+        assertEquals(LocalMediaScanner.ScanResult(1, 1), LocalMediaScanner.scan(context))
+        assertMediaReferences(setOf(indexed.id, unknown.id), setOf(indexed.id))
+    }
+
+    @Test
+    fun folderlessAggregateReferenceCanReuseAnUnambiguousFolderForTheSameUri() = runBlocking {
+        val indexed = mediaSong(1)
+        val deleted = mediaSong(2)
+        seedFolderlessMediaReferences(indexed, deleted)
+        UserLibrary.markPlayed(deleted.toOnlineSong())
+        context.useMediaStore(listOf(1L), indexed.folder)
+
+        assertEquals(LocalMediaScanner.ScanResult(1, 0), LocalMediaScanner.scan(context))
+        assertMediaReferences(setOf(indexed.id))
+    }
+
+    @Test
     fun enrichReadsMissingAudioSpecsAndKeepsExistingMetadata() = runBlocking {
         val audio = File(context.cacheDir, "enrich-fixture.mp3")
         InstrumentationRegistry.getInstrumentation().context.assets.open("audio/fixture-320.mp3").use { input ->
@@ -257,6 +369,27 @@ class LocalMediaScannerInstrumentedTest {
         assertEquals(complete, LocalMediaStore.find(complete.id))
         LocalMediaStore.init(context)
         assertEquals(enriched, LocalMediaStore.find(incomplete.id))
+    }
+
+    @Test
+    fun documentTagReuseRequiresSameNameAndSurvivesIndexReload() = runBlocking {
+        val original = song("healthy", "healthy/tagged").copy(
+            title = "标签标题", sizeBytes = 2_000_000L, modifiedAt = 2_000L,
+            probedDocumentName = "same.mp3",
+        )
+        seed(listOf(original))
+        LocalMediaStore.init(context)
+        MeloraSettings.localFolders.value = listOf(treeUri("healthy").toString())
+        provider.setChildren("healthy", listOf(LoadingDocumentsProvider.Document("healthy/tagged", "same.mp3")), false)
+
+        LocalMediaScanner.scan(context)
+        assertEquals(original, LocalMediaStore.find(original.id))
+
+        provider.setChildren("healthy", listOf(LoadingDocumentsProvider.Document("healthy/tagged", "renamed.mp3")), false)
+        LocalMediaScanner.scan(context)
+        val renamed = requireNotNull(LocalMediaStore.find(original.id))
+        assertEquals("renamed", renamed.title)
+        assertNull(renamed.probedDocumentName)
     }
 
     @Test
@@ -515,6 +648,16 @@ class LocalMediaScannerInstrumentedTest {
         UserLibrary.createPlaylist("扫描保护", songs.map { it.toOnlineSong() })
     }
 
+    private fun seedFolderlessMediaReferences(indexed: LocalSong, vararg older: LocalSong) {
+        LocalMediaStore.replaceAll(listOf(indexed))
+        val songs = listOf(indexed.toOnlineSong()) + older.map { song ->
+            song.toOnlineSong().also { it.raw.remove("localFolder") }
+        }
+        UserLibrary.setFavorites(songs, favorite = true)
+        UserLibrary.createPlaylist("旧媒体库", songs)
+        songs.forEach(UserLibrary::markPlayed)
+    }
+
     private fun assertPersistedSongs(expected: Set<String>) {
         val rows = JSONObject(File(context.filesDir, "local_media.json").readText()).getJSONArray("songs")
         assertEquals(expected, (0 until rows.length()).map { rows.getJSONObject(it).getString("id") }.toSet())
@@ -549,11 +692,12 @@ class LocalMediaScannerInstrumentedTest {
                 writePermission = "android.permission.MANAGE_DOCUMENTS"
             })
         }
-        val mediaProvider = MediaStoreScanProvider().apply {
+        val mediaProvider = MediaStoreScanProvider(provider).apply {
             attachInfo(this@ScanContext, ProviderInfo().apply { authority = "media" })
         }
         private var resolver = ContentResolver.wrap(provider)
         var storageAvailable = true
+        var mediaPermissionGranted = true
         fun useMediaStore(ids: List<Long>, folder: String) {
             mediaProvider.setSongs(ids.toLongArray(), folder)
             resolver = ContentResolver.wrap(mediaProvider)
@@ -566,6 +710,11 @@ class LocalMediaScannerInstrumentedTest {
         override fun getContentResolver(): ContentResolver = resolver
         override fun getFilesDir(): File = File(root, "files").apply { mkdirs() }
         override fun getCacheDir(): File = File(root, "cache").apply { mkdirs() }
+        override fun checkSelfPermission(permission: String): Int = when (permission) {
+            Manifest.permission.READ_MEDIA_AUDIO, Manifest.permission.READ_EXTERNAL_STORAGE ->
+                if (mediaPermissionGranted) PackageManager.PERMISSION_GRANTED else PackageManager.PERMISSION_DENIED
+            else -> super.checkSelfPermission(permission)
+        }
         override fun checkCallingOrSelfUriPermission(uri: Uri, modeFlags: Int): Int =
             if (uri.authority == AUTHORITY) PackageManager.PERMISSION_GRANTED
             else super.checkCallingOrSelfUriPermission(uri, modeFlags)

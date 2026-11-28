@@ -1,5 +1,9 @@
 package com.leyu.melora.playback.sdk
 
+import com.leyu.melora.playback.AudioSpecification
+import com.leyu.melora.playback.PlaybackCandidateProbe
+import com.leyu.melora.playback.sdk.LxScriptPool.CandidateVerdict
+import com.leyu.melora.playback.sdk.SourceResolver.checkedCandidate
 import kotlinx.coroutines.*
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -13,7 +17,7 @@ class PlaybackResolutionTest {
     @Test fun slowPreferredQualityCannotBePreemptedByLowerQuality() = runBlocking {
         for (purpose in SourceResolver.Purpose.entries) {
             val attempts = mutableListOf<String>()
-            val result = SourceResolver.resolveTiers("flac24bit", purpose, tierBudgetMs = 1000) { quality ->
+            val result = SourceResolver.resolveTiers("flac24bit", purpose, tierBudgetMs = 1000) { quality, _ ->
                 attempts += quality
                 delay(80)
                 resolved(quality)
@@ -23,10 +27,23 @@ class PlaybackResolutionTest {
         }
     }
 
+    @Test fun candidateHealthTracksMediaEvidenceAndPreservesTheMeasuredQuality() {
+        val original = OnlineSong(JSONObject(song.raw.toString()).put("interval", "03:00"))
+        val low = SourceResolver.scriptResolution(original,
+            LxScriptPool.ScriptResult("flac24bit", "fast", "https://example.test/fast"))!!
+        val lowSpec = AudioSpecification("audio/mpeg", 44100, 128000)
+        fun check(probe: PlaybackCandidateProbe?) = low.checkedCandidate(original, true, probe)
+        assertEquals(CandidateVerdict.Invalid, check(PlaybackCandidateProbe(nonAudio = true)))
+        assertEquals(CandidateVerdict.Skipped, check(PlaybackCandidateProbe(lowSpec, 30_000L)))
+        assertEquals(CandidateVerdict.Accepted(low.copy(fromPrimary = true)), check(null))
+        assertEquals(CandidateVerdict.Accepted(low.copy(quality = "128k", fromPrimary = true), verified = true),
+            check(PlaybackCandidateProbe(lowSpec, 180_000L)))
+    }
+
     @Test fun slowSourceRecoveryNeverTriesLowerQuality() = runBlocking {
         val attempts = mutableListOf<String>()
         val result = runCatching {
-            SourceResolver.resolveTiers("flac24bit", SourceResolver.Purpose.REBUFFER, 50) { quality ->
+            SourceResolver.resolveTiers("flac24bit", SourceResolver.Purpose.REBUFFER, 50) { quality, _ ->
                 attempts += quality
                 resolved("flac")
             }
@@ -37,14 +54,14 @@ class PlaybackResolutionTest {
 
     @Test fun slowSourceRecoveryDoesNotPickMoreBandwidthHungryHigherTier() = runBlocking {
         val result = runCatching {
-            SourceResolver.resolveTiers("320k", SourceResolver.Purpose.REBUFFER, 50) { resolved("flac24bit") }
+            SourceResolver.resolveTiers("320k", SourceResolver.Purpose.REBUFFER, 50) { _, _ -> resolved("flac24bit") }
         }
         assertTrue(result.isFailure)
     }
 
     @Test fun everyTierRetainsItsOwnBudgetAndFailedHighTierDoesNotSkipFlac() = runBlocking {
         val attempts = mutableListOf<String>()
-        val result = SourceResolver.resolveTiers("flac24bit", SourceResolver.Purpose.PLAYBACK, 50) { quality ->
+        val result = SourceResolver.resolveTiers("flac24bit", SourceResolver.Purpose.PLAYBACK, 50) { quality, _ ->
             attempts += quality
             if (quality == "flac24bit") awaitCancellation() else resolved(quality)
         }
@@ -57,7 +74,7 @@ class PlaybackResolutionTest {
         val deadline = System.nanoTime() + 600_000_000L
         val result = withTimeout(1000) {
             SourceResolver.resolveTiers("flac24bit", SourceResolver.Purpose.PLAYBACK,
-                playbackDeadlineNanos = deadline) { quality ->
+                playbackDeadlineNanos = deadline) { quality, _ ->
                 attempts += quality
                 if (quality == "128k") resolved(quality) else awaitCancellation()
             }
@@ -66,27 +83,9 @@ class PlaybackResolutionTest {
         assertEquals("128k", result.quality)
     }
 
-    @Test fun usableBackupDowngradeAfterPrimaryFailureDoesNotWaitForBackupTimeout() = runBlocking {
-        val ready = CompletableDeferred<Unit>()
-        val stopped = CompletableDeferred<Unit>()
-        var candidate: String? = null
-        val result = withTimeout(1000) { SourceResolver.preferFirst(10,
-            primary = { null },
-            fallback = {
-                try {
-                    candidate = "backup-hq"
-                    ready.complete(Unit)
-                    awaitCancellation()
-                } finally { stopped.complete(Unit) }
-            },
-            available = { candidate }, availableSignal = ready) }
-        assertEquals("backup-hq", result)
-        stopped.await()
-    }
-
     @Test fun reportedDowngradeIsNotAcceptedAsTheRequestedHighTier() = runBlocking {
         val attempts = mutableListOf<String>()
-        val result = SourceResolver.resolveTiers("flac24bit", SourceResolver.Purpose.PLAYBACK) { quality ->
+        val result = SourceResolver.resolveTiers("flac24bit", SourceResolver.Purpose.PLAYBACK) { quality, _ ->
             attempts += quality
             resolved("320k")
         }
@@ -94,19 +93,16 @@ class PlaybackResolutionTest {
         assertEquals("320k", result.quality)
     }
 
-    @Test fun failedPhysicalResourceStopsPrimaryTiersBeforeDowngrading() = runBlocking {
-        val attempts = mutableListOf<String>()
-        var rejected = false
-        val result = runCatching {
-            SourceResolver.resolveTiers("320k", SourceResolver.Purpose.PLAYBACK,
-                stopAfterFailure = { rejected }) { quality ->
-                attempts += quality
-                rejected = true
-                null
-            }
+    @Test fun slowFullQualityBackupFinishesBeforeTheNextTierCanWin() = runBlocking {
+        val tiers = mutableListOf<String>()
+        val result = SourceResolver.resolveTiers("flac24bit", SourceResolver.Purpose.PLAYBACK) { quality, _ ->
+            tiers += quality
+            SourceResolver.preferFirst(10,
+                primary = { if (quality == "320k") resolved("320k", "fast-low") else null },
+                fallback = { delay(40); resolved(quality, "full-quality") })
         }
-        assertTrue(result.isFailure)
-        assertEquals(listOf("320k"), attempts)
+        assertEquals(listOf("flac24bit"), tiers)
+        assertEquals("full-quality", result.resourceId)
     }
 
     @Test fun fastPrimaryAvoidsAnyBackupWork() = runBlocking {
@@ -152,61 +148,13 @@ class PlaybackResolutionTest {
         assertEquals("same-platform", result)
     }
 
-    @Test fun knownPrimaryFallbackSkipsBackupAfterGraceAndCancelsHigherTier() = runBlocking {
-        val ready = CompletableDeferred<Unit>()
-        val stopped = CompletableDeferred<Unit>()
-        var candidate: String? = null
-        var backups = 0
-        val result = SourceResolver.preferFirst(10,
-            primary = {
-                try { candidate = "primary-hq"; ready.complete(Unit); awaitCancellation() }
-                finally { stopped.complete(Unit) }
-            },
-            fallback = { backups++; "backup-claimed-hr" },
-            available = { candidate }, availableSignal = ready)
-        assertEquals("primary-hq", result)
-        assertEquals(0, backups)
-        stopped.await()
-    }
-
-    @Test fun primaryCandidateArrivingDuringBackupWaitWinsWithoutWaitingForEitherChain() = runBlocking {
-        val ready = CompletableDeferred<Unit>()
-        val backupEntered = CompletableDeferred<Unit>()
-        val primaryStopped = CompletableDeferred<Unit>()
-        val backupStopped = CompletableDeferred<Unit>()
-        var candidate: String? = null
-        val result = withTimeout(1000) { SourceResolver.preferFirst(10,
-            primary = {
-                try {
-                    backupEntered.await()
-                    candidate = "primary-hq"; ready.complete(Unit)
-                    awaitCancellation()
-                } finally { primaryStopped.complete(Unit) }
-            },
-            fallback = { try { backupEntered.complete(Unit); awaitCancellation() } finally { backupStopped.complete(Unit) } },
-            available = { candidate }, availableSignal = ready) }
-        assertEquals("primary-hq", result)
-        primaryStopped.await(); backupStopped.await()
-    }
-
-    @Test fun failedPrimaryAndBackupDoNotLeaveCandidateSignalWaiting() = runBlocking {
+    @Test fun failedPrimaryAndBackupReturnNoCandidate() = runBlocking {
         val backupEntered = CompletableDeferred<Unit>()
         val primaryFailed = CompletableDeferred<Unit>()
         val result = withTimeout(1000) { SourceResolver.preferFirst<String>(10,
             primary = { backupEntered.await(); primaryFailed.complete(Unit); null },
-            fallback = { backupEntered.complete(Unit); primaryFailed.await(); null },
-            availableSignal = CompletableDeferred()) }
+            fallback = { backupEntered.complete(Unit); primaryFailed.await(); null }) }
         assertNull(result)
-    }
-
-    @Test fun completedPrimaryHigherQualityWinsOverItsEarlierLowerCandidate() = runBlocking {
-        val ready = CompletableDeferred<Unit>()
-        var candidate: String? = null
-        val result = SourceResolver.preferFirst(1000,
-            primary = { candidate = "primary-hq"; ready.complete(Unit); "primary-hr" },
-            fallback = { error("No backup for completed primary") },
-            available = { candidate }, availableSignal = ready)
-        assertEquals("primary-hr", result)
     }
 
     @Test fun slowPlatformDoesNotBlockFirstUsableMatchingPlatform() = runBlocking {
@@ -228,8 +176,8 @@ class PlaybackResolutionTest {
         val entered = CompletableDeferred<Unit>()
         val attempts = mutableListOf<String>()
         val job = launch {
-            SourceResolver.resolveTiers("flac24bit", SourceResolver.Purpose.PLAYBACK) {
-                attempts += it
+            SourceResolver.resolveTiers("flac24bit", SourceResolver.Purpose.PLAYBACK) { quality, _ ->
+                attempts += quality
                 entered.complete(Unit)
                 awaitCancellation()
             }

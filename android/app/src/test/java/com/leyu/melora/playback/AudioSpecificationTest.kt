@@ -14,6 +14,8 @@ class AudioSpecificationTest {
         assertNull(AudioSpecification("audio/flac", 96000, -1).qualityBadge)
         assertEquals("LOSSLESS", AudioSpecification("audio/flac", 96000, -1, 16).qualityBadge?.label)
         assertEquals("HI-RES", AudioSpecification("audio/flac", 96000, -1, 24).qualityBadge?.label)
+        assertEquals("320k", AudioSpecification("audio/mpeg", 44100, 319_998).verifiedQuality)
+        assertEquals("192k", AudioSpecification("audio/mpeg", 44100, 191_998).verifiedQuality)
         assertNull(AudioSpecification(null, -1, -1).qualityBadge)
         assertNull(AudioSpecification("audio/flac", 96000, -1).verifiedQuality)
         assertEquals("128k", AudioSpecification("audio/mpeg", 44100, 128000).verifiedQuality)
@@ -21,10 +23,11 @@ class AudioSpecificationTest {
     }
 
     @Test
-    fun knownLossyCodecRejectsMasterClaimEvenWithoutBitrate() {
+    fun knownLossyCodecRejectsLosslessClaimsEvenWithoutBitrate() {
         for ((mime, expected) in mapOf("audio/mpeg" to "mp3", "audio/opus" to "opus", "audio/mp4a-latm" to "aac", "audio/vorbis" to "ogg")) {
             val spec = AudioSpecification(mime, 48_000, -1)
-            assertEquals(expected, spec.verifiedStreamQuality("master"))
+            for (claim in listOf("master", "flac24bit", "flac")) assertEquals(expected, spec.verifiedStreamQuality(claim))
+            assertNull(spec.verifiedStreamQuality("320k"))
             assertNull(spec.verifiedStreamQuality(null))
         }
         assertNull(AudioSpecification("audio/flac", 192_000, -1).verifiedStreamQuality("master"))

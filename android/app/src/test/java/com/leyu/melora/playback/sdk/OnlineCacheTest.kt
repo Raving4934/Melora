@@ -13,6 +13,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -501,6 +502,61 @@ class OnlineCacheTest {
         assertNull(OnlineCache.peek<List<String>>("resolver:matches:pending"))
         assertEquals(listOf("visible"), OnlineCache.get<List<String>>("catalog:board", Long.MAX_VALUE))
         assertEquals(listOf("fresh"), OnlineCache.refresh("resolver:matches:pending", 1000) { listOf("fresh") })
+    }
+
+    @Test fun clearingLyricsReturnsNoCandidateAndKeepsItsCallerAlive() = runBlocking {
+        withTimeout(3_000) {
+            val song = OnlineSong(JSONObject().put("source", "kw").put("songmid", "fenced-lyric"))
+            val key = "${SourceResolver.LYRIC_LOOKUP_PREFIX}${song.uid}"
+            val started = CompletableDeferred<Unit>()
+            val reply = CompletableDeferred<OnlineLyric>()
+            val producer = async {
+                OnlineCache.refresh(key, 1000) {
+                    started.complete(Unit)
+                    reply.await()
+                }
+            }
+            started.await()
+            val request = async(start = CoroutineStart.UNDISPATCHED) {
+                SourceResolver.lyric(snapshotContext, song)
+            }
+            OnlineCache.put("catalog:unrelated", "retained")
+            OnlineCache.clear(SourceResolver.LYRIC_LOOKUP_PREFIX)
+
+            assertNull(request.await())
+            producer.join()
+            assertTrue(producer.isCancelled)
+            assertNull(OnlineCache.peek<OnlineLyric>(key))
+            assertEquals("retained", OnlineCache.peek<String>("catalog:unrelated"))
+        }
+    }
+
+    @Test fun cancellingLyricCallerDoesNotStopAnotherWaiterOrResumeCancelledWork() = runBlocking {
+        withTimeout(3_000) {
+            val song = OnlineSong(JSONObject().put("source", "kw").put("songmid", "cancelled-lyric"))
+            val key = "${SourceResolver.LYRIC_LOOKUP_PREFIX}${song.uid}"
+            val started = CompletableDeferred<Unit>()
+            val reply = CompletableDeferred<OnlineLyric>()
+            val remainingWaiter = async {
+                OnlineCache.refresh(key, 1000, cancelWhenUnobserved = true) {
+                    started.complete(Unit)
+                    reply.await()
+                }
+            }
+            started.await()
+            val resumed = CompletableDeferred<Unit>()
+            val request = async(start = CoroutineStart.UNDISPATCHED) {
+                SourceResolver.lyric(snapshotContext, song)
+                resumed.complete(Unit)
+            }
+
+            request.cancelAndJoin()
+            val expected = OnlineLyric("[00:00]找到歌词", source = song.source, song = song)
+            reply.complete(expected)
+            assertTrue(request.isCancelled)
+            assertFalse(resumed.isCompleted)
+            assertEquals(expected, remainingWaiter.await())
+        }
     }
 
 }

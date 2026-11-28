@@ -1,6 +1,7 @@
 package com.leyu.melora.playback.sdk
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
 import com.leyu.melora.playback.lx.LxScript
 import com.leyu.melora.playback.lx.LxScriptEngine
@@ -78,7 +79,24 @@ object LxScriptPool {
         val scriptId: String,
         val data: Any,
         val elapsedMs: Long = 0L,
-    )
+    ) {
+        val url = SourceResolver.extractUrl(data)
+        internal var playbackConfirmation: PlaybackConfirmation? = null
+    }
+
+    class PlaybackConfirmation internal constructor(
+        private val health: PlatformHealth,
+        private val generation: Long,
+    ) {
+        internal fun confirm() = health.succeeded(generation)
+    }
+
+    internal sealed interface CandidateVerdict<out T> {
+        data class Accepted<T>(val value: T, val verified: Boolean = false) : CandidateVerdict<T>
+        data object Healthy : CandidateVerdict<Nothing>
+        data object Skipped : CandidateVerdict<Nothing>
+        data object Invalid : CandidateVerdict<Nothing>
+    }
 
     data class ScriptMetrics(val hitCount: Long, val averageLatencyMs: Long)
 
@@ -94,23 +112,39 @@ object LxScriptPool {
     private val readyListeners = linkedSetOf<(Entry) -> Unit>()
 
     // 同一首歌的一次解析（含各档、主备和跨平台候选）在一个接口上最多记一次失败。
-    internal class ResolutionAttempt
+    internal class ResolutionAttempt {
+        private val failedPlatforms = ConcurrentHashMap.newKeySet<PlatformHealth>()
 
-    private class PlatformHealth {
-        private val failedAttempts = mutableSetOf<ResolutionAttempt>()
+        fun recordFailure(health: PlatformHealth): Boolean = failedPlatforms.add(health)
+    }
+
+    internal class PlatformHealth {
+        private var consecutiveFailures = 0
         private var blockedUntilMs = 0L
+        private var generation = 0L
 
-        @Synchronized fun isBlocked(): Boolean = android.os.SystemClock.elapsedRealtime() < blockedUntilMs
+        @Synchronized fun isBlocked(): Boolean = blockedUntilMs != 0L && SystemClock.elapsedRealtime() < blockedUntilMs
 
-        @Synchronized fun succeeded() {
-            failedAttempts.clear()
+        @Synchronized fun pendingPlaybackConfirmation(): PlaybackConfirmation? =
+            if (consecutiveFailures > 0 || isBlocked()) PlaybackConfirmation(this, generation) else null
+
+        @Synchronized fun succeeded(expectedGeneration: Long? = null) {
+            // 更晚的计数和已消费的播放确认都会推进代次，旧地址无法再清除健康记录。
+            if (expectedGeneration != null && expectedGeneration != generation) return
+            generation++
+            consecutiveFailures = 0
             blockedUntilMs = 0L
         }
 
         @Synchronized fun failed(attempt: ResolutionAttempt): Boolean {
-            if (isBlocked() || !failedAttempts.add(attempt) || failedAttempts.size < 3) return false
-            failedAttempts.clear()
-            blockedUntilMs = android.os.SystemClock.elapsedRealtime() + 5 * 60_000L
+            if (!attempt.recordFailure(this)) return false
+            generation++
+            // 冷却内的新失败使先前的播放确认过期，沿用已安排的重试时间。
+            if (isBlocked()) return false
+            consecutiveFailures++
+            if (consecutiveFailures < 3) return false
+            consecutiveFailures = 0
+            blockedUntilMs = SystemClock.elapsedRealtime() + 5 * 60_000L
             return true
         }
     }
@@ -142,6 +176,40 @@ object LxScriptPool {
     internal fun hasMultipleScripts(context: Context, includeDisabled: Boolean): Boolean =
         store(context).list().count { includeDisabled || it.enabled } > 1
 
+    /** 主源当前没有可优先尝试的同档接口时，把已就绪的健康备用提到冷却源之前。 */
+    internal suspend fun shouldPreferBackup(
+        context: Context,
+        source: String,
+        supportsQuality: (PlatformSupport) -> Boolean,
+    ): Boolean = withContext(dispatcher) {
+        if (entries.values.none { !it.retired && it.health[source]?.isBlocked() == true }) return@withContext false
+        val sourceStore = store(context)
+        var blockedPrimary = false
+        var healthyBackup = false
+        for (script in sourceStore.list()) {
+            val entry = currentEntry(sourceStore, script.id)
+            if (entry == null) {
+                if (script.enabled) return@withContext false
+                continue
+            }
+            if (entry.musicUrlSupport(source)?.let(supportsQuality) != true) continue
+            val blocked = entry.health[source]?.isBlocked() == true
+            if (script.enabled) {
+                if (!blocked) return@withContext false
+                blockedPrimary = true
+            } else if (!blocked) {
+                healthyBackup = true
+            }
+        }
+        blockedPrimary && healthyBackup
+    }
+
+    private fun currentEntry(sourceStore: LxScriptStore, id: String): Entry? =
+        entries[id]?.takeIf { !it.retired && it.revision == sourceStore.revision(id) }
+
+    private fun Entry.musicUrlSupport(source: String): PlatformSupport? =
+        sources[source]?.takeIf { "musicUrl" in it.actions }
+
     internal fun declaredPlatforms(sources: JSONObject?): Map<String, PlatformSupport> = buildMap {
         sources?.keys()?.forEach { id ->
             val node = sources.optJSONObject(id) ?: return@forEach
@@ -161,14 +229,10 @@ object LxScriptPool {
         withContext(dispatcher) {
             val sourceStore = store(context)
             val known = sourceStore.list().map { script ->
-                entries[script.id]?.takeIf { !it.retired && it.revision == sourceStore.revision(script.id) }
-                    ?: return@withContext candidates
+                currentEntry(sourceStore, script.id) ?: return@withContext candidates
             }
             candidates.filter { platform ->
-                known.any { script ->
-                    val support = script.sources[platform]
-                    support != null && "musicUrl" in support.actions && supportsQuality(support)
-                }
+                known.any { it.musicUrlSupport(platform)?.let(supportsQuality) == true }
             }
         }
 
@@ -485,16 +549,16 @@ object LxScriptPool {
     }
 
     /** 同档音源竞速：初始化一项就投递一项；不创建低码率对冲引擎。 */
-    internal suspend fun race(
+    internal suspend fun <T : Any> race(
         context: Context,
         source: String,
         scope: ScriptScope,
         timeoutMs: Long,
         resolutionAttempt: ResolutionAttempt = ResolutionAttempt(),
         request: (LxScript, PlatformSupport) -> ScriptRequest?,
-        accept: suspend (ScriptResult) -> Boolean,
-    ): ScriptResult? = coroutineScope {
-        val results = Channel<ScriptResult>(Channel.UNLIMITED)
+        accept: suspend (ScriptResult) -> CandidateVerdict<T>,
+    ): T? = coroutineScope {
+        val results = Channel<Pair<ScriptResult, T>>(Channel.UNLIMITED)
         val attempted = mutableSetOf<String>()
         val producer = launch {
             try {
@@ -525,8 +589,20 @@ object LxScriptPool {
                                     currentCoroutineContext().ensureActive()
                                     val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L
                                     val result = ScriptResult(spec.requestId, entry.script.id, data, elapsedMs)
-                                    if (SourceResolver.extractUrl(data) != null) health.succeeded() else failed()
-                                    if (accept(result)) results.trySend(result)
+                                    val verdict = if (result.url == null) CandidateVerdict.Invalid else {
+                                        result.playbackConfirmation = health.pendingPlaybackConfirmation()
+                                        accept(result)
+                                    }
+                                    currentCoroutineContext().ensureActive()
+                                    when (verdict) {
+                                        is CandidateVerdict.Accepted -> {
+                                            if (verdict.verified) health.succeeded()
+                                            results.trySend(result to verdict.value)
+                                        }
+                                        CandidateVerdict.Healthy -> health.succeeded()
+                                        CandidateVerdict.Skipped -> Unit
+                                        CandidateVerdict.Invalid -> failed()
+                                    }
                                 } catch (cancelled: CancellationException) {
                                     throw cancelled
                                 } catch (error: Throwable) {
@@ -541,8 +617,7 @@ object LxScriptPool {
                         fun ready(entry: Entry) {
                             if (entry.script.id !in eligible) return
                             if (entry.retired || sourceStore.revision(entry.script.id) != entry.revision) return
-                            val support = entry.sources[source] ?: return
-                            if ("musicUrl" !in support.actions) return
+                            val support = entry.musicUrlSupport(source) ?: return
                             val spec = request(entry.script, support) ?: return
                             // 先确认平台、动作和档位可用；无关平台的健康脚本不能阻止兜底。
                             if (entry.health[source]?.isBlocked() == true) {
@@ -569,8 +644,9 @@ object LxScriptPool {
             }
         }
         try {
-            withTimeoutOrNull(timeoutMs) { results.receiveCatching().getOrNull() }.also { winner ->
-                winner?.let { recordHit(it.scriptId, it.elapsedMs) }
+            withTimeoutOrNull(timeoutMs) { results.receiveCatching().getOrNull() }?.let { (result, accepted) ->
+                recordHit(result.scriptId, result.elapsedMs)
+                accepted
             }
         } finally {
             producer.cancel()

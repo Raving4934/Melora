@@ -84,8 +84,9 @@ internal object OnlineCacheSnapshotCodec {
         .toString()
         .toByteArray(Charsets.UTF_8)
 
-    fun readMetadata(bytes: ByteArray): OnlineCacheSnapshotMetadata? {
-        val root = parseRoot(bytes) ?: return null
+    fun readMetadata(bytes: ByteArray): OnlineCacheSnapshotMetadata? = parseRoot(bytes)?.let(::readMetadata)
+
+    private fun readMetadata(root: JSONObject): OnlineCacheSnapshotMetadata? {
         val version = root.opt("version") as? Number ?: return null
         if (version.toInt() != ONLINE_CACHE_SNAPSHOT_VERSION) return null
         val key = root.optString("key").takeIf { it.isNotBlank() } ?: return null
@@ -179,7 +180,7 @@ internal object OnlineCacheSnapshotCodec {
         nowMs: Long,
     ): JSONObjectWithTimestamp? {
         val root = parseRoot(bytes) ?: return null
-        val metadata = readMetadata(bytes) ?: return null
+        val metadata = readMetadata(root) ?: return null
         if (metadata.key != expectedKey || metadata.kind != expectedKind) return null
         if (nowMs >= metadata.writtenAtMs &&
             nowMs - metadata.writtenAtMs > ONLINE_CACHE_SNAPSHOT_MAX_AGE_MS

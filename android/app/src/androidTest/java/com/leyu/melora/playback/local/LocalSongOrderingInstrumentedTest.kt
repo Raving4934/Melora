@@ -2,8 +2,6 @@ package com.leyu.melora.playback.local
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -26,26 +24,9 @@ class LocalSongOrderingInstrumentedTest {
             testSong("chinese", "中文"),
         )
 
-        assertEquals("0", localSongSection(songs[0], LocalSortField.FileName))
-        assertEquals("#", localSongSection(songs[1], LocalSortField.FileName))
-        assertEquals("#", localSongSection(songs[2], LocalSortField.FileName))
-        assertEquals("E", localSongSection(songs[3], LocalSortField.FileName))
-        assertEquals("A", localSongSection(songs[4], LocalSortField.FileName))
-        assertEquals("F", localSongSection(songs[5], LocalSortField.FileName))
-        assertEquals("Z", localSongSection(songs[6], LocalSortField.FileName))
-
         val ordered = sortLocalSongs(songs, LocalSortField.FileName, ascending = true)
-        val sections = ordered.map { localSongSection(it, LocalSortField.FileName) }
-        assertEquals(listOf("0", "#", "#", "A", "E", "F", "Z"), sections)
-        assertTrue(sections.zipWithNext().all { (left, right) ->
-            LocalSongIndexLabels.indexOf(left) <= LocalSongIndexLabels.indexOf(right)
-        })
-
-        val starts = localSongSectionStarts(ordered, LocalSortField.FileName)
-        assertEquals(listOf("0", "#", "A", "E", "F", "Z"), starts.keys.toList())
-        starts.forEach { (label, index) ->
-            assertEquals(label, localSongSection(ordered[index], LocalSortField.FileName))
-        }
+        assertEquals(listOf("digit", "empty", "symbol", "english", "accent", "traditional", "chinese"), ordered.songs.map { it.id })
+        assertEquals(listOf("0" to 0, "#" to 1, "A" to 3, "E" to 4, "F" to 5, "Z" to 6), ordered.sections.toList())
     }
 
     @Test
@@ -53,21 +34,17 @@ class LocalSongOrderingInstrumentedTest {
         val songs = listOf(
             testSong("zoo", "Zoo", artist = "Alpha"),
             testSong("apple", "Apple", artist = "Alpha"),
+            testSong("zoo-copy", "Zoo", artist = "Alpha"),
             testSong("beta", "Beta", artist = "Beta"),
             testSong("zhou", "周", artist = "周杰伦"),
         )
 
         val ascending = sortLocalSongs(songs, LocalSortField.Artist, ascending = true)
-        assertEquals(listOf("apple", "zoo", "beta", "zhou"), ascending.map { it.id })
-        assertEquals(
-            ascending.asReversed().map { it.id },
-            sortLocalSongs(songs, LocalSortField.Artist, ascending = false).map { it.id },
-        )
-
-        val starts = localSongSectionStarts(ascending, LocalSortField.Artist)
-        assertEquals(listOf("A", "B", "Z"), starts.keys.toList())
-        assertEquals(emptyMap<String, Int>(), localSongSectionStarts(ascending, LocalSortField.Year))
-        assertEquals("", localSongSection(songs.first(), LocalSortField.Year))
+        val descending = sortLocalSongs(songs, LocalSortField.Artist, ascending = false)
+        assertEquals(listOf("apple", "zoo", "zoo-copy", "beta", "zhou"), ascending.songs.map { it.id })
+        assertEquals(ascending.songs.asReversed(), descending.songs)
+        assertEquals(listOf("A" to 0, "B" to 3, "Z" to 4), ascending.sections.toList())
+        assertEquals(listOf("Z" to 0, "B" to 1, "A" to 2), descending.sections.toList())
     }
 
     @Test
@@ -86,12 +63,11 @@ class LocalSongOrderingInstrumentedTest {
 
         expectedAscendingIds.forEach { (field, ids) ->
             val ascending = sortLocalSongs(songs, field, ascending = true)
-            assertEquals(ids, ascending.map { it.id })
-            assertEquals(
-                ascending.asReversed().map { it.id },
-                sortLocalSongs(songs, field, ascending = false).map { it.id },
-            )
-            assertEquals(emptyMap<String, Int>(), localSongSectionStarts(ascending, field))
+            val descending = sortLocalSongs(songs, field, ascending = false)
+            assertEquals(ids, ascending.songs.map { it.id })
+            assertEquals(ascending.songs.asReversed(), descending.songs)
+            assertEquals(emptyMap<String, Int>(), ascending.sections)
+            assertEquals(emptyMap<String, Int>(), descending.sections)
         }
 
         assertEquals(
@@ -104,8 +80,7 @@ class LocalSongOrderingInstrumentedTest {
 
     @Test
     fun handlesEmptyAndLargeCollectionsWithoutLosingEntries() {
-        assertTrue(sortLocalSongs(emptyList(), LocalSortField.FileName, true).isEmpty())
-        assertTrue(localSongSectionStarts(emptyList(), LocalSortField.FileName).isEmpty())
+        assertEquals(LocalSongsContent(), sortLocalSongs(emptyList(), LocalSortField.FileName, true))
 
         val songs = (0 until 1_200).map { index ->
             val title = when (index % 6) {
@@ -120,16 +95,16 @@ class LocalSongOrderingInstrumentedTest {
         }
 
         val ascending = sortLocalSongs(songs, LocalSortField.FileName, ascending = true)
-        assertEquals(songs.size, ascending.size)
-        assertEquals(songs.map { it.id }.toSet(), ascending.map { it.id }.toSet())
-        assertFalse(ascending.zipWithNext().any { (left, right) ->
-            LocalSongIndexLabels.indexOf(localSongSection(left, LocalSortField.FileName)) >
-                LocalSongIndexLabels.indexOf(localSongSection(right, LocalSortField.FileName))
+        val descending = sortLocalSongs(songs, LocalSortField.FileName, ascending = false)
+        assertEquals(songs.size, ascending.songs.size)
+        assertEquals(songs.map { it.id }.toSet(), ascending.songs.map { it.id }.toSet())
+        val groupLabels = listOf("0", "#", "A", "E", "F", "Z")
+        assertEquals(groupLabels.mapIndexed { index, label -> label to index * 200 }, ascending.sections.toList())
+        assertEquals(listOf(0, 1, 2, 3, 5, 4), ascending.songs.chunked(200).map { group ->
+            group.map { it.id.toInt() % 6 }.distinct().single()
         })
-        assertEquals(
-            ascending.asReversed().map { it.id },
-            sortLocalSongs(songs, LocalSortField.FileName, ascending = false).map { it.id },
-        )
+        assertEquals(ascending.songs.asReversed(), descending.songs)
+        assertEquals(groupLabels.reversed().mapIndexed { index, label -> label to index * 200 }, descending.sections.toList())
     }
 
     private fun testSong(

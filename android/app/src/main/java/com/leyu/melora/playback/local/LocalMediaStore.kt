@@ -8,9 +8,9 @@ import com.leyu.melora.playback.UiTrack
 import com.leyu.melora.playback.UserLibrary
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.sdk.SourceResolver
+import com.leyu.melora.playback.sha256Hex
 import com.leyu.melora.playback.writeTextAtomically
 import java.io.File
-import java.security.MessageDigest
 import java.util.Locale
 import kotlin.math.abs
 import kotlinx.coroutines.CoroutineScope
@@ -44,8 +44,7 @@ object LocalMediaStore {
 
     @Volatile private var byUri: Map<String, LocalSong> = emptyMap()
     @Volatile private var byId: Map<String, LocalSong> = emptyMap()
-    @Volatile private var byMatch: Map<String, LocalSong> = emptyMap()
-    @Volatile private var byTitle: Map<String, List<LocalSong>> = emptyMap()
+    @Volatile private var byTitle: Map<String, List<IndexedSong>> = emptyMap()
     @Volatile private var appContext: Context? = null
 
     fun init(context: Context) {
@@ -132,15 +131,11 @@ object LocalMediaStore {
      * 索引更新与 JSON 持久化全部在 IO 协程中执行，不阻塞点播或主线程。
      * 返回的 Job 仅用于需要等待索引刷新（例如测试）的调用方，普通播放调用可直接忽略。
      */
-    fun recordAudioSpecification(observed: LocalSong, spec: AudioSpecification): Job {
-        val observedId = observed.id
-        return audioSpecificationScope.launch {
+    fun recordAudioSpecification(observed: LocalSong, spec: AudioSpecification): Job =
+        audioSpecificationScope.launch {
             mutate { current ->
-                val index = current.indexOfFirst { it.id == observedId }
-                if (index < 0) return@mutate current
-                val currentSong = current[index]
                 // 只允许把这次播放识别到的规格写回同一个文件；删除/替换后的条目不接受旧播放结果。
-                if (!observed.sameFileVersion(currentSong)) return@mutate current
+                val currentSong = byId[observed.id]?.takeIf(observed::sameFileVersion) ?: return@mutate current
 
                 val measuredMime = spec.mimeType?.trim()?.takeIf { it.isNotEmpty() }
                 // PCM 轨可来自已知无损容器；其余格式以这次实际选中的编码为准。
@@ -155,10 +150,9 @@ object LocalMediaStore {
                     bitDepth = measured.bitDepth,
                     channelCount = measured.channelCount,
                 )
-                if (updated == currentSong) current else current.toMutableList().also { it[index] = updated }
+                if (updated == currentSong) current else current.map { if (it.id == updated.id) updated else it }
             }
         }
-    }
 
     fun clear() { mutate { emptyList() } }
 
@@ -229,7 +223,13 @@ object LocalMediaStore {
     fun findByUri(uri: String): LocalSong? = byUri[uri]
         ?: byId[idForUri(uri)]?.takeIf { it.id.startsWith("ms_") }
 
-    fun match(title: String, artist: String): LocalSong? = byMatch[LocalSong.matchKeyOf(title, artist)]
+    fun match(title: String, artist: String): LocalSong? {
+        val artistKey = LocalSong.artistKeyOf(artist)
+        return byTitle[LocalSong.titleKeyOf(title)].orEmpty().asSequence()
+            .filter { it.artistKey == artistKey }
+            .map(IndexedSong::song)
+            .maxWithOrNull(localPreferenceComparator)
+    }
 
     /**
      * 只在两边的音频规格都能给出明确结论时返回 true。
@@ -242,21 +242,17 @@ object LocalMediaStore {
     fun matchSong(song: OnlineSong): LocalSong? {
         if (song.source == LocalSong.SOURCE) return byId[song.songmid]
         val candidates = byTitle[LocalSong.titleKeyOf(song.name)].orEmpty()
-            .filter { SourceResolver.sameRecordingVersion(song, it.toOnlineSong()) }
+            .filter { SourceResolver.sameRecordingVersion(song, it.song.toOnlineSong()) }
         if (candidates.isEmpty()) return null
         val durationMs = song.intervalSeconds.takeIf { it > 0 }?.times(1_000L)
         val artistKey = LocalSong.artistKeyOf(song.singer)
-        val exactArtist = candidates.filter { local ->
-            val localArtist = LocalSong.artistKeyOf(local.artist)
-            artistKey.isNotBlank() && localArtist.isNotBlank() && localArtist == artistKey
-        }
+        val exactArtist = candidates.filter { artistKey.isNotBlank() && it.artistKey == artistKey }
+            .map(IndexedSong::song)
         bestCandidate(exactArtist, durationMs)?.let { return it }
         if (durationMs == null) return null
         return bestCandidate(
-            candidates.filter { local ->
-                val localArtist = LocalSong.artistKeyOf(local.artist)
-                (localArtist.isBlank() || artistKey.isBlank()) && local.durationMs > 0
-            },
+            candidates.filter { (it.artistKey.isBlank() || artistKey.isBlank()) && it.song.durationMs > 0 }
+                .map(IndexedSong::song),
             durationMs,
             allowUnknownDuration = false,
         )
@@ -290,10 +286,6 @@ object LocalMediaStore {
         return OnlineSong.from(track.raw)?.let(::matchSong) ?: match(track.title, track.artist)
     }
 
-    /** 歌曲是否已有本地文件：与实际播放使用完全相同的匹配规则。 */
-    fun hasLocalFile(song: OnlineSong): Boolean =
-        song.source == LocalSong.SOURCE || matchSong(song) != null
-
     private fun mutate(transform: (List<LocalSong>) -> List<LocalSong>) = synchronized(lock) {
         commitLocked(transform(_songs.value))
     }
@@ -322,19 +314,13 @@ object LocalMediaStore {
     /** 先完整构造新映射再切换引用，播放线程不会撞见 clear/add 中间态。 */
     private fun applyIndex(prepared: PreparedIndex) {
         val unique = prepared.songs
-        val matchIndex = LinkedHashMap<String, LocalSong>(unique.size)
-        val titleIndex = LinkedHashMap<String, MutableList<LocalSong>>()
+        val titleIndex = LinkedHashMap<String, MutableList<IndexedSong>>()
         unique.forEach { song ->
-            val matchKey = song.matchKey()
-            val existing = matchIndex[matchKey]
-            if (existing == null || localPreferenceComparator.compare(song, existing) > 0) {
-                matchIndex[matchKey] = song
-            }
-            titleIndex.getOrPut(LocalSong.titleKeyOf(song.title)) { mutableListOf() }.add(song)
+            titleIndex.getOrPut(LocalSong.titleKeyOf(song.title)) { mutableListOf() }
+                .add(IndexedSong(song, LocalSong.artistKeyOf(song.artist)))
         }
         byId = prepared.byId
         byUri = unique.associateBy(LocalSong::uri)
-        byMatch = matchIndex
         byTitle = titleIndex
         _songs.value = unique
     }
@@ -410,8 +396,7 @@ object LocalMediaStore {
         val mediaId = parsed?.takeIf {
             it.authority == "media" && it.path?.substringBeforeLast('/')?.endsWith("/audio/media") == true
         }?.path?.substringAfterLast('/')?.toLongOrNull()
-        return if (mediaId != null) "ms_$mediaId" else "doc_" + MessageDigest.getInstance("SHA-256")
-            .digest(uri.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+        return if (mediaId != null) "ms_$mediaId" else "doc_${uri.sha256Hex()}"
     }
 
     private fun mimeTypeFromDisplayName(displayName: String): String? = when (
@@ -453,6 +438,8 @@ object LocalMediaStore {
         val songs: List<LocalSong>,
         val byId: Map<String, LocalSong>,
     )
+
+    private data class IndexedSong(val song: LocalSong, val artistKey: String)
 
     private enum class AudioKind { Compressed, Lossless, Dsd }
 

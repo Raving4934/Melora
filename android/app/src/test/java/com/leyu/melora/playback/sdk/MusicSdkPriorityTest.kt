@@ -49,4 +49,15 @@ class MusicSdkPriorityTest {
 
         assertEquals(2, balancer.reserve())
     }
+
+    @Test
+    fun reservationsAvoidCoolingSlotsAndReuseRecoveredSlots() {
+        val balancer = SlotLoadBalancer(3)
+        assertEquals(1, balancer.reserve { it != 0 })
+        assertEquals(2, balancer.reserve { it != 0 })
+        assertEquals(-1, balancer.reserve { false })
+        assertEquals(listOf(0, 1, 1), balancer.snapshot())
+
+        assertEquals(0, balancer.reserve())
+    }
 }

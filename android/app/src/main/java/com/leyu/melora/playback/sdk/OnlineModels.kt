@@ -5,6 +5,7 @@ import com.leyu.melora.playback.AudioQualityTier
 import com.leyu.melora.playback.compressedAudioBadge
 import java.util.Calendar
 import java.util.Locale
+import java.util.RandomAccess
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import org.json.JSONObject
@@ -132,6 +133,52 @@ private fun inferredSongPageHasMore(
     else -> rawCount >= pageSize
 }
 
+/** 保留展示顺序和有序 UID。追加时只读新页的 UID，旧快照可继续扩展为不同分支。 */
+private class IndexedSongs(
+    private val rows: List<OnlineSong>,
+    private val sortedUids: Array<String>,
+) : AbstractList<OnlineSong>(), RandomAccess {
+    override val size: Int get() = rows.size
+    override fun get(index: Int): OnlineSong = rows[index]
+
+    private data class Insertion(val song: OnlineSong, val uid: String, val index: Int)
+
+    fun append(next: IndexedSongs): IndexedSongs {
+        val additions = next.mapNotNull { song ->
+            val uid = song.uid
+            val position = sortedUids.binarySearch(uid)
+            if (position < 0) Insertion(song, uid, -position - 1) else null
+        }
+        if (additions.isEmpty()) return this
+
+        val ordered = ArrayList<OnlineSong>(size + additions.size)
+        ordered.addAll(rows)
+        additions.forEach { ordered.add(it.song) }
+
+        val uids = Array(ordered.size) { "" }
+        var previous = 0
+        var written = 0
+        for ((_, uid, index) in additions.sortedBy(Insertion::uid)) {
+            sortedUids.copyInto(uids, written, previous, index)
+            written += index - previous
+            uids[written++] = uid
+            previous = index
+        }
+        sortedUids.copyInto(uids, written, previous)
+        return IndexedSongs(ordered, uids)
+    }
+
+    companion object {
+        fun from(entries: List<OnlineSong>): IndexedSongs {
+            if (entries is IndexedSongs) return entries
+            val unique = LinkedHashMap<String, OnlineSong>()
+            entries.forEach { unique.putIfAbsent(it.uid, it) }
+            val uids = unique.keys.toTypedArray().apply { sort() }
+            return IndexedSongs(unique.values.toList(), uids)
+        }
+    }
+}
+
 data class SongPage(
     /** 音源返回的有效记录，供导入计数与版本匹配使用。 */
     internal val entries: List<OnlineSong>,
@@ -149,7 +196,8 @@ data class SongPage(
     val receivedCount: Int = rawCount,
 ) {
     /** 列表行和播放队列使用同一个 UID，按来源顺序保留首次出现的版本。 */
-    val list = entries.distinctBy(OnlineSong::uid)
+    private val indexed = IndexedSongs.from(entries)
+    val list: List<OnlineSong> get() = indexed
 
     /** 优先使用已保存的合并快照状态；未知总数时才以当前页满页推断。 */
     fun hasMore(loadedCount: Int = receivedCount): Boolean = snapshotHasMore ?: inferredSongPageHasMore(
@@ -191,21 +239,19 @@ data class SongPage(
             allPage = resolvedAllPage,
             loadedCount = received,
         )
-        val merged = SongPage(
-            entries = list + next.list,
+        val merged = indexed.append(next.indexed)
+        return SongPage(
+            entries = merged,
             total = resolvedTotal,
             page = cursor,
             allPage = resolvedAllPage,
-            snapshotHasMore = next.rawCount > 0 && nextHasMore,
+            snapshotHasMore = next.rawCount > 0 && nextHasMore && (next.list.isEmpty() || merged !== indexed),
             playlistName = next.playlistName ?: playlistName,
             playlistCover = next.playlistCover ?: playlistCover,
             pageSize = next.pageSize,
             rawCount = next.rawCount,
             receivedCount = received,
         )
-        return if (merged.hasMore() && next.list.isNotEmpty() && merged.list.size == list.size) {
-            merged.copy(snapshotHasMore = false)
-        } else merged
     }
 }
 

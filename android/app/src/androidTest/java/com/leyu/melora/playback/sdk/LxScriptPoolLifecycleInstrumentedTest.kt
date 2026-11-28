@@ -11,9 +11,11 @@ import com.leyu.melora.playback.lx.LxScriptStore
 import com.quickjs.QuickJS
 import java.io.File
 import java.util.UUID
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
@@ -91,7 +93,7 @@ class LxScriptPoolLifecycleInstrumentedTest {
         assertTrue(page.isCancelled)
         val winner = LxScriptPool.race(context, "kw", LxScriptPool.ScriptScope.ENABLED, 3_000,
             request = { source, _ -> LxScriptPool.ScriptRequest("fixture", source.id, "kw", "musicUrl", JSONObject(), 2_000) },
-            accept = { true })
+            accept = { LxScriptPool.CandidateVerdict.Accepted(it) })
         assertEquals("https://example.test/new.mp3", winner?.data)
     }
 
@@ -168,6 +170,18 @@ class LxScriptPoolLifecycleInstrumentedTest {
         assertEquals("a.js", healthRace(fail = false)?.scriptId)
     }
 
+    @Test(timeout = 10_000) fun confirmedAudioClearsFailuresWithoutCountingTheSameResolutionAgain() = runBlocking {
+        prepareHealthFixture("UNEXPECTED_ERROR")
+        val attempt = LxScriptPool.ResolutionAttempt()
+        assertNull(healthRace(fail = true, attempt = attempt))
+        assertEquals("a.js", healthRace(fail = false, attempt = attempt) {
+            LxScriptPool.CandidateVerdict.Accepted(it, verified = true)
+        }?.scriptId)
+        assertNull(healthRace(fail = true, attempt = attempt))
+        repeat(2) { assertNull(healthRace(fail = true)) }
+        assertEquals("a.js", healthRace(fail = false)?.scriptId)
+    }
+
     @Test(timeout = 10_000) fun circuitIsScopedToPlatformAndScriptContentRevision() = runBlocking {
         prepareHealthFixture("UNEXPECTED_ERROR")
         for (id in listOf("a.js", "b.js")) {
@@ -175,9 +189,13 @@ class LxScriptPoolLifecycleInstrumentedTest {
             store.import(id, code)
         }
         repeat(3) { assertNull(healthRace(fail = true)) }
+        val supportsExpected = { support: LxScriptPool.PlatformSupport -> "320k" in support.qualitys }
+        assertTrue(LxScriptPool.shouldPreferBackup(context, "kw", supportsExpected))
+        assertFalse(LxScriptPool.shouldPreferBackup(context, "wy", supportsExpected))
         assertEquals("a.js", healthRace(fail = false, source = "wy")?.scriptId)
         assertNull(healthRace(fail = false))
         store.import("a.js", store.code("a.js")!! + "\n// new revision")
+        assertFalse(LxScriptPool.shouldPreferBackup(context, "kw", supportsExpected))
         assertEquals("a.js", healthRace(fail = false)?.scriptId)
     }
 
@@ -200,6 +218,93 @@ class LxScriptPoolLifecycleInstrumentedTest {
             lock.unlock()
         }
         assertEquals("https://example.test/available.mp3", healthRace(fail = false)?.data)
+    }
+
+    @Test(timeout = 10_000) fun cancelledValidationLeavesPreviousFailuresIntact() = runBlocking {
+        prepareHealthFixture("UNEXPECTED_ERROR")
+        repeat(2) { assertNull(healthRace(fail = true)) }
+        val validating = CompletableDeferred<Unit>()
+        val race = async {
+            healthRace(fail = false) {
+                validating.complete(Unit)
+                awaitCancellation()
+            }
+        }
+        withTimeout(2_000) { validating.await() }
+        race.cancelAndJoin()
+        // 取消中的候选不清零也不新增失败。未知但可尝试播放的 URL 同样不清零。
+        assertEquals("a.js", healthRace(fail = false)?.scriptId)
+        assertNull(healthRace(fail = true))
+        assertNull(healthRace(fail = false))
+    }
+
+    @Test(timeout = 10_000) fun playbackConfirmationClearsTheFailureStreakOnlyOnce() = runBlocking {
+        prepareHealthFixture("UNEXPECTED_ERROR")
+        assertNull(requireNotNull(healthRace(fail = false)).playbackConfirmation)
+        repeat(2) { assertNull(healthRace(fail = true)) }
+        val first = requireNotNull(healthRace(fail = false)?.playbackConfirmation)
+        val another = requireNotNull(healthRace(fail = false)?.playbackConfirmation)
+
+        first.confirm()
+        assertNull(healthRace(fail = true))
+        assertEquals("a.js", healthRace(fail = false)?.scriptId)
+
+        repeat(2) { assertNull(healthRace(fail = true)) }
+        first.confirm()
+        another.confirm()
+        assertNull(healthRace(fail = false))
+    }
+
+    @Test(timeout = 10_000) fun delayedConfirmationCannotClearANewerFailure() = runBlocking {
+        prepareHealthFixture("UNEXPECTED_ERROR")
+        repeat(2) { assertNull(healthRace(fail = true)) }
+        val pending = requireNotNull(healthRace(fail = false)?.playbackConfirmation)
+        assertNull(healthRace(fail = true))
+        pending.confirm()
+        assertNull(healthRace(fail = false))
+    }
+
+    @Test(timeout = 10_000) fun newerFailureDuringCooldownInvalidatesPlaybackConfirmation() = runBlocking {
+        prepareHealthFixture("UNEXPECTED_ERROR")
+        repeat(3) { assertNull(healthRace(fail = true)) }
+        val primaryOnly = LxScriptPool.ScriptScope.ENABLED
+        val pending = requireNotNull(healthRace(fail = false, scope = primaryOnly)?.playbackConfirmation)
+        val newAttempt = LxScriptPool.ResolutionAttempt()
+
+        assertNull(healthRace(fail = true, scope = primaryOnly, attempt = newAttempt))
+        pending.confirm()
+        assertNull(healthRace(fail = false))
+
+        val recovered = requireNotNull(healthRace(fail = false, scope = primaryOnly)?.playbackConfirmation)
+        assertNull(healthRace(fail = true, scope = primaryOnly, attempt = newAttempt))
+        recovered.confirm()
+        assertEquals("a.js", healthRace(fail = false)?.scriptId)
+    }
+
+    @Test(timeout = 10_000) fun playbackConfirmationClearsOnlyItsRequestPlatform() = runBlocking {
+        prepareHealthFixture("UNEXPECTED_ERROR")
+        for (id in listOf("a.js", "b.js")) {
+            val code = store.code(id)!!.replace("sources:{", "sources:{wy:{actions:['musicUrl'],qualitys:['320k']},")
+            store.import(id, code)
+        }
+        for (source in listOf("kw", "wy")) repeat(3) { assertNull(healthRace(fail = true, source = source)) }
+        assertNull(healthRace(fail = false))
+        val confirmation = requireNotNull(healthRace(fail = false, scope = LxScriptPool.ScriptScope.ENABLED)?.playbackConfirmation)
+
+        confirmation.confirm()
+        assertEquals("a.js", healthRace(fail = false)?.scriptId)
+        assertNull(healthRace(fail = false, source = "wy"))
+    }
+
+    @Test(timeout = 10_000) fun playbackConfirmationCannotClearReplacementScriptsFailures() = runBlocking {
+        prepareHealthFixture("UNEXPECTED_ERROR")
+        repeat(3) { assertNull(healthRace(fail = true)) }
+        val previous = requireNotNull(healthRace(fail = false, scope = LxScriptPool.ScriptScope.ENABLED)?.playbackConfirmation)
+        store.import("a.js", store.code("a.js")!! + "\n// new revision")
+        repeat(3) { assertNull(healthRace(fail = true)) }
+
+        previous.confirm()
+        assertNull(healthRace(fail = false))
     }
 
     @Test(timeout = 10_000) fun unrelatedPlatformDoesNotPreventBlockedSourceFallback() = runBlocking {
@@ -245,14 +350,19 @@ class LxScriptPoolLifecycleInstrumentedTest {
         timeoutMs: Long = 2_000,
         source: String = "kw",
         attempt: LxScriptPool.ResolutionAttempt = LxScriptPool.ResolutionAttempt(),
+        scope: LxScriptPool.ScriptScope = LxScriptPool.ScriptScope.ALL,
+        acceptPrimary: suspend (LxScriptPool.ScriptResult) -> LxScriptPool.CandidateVerdict<LxScriptPool.ScriptResult> =
+            { LxScriptPool.CandidateVerdict.Accepted(it) },
     ) = LxScriptPool.race(
-        context, source, LxScriptPool.ScriptScope.ALL, timeoutMs, attempt,
+        context, source, scope, timeoutMs, attempt,
         request = { script, support ->
             SourceResolver.selectQuality("320k", support.qualitys)?.let { quality ->
                 LxScriptPool.ScriptRequest(quality, script.id, source, "musicUrl", JSONObject().put("fail", fail), 1_000)
             }
         },
-        accept = { it.scriptId == "a.js" },
+        accept = { result ->
+            if (result.scriptId == "a.js") acceptPrimary(result) else LxScriptPool.CandidateVerdict.Skipped
+        },
     )
 
     @Suppress("UNCHECKED_CAST")

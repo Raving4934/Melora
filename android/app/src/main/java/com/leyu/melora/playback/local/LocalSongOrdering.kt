@@ -3,7 +3,6 @@ package com.leyu.melora.playback.local
 import android.icu.text.AlphabeticIndex
 import android.icu.text.CollationKey
 import android.icu.text.Collator
-import java.util.LinkedHashMap
 import java.util.Locale
 
 /** 本地歌曲排序字段；storageValue 作为持久化契约，不依赖枚举名称。 */
@@ -25,6 +24,14 @@ internal enum class LocalSortField(val storageValue: String, val label: String) 
 internal val LocalSongIndexLabels: List<String> =
     listOf("0", "#") + ('A'..'Z').map { it.toString() }
 
+/** 歌曲、队列标识与分组首位使用同一列表快照。 */
+internal data class LocalSongsContent(
+    val songs: List<LocalSong> = emptyList(),
+    val sections: Map<String, Int> = emptyMap(),
+) {
+    val songUids = songs.map(LocalSong::localUid)
+}
+
 /*
  * Android ICU 从 API 24 起可用，但 JVM 单元测试不会提供运行时 ICU 实现。
  * 只创建 Lazy 委托，不在该文件被加载时解析或初始化 ICU 对象。
@@ -42,47 +49,16 @@ private val localSongCollator by lazy(LazyThreadSafetyMode.PUBLICATION) {
     }.freeze()
 }
 
-/** 返回标题/歌手在固定索引条中的分组；非文本排序字段不提供分组。 */
-internal fun localSongSection(song: LocalSong, field: LocalSortField): String {
-    val value = when (field) {
-        LocalSortField.FileName -> song.title
-        LocalSortField.Artist -> song.artist
-        else -> return ""
-    }
-    return localSongSectionForValue(value)
-}
-
-/**
- * 从当前实际列表中提取每个分组的首项位置。
- * LinkedHashMap 保留 songs 中首次遇到各分组的顺序，反序列表也因此按实际位置工作。
- */
-internal fun localSongSectionStarts(
-    songs: List<LocalSong>,
-    field: LocalSortField,
-): Map<String, Int> {
-    if (songs.isEmpty()) return emptyMap()
-    when (field) {
-        LocalSortField.FileName, LocalSortField.Artist -> Unit
-        else -> return emptyMap()
-    }
-
-    val starts = LinkedHashMap<String, Int>()
-    songs.forEachIndexed { index, song ->
-        val section = localSongSection(song, field)
-        if (section !in starts) starts[section] = index
-    }
-    return starts
-}
-
 internal fun sortLocalSongs(
     songs: List<LocalSong>,
     field: LocalSortField,
     ascending: Boolean,
-): List<LocalSong> {
+): LocalSongsContent {
+    if (songs.isEmpty()) return LocalSongsContent()
     val ordered = when (field) {
         LocalSortField.FileName,
         LocalSortField.Artist,
-        -> sortLocalSongsByName(songs, field)
+        -> return sortLocalSongsByName(songs, field, ascending)
 
         // These comparisons are intentionally unchanged: storage values and numeric/time
         // ordering are existing persistence/UI contracts.
@@ -91,7 +67,7 @@ internal fun sortLocalSongs(
         LocalSortField.ModifiedAt -> songs.sortedWith(compareBy { it.modifiedAt })
         LocalSortField.AddedAt -> songs.sortedWith(compareBy { it.addedAt })
     }
-    return if (ascending) ordered else ordered.asReversed()
+    return LocalSongsContent(if (ascending) ordered else ordered.asReversed())
 }
 
 private data class LocalTextSortEntry(
@@ -104,7 +80,8 @@ private data class LocalTextSortEntry(
 private fun sortLocalSongsByName(
     songs: List<LocalSong>,
     field: LocalSortField,
-): List<LocalSong> {
+    ascending: Boolean,
+): LocalSongsContent {
     val keys = HashMap<String, CollationKey>()
     val entries = songs.map { song ->
         val primary = if (field == LocalSortField.FileName) song.title else song.artist
@@ -113,35 +90,29 @@ private fun sortLocalSongsByName(
         val secondaryValue = secondary.trimStart()
         LocalTextSortEntry(
             song = song,
-            sectionRank = localSongSectionRank(localSongSectionForValue(primaryValue)),
+            sectionRank = localSongSectionRank(primaryValue),
             primaryKey = keys.getOrPut(primaryValue) { localSongCollator.getCollationKey(primaryValue) },
             secondaryKey = keys.getOrPut(secondaryValue) { localSongCollator.getCollationKey(secondaryValue) },
         )
     }
 
-    return entries.sortedWith(compareBy<LocalTextSortEntry> { it.sectionRank }
-        .thenBy { it.primaryKey }.thenBy { it.secondaryKey }).map { it.song }
+    val ordered = entries.sortedWith(compareBy<LocalTextSortEntry> { it.sectionRank }
+        .thenBy { it.primaryKey }.thenBy { it.secondaryKey })
+    val sections = linkedMapOf<String, Int>()
+    val sorted = (if (ascending) ordered else ordered.asReversed()).mapIndexed { index, entry ->
+        sections.putIfAbsent(LocalSongIndexLabels[entry.sectionRank], index)
+        entry.song
+    }
+    return LocalSongsContent(sorted, sections)
 }
 
-private fun localSongSectionForValue(value: String): String {
-    val trimmed = value.trimStart()
-    if (trimmed.isEmpty()) return "#"
+private fun localSongSectionRank(value: String): Int {
+    if (value.isEmpty()) return 1
+    val firstCodePoint = value.codePointAt(0)
+    if (Character.isDigit(firstCodePoint)) return 0
+    if (!Character.isLetter(firstCodePoint)) return 1
 
-    val firstCodePoint = trimmed.codePointAt(0)
-    if (Character.isDigit(firstCodePoint)) return "0"
-    if (!Character.isLetter(firstCodePoint)) return "#"
-
-    val bucketIndex = localSongAlphabeticIndex.getBucketIndex(trimmed)
-    val label = localSongAlphabeticIndex.getBucket(bucketIndex).label
-    return label
-        .uppercase(Locale.ROOT)
-        .takeIf { it.length == 1 && it[0] in 'A'..'Z' }
-        ?: "#"
-}
-
-private fun localSongSectionRank(section: String): Int = when {
-    section == "0" -> 0
-    section == "#" -> 1
-    section.length == 1 && section[0] in 'A'..'Z' -> section[0] - 'A' + 2
-    else -> 1
+    val index = localSongAlphabeticIndex.getBucketIndex(value)
+    val letter = localSongAlphabeticIndex.getBucket(index).label.uppercase(Locale.ROOT).singleOrNull()
+    return if (letter != null && letter in 'A'..'Z') letter - 'A' + 2 else 1
 }

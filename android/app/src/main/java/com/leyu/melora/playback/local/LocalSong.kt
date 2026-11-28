@@ -27,7 +27,11 @@ data class LocalSong(
     /** MediaMetadataRetriever/Media3 未识别时为 -1；旧索引读取同样默认为未知。 */
     val bitDepth: Int = -1,
     val channelCount: Int = -1,
+    /** SAF 探测成功时的原始文件名，用来判断目录条目的标签结果能否复用。 */
+    internal val probedDocumentName: String? = null,
 ) {
+    internal fun localUid(): String = "${SOURCE}_$id"
+
     /** 异步结果只属于读取时的那一版文件；描述信息和播放测得规格不参与版本判断。 */
     internal fun sameFileVersion(other: LocalSong?): Boolean = other != null &&
         id == other.id && uri == other.uri && modifiedAt == other.modifiedAt && sizeBytes == other.sizeBytes
@@ -50,8 +54,6 @@ data class LocalSong(
     /** 本地资源通知播放注册表时使用的实际质量标识，不用目录能力猜测未知位深。 */
     val playbackQuality: String
         get() = audioSpecification.verifiedQuality ?: if (isLossless) "flac" else "local"
-
-    fun matchKey(): String = matchKeyOf(title, artist)
 
     /** 本地搜索：标题/歌手/专辑/文件名包含即命中（忽略大小写）。 */
     fun matches(query: String): Boolean {
@@ -94,6 +96,7 @@ data class LocalSong(
         put("bitDepth", bitDepth)
         put("channelCount", channelCount)
         coverUri?.let { put("coverUri", it) }
+        probedDocumentName?.let { put("probedDocumentName", it) }
         if (infoFilled) put("infoFilled", true)
     }
 
@@ -121,21 +124,22 @@ data class LocalSong(
                 infoFilled = json.optBoolean("infoFilled"),
                 bitDepth = json.optInt("bitDepth", -1).takeIf { it > 0 } ?: -1,
                 channelCount = json.optInt("channelCount", -1).takeIf { it > 0 } ?: -1,
+                probedDocumentName = json.optString("probedDocumentName").takeIf(String::isNotBlank),
             )
         }
 
-        /** 网络歌曲与本地文件的匹配键：忽略大小写、空白、标点与常见装饰后缀。 */
-        fun matchKeyOf(title: String, artist: String): String =
-            titleKeyOf(title) + "|" + artistKeyOf(artist)
+        private val titleDecoration = Regex("(?i)\\((feat|ft|live|remix|伴奏|和声)[^)]*\\)")
+        private val punctuation = Regex("[\\s·・、,，.。!！?？'\"“”‘’\\-—_()（）\\[\\]【】《》<>]+")
 
+        /** 网络歌曲与本地文件的匹配键：忽略大小写、空白、标点与常见装饰后缀。 */
         fun titleKeyOf(title: String): String = normalize(title)
 
         fun artistKeyOf(artist: String): String = normalize(artist)
 
         private fun normalize(raw: String): String =
             raw.lowercase(Locale.ROOT)
-                .replace(Regex("(?i)\\((feat|ft|live|remix|伴奏|和声)[^)]*\\)"), "")
-                .replace(Regex("[\\s·・、,，.。!！?？'\"“”‘’\\-—_()（）\\[\\]【】《》<>]+"), "")
+                .replace(titleDecoration, "")
+                .replace(punctuation, "")
 
         fun formatDuration(seconds: Long): String {
             val safe = seconds.coerceAtLeast(0)

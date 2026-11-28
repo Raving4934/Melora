@@ -29,7 +29,7 @@ class SourceResolverPolicyTest {
     fun downloadsTryEachTierInOrderAndKeepActualQuality() = runBlocking {
         for (preferred in listOf("flac24bit", "hires")) {
             val attempts = mutableListOf<String>()
-            val result = SourceResolver.resolveTiers(preferred, SourceResolver.Purpose.DOWNLOAD) { quality ->
+            val result = SourceResolver.resolveTiers(preferred, SourceResolver.Purpose.DOWNLOAD) { quality, _ ->
                 attempts += quality
                 if (quality != "320k") error("unsupported $quality")
                 SourceResolver.Resolved("https://example.com/audio.mp3", quality, song(), false, "actual-320k")
@@ -43,7 +43,7 @@ class SourceResolverPolicyTest {
     @Test
     fun downloadsNeverProbeLowerTiersAfterTheSelectedTierSucceeds() = runBlocking {
         var calls = 0
-        val result = SourceResolver.resolveTiers("flac24bit", SourceResolver.Purpose.DOWNLOAD) { quality ->
+        val result = SourceResolver.resolveTiers("flac24bit", SourceResolver.Purpose.DOWNLOAD) { quality, _ ->
             calls++
             assertEquals("flac24bit", quality)
             SourceResolver.Resolved("https://example.com/audio.flac", "hires", song(), false, "actual-hires")
@@ -55,7 +55,7 @@ class SourceResolverPolicyTest {
     @Test
     fun downloadTimeoutAtHigherTierStillReaches128k() = runBlocking {
         val attempts = mutableListOf<String>()
-        val result = SourceResolver.resolveTiers("hires", SourceResolver.Purpose.DOWNLOAD, tierBudgetMs = 30) { quality ->
+        val result = SourceResolver.resolveTiers("hires", SourceResolver.Purpose.DOWNLOAD, tierBudgetMs = 30) { quality, _ ->
             attempts += quality
             if (quality != "128k") delay(1000)
             SourceResolver.Resolved("https://example.com/audio.mp3", quality, song(), false, "actual-128k")
@@ -68,7 +68,7 @@ class SourceResolverPolicyTest {
     fun downloadCancellationDoesNotStartLowerTierAndAllFailuresAreReported() = runBlocking {
         val attempts = mutableListOf<String>()
         try {
-            SourceResolver.resolveTiers("flac24bit", SourceResolver.Purpose.DOWNLOAD) { quality ->
+            SourceResolver.resolveTiers("flac24bit", SourceResolver.Purpose.DOWNLOAD) { quality, _ ->
                 attempts += quality
                 throw CancellationException("user cancelled")
             }
@@ -77,7 +77,7 @@ class SourceResolverPolicyTest {
         assertEquals(listOf("flac24bit"), attempts)
         attempts.clear()
         try {
-            SourceResolver.resolveTiers("flac24bit", SourceResolver.Purpose.DOWNLOAD) { quality -> attempts += quality; error("offline") }
+            SourceResolver.resolveTiers("flac24bit", SourceResolver.Purpose.DOWNLOAD) { quality, _ -> attempts += quality; error("offline") }
             error("must report failure")
         } catch (expected: IllegalStateException) {
             assertTrue(expected.message!!.contains("各档下载音质"))
@@ -178,7 +178,7 @@ class SourceResolverPolicyTest {
             song(), LxScriptPool.ScriptResult("master", "source.js", JSONObject().put("url", url).put("type", "flac24bit")),
         ))
         assertNull(downgraded.sourceQuality)
-        assertEquals(downgraded, SourceResolver.resolveTiers("master", SourceResolver.Purpose.DOWNLOAD) { quality ->
+        assertEquals(downgraded, SourceResolver.resolveTiers("master", SourceResolver.Purpose.DOWNLOAD) { quality, _ ->
             attempts += quality
             downgraded
         })

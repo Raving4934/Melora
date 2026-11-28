@@ -1,5 +1,6 @@
 package com.leyu.melora.playback.sdk
 
+import com.leyu.melora.playback.sharedNetworkClient
 import com.leyu.melora.playback.readResponse
 import kotlinx.coroutines.CancellationException
 import okhttp3.OkHttpClient
@@ -27,7 +28,7 @@ object KwBookApi {
     private val RANK_WHITELIST = listOf("13", "20", "1", "14", "15")
 
     private val client: OkHttpClient by lazy {
-        OkHttpClient.Builder()
+        sharedNetworkClient.newBuilder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .build()

@@ -5,9 +5,13 @@ import android.content.ContentValues;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.net.Uri;
+import android.os.Bundle;
+import android.os.CancellationSignal;
+import java.util.Arrays;
 
 /** 仅由 ContentResolver.wrap 使用；不注册、不读写系统媒体库。 */
 public final class MediaStoreScanProvider extends ContentProvider {
+    private final ContentProvider documents;
     private long[] ids = new long[0];
     private String folder = "";
     public Runnable onQuery;
@@ -15,10 +19,20 @@ public final class MediaStoreScanProvider extends ContentProvider {
     public long smallTrackId = -1;
     public long nonMusicTrackId = -1;
 
+    public MediaStoreScanProvider(ContentProvider documents) { this.documents = documents; }
+
     public void setSongs(long[] ids, String folder) { this.ids = ids; this.folder = folder; }
     @Override public boolean onCreate() { return true; }
+    @Override public Cursor query(Uri uri, String[] projection, Bundle args, CancellationSignal cancellation) {
+        return "media".equals(uri.getAuthority()) ? super.query(uri, projection, args, cancellation)
+            : documents.query(uri, projection, args, cancellation);
+    }
     @Override public Cursor query(Uri uri, String[] projection, String selection, String[] args, String order) {
-        if (onQuery != null) { Runnable callback = onQuery; onQuery = null; callback.run(); }
+        if (onQuery != null && projection != null && Arrays.asList(projection).contains("_id")) {
+            Runnable callback = onQuery;
+            onQuery = null;
+            callback.run();
+        }
         MatrixCursor cursor = new MatrixCursor(projection);
         for (long id : ids) {
             if ("is_music != 0".equals(selection) && id == nonMusicTrackId) continue;
@@ -45,7 +59,7 @@ public final class MediaStoreScanProvider extends ContentProvider {
         }
         return cursor;
     }
-    @Override public String getType(Uri uri) { return "audio/mpeg"; }
+    @Override public String getType(Uri uri) { return "media".equals(uri.getAuthority()) ? "audio/mpeg" : documents.getType(uri); }
     @Override public Uri insert(Uri uri, ContentValues values) { throw new UnsupportedOperationException(); }
     @Override public int update(Uri uri, ContentValues values, String selection, String[] args) { throw new UnsupportedOperationException(); }
     @Override public int delete(Uri uri, String selection, String[] args) { throw new UnsupportedOperationException(); }

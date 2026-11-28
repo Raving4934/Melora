@@ -1,5 +1,7 @@
 package com.leyu.melora.playback.sdk
 
+import com.leyu.melora.playback.sharedNetworkClient
+import com.leyu.melora.playback.readResponse
 import java.io.IOException
 import java.net.URLEncoder
 import java.time.Instant
@@ -9,7 +11,6 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
@@ -36,7 +37,7 @@ object CatalogMetadata {
     private data class Cached<T>(val value: T?)
 
     private val client by lazy {
-        OkHttpClient.Builder()
+        sharedNetworkClient.newBuilder()
             .connectTimeout(8, TimeUnit.SECONDS)
             .readTimeout(10, TimeUnit.SECONDS)
             .build()
@@ -84,7 +85,7 @@ object CatalogMetadata {
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
                 .header("Referer", "https://music.163.com/")
                 .build()
-            client.newCall(request).execute().use { response ->
+            client.newCall(request).readResponse { response ->
                 if (!response.isSuccessful) throw IOException("目录信息查询失败：HTTP ${response.code}")
                 response.body.string()
             }

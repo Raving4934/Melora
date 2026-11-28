@@ -11,6 +11,9 @@ import java.io.File
 import java.io.IOException
 import java.nio.file.Files
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.After
@@ -72,21 +75,24 @@ class LocalMediaTest {
     @Test
     fun matchKeyIgnoresCasePunctuationAndDecorations() {
         assertEquals(
-            LocalSong.matchKeyOf("夜曲 (Live)", "周杰伦"),
-            LocalSong.matchKeyOf("夜曲", "周 杰 伦"),
+            LocalSong.titleKeyOf("夜曲 (Live)"),
+            LocalSong.titleKeyOf("夜曲"),
         )
+        assertEquals(LocalSong.artistKeyOf("周杰伦"), LocalSong.artistKeyOf("周 杰 伦"))
+        assertEquals(LocalSong.titleKeyOf("ABC!"), LocalSong.titleKeyOf("abc"))
         assertEquals(
-            LocalSong.matchKeyOf("ABC!", "A、B"),
-            LocalSong.matchKeyOf("abc", "A B"),
+            LocalSong.artistKeyOf("A、B"),
+            LocalSong.artistKeyOf("A B"),
         )
     }
 
     @Test
-    fun hasLocalFileMatchesOnlineSongByTitleArtist() {
-        LocalMediaStore.replaceAll(listOf(localSong(title = "夜曲", artist = "周杰伦")))
-        assertTrue(LocalMediaStore.hasLocalFile(online(name = "夜曲", singer = "周杰伦")))
-        assertFalse(LocalMediaStore.hasLocalFile(online(name = "稻香", singer = "周杰伦")))
-        assertTrue(LocalMediaStore.hasLocalFile(online(source = "local", songmid = "other")))
+    fun matchesOnlineSongByTitleArtistAndLocalSongById() {
+        val song = localSong()
+        LocalMediaStore.replaceAll(listOf(song))
+        assertEquals(song, LocalMediaStore.matchSong(online(name = "夜曲", singer = "周杰伦")))
+        assertNull(LocalMediaStore.matchSong(online(name = "稻香", singer = "周杰伦")))
+        assertEquals(song, LocalMediaStore.matchSong(online(source = "local", songmid = song.id)))
     }
 
     @Test
@@ -188,6 +194,43 @@ class LocalMediaTest {
             LocalMediaScanner.scanSource { throw CancellationException("cancelled") }
             error("must propagate cancellation")
         } catch (_: CancellationException) { }
+    }
+
+    @Test
+    fun enrichmentOnOlderAndroidSkipsKnownBitrateWithoutSampleRate() = runBlocking {
+        val known = localSong(id = "known", sampleRate = 0, bitrate = 128_000)
+        val unknown = localSong(id = "unknown", sampleRate = 0, bitrate = 0)
+        val reads = mutableListOf<String>()
+        var persisted: List<LocalSong>? = null
+        enrichLocalSpecifications(listOf(known, unknown), supportsSampleRate = false, readTag = {
+            reads += it.id
+            LocalTagReader.Tag("", "", "", 0L, sampleRate = 0, bitrate = 192_000, year = 0)
+        }) { persisted = it }
+
+        assertEquals(listOf(unknown.id), reads)
+        assertEquals(listOf(known, unknown.copy(bitrate = 192_000)), persisted)
+    }
+
+    @Test
+    fun cancellingEnrichmentPersistsOnlyCompletedReads() = runBlocking {
+        val first = localSong(id = "finished", sampleRate = 0, bitrate = 0)
+        val second = localSong(id = "interrupted", sampleRate = 0, bitrate = 0)
+        val third = localSong(id = "pending", sampleRate = 0, bitrate = 0)
+        val reads = mutableListOf<String>()
+        var persisted: List<LocalSong>? = null
+        val job = launch {
+            val coroutine = currentCoroutineContext()
+            enrichLocalSpecifications(listOf(first, second, third), supportsSampleRate = true, readTag = {
+                reads += it.id
+                if (it == second) coroutine.cancel()
+                LocalTagReader.Tag("", "", "", 0L, sampleRate = 48_000, bitrate = 192_000, year = 0)
+            }) { persisted = it }
+        }
+        job.join()
+
+        assertTrue(job.isCancelled)
+        assertEquals(listOf(first.id, second.id), reads)
+        assertEquals(listOf(first.copy(sampleRate = 48_000, bitrate = 192_000), second, third), persisted)
     }
 
     @Test
@@ -345,7 +388,8 @@ class LocalMediaTest {
         val lossless = localSong(id = "flac", uri = "file:///Music/a.flac", mimeType = "audio/flac", bitrate = 900_000)
         LocalMediaStore.replaceAll(listOf(compressed, lossless))
 
-        assertEquals("flac", LocalMediaStore.match("夜曲", "周杰伦")?.id)
+        val withoutRaw = track(source = "kw", uid = "kw_1", title = "夜曲", artist = "周杰伦")
+        assertEquals("flac", LocalMediaStore.matchTrack(withoutRaw)?.id)
     }
 
     @Test

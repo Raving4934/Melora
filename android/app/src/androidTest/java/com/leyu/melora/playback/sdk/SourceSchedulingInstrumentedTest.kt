@@ -89,6 +89,42 @@ class SourceSchedulingInstrumentedTest {
     }
 
     @Test
+    fun playbackLetsACachedCrossPlatformMatchRaceOnTheFirstQualityTier() = runBlocking {
+        ResolutionMediaServer().use { server ->
+            val crossPlatform = "cross-platform-$runId.js"
+            fun script(platform: String, delayMs: Int) = """
+                lx.send('inited', {sources: {$platform: {actions: ['musicUrl'], qualitys: ['flac24bit']}}});
+                lx.on('request', () => new Promise(resolve => {
+                    setTimeout(() => resolve('${server.url}/verified-$platform'), $delayMs);
+                }));
+            """.trimIndent()
+
+            try {
+                store.import(scriptId, script("kw", 1_000))
+                store.import(crossPlatform, script("wy", 0))
+                assertEquals(2, LxScriptPool.reload(context))
+
+                val song = fixtureSong("$runId-cross-platform")
+                song.raw.put("interval", "00:12")
+                val matched = OnlineSong(JSONObject(song.raw.toString())
+                    .put("source", "wy").put("songmid", "$runId-matched"))
+                OnlineCache.put(SourceResolver.matchingCacheKey(song, "wy"), listOf(matched))
+
+                val result = withTimeout(CALL_TIMEOUT_MS) {
+                    SourceResolver.resolve(context, song, "flac24bit", allowSwitch = true)
+                }
+                // 1.2 秒后才发起跨平台解析时，1 秒返回的原平台会先胜出。
+                assertEquals("${server.url}/verified-wy", result.url)
+                assertEquals("flac24bit", result.effectiveQuality)
+                assertTrue(result.switched)
+            } finally {
+                store.remove(crossPlatform)
+                SourceResolver.clearCache()
+            }
+        }
+    }
+
+    @Test
     fun playbackDoesNotWaitForTheSamePlatformAgainOnTheNextQualityTier() = runBlocking {
         ResolutionMediaServer().use { server ->
             val baseUrl = server.url

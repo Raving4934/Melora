@@ -5,9 +5,11 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import androidx.core.net.toUri
 import com.leyu.melora.playback.EmbeddedLyrics
+import com.leyu.melora.playback.readId3Prefix
+import com.leyu.melora.playback.skipId3Bytes
 import android.os.Build
-import java.io.BufferedInputStream
 import java.io.ByteArrayInputStream
+import java.io.EOFException
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -237,54 +239,44 @@ object LocalTagReader {
         extractMetadata(key)?.trim().orEmpty()
 
     /** 内嵌歌词：只读取容器元数据块，不把整首音频载入内存。 */
-    fun embeddedLyrics(context: Context, uri: String, mimeType: String): EmbeddedLyrics? {
-        val mime = mimeType.lowercase()
+    fun embeddedLyrics(context: Context, uri: String): EmbeddedLyrics? {
         return runCatching {
             LocalMediaIoCoordinator.withRead(context, uri.toUri()) {
                 context.contentResolver.openInputStream(uri.toUri())?.buffered()?.use { input ->
-                    readEmbeddedLyrics(input, mime)
+                    readEmbeddedLyrics(input)
                 }
             }
         }.getOrNull()?.takeUnless { it.isBlank }
     }
 
     /** 共用生产解析链，仅供容器帧/块的 instrumented fixture 注入字节。 */
-    internal fun embeddedLyricsFromBytes(bytes: ByteArray, mimeType: String): EmbeddedLyrics? = runCatching {
-        ByteArrayInputStream(bytes).use { input -> readEmbeddedLyrics(input, mimeType) }
+    internal fun embeddedLyricsFromBytes(bytes: ByteArray): EmbeddedLyrics? = runCatching {
+        ByteArrayInputStream(bytes).use(::readEmbeddedLyrics)
     }.getOrNull()?.takeUnless { it.isBlank }
 
     /** 生产与 JVM 测试共用的流入口；调用方负责关闭输入流。 */
-    internal fun readEmbeddedLyrics(input: InputStream, mimeType: String): EmbeddedLyrics? {
-        val stream = input as? BufferedInputStream ?: input.buffered()
-        val mime = mimeType.lowercase()
-        return when {
-            mime.contains("mpeg") || mime.contains("mp3") -> readId3Lyrics(stream)
-            mime.contains("flac") -> readFlacLyrics(stream)
-            else -> detectAndReadLyrics(stream)
-        }
-    }
-
-    private fun detectAndReadLyrics(input: BufferedInputStream): EmbeddedLyrics? {
-        input.mark(10)
-        val header = input.readExact(4) ?: return null
-        input.reset()
-        return when {
-            header.contentEquals(byteArrayOf('f'.code.toByte(), 'L'.code.toByte(), 'a'.code.toByte(), 'C'.code.toByte())) -> readFlacLyrics(input)
-            header[0] == 'I'.code.toByte() && header[1] == 'D'.code.toByte() && header[2] == '3'.code.toByte() -> readId3Lyrics(input)
-            else -> null
+    internal fun readEmbeddedLyrics(input: InputStream): EmbeddedLyrics? {
+        val stream = input.buffered()
+        var id3Lyrics: EmbeddedLyrics? = null
+        return try {
+            while (true) {
+                val tag = stream.readId3Prefix() ?: break
+                if (id3Lyrics == null && tag.bodySize in 1..MAX_TAG_BYTES) {
+                    val body = stream.readExact(tag.bodySize) ?: return null
+                    id3Lyrics = parseId3Lyrics(tag.header + body)
+                } else {
+                    stream.skipId3Bytes(tag.bodySize)
+                }
+                stream.skipId3Bytes(tag.footerSize)
+            }
+            // 旧文件的 ID3 歌词仍可读取，FLAC 本身写有歌词时优先使用它的评论块。
+            readFlacLyrics(stream) ?: id3Lyrics
+        } catch (_: EOFException) {
+            id3Lyrics
         }
     }
 
     // --- MP3: ID3v2 USLT + TXXX[LYRICS_TTML] ---
-
-    private fun readId3Lyrics(input: InputStream): EmbeddedLyrics? {
-        val header = input.readExact(10) ?: return null
-        if (header[0] != 'I'.code.toByte() || header[1] != 'D'.code.toByte() || header[2] != '3'.code.toByte()) return null
-        val tagSize = synchsafe(header, 6)
-        if (tagSize <= 0 || tagSize > MAX_TAG_BYTES) return null
-        val body = input.readExact(tagSize) ?: return null
-        return parseId3Lyrics(header + body)
-    }
 
     private fun parseId3Lyrics(bytes: ByteArray): EmbeddedLyrics? {
         val major = bytes[3].toInt() and 0xFF
@@ -325,27 +317,26 @@ object LocalTagReader {
     }
 
     /** 返回 (description, value)；USLT 的前缀含 encoding+language，TXXX 仅含 encoding。 */
-    private fun decodeId3Fields(bytes: ByteArray, start: Int, size: Int, prefixLength: Int): Pair<String, String>? {
+    internal fun decodeId3Fields(
+        bytes: ByteArray,
+        start: Int,
+        size: Int,
+        prefixLength: Int,
+        readValue: Boolean = true,
+    ): Pair<String, String>? {
         if (size <= prefixLength || start < 0 || size > bytes.size - start) return null
         val encoding = bytes[start].toInt() and 0xFF
         val end = start + size
         val descriptionStart = start + prefixLength
+        val hasDescriptionBom = encoding == 1 && bytes.hasUtf16Bom(descriptionStart, end)
         val charset = when (encoding) {
             0 -> Charsets.ISO_8859_1
-            1 -> if (descriptionStart + 1 < end && bytes[descriptionStart] == 0xFF.toByte() && bytes[descriptionStart + 1] == 0xFE.toByte()) {
-                Charsets.UTF_16LE
-            } else {
-                Charsets.UTF_16BE
-            }
+            1 -> if (hasDescriptionBom && bytes[descriptionStart] == 0xFF.toByte()) Charsets.UTF_16LE else Charsets.UTF_16BE
             2 -> Charsets.UTF_16BE
             else -> Charsets.UTF_8
         }
         val wide = encoding == 1 || encoding == 2
-        var cursor = descriptionStart
-        if (wide && encoding == 1 && cursor + 1 < end &&
-            ((bytes[cursor] == 0xFF.toByte() && bytes[cursor + 1] == 0xFE.toByte()) ||
-                (bytes[cursor] == 0xFE.toByte() && bytes[cursor + 1] == 0xFF.toByte()))
-        ) cursor += 2
+        var cursor = descriptionStart + if (hasDescriptionBom) 2 else 0
 
         val delimiter = if (wide) {
             var index = cursor
@@ -363,11 +354,19 @@ object LocalTagReader {
         val description = runCatching {
             String(bytes, descriptionStart, descriptionEnd - descriptionStart, charset).trim('\uFEFF', '\u0000')
         }.getOrNull() ?: return null
+        if (!readValue) return description to ""
         val value = runCatching {
-            String(bytes, valueStart, end - valueStart, charset).trimStart('\uFEFF').trimEnd('\u0000')
+            val valueCharset = if (encoding == 1 && bytes.hasUtf16Bom(valueStart, end)) Charsets.UTF_16 else charset
+            String(bytes, valueStart, end - valueStart, valueCharset).trimStart('\uFEFF').trimEnd('\u0000')
         }.getOrNull() ?: return null
         return description to value
     }
+
+    private fun ByteArray.hasUtf16Bom(offset: Int, end: Int): Boolean =
+        offset + 1 < end && (
+            (this[offset] == 0xFF.toByte() && this[offset + 1] == 0xFE.toByte()) ||
+                (this[offset] == 0xFE.toByte() && this[offset + 1] == 0xFF.toByte())
+        )
 
     // --- FLAC: VORBIS_COMMENT ---
 

@@ -1,6 +1,7 @@
 package com.leyu.melora.playback.sdk
 
 import android.content.Context
+import com.leyu.melora.playback.PlatformSource
 import com.leyu.melora.playback.UserLibrary
 import java.time.LocalDate
 import java.util.Locale
@@ -18,8 +19,6 @@ import kotlinx.coroutines.supervisorScope
  * 收藏歌单名称，避免复用发现页结果。全部音乐入口在此再次执行内容边界和多样性约束。
  */
 object Recommender {
-    val musicSources = listOf("kw", "kg", "wy", "tx", "mg")
-
     private const val SONG_LIMIT = 30
     private const val CARD_LIMIT = 6
     private const val PER_SEED_LIMIT = 8
@@ -458,7 +457,7 @@ object Recommender {
     }
 
     private fun validSources(sources: List<String>): List<String> =
-        sources.filter { it in musicSources }.distinct().ifEmpty { listOf("kw") }
+        sources.filter { it in PlatformSource.musicIds }.distinct().ifEmpty { listOf(PlatformSource.Kuwo.id) }
 
     private fun knownMusicUids(): Set<String> =
         (UserLibrary.favorites.value.musicOnly() + UserLibrary.recents.value.musicOnly()).mapTo(hashSetOf()) { it.uid }

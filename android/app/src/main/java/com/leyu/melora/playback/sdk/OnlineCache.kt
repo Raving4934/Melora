@@ -1,13 +1,13 @@
 package com.leyu.melora.playback.sdk
 
 import android.content.Context
+import com.leyu.melora.playback.sha256Hex
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
-import java.security.MessageDigest
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -299,7 +299,7 @@ object OnlineCache {
     }
 
     private fun snapshotFile(context: Context, key: String): File =
-        snapshotDirectory(context).resolve("${sha256(key)}.json")
+        snapshotDirectory(context).resolve("${key.sha256Hex()}.json")
 
     private fun metadataOf(file: File): OnlineCacheSnapshotMetadata? {
         if (!file.isFile || file.length() > ONLINE_CACHE_SNAPSHOT_MAX_BYTES) return null
@@ -419,11 +419,6 @@ object OnlineCache {
             prefix == "playlists" || prefix.startsWith("playlists.") -> playlistSnapshotGeneration++
         }
     }
-
-    private fun sha256(value: String): String = MessageDigest
-        .getInstance("SHA-256")
-        .digest(value.toByteArray(Charsets.UTF_8))
-        .joinToString("") { byte -> "%02x".format(byte) }
 }
 
 internal enum class PageSnapshotFamily {

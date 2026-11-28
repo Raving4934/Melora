@@ -1,5 +1,6 @@
 package com.leyu.melora.playback.local
 
+import com.leyu.melora.playback.sharedNetworkClient
 import android.app.RecoverableSecurityException
 import android.content.Context
 import android.net.Uri
@@ -12,17 +13,16 @@ import androidx.core.net.toUri
 import com.leyu.melora.playback.DownloadMetadataWriter
 import com.leyu.melora.playback.EmbeddedLyrics
 import com.leyu.melora.playback.LyricParser
-import com.leyu.melora.playback.MAX_EMBEDDED_COVER_BYTES
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.PlayerLyric
 import com.leyu.melora.playback.TrackRegistry
 import com.leyu.melora.playback.UiTrack
-import com.leyu.melora.playback.readBoundedBytes
 import com.leyu.melora.playback.recoverableOrNull
 import com.leyu.melora.playback.sdk.CoverLoader
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.playback.sdk.SourceResolver
+import com.leyu.melora.playback.sha256Hex
 import java.io.Closeable
 import java.io.File
 import java.nio.file.Files
@@ -42,8 +42,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import org.json.JSONObject
 
 /** 待系统确认的媒体文件标签写入。只暴露启动授权所需数据，写入内容继续封装在本地补全器中。 */
@@ -74,7 +72,7 @@ object LocalTagFiller {
     private const val TAG = "LocalTagFiller"
     private const val RETRY_COOLDOWN_MS = 30 * 60 * 1000L  // 30 min
     private val client by lazy {
-        OkHttpClient.Builder()
+        sharedNetworkClient.newBuilder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(20, TimeUnit.SECONDS)
             .build()
@@ -154,7 +152,7 @@ object LocalTagFiller {
         val local = LocalMediaStore.find(original.id) ?: original
         if (!canFill(local.id) || !shouldFillLocalInfo(local)) return
         val existingCover = LocalTagReader.bestCoverUri(context, local)
-        val existingLyric = LocalTagReader.embeddedLyrics(context, local.uri, local.mimeType)
+        val existingLyric = LocalTagReader.embeddedLyrics(context, local.uri)
         val gaps = localInfoGaps(local, existingCover != null, existingLyric?.isBlank == false)
         if (!gaps.any) {
             LocalMediaStore.updateMetadata(local, local.copy(infoFilled = true))
@@ -611,11 +609,8 @@ object LocalTagFiller {
         return if (media) result.getOrThrow() else result.getOrDefault(StorageVersion())
     }
 
-    private fun restoredVersionFile(context: Context, uri: String): File {
-        val key = MessageDigest.getInstance("SHA-256").digest(uri.toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it.toInt() and 0xFF) }
-        return File(context.filesDir, "local-tag-writes/restored-$key.json")
-    }
+    private fun restoredVersionFile(context: Context, uri: String): File =
+        File(context.filesDir, "local-tag-writes/restored-${uri.sha256Hex()}.json")
 
     private fun readRestoredVersion(file: File, uri: String): RestoredVersion? = runCatching {
         val json = JSONObject(file.readText())
@@ -665,16 +660,7 @@ object LocalTagFiller {
 
     private suspend fun fetchCover(context: Context, song: OnlineSong): ByteArray? {
         val url = CoverLoader.resolve(context, song) ?: return null
-        val request = Request.Builder().url(url)
-            .header("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36")
-            .build()
-        return client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) return@use null
-            val body = response.body
-            if (body.contentLength() > MAX_EMBEDDED_COVER_BYTES) return@use null
-            val bytes = body.byteStream().use { it.readBoundedBytes(MAX_EMBEDDED_COVER_BYTES) } ?: return@use null
-            if (bytes.size < 200) null else bytes
-        }
+        return CoverLoader.fetchBytes(url, client)
     }
 
     private fun isCurrentLocal(local: LocalSong): Boolean {

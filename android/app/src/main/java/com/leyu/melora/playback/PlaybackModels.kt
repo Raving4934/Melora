@@ -4,6 +4,7 @@ import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.Player
 import com.leyu.melora.playback.sdk.OnlineSong
+import com.leyu.melora.playback.sdk.SourceResolver
 import java.util.Locale
 import org.json.JSONObject
 
@@ -219,15 +220,15 @@ data class AudioSpecification(
     val verifiedQuality: String? get() = when {
         isDsd -> "master"
         isLossless -> if (bitDepth >= 24) "flac24bit" else if (bitDepth > 0) "flac" else null
-        normalizedMimeType == "audio/mpeg" -> bitrate.takeIf { it > 0 }?.let { "${it / 1000}k" }
+        normalizedMimeType == "audio/mpeg" -> bitrate.takeIf { it > 0 }?.let { "${(it.toLong() + 500) / 1000}k" }
         normalizedMimeType == "audio/mp4a-latm" -> bitrate.takeIf { it > 0 }?.let { "aac${it / 1000}k" }
         normalizedMimeType == "audio/vorbis" -> bitrate.takeIf { it > 0 }?.let { "ogg${it / 1000}k" }
         else -> null
     }
 
-    /** 即使流没有平均码率，已识别的有损编码也足以否决脚本的母带声明。 */
-    internal fun verifiedStreamQuality(sourceQuality: String?): String? = verifiedQuality
-        ?: if (sourceQuality == "master") when (codecLabel) {
+    /** 即使流没有平均码率，已识别的有损编码也足以否决无损声明。 */
+    internal fun verifiedStreamQuality(claimedQuality: String?): String? = verifiedQuality
+        ?: if (claimedQuality != null && SourceResolver.qualityRank(claimedQuality) >= SourceResolver.qualityRank("flac")) when (codecLabel) {
             "MP3" -> "mp3"
             "AAC" -> "aac"
             "Vorbis" -> "ogg"

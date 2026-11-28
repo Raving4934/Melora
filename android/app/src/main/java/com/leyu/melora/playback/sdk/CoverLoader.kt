@@ -1,6 +1,14 @@
 package com.leyu.melora.playback.sdk
 
 import android.content.Context
+import com.leyu.melora.playback.AudioCacheStore
+import com.leyu.melora.playback.MAX_EMBEDDED_COVER_BYTES
+import com.leyu.melora.playback.readBoundedBytes
+import com.leyu.melora.playback.readResponse
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -61,21 +69,34 @@ object CoverLoader {
         if (!resolved.needsRefresh(uid)) return stale
 
         val generation = inFlight.currentGeneration()
-        return inFlight.run(uid, generation) {
-            resolved.fresh(uid)?.let { return@run Resolution(it) }
-            val url = requestGate.withPermit {
-                retryNullable(MAX_ATTEMPTS, RETRY_DELAY_MS) {
-                    SourceResolver.picFast(context.applicationContext, song)
-                        ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+        return try {
+            inFlight.run(uid, generation) {
+                resolved.fresh(uid)?.let { return@run Resolution(it) }
+                val url = requestGate.withPermit {
+                    retryNullable(MAX_ATTEMPTS, RETRY_DELAY_MS) {
+                        SourceResolver.picFast(context.applicationContext, song)
+                            ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+                    }
                 }
-            }
-            if (url != null) {
-                synchronized(cacheLock) {
-                    if (inFlight.currentGeneration() == generation) resolved.put(uid, url)
+                if (url != null) {
+                    synchronized(cacheLock) {
+                        if (inFlight.currentGeneration() == generation) resolved.put(uid, url)
+                    }
                 }
-            }
-            Resolution(url)
-        }.url ?: resolved.peek(uid)
+                Resolution(url)
+            }.url ?: resolved.peek(uid)
+        } catch (_: FlightFencedException) {
+            currentCoroutineContext().ensureActive()
+            null
+        }
+    }
+
+    internal suspend fun fetchBytes(url: String, client: OkHttpClient): ByteArray? {
+        val request = Request.Builder().url(url).header("User-Agent", AudioCacheStore.USER_AGENT).build()
+        return client.newCall(request).readResponse { response ->
+            if (!response.isSuccessful || response.body.contentLength() > MAX_EMBEDDED_COVER_BYTES) null
+            else response.body.byteStream().readBoundedBytes(MAX_EMBEDDED_COVER_BYTES)?.takeIf { it.size >= 200 }
+        }
     }
 
     /** 清掉所有已解析地址，并让清理前的在途结果失效；活动订阅保留当前画面快照但标记失效。 */

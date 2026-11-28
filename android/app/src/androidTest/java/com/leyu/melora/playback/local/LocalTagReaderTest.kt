@@ -7,6 +7,10 @@ import com.leyu.melora.playback.PlayerUiState
 import com.leyu.melora.playback.PlayerLyric
 import com.leyu.melora.playback.LyricLine
 import com.leyu.melora.playback.UiTrack
+import com.leyu.melora.playback.DownloadMetadataWriter
+import com.leyu.melora.playback.detectAudioExtension
+import com.leyu.melora.playback.inspectDownloadAudio
+import com.leyu.melora.playback.sameDownloadedBytes
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -14,6 +18,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import android.content.Context
 import android.content.ContextWrapper
+import android.net.Uri
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.ByteArrayOutputStream
@@ -24,6 +29,7 @@ import java.nio.ByteOrder
 import java.nio.file.Files
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -90,7 +96,7 @@ class LocalTagReaderTest {
             player.value = PlayerUiState()
             LocalTagFiller.consider(context, null)
             awaitTagJobs()
-            assertTrue(requireNotNull(LocalTagReader.embeddedLyrics(context, song.uri, song.mimeType)).plain.contains("旧索引仍可写入"))
+            assertTrue(requireNotNull(LocalTagReader.embeddedLyrics(context, song.uri)).plain.contains("旧索引仍可写入"))
             assertEquals(file.length(), LocalMediaStore.find(song.id)?.sizeBytes)
             assertEquals(file.lastModified(), LocalMediaStore.find(song.id)?.modifiedAt)
         }
@@ -125,7 +131,7 @@ class LocalTagReaderTest {
                 flushTagWrites(player)
 
                 val written = requireNotNull(context.contentResolver.openInputStream(uri)).use { it.readBytes() }
-                assertTrue(requireNotNull(LocalTagReader.embeddedLyricsFromBytes(written, local.mimeType))
+                assertTrue(requireNotNull(LocalTagReader.embeddedLyricsFromBytes(written))
                     .plain.contains("未知版本仍可写入"))
                 val document = androidx.documentfile.provider.DocumentFile.fromSingleUri(context, uri)!!
                 assertEquals(document.length(), LocalMediaStore.find(local.id)?.sizeBytes)
@@ -159,7 +165,7 @@ class LocalTagReaderTest {
                     before.zip(after).forEach { (expected, actual) -> org.junit.Assert.assertArrayEquals(expected, actual) }
                     org.junit.Assert.assertArrayEquals(audio, audioAfterId3(written))
                     if (lyricOnly) {
-                        assertTrue(requireNotNull(LocalTagReader.embeddedLyricsFromBytes(written, local.mimeType))
+                        assertTrue(requireNotNull(LocalTagReader.embeddedLyricsFromBytes(written))
                             .plain.contains("新增歌词"))
                     } else {
                         org.junit.Assert.assertArrayEquals(existingLyric, id3Frames(written, "USLT").single())
@@ -198,7 +204,7 @@ class LocalTagReaderTest {
 
                 assertFalse(root.exists())
                 val written = requireNotNull(context.contentResolver.openInputStream(uri)).use { it.readBytes() }
-                assertTrue(requireNotNull(LocalTagReader.embeddedLyricsFromBytes(written, local.mimeType))
+                assertTrue(requireNotNull(LocalTagReader.embeddedLyricsFromBytes(written))
                     .plain.contains("恢复后新写入"))
             }
         }
@@ -253,7 +259,7 @@ class LocalTagReaderTest {
                 if (replaced) {
                     org.junit.Assert.assertArrayEquals(replacement, written)
                     assertEquals(local, LocalMediaStore.find(local.id))
-                } else assertTrue(requireNotNull(LocalTagReader.embeddedLyricsFromBytes(written, local.mimeType))
+                } else assertTrue(requireNotNull(LocalTagReader.embeddedLyricsFromBytes(written))
                     .plain.contains("版本恢复可见后仍可新写入"))
             }
         }
@@ -293,7 +299,7 @@ class LocalTagReaderTest {
                 LocalTagFiller.consider(context, null)
                 awaitTagJobs()
                 val written = requireNotNull(resolver.openInputStream(uri)).use { it.readBytes() }
-                assertTrue(requireNotNull(LocalTagReader.embeddedLyricsFromBytes(written, "audio/mpeg")).plain.contains("恢复后仍可写入"))
+                assertTrue(requireNotNull(LocalTagReader.embeddedLyricsFromBytes(written)).plain.contains("恢复后仍可写入"))
             } finally { resolver.call(uri, "reset", null, null) }
         }
     }
@@ -320,7 +326,7 @@ class LocalTagReaderTest {
                 player.value = PlayerUiState()
                 LocalTagFiller.consider(context, null)
                 awaitTagJobs()
-                assertTrue(requireNotNull(LocalTagReader.embeddedLyrics(context, song.uri, song.mimeType))
+                assertTrue(requireNotNull(LocalTagReader.embeddedLyrics(context, song.uri))
                     .plain.contains("明确手动重试"))
                 assertEquals(file.length(), LocalMediaStore.find(song.id)?.sizeBytes)
             } finally { declined.remove(song.id) }
@@ -488,7 +494,7 @@ class LocalTagReaderTest {
             }
             assertTrue(File(root, "pending").isFile)
             val fromOriginal = requireNotNull(LocalTagReader.embeddedLyrics(
-                context, File(root, "original").toURI().toString(), "audio/mpeg",
+                context, File(root, "original").toURI().toString(),
             ))
             assertEquals("plain lyrics", fromOriginal.plain)
             assertEquals(rich, fromOriginal.ttml)
@@ -501,7 +507,7 @@ class LocalTagReaderTest {
             val restored = requireNotNull(resolver.openInputStream(provider)).use { it.readBytes() }
             org.junit.Assert.assertArrayEquals(original, restored)
             assertFalse(root.exists())
-            val lyrics = requireNotNull(LocalTagReader.embeddedLyricsFromBytes(restored, "audio/mpeg"))
+            val lyrics = requireNotNull(LocalTagReader.embeddedLyricsFromBytes(restored))
             assertEquals("plain lyrics", lyrics.plain)
             assertEquals(rich, lyrics.ttml)
         } finally { resolver.call(provider, "reset", null, null) }
@@ -516,10 +522,34 @@ class LocalTagReaderTest {
             id3Frame("TXXX", txxxBody("LYRICS_TTML", rich)),
         )
 
-        val lyrics = requireNotNull(LocalTagReader.embeddedLyricsFromBytes(bytes, "audio/mpeg"))
+        val lyrics = requireNotNull(LocalTagReader.embeddedLyricsFromBytes(bytes))
 
         assertEquals("plain lyrics", lyrics.plain)
         assertEquals(rich, lyrics.ttml)
+    }
+
+    @Test
+    fun taggedFlacSurvivesPhysicalMetadataRewriteAndStillHasActual24BitFrames() {
+        val bytes = InstrumentationRegistry.getInstrumentation().context.assets
+            .open("audio/fixture-24.flac").use { it.readBytes() }
+        val prefix = id3Tag(id3Frame("PRIV", byteArrayOf(7, 8, 9)))
+        val file = File(cacheRoot, "old-prefixed.flac").apply { writeBytes(prefix + bytes) }
+        val uri = Uri.fromFile(file)
+        val before = requireNotNull(inspectDownloadAudio(context, uri))
+        assertEquals(".flac", detectAudioExtension(file))
+        assertEquals("audio/flac", before.spec.mimeType)
+        assertEquals(24, before.spec.bitDepth)
+
+        val lyric = EmbeddedLyrics(plain = "[00:01.00]真实 FLAC 歌词")
+        DownloadMetadataWriter.write(file, ".flac", "标题", "歌手", "", null, lyric)
+
+        val after = requireNotNull(inspectDownloadAudio(context, uri))
+        assertEquals(before.spec.bitDepth, after.spec.bitDepth)
+        assertEquals(before.durationMs, after.durationMs)
+        assertEquals(lyric, LocalTagReader.embeddedLyrics(context, uri.toString()))
+        val rewritten = file.readBytes()
+        assertArrayEquals(prefix, rewritten.copyOf(prefix.size))
+        assertTrue(sameDownloadedBytes(bytes.inputStream(), rewritten.inputStream(), flac = true))
     }
 
     @Test
@@ -531,7 +561,7 @@ class LocalTagReaderTest {
             "UNSYNCED LYRICS=plain lyrics",
         )
 
-        val lyrics = requireNotNull(LocalTagReader.embeddedLyricsFromBytes(bytes, "audio/flac"))
+        val lyrics = requireNotNull(LocalTagReader.embeddedLyricsFromBytes(bytes))
 
         assertEquals("plain lyrics", lyrics.plain)
         assertEquals(rich, lyrics.ttml)

@@ -4,10 +4,13 @@ import android.content.Context
 import android.util.Log
 import com.leyu.melora.BuildConfig
 import com.leyu.melora.playback.AudioCacheStore
-import com.leyu.melora.playback.MeloraSettings
+import com.leyu.melora.playback.PlaybackCandidateProbe
+import com.leyu.melora.playback.isPreviewDuration
+import com.leyu.melora.playback.PlatformSource
+import com.leyu.melora.playback.sdk.LxScriptPool.CandidateVerdict
 import com.leyu.melora.playback.sdk.LxScriptPool.ScriptScope
+import com.leyu.melora.playback.sha256Hex
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
@@ -16,18 +19,15 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.json.JSONObject
-import java.security.MessageDigest
 import java.text.Normalizer
 import java.util.Locale
 
@@ -46,7 +46,6 @@ object SourceResolver {
     private val QUALITY_ORDER = listOf(
         MASTER_QUALITY, "atmos_plus", "atmos", "hires", "flac24bit", "flac", "wav", "ape", "320k", "192k", "128k",
     )
-    private val SWITCH_SOURCES = listOf("kw", "kg", "wy", "tx", "mg")
     // 本地媒体歌曲的 source；联网取封面/歌词前先按标题/歌手搜出真实在线条目
     private const val LOCAL_SOURCE = "local"
     private const val LOCAL_MATCH_SOURCE = "kw"
@@ -62,18 +61,19 @@ object SourceResolver {
         val fromPrimary: Boolean = false,
         // 脚本母带档与解码器测得的音频规格分别保存。
         val sourceQuality: String? = null,
+        internal val playbackConfirmation: LxScriptPool.PlaybackConfirmation? = null,
     ) {
         internal val effectiveQuality: String get() = SourceResolver.effectiveQuality(quality, sourceQuality)
     }
 
-    enum class Purpose { PLAYBACK, CACHE_FILL, DOWNLOAD, REBUFFER }
+    enum class Purpose { PLAYBACK, DOWNLOAD, REBUFFER }
 
     internal data class ResolveKey(
         val songUid: String,
         val preferredQuality: String,
         val allowSwitch: Boolean,
-        // 播放主源优先；下载/补齐音质优先，不能互相复用不同选优策略的 URL 结果。
-        val preferPrimary: Boolean = true,
+        // 播放有交互时限，下载可等待更久；仅满足目标档位的主源结果跨用途共享。
+        val playback: Boolean = true,
     )
 
     private data class InFlightKey(
@@ -85,9 +85,12 @@ object SourceResolver {
 
     private data class CachedUrl(val resolved: Resolved, val expireAt: Long)
 
+    internal const val LYRIC_LOOKUP_PREFIX = "lyric:lookup:"
     private val cacheLock = Any()
     // 播放地址缓存：按歌曲、目标音质与换源策略隔离，避免播放与下载相互污染。
-    private val urlCache = mutableMapOf<ResolveKey, CachedUrl>()
+    private val urlCache = object : LinkedHashMap<ResolveKey, CachedUrl>(256, 0.75f, true) {
+        override fun removeEldestEntry(eldest: Map.Entry<ResolveKey, CachedUrl>?) = size > 256
+    }
     private val failedResources = mutableMapOf<String, Long>()
     private val observedQualities = linkedMapOf<String, String>()
     // 在应用级作用域合并同参数请求：调用方取消只停止等待，不会毒化其他播放/预取调用方。
@@ -108,6 +111,8 @@ object SourceResolver {
     private const val PLAYBACK_MATCH_TIMEOUT_MS = 3_000L
     private const val DEGRADED_URL_TTL_MS = 45_000L
     private const val FAILED_RESOURCE_TTL_MS = 5 * 60_000L
+
+    internal val cacheGeneration: Long get() = inFlight.currentGeneration()
 
     fun clearCache() {
         synchronized(cacheLock) {
@@ -172,15 +177,14 @@ object SourceResolver {
         }
     }
 
-    /** 只有用户仍在等待的当前播放，才提交已选中的备用资源；普通解析仍走同一入口。 */
-    internal fun selectForPlayback(song: OnlineSong, preferredQuality: String, resolved: Resolved) {
-        val key = ResolveKey(song.uid, normalizedQuality(preferredQuality), MeloraSettings.autoSwitchSource.value)
-        cache(key, resolved, inFlight.currentGeneration())
-    }
+    /** 恢复发起后音源已重载或候选已失效时，保留当前播放。 */
+    internal fun selectForRebuffer(
+        song: OnlineSong, preferredQuality: String, resolved: Resolved, generation: Long,
+    ): Boolean = cache(ResolveKey(song.uid, normalizedQuality(preferredQuality), allowSwitch = true), resolved, generation)
 
-    private fun cache(key: ResolveKey, resolved: Resolved, generation: Long) {
+    private fun cache(key: ResolveKey, resolved: Resolved, generation: Long): Boolean {
         synchronized(cacheLock) {
-            if (generation != inFlight.currentGeneration() || isRejected(resolved.resourceId)) return
+            if (generation != inFlight.currentGeneration() || isRejected(resolved.resourceId)) return false
             val measured = observedQualities[resolved.resourceId]?.let { resolved.copy(quality = it) } ?: resolved
             val sameTier = sameQualityTier(key.preferredQuality, measured.effectiveQuality)
             val ttlMs = when {
@@ -188,15 +192,18 @@ object SourceResolver {
                 measured.song.isBookChapter -> BOOK_URL_TTL_MS
                 else -> URL_TTL_MS
             }
-            val expireAt = System.currentTimeMillis() + ttlMs
+            val now = System.currentTimeMillis()
+            urlCache.entries.removeAll { it.value.expireAt <= now }
+            val expireAt = now + ttlMs
             val keys = if (measured.fromPrimary && sameTier)
-                listOf(key, key.copy(preferPrimary = !key.preferPrimary)) else listOf(key)
+                listOf(key, key.copy(playback = !key.playback)) else listOf(key)
             for (target in keys) {
                 urlCache[target] = CachedUrl(measured, expireAt)
                 if (measured.song.uid != target.songUid) {
                     urlCache[target.copy(songUid = measured.song.uid)] = CachedUrl(measured.copy(switched = false), expireAt)
                 }
             }
+            return true
         }
     }
 
@@ -246,11 +253,8 @@ object SourceResolver {
         val resolved = supervisorScope {
             // 匹配任务跨音质档复用，按需启动；一个慢平台不再阻塞其它平台的有效候选。
             val resolutionAttempt = LxScriptPool.ResolutionAttempt()
-            val searchPlatforms = async(start = CoroutineStart.LAZY) {
-                LxScriptPool.audioSearchPlatforms(context, SWITCH_SOURCES)
-            }
             val matches = if (key.allowSwitch && !song.isBookChapter) {
-                SWITCH_SOURCES.filterNot { it == song.source }.associateWith { source ->
+                PlatformSource.musicIds.filterNot { it == song.source }.associateWith { source ->
                     async(start = CoroutineStart.LAZY) {
                         findMatchedSongs(song, source, PLAYBACK_MATCH_TIMEOUT_MS) { keyword ->
                             OnlineRepository.search(context, source, keyword, limit = 25,
@@ -260,102 +264,103 @@ object SourceResolver {
                     }
                 }
             } else emptyMap()
+            val otherPlatforms = matches.keys.toList()
             val alternativeSlots = Semaphore(2)
-            val lowerResults = ScriptScope.entries.associateWith { ConcurrentHashMap<String, Resolved>() }
-            val lowerReady = CompletableDeferred<Unit>()
-            val rejectedPrimary = AtomicBoolean()
+            val lowerResults = ConcurrentHashMap<String, Resolved>()
             val competingSources = async(start = CoroutineStart.LAZY) {
-                (purpose == Purpose.PLAYBACK || purpose == Purpose.REBUFFER) &&
-                    (LxScriptPool.hasMultipleScripts(context, key.allowSwitch) ||
-                        (matches.isNotEmpty() && searchPlatforms.await().any { it != song.source }))
+                LxScriptPool.hasMultipleScripts(context, key.allowSwitch) ||
+                    (otherPlatforms.isNotEmpty() && LxScriptPool.audioSearchPlatforms(context, otherPlatforms).isNotEmpty())
             }
-            val checkedUrls = ConcurrentHashMap<String, Boolean>()
-            fun usable(result: Resolved): Boolean = result.resourceId !in excludedResources && !isRejected(result.resourceId)
-            fun candidate(quality: String, scope: ScriptScope): Resolved? {
-                val origins = when (scope) {
-                    ScriptScope.ENABLED -> listOf(ScriptScope.ENABLED)
-                    ScriptScope.DISABLED -> listOf(ScriptScope.DISABLED, ScriptScope.ALL)
-                    ScriptScope.ALL -> ScriptScope.entries
+            val probes = ConcurrentHashMap<String, Deferred<PlaybackCandidateProbe?>>()
+            fun usable(result: Resolved) = result.resourceId !in excludedResources && !isRejected(result.resourceId)
+            fun candidate(quality: String) = lowerResults.values.filter {
+                usable(it) && meetsTier(quality, it, purpose)
+            }.maxWithOrNull(compareBy<Resolved> { qualityRank(it.effectiveQuality) }.thenBy { it.fromPrimary })
+
+            suspend fun accept(result: Resolved, quality: String, scope: ScriptScope): CandidateVerdict<Resolved> {
+                if (!usable(result)) return CandidateVerdict.Skipped
+                val probe = if (competingSources.await()) probes.computeIfAbsent(result.url) {
+                    async(start = CoroutineStart.LAZY) { AudioCacheStore.probePlaybackCandidate(it) }
+                }.await() else null
+                val checked = result.checkedCandidate(song, scope == ScriptScope.ENABLED, probe)
+                if (checked !is CandidateVerdict.Accepted) return checked
+                val actual = checked.value
+                if (meetsTier(quality, actual, purpose)) return checked
+                if (qualityRank(actual.effectiveQuality) >= 0) {
+                    lowerResults.compute(actual.effectiveQuality) { _, previous ->
+                        previous?.takeIf { usable(it) && (it.fromPrimary || !actual.fromPrimary) } ?: actual
+                    }
                 }
-                return origins.flatMap { lowerResults.getValue(it).values }.filter { value ->
-                    usable(value) && meetsTier(quality, value, purpose)
-                }.maxByOrNull { qualityRank(it.effectiveQuality) }
+                return if (checked.verified) CandidateVerdict.Healthy else CandidateVerdict.Skipped
             }
-            suspend fun accept(result: Resolved, quality: String, scope: ScriptScope): Resolved? {
-                if (!usable(result)) {
-                    if (scope == ScriptScope.ENABLED) rejectedPrimary.set(true)
-                    return null
-                }
-                if (competingSources.await()) {
-                    val page = checkedUrls[result.url] ?: AudioCacheStore.returnsNonAudioPage(result.url)
-                        .also { checkedUrls[result.url] = it }
-                    if (page) return null
-                }
-                val actual = result.copy(quality = observedQuality(result.resourceId) ?: result.quality,
-                    switched = result.song.uid != song.uid, fromPrimary = scope == ScriptScope.ENABLED)
-                if (meetsTier(quality, actual, purpose)) return actual
-                // 分开保存主源、同平台备用与跨平台候选；后到的同档备用不能覆盖主源。
-                if (qualityRank(actual.quality) >= 0) {
-                    lowerResults.getValue(scope).compute(actual.quality) { _, previous -> previous?.takeIf(::usable) ?: actual }
-                    lowerReady.complete(Unit)
-                }
-                return null
-            }
-            val requestTimeout = if (purpose == Purpose.DOWNLOAD || purpose == Purpose.CACHE_FILL) 8_000L else SOURCE_REQUEST_TIMEOUT_MS
-            val tierBudget = if (purpose == Purpose.DOWNLOAD || purpose == Purpose.CACHE_FILL) DOWNLOAD_TIER_BUDGET_MS else PLAYBACK_TIER_BUDGET_MS
+            val requestTimeout = if (purpose == Purpose.DOWNLOAD) 8_000L else SOURCE_REQUEST_TIMEOUT_MS
+            val tierBudget = if (purpose == Purpose.DOWNLOAD) DOWNLOAD_TIER_BUDGET_MS else PLAYBACK_TIER_BUDGET_MS
+            val allowMasterAlias = key.preferredQuality != MASTER_QUALITY
             suspend fun scripts(candidate: OnlineSong, scope: ScriptScope, quality: String): Resolved? =
                 resolveOnScripts(
                     context, candidate, quality, scope, requestTimeout, tierBudget, resolutionAttempt,
-                    allowMasterAlias = key.preferredQuality != MASTER_QUALITY,
-                ) { accept(it, quality, scope) != null }
-                    ?.let { it.copy(switched = it.song.uid != song.uid, fromPrimary = scope == ScriptScope.ENABLED) }
-            suspend fun samePlatform(scope: ScriptScope, quality: String): Resolved? =
-                if (scope == ScriptScope.ALL) preferFirst(BACKUP_START_DELAY_MS,
+                    allowMasterAlias = allowMasterAlias,
+                ) { accept(it, quality, scope) }
+            suspend fun samePlatform(quality: String, deadlineNanos: Long): Resolved? {
+                if (!key.allowSwitch) return scripts(song, ScriptScope.ENABLED, quality)
+                val preferBackup = LxScriptPool.shouldPreferBackup(context, song.source) {
+                    selectQuality(quality, it.qualitys, allowMasterAlias) != null
+                }
+                if (preferBackup) {
+                    // 健康备用先试；在本档结束前留出一次原主源恢复的机会。
+                    val remainingMs = ((deadlineNanos - System.nanoTime()) / 1_000_000L).coerceAtLeast(0L)
+                    val reserveMs = minOf(ALTERNATIVE_START_DELAY_MS, remainingMs / 2)
+                    return preferFirst(remainingMs - reserveMs,
+                        primary = { scripts(song, ScriptScope.DISABLED, quality) },
+                        fallback = { scripts(song, ScriptScope.ENABLED, quality) })
+                }
+                return preferFirst(BACKUP_START_DELAY_MS,
                     primary = { scripts(song, ScriptScope.ENABLED, quality) },
                     fallback = { scripts(song, ScriptScope.DISABLED, quality) })
-                else scripts(song, scope, quality)
-            suspend fun chain(scope: ScriptScope): Resolved = resolveTiers(key.preferredQuality, purpose,
-                // 已失败的资源应尝试同档备用，不把故障当作“不支持此音质”继续向下探测。
+            }
+            suspend fun chain(): Resolved = resolveTiers(key.preferredQuality, purpose,
                 playbackDeadlineNanos = startedAt + PLAYBACK_TOTAL_BUDGET_MS * 1_000_000L,
-                stopAfterFailure = { scope == ScriptScope.ENABLED && purpose == Purpose.PLAYBACK && key.allowSwitch && rejectedPrimary.get() },
-            ) { quality ->
-                candidate(quality, scope) ?: if (scope == ScriptScope.ENABLED || matches.isEmpty()) {
-                    samePlatform(scope, quality)
-                } else preferFirst(
-                    // 播放只在首档给原平台备用源留独占时间，降档时直接与跨平台源竞速。
-                    delayMs = if (purpose == Purpose.PLAYBACK && quality != key.preferredQuality) 0L else ALTERNATIVE_START_DELAY_MS,
-                    primary = { samePlatform(scope, quality) },
-                    fallback = {
-                        val platforms = if (quality == MASTER_QUALITY) {
-                            LxScriptPool.audioSearchPlatforms(context, matches.keys.toList()) {
-                                selectQuality(MASTER_QUALITY, it.qualitys) != null
+            ) { quality, deadlineNanos ->
+                candidate(quality)?.let { return@resolveTiers it }
+                if (matches.isEmpty()) return@resolveTiers samePlatform(quality, deadlineNanos)
+                val firstPlaybackTier = purpose == Purpose.PLAYBACK && quality == key.preferredQuality
+                val tierStart = System.nanoTime()
+                preferFirst(
+                    delayMs = when {
+                        firstPlaybackTier -> BACKUP_START_DELAY_MS
+                        purpose == Purpose.PLAYBACK -> 0L
+                        else -> ALTERNATIVE_START_DELAY_MS
+                    },
+                    primary = { samePlatform(quality, deadlineNanos) },
+                    fallback = { awaitOriginal ->
+                        val platforms = LxScriptPool.audioSearchPlatforms(context, otherPlatforms) {
+                            quality != MASTER_QUALITY || selectQuality(MASTER_QUALITY, it.qualitys) != null
+                        }
+                        val useCachedMatches = firstPlaybackTier && song.canMatchAlternatives()
+                        firstSuccessful(platforms) { platform ->
+                            val cached = if (useCachedMatches) OnlineCache.get<List<OnlineSong>>(
+                                matchingCacheKey(song, platform, generation = generation), ALT_TTL_MS,
+                            ) else null
+                            // 已匹配的歌曲可直接解析。新目录请求等原平台失败或首档满 1.2 秒。
+                            if (firstPlaybackTier && cached == null) {
+                                val remainingMs = ALTERNATIVE_START_DELAY_MS - (System.nanoTime() - tierStart) / 1_000_000L
+                                if (withTimeoutOrNull(remainingMs) { awaitOriginal() } == true) return@firstSuccessful null
                             }
-                        } else searchPlatforms.await()
-                        firstSuccessful(platforms.mapNotNull(matches::get)) { match ->
-                            match.await().take(3).firstNotNullOfOrNull { matched ->
+                            (cached ?: matches.getValue(platform).await()).take(3).firstNotNullOfOrNull { matched ->
                                 alternativeSlots.withPermit { scripts(matched, ScriptScope.ALL, quality) }
                             }
                         }
                     })
             }
-            fun playableFallback() = candidate("128k", ScriptScope.ENABLED) ?: candidate("128k", ScriptScope.DISABLED)
-            val activeScope = if (key.allowSwitch) ScriptScope.ALL else ScriptScope.ENABLED
             try {
                 if (purpose == Purpose.PLAYBACK) {
-                    withTimeoutOrNull(PLAYBACK_TOTAL_BUDGET_MS) {
-                        // 母带偏好在同档主源和备源间完成尝试，再开始降档。
-                        if (key.preferredQuality == MASTER_QUALITY) attempt { chain(activeScope) }
-                        else preferFirst(BACKUP_START_DELAY_MS,
-                            primary = { chain(ScriptScope.ENABLED) },
-                            fallback = { if (key.allowSwitch) chain(ScriptScope.DISABLED) else null },
-                            available = ::playableFallback,
-                            availableSignal = lowerReady)
-                    } ?: playableFallback() ?: error("各档播放音质均不可用，请检查网络或音源")
-                } else chain(activeScope)
+                    withTimeoutOrNull(PLAYBACK_TOTAL_BUDGET_MS) { attempt { chain() } }
+                        ?: candidate("128k") ?: error("各档播放音质均不可用，请检查网络或音源")
+                } else chain()
             } finally {
+                probes.values.forEach { it.cancel() }
                 competingSources.cancel()
                 matches.values.forEach { it.cancel() }
-                searchPlatforms.cancel()
             }
         }
         // 恢复候选只有仍卡顿且用户仍想播放时才接管；不能提前污染正常解析缓存。
@@ -368,10 +373,9 @@ object SourceResolver {
     internal suspend fun resolveTiers(
         preferredQuality: String,
         purpose: Purpose,
-        tierBudgetMs: Long = if (purpose == Purpose.DOWNLOAD || purpose == Purpose.CACHE_FILL) DOWNLOAD_TIER_BUDGET_MS else PLAYBACK_TIER_BUDGET_MS,
+        tierBudgetMs: Long = if (purpose == Purpose.DOWNLOAD) DOWNLOAD_TIER_BUDGET_MS else PLAYBACK_TIER_BUDGET_MS,
         playbackDeadlineNanos: Long = System.nanoTime() + PLAYBACK_TOTAL_BUDGET_MS * 1_000_000L,
-        stopAfterFailure: () -> Boolean = { false },
-        resolve: suspend (String) -> Resolved?,
+        resolve: suspend (quality: String, tierDeadlineNanos: Long) -> Resolved?,
     ): Resolved {
         val qualities = if (purpose == Purpose.REBUFFER) listOf(normalizedQuality(preferredQuality))
             else qualityAttempts(preferredQuality)
@@ -385,9 +389,9 @@ object SourceResolver {
                 val weightsLeft = tiersLeft + 1 + (if (index == 0 && tiersLeft > 1) 1 else 0)
                 minOf(tierBudgetMs, remaining * weight / weightsLeft)
             } else if (index == 0) tierBudgetMs else minOf(tierBudgetMs, 12_000L)
-            attempt { withTimeoutOrNull(budget) { resolve(quality) } }
+            val tierDeadlineNanos = System.nanoTime() + budget * 1_000_000L
+            attempt { withTimeoutOrNull(budget) { resolve(quality, tierDeadlineNanos) } }
                 ?.takeIf { meetsTier(quality, it, purpose) }?.let { return it }
-            if (stopAfterFailure()) break
         }
         if (purpose == Purpose.REBUFFER) throw IllegalStateException("同音质备用资源不可用")
         val action = if (purpose == Purpose.DOWNLOAD) "下载" else "播放"
@@ -416,23 +420,33 @@ object SourceResolver {
         budgetMs: Long,
         resolutionAttempt: LxScriptPool.ResolutionAttempt,
         allowMasterAlias: Boolean,
-        accept: suspend (Resolved) -> Boolean,
-    ): Resolved? {
-        val winner = LxScriptPool.race(context, song.source, scope, budgetMs, resolutionAttempt,
+        accept: suspend (Resolved) -> CandidateVerdict<Resolved>,
+    ): Resolved? =
+        LxScriptPool.race(context, song.source, scope, budgetMs, resolutionAttempt,
             request = { script, support ->
                 selectQuality(quality, support.qualitys, allowMasterAlias)?.let { parameter ->
                     LxScriptPool.ScriptRequest(parameter, script.id, song.source, "musicUrl",
                         JSONObject().put("type", parameter).put("musicInfo", song.raw), timeoutMs)
                 }
             },
-            accept = { result -> scriptResolution(song, result)?.let { accept(it) } == true }) ?: return null
-        return scriptResolution(song, winner)?.let { result ->
-            observedQuality(result.resourceId)?.let { result.copy(quality = it) } ?: result
+            accept = { result -> scriptResolution(song, result)?.let { accept(it) } ?: CandidateVerdict.Skipped })
+
+    internal fun Resolved.checkedCandidate(
+        requested: OnlineSong, primary: Boolean, probe: PlaybackCandidateProbe?,
+    ): CandidateVerdict<Resolved> {
+        if (probe?.nonAudio == true) return CandidateVerdict.Invalid
+        if (!requested.isBookChapter && isPreviewDuration(requested.intervalSeconds, probe?.durationMs ?: 0L)) {
+            return CandidateVerdict.Skipped
         }
+        val measured = observedQuality(resourceId) ?: probe?.spec?.verifiedStreamQuality(effectiveQuality)
+        val verified = probe?.spec != null
+        val actual = copy(quality = measured ?: quality, switched = song.uid != requested.uid, fromPrimary = primary,
+            playbackConfirmation = if (verified) null else playbackConfirmation)
+        return CandidateVerdict.Accepted(actual, verified)
     }
 
     internal fun scriptResolution(song: OnlineSong, winner: LxScriptPool.ScriptResult): Resolved? {
-        val url = extractUrl(winner.data) ?: return null
+        val url = winner.url ?: return null
         val payload = winner.data as? JSONObject
         val actualSource = payload?.optString("source")?.takeIf(String::isNotBlank) ?: song.source
         val actualSong = payload?.optJSONObject("musicInfo")?.let { raw ->
@@ -447,7 +461,7 @@ object SourceResolver {
         val identity = stableId?.let { "${actualSong.uid}|$quality|$it" } ?: url
         return Resolved(
             url, quality, actualSong, actualSong.uid != song.uid, scriptResourceId(winner.scriptId, identity),
-            sourceQuality = sourceQuality,
+            sourceQuality = sourceQuality, playbackConfirmation = winner.playbackConfirmation,
         )
     }
 
@@ -455,8 +469,7 @@ object SourceResolver {
 
     /** 脚本不提供稳定文件ID时保守按URL隔离；无法证明同一文件就不跨新链接拼接旧分片。 */
     internal fun scriptResourceId(scriptId: String, url: String): String =
-        "lx:$scriptId:" + MessageDigest.getInstance("SHA-256").digest(url.toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it) }
+        "lx:$scriptId:${url.sha256Hex()}"
 
     internal fun extractUrl(data: Any?): String? = when (data) {
         is String -> urlFromText(data)
@@ -543,29 +556,20 @@ object SourceResolver {
     internal suspend fun <T : Any> preferFirst(
         delayMs: Long,
         primary: suspend () -> T?,
-        fallback: suspend () -> T?,
-        available: () -> T? = { null },
-        availableSignal: Deferred<Unit>? = null,
+        fallback: suspend (awaitPrimary: suspend () -> Boolean) -> T?,
     ): T? = supervisorScope {
         val first = async(start = if (delayMs > 0) CoroutineStart.DEFAULT else CoroutineStart.UNDISPATCHED) {
             attempt { primary() }
         }
+        val alternative: suspend () -> T? = { fallback { first.await() != null } }
         try {
             val preferred = if (first.isCompleted) first.await() else withTimeoutOrNull(delayMs) { first.await() }
             if (preferred != null) return@supervisorScope preferred
-            available()?.let { return@supervisorScope it }
-            val race = async {
-                if (first.isCompleted) first.await() ?: attempt { fallback() }
-                else firstSuccessful(listOf<suspend () -> T?>({ first.await() }, fallback)) { it() }
+            if (first.isCompleted) first.await() ?: attempt(alternative)
+            else {
+                val winner = firstSuccessful(listOf<suspend () -> T?>({ first.await() }, alternative)) { it() }
+                (if (first.isCompleted) first.await() else null) ?: winner
             }
-            try {
-                val winner = if (availableSignal == null) race.await() else select {
-                    race.onAwait { it }
-                    availableSignal.onAwait { available() ?: race.await() }
-                }
-                if (first.isCompleted) first.await()?.let { return@supervisorScope it }
-                winner ?: available()
-            } finally { race.cancel() }
         } finally { first.cancel() }
     }
 
@@ -593,7 +597,7 @@ object SourceResolver {
     suspend fun findAlternatives(context: Context, song: OnlineSong, background: Boolean = false, force: Boolean = false): List<OnlineSong> {
         if (song.isBookChapter) return emptyList()
         return parallelMapWithinBudget(
-            inputs = SWITCH_SOURCES.filterNot { it == song.source },
+            inputs = PlatformSource.musicIds.filterNot { it == song.source },
             budgetMs = ALT_SEARCH_TOTAL_BUDGET_MS,
         ) { source ->
             findMatchedSongs(song, source, ALT_SEARCH_REQUEST_TIMEOUT_MS, force = force) { keyword ->
@@ -616,9 +620,7 @@ object SourceResolver {
         force: Boolean = false,
         search: suspend (String) -> List<OnlineSong>,
     ): List<OnlineSong> {
-        if (song.isBookChapter || song.source.isBlank() || song.songmid.isBlank() ||
-            filterStr(song.name).isBlank() || (requireArtist && artistNames(song.singer).isEmpty())
-        ) return emptyList()
+        if (!song.canMatchAlternatives(requireArtist)) return emptyList()
         val generation = inFlight.currentGeneration()
         val key = matchingCacheKey(song, targetSource, cacheNamespace, generation)
         val result = try {
@@ -643,6 +645,10 @@ object SourceResolver {
         }
         return result.takeIf { generation == inFlight.currentGeneration() }.orEmpty()
     }
+
+    private fun OnlineSong.canMatchAlternatives(requireArtist: Boolean = true): Boolean =
+        !isBookChapter && source.isNotBlank() && songmid.isNotBlank() &&
+            filterStr(name).isNotBlank() && (!requireArtist || artistNames(singer).isNotEmpty())
 
     internal fun matchingCacheKey(
         song: OnlineSong,
@@ -759,26 +765,29 @@ object SourceResolver {
      * 当前平台无词时按同曲匹配换平台再取内置歌词。
      */
     suspend fun lyric(context: Context, song: OnlineSong, background: Boolean = false, preferWordTimings: Boolean = false, force: Boolean = false): OnlineLyric? {
-        val base = localAsOnline(context, song, background, force) ?: return null
-        var fallback = attempt { OnlineRepository.lyric(context, base.source, base, background) }?.takeIf { it.hasLyrics }
-        if (fallback != null && (!preferWordTimings || fallback.lxlyric.isNotBlank())) return fallback
-        // 本地补词复用现有同曲/版本匹配和最多三个候选；没有逐字时仍保留首个普通结果。
-        for (candidate in findAlternatives(context, base, background, force).take(3)) {
-            if (candidate.source == base.source) continue
-            val result = attempt { OnlineRepository.lyric(context, candidate.source, candidate, background) }
-                ?.takeIf { it.hasLyrics } ?: continue
-            if (!preferWordTimings || result.lxlyric.isNotBlank()) return result
-            if (fallback == null) fallback = result
+        return try {
+            val base = localAsOnline(context, song, background, force) ?: return null
+            suspend fun fetch(target: OnlineSong): OnlineLyric? = attempt {
+                // 仅缓存该平台成功完成的查询。网络失败或其它平台的失败不会封锁整首歌。
+                OnlineCache.refresh("${LYRIC_LOOKUP_PREFIX}${target.uid}", 30 * 60_000L, force = force, cancelWhenUnobserved = true) {
+                    OnlineRepository.lyric(context, target.source, target, background)
+                }
+            }?.takeIf { it.hasLyrics }
+            var fallback = fetch(base)
+            if (fallback != null && (!preferWordTimings || fallback.lxlyric.isNotBlank())) return fallback
+            // 本地补词复用现有同曲/版本匹配和最多三个候选；没有逐字时仍保留首个普通结果。
+            for (candidate in findAlternatives(context, base, background, force).take(3)) {
+                if (candidate.source == base.source) continue
+                val result = fetch(candidate) ?: continue
+                if (!preferWordTimings || result.lxlyric.isNotBlank()) return result
+                if (fallback == null) fallback = result
+            }
+            fallback
+        } catch (_: FlightFencedException) {
+            // 清理歌词缓存只终止本轮查询，等待可选歌词的仍在运行的任务可以继续。
+            currentCoroutineContext().ensureActive()
+            null
         }
-        return fallback
-    }
-
-    suspend fun pic(context: Context, song: OnlineSong): String? {
-        val base = localAsOnline(context, song) ?: return null
-        base.img?.let { return it }
-        // 封面同样由内置模块提供，脚本仅兜底
-        OnlineRepository.pic(context, base.source, base)?.let { return it }
-        return picFromScripts(context, base)
     }
 
     /** 列表封面快速通道：内置目录模块优先（HTTP 直取），脚本兜底。 */
@@ -789,7 +798,7 @@ object SourceResolver {
         return picFromScripts(context, base, 8_000)
     }
 
-    private suspend fun picFromScripts(context: Context, song: OnlineSong, timeoutMs: Long = 12_000): String? =
+    private suspend fun picFromScripts(context: Context, song: OnlineSong, timeoutMs: Long): String? =
         attempt {
             val scripts = LxScriptPool.scriptsFor(context, song.source, "pic", ScriptScope.ENABLED)
             for ((script, _) in scripts) {
@@ -840,7 +849,7 @@ internal class SingleFlight<K : Any, V : Any>(
             requests.keys.removeAll(predicate)
             active.filterValues(predicate).keys.toList().also { tasks -> tasks.forEach(active::remove) }
         }
-        retired.forEach { it.cancel() }
+        retired.forEach { it.cancel(FlightFencedException()) }
     }
 
     /**
@@ -894,7 +903,7 @@ internal class SingleFlight<K : Any, V : Any>(
 
 }
 
-private class FlightFencedException : CancellationException("single-flight fenced")
+internal class FlightFencedException : CancellationException("single-flight fenced")
 
 internal suspend fun <I, O : Any> parallelMapWithinBudget(
     inputs: List<I>,

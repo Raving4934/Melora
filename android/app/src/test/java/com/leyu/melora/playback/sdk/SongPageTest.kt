@@ -77,6 +77,20 @@ class SongPageTest {
         assertEquals(first.list, stopped.list)
     }
 
+    @Test fun cachedPageCanBranchWithoutSharingNewRowsOrDedupState() {
+        val cached = page(1, 1..30, all = 6).append(page(2, 21..50, all = 6), 2)
+        val firstBranch = cached.append(page(3, 41..70, all = 6), 3)
+        val secondBranch = cached.append(page(3, 61..90, all = 6), 3)
+        val continued = secondBranch.append(page(4, 51..70, all = 6), 4)
+
+        fun SongPage.ids() = list.map { it.songmid.toInt() }
+        assertEquals((1..50).toList(), cached.ids())
+        assertEquals((1..70).toList(), firstBranch.ids())
+        assertEquals((1..50).toList() + (61..90).toList(), secondBranch.ids())
+        assertEquals(secondBranch.ids() + (51..60).toList(), continued.ids())
+        assertSame(cached.list, cached.copy(playlistCover = "cover").list)
+    }
+
     @Test fun firstFilteredPagesAreReadBeforeTheEmptyViewCanTerminatePaging() = runBlocking {
         val calls = mutableListOf<Int>()
         val first = page(1, IntRange.EMPTY, total = 9, all = 3, raw = 3, size = 3)

@@ -2,6 +2,7 @@ package com.leyu.melora.playback.sdk
 
 import android.content.Context
 import android.util.Log
+import com.leyu.melora.playback.PlatformSource
 import com.leyu.melora.playback.SourceAlias
 import com.leyu.melora.playback.lx.LxScriptEngine
 import kotlinx.coroutines.CancellationException
@@ -31,7 +32,15 @@ import java.util.concurrent.Executors
  */
 object MusicSdkEngine {
     private const val POOL_SIZE = 3
+    private const val LOAD_RETRY_DELAY_NANOS = 2_000_000_000L
     private const val TAG = "MusicSdkEngine"
+
+    private class LoadFailure(cause: Throwable) :
+        IllegalStateException("目录引擎加载失败：${cause.message}", cause) {
+        private val retryAtNanos = System.nanoTime() + LOAD_RETRY_DELAY_NANOS
+
+        fun isCooling(nowNanos: Long): Boolean = retryAtNanos - nowNanos > 0
+    }
 
     private class Task(
         val action: String,
@@ -50,7 +59,7 @@ object MusicSdkEngine {
         val low = Channel<Task>(Channel.UNLIMITED)
 
         @Volatile var engine: LxScriptEngine? = null
-        @Volatile var loadFailure: Throwable? = null
+        @Volatile var loadFailure: LoadFailure? = null
         @Volatile var worker: Job? = null
     }
 
@@ -92,20 +101,38 @@ object MusicSdkEngine {
         } else {
             ensureStarted(context)
         }
-        val slot = slots[loadBalancer.reserve()]
-        val task = Task(action, source, JSONObject(params.toString()), timeoutMs)
-        try {
-            (if (background) slot.low else slot.high).send(task)
-        } catch (error: Throwable) {
-            loadBalancer.release(slot.index)
-            throw error
-        }
-        return try {
-            withTimeoutOrNull(timeoutMs + 10_000) { task.result.await() }
-                ?: throw IllegalStateException("目录请求超时")
-        } finally {
-            if (!task.result.isCompleted) task.result.cancel()
-        }
+        val snapshot = JSONObject(params.toString())
+        return withTimeoutOrNull(timeoutMs + 10_000) {
+            val attempted = BooleanArray(slots.size)
+            var lastFailure: LoadFailure? = null
+            repeat(slots.size) {
+                val now = System.nanoTime()
+                val index = loadBalancer.reserve { index ->
+                    !attempted[index] && slots[index].loadFailure?.isCooling(now) != true
+                }
+                if (index < 0) {
+                    throw (lastFailure ?: slots.firstNotNullOfOrNull { it.loadFailure }
+                        ?: IllegalStateException("目录引擎暂不可用，请稍后重试"))
+                }
+                attempted[index] = true
+                val slot = slots[index]
+                val task = Task(action, source, snapshot, timeoutMs)
+                // 成功入队后只由 worker 归还计数，调用方取消时只取消结果。
+                if (!(if (background) slot.low else slot.high).trySend(task).isSuccess) {
+                    loadBalancer.release(index)
+                    error("目录队列已关闭")
+                }
+                try {
+                    return@withTimeoutOrNull task.result.await()
+                } catch (failure: LoadFailure) {
+                    // 只有加载失败能换槽，业务请求已经发出时交给上层决定是否重试。
+                    lastFailure = failure
+                } finally {
+                    if (!task.result.isCompleted) task.result.cancel()
+                }
+            }
+            throw checkNotNull(lastFailure)
+        } ?: throw IllegalStateException("目录请求超时")
     }
 
     private suspend fun ensureStarted(context: Context) = startMutex.withLock {
@@ -150,15 +177,21 @@ object MusicSdkEngine {
 
     private fun ensureEngine(context: Context, slot: Slot): LxScriptEngine {
         slot.engine?.let { return it }
-        slot.loadFailure?.let { throw IllegalStateException("目录引擎加载失败：${it.message}", it) }
-        val created = LxScriptEngine(context)
+        slot.loadFailure?.takeIf { it.isCooling(System.nanoTime()) }?.let { throw it }
+        var created: LxScriptEngine? = null
         return try {
-            created.load(sdkCode.orEmpty(), "music-sdk.js")
-            created.also { slot.engine = it }
+            val engine = LxScriptEngine(context)
+            created = engine
+            engine.load(checkNotNull(sdkCode), "music-sdk.js")
+            slot.engine = engine
+            slot.loadFailure = null
+            engine
         } catch (error: Throwable) {
-            created.close()
-            slot.loadFailure = error
-            throw IllegalStateException("目录引擎加载失败：${error.message}", error)
+            created?.close()
+            if (error is CancellationException) throw error
+            val failure = LoadFailure(error)
+            slot.loadFailure = failure
+            throw failure
         }
     }
 }
@@ -177,8 +210,14 @@ internal class SlotLoadBalancer(size: Int) {
     private val pending = IntArray(size.also { require(it > 0) { "size must be positive" } })
 
     @Synchronized
-    fun reserve(): Int {
-        val index = pending.indices.minBy { pending[it] }
+    fun reserve(isAvailable: (Int) -> Boolean = { true }): Int {
+        var index = -1
+        for (candidate in pending.indices) {
+            if (isAvailable(candidate) && (index < 0 || pending[candidate] < pending[index])) {
+                index = candidate
+            }
+        }
+        if (index < 0) return index
         pending[index]++
         return index
     }
@@ -193,14 +232,6 @@ internal class SlotLoadBalancer(size: Int) {
     @Synchronized
     fun snapshot(): List<Int> = pending.toList()
 }
-
-private val sdkSourceNames = mapOf(
-    "kg" to "酷狗",
-    "mg" to "咪咕",
-    "kw" to "酷我",
-    "tx" to "QQ音乐",
-    "wy" to "网易云",
-)
 
 private val sdkActionNames = mapOf(
     "search" to "搜索",
@@ -226,7 +257,7 @@ internal fun userFacingMusicSdkError(action: String, source: String, error: Thro
     if (!isRetryExhausted) {
         return raw.ifEmpty { "在线内容请求失败，请稍后重试" }
     }
-    val sourceName = SourceAlias.display(source, sdkSourceNames[source].orEmpty())
+    val sourceName = SourceAlias.display(source, PlatformSource.musicPlatform(source)?.sdkLabel.orEmpty())
     val actionName = sdkActionNames[action] ?: "在线内容"
     return "${sourceName}${actionName}暂时无法加载，请稍后重试"
 }
