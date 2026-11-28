@@ -1373,9 +1373,15 @@ object PlaybackController {
         player.prepareAndPlay()
     }
 
-    fun seekTo(positionMs: Long) {
+    fun seekTo(positionMs: Long, play: Boolean = false) {
         interruptRecovery()
-        controller?.seekTo(positionMs)
+        val player = controller ?: return
+        player.seekTo(positionMs)
+        // 播放出错后仍可能保留播放意图，但处于 IDLE 时仅定位不会重新准备。
+        if (play && (player.playbackState == Player.STATE_IDLE || !player.playWhenReady)) {
+            if (player.playerError != null) { errorRecovery.reset(); consecutiveErrors = 0 }
+            player.prepareAndPlay()
+        }
     }
 
     fun jumpTo(index: Int) {

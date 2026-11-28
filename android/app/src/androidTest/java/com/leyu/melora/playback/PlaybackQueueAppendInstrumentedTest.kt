@@ -895,6 +895,25 @@ class PlaybackQueueAppendInstrumentedTest {
         }
     }
 
+    @Test fun seekAndPlayPreparesAnIdleItemWithPlayIntent() = withPlayer { player, controller ->
+        main { controller.play() }
+        await { player.isPlaying && controller.playWhenReady }
+        main { player.stop() }
+        await { player.playbackState == Player.STATE_IDLE && controller.playbackState == Player.STATE_IDLE }
+        main {
+            assertTrue("停止准备后仍保留播放意图", player.playWhenReady && controller.playWhenReady)
+            PlaybackController.seekTo(21_000L)
+        }
+        await { player.currentPosition == 21_000L && controller.currentPosition == 21_000L }
+        main {
+            assertEquals("普通定位仍留在 IDLE", Player.STATE_IDLE, player.playbackState)
+            PlaybackController.seekTo(34_000L, play = true)
+        }
+        await(onTimeout = { "跳播没有重新准备并播放：${describePlayback(player)}" }) {
+            player.isPlaying && controller.isPlaying && player.currentPosition in 34_000L..36_000L
+        }
+    }
+
     @Test fun serviceExitPersistsQueueIndexAndPositionWithoutUiControllerAndIsIdempotent() =
         withPlayer(listen = true) { player, controller ->
             main { PlaybackController.addToQueue(testContext, listOf(track("c"))) }
