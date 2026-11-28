@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 
 
 def transport_id(devices: str, serial: str) -> str | None:
-    match = re.search(rf"(?m)^{re.escape(serial)}\s+device[^\n]*\btransport_id:(\d+)\b", devices)
+    match = re.search(rf"(?m)^{re.escape(serial)}[ \t]+device[ \t]+[^\n]*\btransport_id:(\d+)\b", devices)
     return match[1] if match else None
 
 
@@ -25,13 +25,22 @@ def was_interrupted(log: str, reports: Path, serial: str) -> bool:
     incomplete = 0
     interrupted_cases = 0
     for path in reports.rglob("TEST-*.xml"):
-        for case in ET.parse(path).iter("testcase"):
-            for issue in case:
-                if issue.tag == "error":
-                    return False
-                if issue.tag != "failure":
-                    continue
+        root = ET.parse(path).getroot()
+        failures = root.findall(".//testcase/failure")
+        if root.findall(".//failure") != failures or root.find(".//error") is not None:
+            return False
+        for suite in root.iter():
+            if suite.tag not in ("testsuites", "testsuite"):
+                continue
+            if int(suite.get("errors", "0")):
+                return False
+            if "failures" in suite.attrib and int(suite.attrib["failures"]) != len(suite.findall(".//failure")):
+                return False
+        for case in root.iter("testcase"):
+            for issue in case.findall("failure"):
                 message = (issue.text or "").strip() or issue.get("message", "")
+                if issue.get("message", message) != message:
+                    return False
                 if (case.get("classname"), case.get("name")) == ("android-test", "testRunFailed"):
                     match = re.fullmatch(r"Test run failed to complete\. Expected (\d+) tests, received (\d+)", message)
                     if not match or int(match[2]) >= int(match[1]):
@@ -80,7 +89,7 @@ def recover(log: Path, prior_devices: Path, reports: Path, serial: str) -> bool:
 if __name__ == "__main__":
     try:
         restored = recover(*(Path(arg) for arg in sys.argv[1:]), serial=os.environ["ANDROID_SERIAL"])
-    except (OSError, ET.ParseError, RuntimeError, subprocess.SubprocessError) as error:
+    except (OSError, ValueError, ET.ParseError, RuntimeError, subprocess.SubprocessError) as error:
         print(f"ADB transport recovery failed: {error}", file=sys.stderr)
         raise SystemExit(1) from error
     raise SystemExit(0 if restored else 1)
