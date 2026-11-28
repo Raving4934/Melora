@@ -13,6 +13,9 @@ import sys
 import time
 
 
+EMULATOR_WIFI_SSID = "AndroidWifi"
+
+
 def host_dns(paths: tuple[Path, ...]) -> str:
     # Ubuntu 的 /etc/resolv.conf 常指向 127.0.0.53 stub。直接给两个虚拟网络
     # 后端同一组真实上游，避免 Wi-Fi/netsim 与蜂窝/slirp 各自推断 DNS。
@@ -78,6 +81,7 @@ class WifiNetwork:
     interface: str
     ipv4: ipaddress.IPv4Interface
     gateway: ipaddress.IPv4Address
+    emulator_access_point: bool
 
 
 def unvalidated_wifi(snapshot: str) -> WifiNetwork | None:
@@ -112,7 +116,11 @@ def unvalidated_wifi(snapshot: str) -> WifiNetwork | None:
             return None
     except ValueError:
         return None
-    return WifiNetwork(int(netid[1]), interface[1], ipv4[0], gateway)
+    # Android 的 Security type 0 表示开放网络，仅对模拟器内置的开放热点显式重连。
+    emulator_access_point = bool(re.search(
+        rf'TransportInfo: <SSID: "{EMULATOR_WIFI_SSID}", .*?Security type: 0,', line,
+    ))
+    return WifiNetwork(int(netid[1]), interface[1], ipv4[0], gateway, emulator_access_point)
 
 
 def missing_ipv4_routes(wifi: WifiNetwork, addresses: str, routes: str, rules: str) -> str | None:
@@ -190,6 +198,9 @@ def prepare_network(serial: str, log_dir: Path, *, timeout: float = 240) -> None
         (log_dir / name).write_text(value + "\n")
         return value
 
+    def wifi_state(wifi: str, state: str) -> bool:
+        return bool(re.search(rf"(?m)^Wi-Fi is {state}\s*$", wifi))
+
     def await_state(check, label: str) -> None:
         while time.monotonic() < deadline:
             if check():
@@ -214,7 +225,7 @@ def prepare_network(serial: str, log_dir: Path, *, timeout: float = 240) -> None
         wifi = read("wifi-before-tests.log", "dumpsys", "wifi")
         network = read("connectivity-before-tests.log", "dumpsys", "connectivity")
         # svc返回0不能证明启用成功，更不能用历史Wi-Fi能力或当前蜂窝网络放行。
-        enabled = bool(re.search(r"(?m)^Wi-Fi is enabled\s*$", wifi))
+        enabled = wifi_state(wifi, "enabled")
         if enabled and ready_network(network):
             return True
         if not requested_enable:
@@ -238,7 +249,7 @@ def prepare_network(serial: str, log_dir: Path, *, timeout: float = 240) -> None
         # 采样期间可能已验证或换网，操作前再确认身份，避免打断刚恢复的正常连接。
         wifi = read("wifi-before-tests.log", "dumpsys", "wifi")
         network = read("connectivity-before-tests.log", "dumpsys", "connectivity")
-        if re.search(r"(?m)^Wi-Fi is enabled\s*$", wifi) and ready_network(network):
+        if wifi_state(wifi, "enabled") and ready_network(network):
             return True
         if unvalidated_wifi(network) != current:
             candidate = None
@@ -253,11 +264,19 @@ def prepare_network(serial: str, log_dir: Path, *, timeout: float = 240) -> None
         def disconnected() -> bool:
             wifi = read("wifi-before-tests.log", "dumpsys", "wifi")
             network = read("connectivity-before-tests.log", "dumpsys", "connectivity")
-            return (bool(re.search(r"(?m)^Wi-Fi is disabled\s*$", wifi)) and
+            return (wifi_state(wifi, "disabled") and
                     not any(f"network{{{current.netid}}}" in line for line in current_networks(network)))
 
         await_state(disconnected, "Verified Wi-Fi disabled and old network released")
         command("svc", "wifi", "enable")
+        if current.emulator_access_point:
+            # 缺路由时系统曾把 AndroidWifi 标记为永久无互联网，重新开 Wi-Fi 不会自动选中它。
+            await_state(
+                lambda: wifi_state(read("wifi-before-tests.log", "dumpsys", "wifi"), "enabled"),
+                "Verified Wi-Fi enabled after reset",
+            )
+            if not ready_network(read("connectivity-before-tests.log", "dumpsys", "connectivity")):
+                read("wifi-route-recovery-connect.log", "cmd", "wifi", "connect-network", EMULATOR_WIFI_SSID, "open")
         candidate = None
         return False
 

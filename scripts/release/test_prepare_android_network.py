@@ -23,6 +23,7 @@ ROUTES = ("ip", "-4", "route", "show", "table", "all")
 RULES = ("ip", "-4", "rule", "show")
 DISABLE = ("svc", "wifi", "disable")
 ENABLE = ("svc", "wifi", "enable")
+CONNECT = ("cmd", "wifi", "connect-network", "AndroidWifi", "open")
 NO_NETWORK = "Active default network: none\nCurrent Networks:\n"
 KERNEL_ADDR = ("16: wlan0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500\n"
                "    inet 10.0.2.16/24 brd 10.0.2.255 scope global wlan0\n")
@@ -42,14 +43,14 @@ def connected(capabilities="INTERNET&NOT_METERED&VALIDATED", transport="WIFI"):
             + capabilities + " ]}}\n")
 
 
-def associated_wifi(*, netid=100, active=101, validated=False, address="10.0.2.16/24"):
+def associated_wifi(*, netid=100, active=101, validated=False, address="10.0.2.16/24", transport_info=""):
     caps = "INTERNET&NOT_METERED" + ("&VALIDATED" if validated else "")
     return (f"Active default network: {active}\nCurrent Networks:\n"
             f"  NetworkAgentInfo{{network{{{netid}}} ni{{WIFI CONNECTED extra: }} "
             f"lp{{{{InterfaceName: wlan0 LinkAddresses: [ {address} ] "
             "Routes: [ 10.0.2.0/24 -> 0.0.0.0 wlan0 mtu 0,"
             "0.0.0.0/0 -> 10.0.2.2 wlan0 mtu 0 ]}} "
-            f"nc{{[ Transports: WIFI Capabilities: {caps} ]}}}}\n")
+            f"nc{{[ Transports: WIFI Capabilities: {caps} {transport_info}]}}}}\n")
 
 
 class WifiRouteEvidenceTest(unittest.TestCase):
@@ -257,6 +258,50 @@ class NetworkPreparationTest(unittest.TestCase):
         for name in ("wifi", "connectivity", "addr", "routes", "rules"):
             self.assertTrue((self.logs / f"wifi-route-recovery-{name}.log").is_file())
         self.assertIn("VALIDATED", (self.logs / "connectivity-before-tests.log").read_text())
+
+    def test_saved_emulator_wifi_can_require_explicit_reconnection_after_reset(self):
+        for validated in (True, False):
+            with self.subTest(validated=validated):
+                self.now = 0
+                self.fault()
+
+                def wifi():
+                    if self.phase == "disabled":
+                        return "Wi-Fi is disabled"
+                    if self.phase == "enabling":
+                        if self.now < self.enabled_at:
+                            return "Wi-Fi is enabling"
+                        self.phase = "enabled"
+                    return "Wi-Fi is enabled"
+
+                def connectivity():
+                    if self.phase == "fault":
+                        return associated_wifi(transport_info=(
+                            'TransportInfo: <SSID: "AndroidWifi", BSSID: 02:15:b2:00:00:01, Security type: 0, '
+                            'Supplicant state: COMPLETED> '
+                        ))
+                    if self.phase == "reconnected":
+                        return associated_wifi(netid=102, active=102, validated=validated)
+                    # AndroidWifi 被系统设为永久无互联网，开关 Wi-Fi 后仍保持断开。
+                    return NO_NETWORK
+
+                def enable():
+                    self.phase = "enabling"
+                    self.enabled_at = self.now + 2
+
+                def connect():
+                    self.assertEqual("enabled", self.phase)
+                    self.phase = "reconnected"
+
+                self.responses[WIFI] = [wifi]
+                self.responses[CONNECTIVITY] = [connectivity]
+                self.responses[CONNECT] = ["Connection initiated"]
+                self.effects[ENABLE] = enable
+                self.effects[CONNECT] = connect
+                calls = self.run_prepare(None if validated else "Verified active unmetered", timeout=90)
+                self.assertEqual(1, calls.count(call(SERIAL, *CONNECT)))
+                self.assertLess(calls.index(call(SERIAL, *ENABLE)), calls.index(call(SERIAL, *CONNECT)))
+                self.assertEqual("Connection initiated\n", (self.logs / "wifi-route-recovery-connect.log").read_text())
 
     def test_healthy_routes_with_dns_failure_do_not_reconnect(self):
         self.fault()
