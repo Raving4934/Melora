@@ -1,6 +1,7 @@
 package com.leyu.melora.ui.leaderboard
 
-import com.leyu.melora.ui.common.ChromeActionSurface
+import com.leyu.melora.ui.common.recordContainerPlayback
+import com.leyu.melora.ui.common.PlayAllPill
 import com.leyu.melora.ui.common.ChromeScaffold
 import com.leyu.melora.ui.common.DetailPageHost
 import com.leyu.melora.ui.common.chromeContentPadding
@@ -45,7 +46,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.Whatshot
-import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -76,6 +76,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.leyu.melora.playback.MeloraSettings
+import com.leyu.melora.playback.PlatformSource
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.UiTrack
 import com.leyu.melora.playback.UserLibrary
@@ -110,20 +111,6 @@ import com.leyu.melora.ui.common.runCatchingCancellable
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 
-data class BoardPlatform(
-    val id: String,
-    val name: String,
-)
-
-/** 榜单平台顺序：主界面顶栏的"平台筛选"也复用该列表。 */
-val boardPlatforms = listOf(
-    BoardPlatform("kw", "酷我"),
-    BoardPlatform("kg", "酷狗"),
-    BoardPlatform("tx", "企鹅"),
-    BoardPlatform("wy", "网易云"),
-    BoardPlatform("mg", "咪咕"),
-)
-
 private const val BOARD_SONGS_TTL_MS = 15 * 60 * 1000L
 private const val BOARD_PREVIEW_LIMIT = 3
 private fun boardPreviewCacheKey(platform: String, boardId: String) = "boardSongsPreview.$platform.$boardId"
@@ -154,7 +141,7 @@ private fun playBoard(context: Context, platform: String, board: BoardItem) {
     val queueId = "board.$platform.${board.bangid}"
     val cacheKey = boardPageCacheKey(platform, board.bangid)
     val cached = OnlineCache.peek<SongPage>(cacheKey)
-    UserLibrary.markContainerPlayed(
+    recordContainerPlayback(
         UserLibrary.PlayContainer(
             kind = "board",
             id = board.bangid,
@@ -209,7 +196,7 @@ fun LeaderboardScreen(
     val context = LocalContext.current
     // 平台切换完全由顶栏"平台筛选"驱动，页面即时跟随设置
     val platformId by MeloraSettings.leaderboardPlatform.collectAsStateWithLifecycle()
-    val platform = boardPlatforms.firstOrNull { it.id == platformId } ?: boardPlatforms.first()
+    val platform = PlatformSource.musicPlatform(platformId) ?: PlatformSource.Kuwo
     val pullEnabled by MeloraSettings.pullToRefresh.collectAsStateWithLifecycle()
 
     val cacheTtl = 15 * 60 * 1000L
@@ -387,7 +374,7 @@ fun LeaderboardScreen(
                                         )
                                         Spacer(Modifier.width(6.dp))
                                         Text(
-                                            text = "${sourceAliasDisplay(platform.id, platform.name)}官方榜",
+                                            text = "${sourceAliasDisplay(platform.id, platform.boardLabel)}官方榜",
                                             fontSize = 17.sp,
                                             fontWeight = FontWeight.Medium,
                                             color = TextMain,
@@ -488,13 +475,14 @@ fun LeaderboardScreen(
 // 榜单歌曲详情
 @Composable
 internal fun BoardDetailContent(
-    platform: BoardPlatform,
+    platform: PlatformSource,
     board: BoardItem,
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val boardKey = "${platform.id}:${board.bangid}"
+    val queueId = "board.${platform.id}.${board.bangid}"
     val listState = key(boardKey) { rememberLazyListState() }
     val scrollToTop = rememberFastScrollToTop(listState)
     // 系统返回键先退出榜单详情回到榜单列表，而不是退出应用
@@ -561,47 +549,27 @@ internal fun BoardDetailContent(
                 Text(board.name, fontSize = 17.sp, fontWeight = FontWeight.Medium, color = TextMain, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             if (songs.isNotEmpty()) {
-                ChromeActionSurface(
+                PlayAllPill(
                     onClick = {
-                        UserLibrary.markContainerPlayed(
+                        recordContainerPlayback(
                             UserLibrary.PlayContainer(
                                 kind = "board",
                                 id = board.bangid,
                                 name = board.name,
                                 img = board.img ?: songs.firstOrNull()?.img,
                                 source = platform.id,
-                                queueId = "board.${platform.id}.${board.bangid}",
+                                queueId = queueId,
                             ),
                         )
                         PlaybackController.playQueue(
                             context,
                             songs.toUiTracks(),
                             0,
-                            "board.${platform.id}.${board.bangid}",
+                            queueId,
                         )
                     },
-                    shape = RoundedCornerShape(16.dp),
                     modifier = Modifier.padding(end = 8.dp),
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            Icons.Rounded.PlayArrow,
-                            contentDescription = null,
-                            tint = BrandBlue,
-                            modifier = Modifier.size(15.dp),
-                        )
-                        Spacer(Modifier.width(3.dp))
-                        Text(
-                            "播放全部",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = BrandBlue,
-                        )
-                    }
-                }
+                )
             }
         }
     }) {
@@ -610,42 +578,52 @@ internal fun BoardDetailContent(
             loading -> SkeletonSongList(modifier = Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current))
             error != null -> ErrorState(error!!, onRetry = { scope.launch { load(1, false) } }, modifier = Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current))
             songs.isEmpty() -> EmptyState("榜单暂无歌曲", Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current))
-            else -> LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
-            ) {
-                itemsIndexed(songs, key = { _, song -> song.uid }) { index, song ->
-                    OnlineSongRow(
-                        song = song,
-                        showAlbum = true,
-                        isFavorite = song.uid in favoriteUids,
-                        onMore = { moreSong = song },
-                        onClick = {
-                            UserLibrary.markContainerPlayed(
-                                UserLibrary.PlayContainer(
-                                    kind = "board",
-                                    id = board.bangid,
-                                    name = board.name,
-                                    img = board.img ?: songs.firstOrNull()?.img,
-                                    source = platform.id,
-                                    queueId = "board.${platform.id}.${board.bangid}",
-                                ),
-                            )
-                            PlaybackController.playTrack(context, UiTrack.fromOnline(song))
-                        },
-                    )
-                }
-                if (hasMore) {
-                    item {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable(enabled = !loadingMore) { scope.launch { load(page + 1, true) } }
-                                .padding(vertical = 16.dp),
-                            horizontalArrangement = Arrangement.Center,
-                        ) {
-                            Text(if (loadingMore) "加载中…" else "加载更多", fontSize = 13.sp, color = BrandBlue)
+            else -> {
+                val snapshot = songs
+                val sourceUids = remember(snapshot) { snapshot.map(OnlineSong::uid) }
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = chromeContentPadding(PaddingValues(bottom = 24.dp)),
+                ) {
+                    itemsIndexed(snapshot, key = { _, song -> song.uid }) { index, song ->
+                        OnlineSongRow(
+                            song = song,
+                            showAlbum = true,
+                            isFavorite = song.uid in favoriteUids,
+                            onMore = { moreSong = song },
+                            onClick = {
+                                recordContainerPlayback(
+                                    UserLibrary.PlayContainer(
+                                        kind = "board",
+                                        id = board.bangid,
+                                        name = board.name,
+                                        img = board.img ?: snapshot.firstOrNull()?.img,
+                                        source = platform.id,
+                                        queueId = queueId,
+                                    ),
+                                )
+                                PlaybackController.playFromCollection(
+                                    context,
+                                    selected = UiTrack.fromOnline(song),
+                                    startIndex = index,
+                                    queueId = queueId,
+                                    sourceUids = sourceUids,
+                                ) { trackIndex -> UiTrack.fromOnline(snapshot[trackIndex]) }
+                            },
+                        )
+                    }
+                    if (hasMore) {
+                        item {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable(enabled = !loadingMore) { scope.launch { load(page + 1, true) } }
+                                    .padding(vertical = 16.dp),
+                                horizontalArrangement = Arrangement.Center,
+                            ) {
+                                Text(if (loadingMore) "加载中…" else "加载更多", fontSize = 13.sp, color = BrandBlue)
+                            }
                         }
                     }
                 }
@@ -749,7 +727,7 @@ private fun BoardPeekCard(
                         )
                         val cover = board.img ?: songs.firstOrNull()?.img
                         if (cover != null) {
-                            SongArtwork(cover, "board-cover-${board.bangid}", Modifier.fillMaxSize(), cornerRadius = 16)
+                            SongArtwork(cover, Modifier.fillMaxSize(), cornerRadius = 16)
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
@@ -899,7 +877,7 @@ private fun GenreBoardCard(
                 ),
         ) {
             if (!board.img.isNullOrBlank()) {
-                SongArtwork(board.img, "genre-board-${board.bangid}", Modifier.fillMaxSize(), cornerRadius = 16)
+                SongArtwork(board.img, Modifier.fillMaxSize(), cornerRadius = 16)
             } else {
                 Text(
                     text = board.name.take(2),

@@ -54,7 +54,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -63,6 +62,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.leyu.melora.playback.MeloraSettings
+import com.leyu.melora.playback.PlatformSource
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.sdk.CachedPlaylistPage
 import com.leyu.melora.playback.sdk.OnlineCache
@@ -89,23 +89,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.leyu.melora.ui.common.OnlinePlaylistCard
 import com.leyu.melora.ui.common.PlaylistDetailContent
 import com.leyu.melora.ui.common.LoadMoreOnScroll
-import com.leyu.melora.ui.common.SongArtwork
 import com.leyu.melora.ui.common.TextMain
 import com.leyu.melora.ui.common.TextSub
 import com.leyu.melora.ui.common.toUiTracks
 import com.leyu.melora.ui.common.runCatchingCancellable
 import kotlinx.coroutines.launch
 import com.leyu.melora.ui.theme.MeloraAppearance
-
-data class PlaylistPlatform(val id: String, val label: String, val color: Color)
-
-val playlistPlatforms = listOf(
-    PlaylistPlatform("kw", "酷我", Color(0xFFFFB300)),
-    PlaylistPlatform("kg", "酷狗", Color(0xFF0091EA)),
-    PlaylistPlatform("wy", "网易", Color(0xFFE53935)),
-    PlaylistPlatform("tx", "企鹅", Color(0xFF00C853)),
-    PlaylistPlatform("mg", "咪咕", Color(0xFF8E24AA)),
-)
 
 internal enum class PlaylistLoad { Initial, Refresh, More }
 
@@ -147,7 +136,7 @@ fun PlaylistsScreen(
 
     // 平台 / 分类 / 排序全部由顶栏筛选驱动（设置即状态）
     val platformId by MeloraSettings.playlistPlatform.collectAsStateWithLifecycle()
-    val selectedPlatform = playlistPlatforms.firstOrNull { it.id == platformId } ?: playlistPlatforms.first()
+    val selectedPlatform = PlatformSource.musicPlatform(platformId) ?: PlatformSource.Kuwo
     val selectedTagId by MeloraSettings.playlistTagId.collectAsStateWithLifecycle()
     val sortOrder by MeloraSettings.playlistSort.collectAsStateWithLifecycle()
     val pullEnabled by MeloraSettings.pullToRefresh.collectAsStateWithLifecycle()

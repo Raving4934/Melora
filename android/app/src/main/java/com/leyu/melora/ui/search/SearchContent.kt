@@ -38,16 +38,17 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.leyu.melora.playback.PlatformSource
 import com.leyu.melora.playback.sdk.OnlinePlaylist
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.ui.common.CardWhite
 import com.leyu.melora.ui.common.EmptyState
 import com.leyu.melora.ui.common.ErrorState
 import com.leyu.melora.ui.common.LoadMoreOnScroll
-import com.leyu.melora.ui.common.OnlineAudiobookCard
 import com.leyu.melora.ui.common.OnlinePlaylistCard
 import com.leyu.melora.ui.common.OnlineSongRow
 import com.leyu.melora.ui.common.ShimmerBox
+import com.leyu.melora.ui.common.dotColor
 import com.leyu.melora.ui.common.sourceAliasDisplay
 import com.leyu.melora.ui.common.ShimmerTextLine
 import com.leyu.melora.ui.common.SkeletonGrid
@@ -95,7 +96,8 @@ internal fun SearchResultsContent(
     }
 
     val songResults = category == SearchCategory.Song
-    val source = sourceAliasDisplay(selectedPlatform.id, selectedPlatform.label)
+    val source = if (category == SearchCategory.Audiobook) sourceAliasDisplay("kw", "酷我")
+        else sourceAliasDisplay(selectedPlatform.id, selectedPlatform.label)
     val footerKey = if (songResults) results.songs.size else results.playlists.size
     LoadMoreOnScroll(
         listState, enabled = results.hasMore && error == null, loading = loading,
@@ -114,7 +116,7 @@ internal fun SearchResultsContent(
                     text = when (category) {
                         SearchCategory.Song -> "歌曲结果 · 来自【$source】 · ${results.songs.size} 首"
                         SearchCategory.Playlist -> "歌单结果 · 来自【$source】 · ${results.playlists.size} 个"
-                        SearchCategory.Audiobook -> "有声专辑 · 来自【酷我】 · ${results.playlists.size} 个"
+                        SearchCategory.Audiobook -> "有声专辑 · 来自【$source】 · ${results.playlists.size} 个"
                     },
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
@@ -131,7 +133,7 @@ internal fun SearchResultsContent(
                         onMore = { onMoreSong(song) },
                         onClick = { onPlaySong(song) },
                         platformDotColor = if (selectedPlatform == PlatformSource.All) {
-                            PlatformSource.entries.firstOrNull { it.id == song.source }?.color
+                            PlatformSource.fromId(song.source)?.dotColor
                         } else null,
                     )
                 }
@@ -140,7 +142,7 @@ internal fun SearchResultsContent(
                     val first = row.first()
                     "playlist:${first.source}:${first.id}"
                 }) { row ->
-                    SearchPlaylistRow(row, columns, category, onOpenPlaylist)
+                    SearchPlaylistRow(row, columns, onOpenPlaylist)
                 }
             }
             if (results.hasMore || loading || error != null) {
@@ -168,16 +170,11 @@ internal fun SearchResultsContent(
 internal fun SearchPlaylistRow(
     playlists: List<OnlinePlaylist>,
     columns: Int,
-    category: SearchCategory,
     onOpenPlaylist: (OnlinePlaylist) -> Unit,
 ) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         playlists.forEach { playlist ->
-            if (category == SearchCategory.Audiobook) {
-                OnlineAudiobookCard(playlist, { onOpenPlaylist(playlist) }, Modifier.weight(1f))
-            } else {
-                OnlinePlaylistCard(playlist, { onOpenPlaylist(playlist) }, Modifier.weight(1f))
-            }
+            OnlinePlaylistCard(playlist, { onOpenPlaylist(playlist) }, Modifier.weight(1f))
         }
         repeat(columns - playlists.size) { Spacer(Modifier.weight(1f)) }
     }
@@ -318,7 +315,7 @@ internal fun PlaylistStripCard(
                 .padding(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            SongArtwork(playlist.img, "${playlist.source}_${playlist.id}", Modifier.size(56.dp), cornerRadius = 12)
+            SongArtwork(playlist.img, Modifier.size(56.dp), cornerRadius = 12)
             Spacer(Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(

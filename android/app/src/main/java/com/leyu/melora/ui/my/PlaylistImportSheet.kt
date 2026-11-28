@@ -1,5 +1,6 @@
 package com.leyu.melora.ui.my
 
+import com.leyu.melora.ui.common.sourceAliasDisplay
 import android.content.ClipboardManager
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
@@ -310,7 +311,7 @@ internal fun PlaylistImportSheet(
                             val ready = result
                             if (ready != null) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    SongArtwork(ready.cover ?: ready.songs.firstOrNull()?.img, seed = ready.name,
+                                    SongArtwork(ready.cover ?: ready.songs.firstOrNull()?.img,
                                         modifier = Modifier.size(52.dp).clip(RoundedCornerShape(12.dp)))
                                     Spacer(Modifier.width(12.dp))
                                     Column(Modifier.weight(1f)) {
@@ -321,7 +322,8 @@ internal fun PlaylistImportSheet(
                                             cursorBrush = SolidColor(BrandBlue),
                                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).testTag("playlist-import-name"),
                                         )
-                                        Text("${ready.platform} · ${ready.songs.size} 首${if (ready.duplicates > 0) " · 去重 ${ready.duplicates} 首" else ""}",
+                                        val platform = sourceAliasDisplay(ready.importSource?.source.orEmpty(), ready.platform)
+                                        Text("$platform · ${ready.songs.size} 首${if (ready.duplicates > 0) " · 去重 ${ready.duplicates} 首" else ""}",
                                             fontSize = 12.sp, color = TextSub)
                                     }
                                 }

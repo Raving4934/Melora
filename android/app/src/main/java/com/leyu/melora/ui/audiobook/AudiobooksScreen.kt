@@ -1,5 +1,7 @@
 package com.leyu.melora.ui.audiobook
 
+import com.leyu.melora.ui.common.bookAlbumOf
+import com.leyu.melora.ui.common.collectionQueueId
 import com.leyu.melora.ui.common.MeloraBottomSheet
 import com.leyu.melora.ui.common.rememberMeloraBottomSheetState
 import com.leyu.melora.ui.common.rememberSheetDismiss
@@ -120,7 +122,7 @@ fun AudiobooksScreen(
     var rankPage by rememberSaveable(stateSaver = BookRankTabSaver) { mutableStateOf<KwBookApi.BookRankTab?>(null) }
     var detail by rememberSaveable(stateSaver = BookDetailSaver) { mutableStateOf<BookDetail?>(null) }
     val recentChapter = remember(recentSongs) { recentSongs.firstOrNull(OnlineSong::isBookChapter) }
-    val recentPlaylist = remember(recentChapter) { recentChapter?.asPlaylist() }
+    val recentPlaylist = remember(recentChapter) { recentChapter?.let(::bookAlbumOf) }
 
     LaunchedEffect(Unit) {
         val cached = OnlineCache.get<List<KwBookApi.BookRankTab>>("book.ranks", RANK_TTL)
@@ -458,7 +460,7 @@ private fun RecentCard(
 ) {
     Surface(onClick = onClick, shape = RoundedCornerShape(20.dp), color = MeloraAppearance.card, border = MeloraAppearance.cardBorder, modifier = modifier.fillMaxHeight()) {
         Box(Modifier.fillMaxSize()) {
-            if (playlist?.img != null) SongArtwork(playlist.img, "recent-book-${playlist.id}", Modifier.fillMaxSize(), 20)
+            if (playlist?.img != null) SongArtwork(playlist.img, Modifier.fillMaxSize(), 20)
             else Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color(0xFF5B4BCE), Color(0xFF312E81))))) {
                 Icon(Icons.Outlined.Headphones, null, tint = Color.White.copy(alpha = .25f), modifier = Modifier.align(Alignment.Center).size(66.dp))
             }
@@ -477,7 +479,7 @@ private fun RecentCard(
             }
             if (playlist != null) {
                 CardPlayButton(
-                    queueId = "playlist.${playlist.source}.${playlist.id}",
+                    queueId = collectionQueueId(playlist.source, playlist.id, isBook = true),
                     onPlay = onPlay,
                     modifier = Modifier.align(Alignment.BottomEnd).padding(10.dp),
                     size = 32.dp,
@@ -508,7 +510,7 @@ private fun BookGrid(
                 playlists.isEmpty() -> item("empty") { Box(Modifier.fillMaxWidth().height(360.dp)) { EmptyState(if (hasMore) "当前页暂无匹配作品，点击下方继续加载" else emptyMessage, Modifier.fillMaxSize()) } }
                 else -> itemsIndexed(playlists.chunked(columns), key = { _, row -> row.joinToString(":") { it.id } }) { _, row ->
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        row.forEach { book -> OnlineAudiobookCard(book, { onOpen(book) }, Modifier.weight(1f)) }
+                        row.forEach { book -> OnlinePlaylistCard(book, { onOpen(book) }, Modifier.weight(1f)) }
                         repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
                     }
                 }
@@ -523,17 +525,4 @@ private fun BookGrid(
     }
 }
 
-private fun OnlineSong.asPlaylist(): OnlinePlaylist? = albumId.takeIf(String::isNotBlank)?.let {
-    OnlinePlaylist.from(
-        JSONObject()
-            .put("id", "book_album_$it")
-            .put("name", albumName.ifBlank { name })
-            .put("source", source)
-            .put("kind", "book")
-            .put("author", singer)
-            .put("img", img ?: "")
-            .put("description", raw.optString("description"))
-            .put("play_count", raw.optString("play_count")),
-    )
-}
 private fun OnlineSong.displayName(): String = name.removePrefix(albumName).trim().ifBlank { name }

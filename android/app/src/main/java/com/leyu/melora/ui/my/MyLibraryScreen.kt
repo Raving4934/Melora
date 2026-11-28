@@ -1,5 +1,7 @@
 package com.leyu.melora.ui.my
 
+import com.leyu.melora.ui.common.isLoadableArtworkUri
+import com.leyu.melora.ui.common.submitLibraryWrite
 import com.leyu.melora.ui.common.MeloraBottomSheet
 import com.leyu.melora.ui.common.MeloraSheetHandle
 import com.leyu.melora.ui.common.rememberMeloraBottomSheetState
@@ -135,11 +137,15 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import com.leyu.melora.playback.DownloadCenter
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.Downloader
+import com.leyu.melora.playback.PlatformSource
 import com.leyu.melora.playback.PlaybackController
+import com.leyu.melora.playback.PlayerUiState
 import com.leyu.melora.playback.UiTrack
 import com.leyu.melora.playback.UserLibrary
 import com.leyu.melora.playback.sdk.BoardItem
@@ -155,6 +161,7 @@ import com.leyu.melora.ui.common.SongSelectionTopBar
 import com.leyu.melora.ui.common.SongSelectionState
 import com.leyu.melora.ui.common.AddToPlaylistSheet
 import com.leyu.melora.ui.common.ChromeActionSurface
+import com.leyu.melora.ui.common.PlayAllPill
 import com.leyu.melora.ui.common.CollectionPlayIntent
 import com.leyu.melora.ui.common.collectionPlayButton
 import com.leyu.melora.ui.common.rememberQueuePlayback
@@ -176,7 +183,6 @@ import com.leyu.melora.ui.common.SongArtwork
 import com.leyu.melora.ui.common.SongMoreSheet
 import com.leyu.melora.ui.common.SongPlaybackPrefix
 import com.leyu.melora.ui.leaderboard.BoardDetailContent
-import com.leyu.melora.ui.leaderboard.boardPlatforms
 import com.leyu.melora.ui.common.TextMain
 import com.leyu.melora.ui.common.TextTabs
 import com.leyu.melora.ui.common.TextMuted
@@ -208,6 +214,8 @@ private enum class MyPage {
     Downloads,
 }
 
+private val libraryPlayAllPadding = PaddingValues(end = 10.dp, top = 6.dp, bottom = 6.dp)
+
 @Composable
 fun MyLibraryScreen(
     modifier: Modifier = Modifier,
@@ -230,7 +238,7 @@ fun MyLibraryScreen(
     val singleSongs = favoriteSongs.filterNot { it.isBookChapter }
     val favoriteChapters = favoriteSongs.filter { it.isBookChapter }
 
-    var page by remember { mutableStateOf<MyPage?>(null) }
+    var page by rememberSaveable { mutableStateOf<MyPage?>(null) }
     var favoritesTab by rememberSaveable { mutableIntStateOf(0) }
     var detail by remember { mutableStateOf<LibraryDetail?>(null) }
     var moreSong by remember { mutableStateOf<OnlineSong?>(null) }
@@ -294,8 +302,9 @@ fun MyLibraryScreen(
             onImport = { showCreateSheet = false; showImportSheet = true },
             onDismiss = { showCreateSheet = false },
             onConfirm = { name ->
-                UserLibrary.createPlaylist(name)
-                PlaybackController.postMessage(context, "已创建歌单「$name」")
+                submitLibraryWrite("创建失败，歌单未修改", onCompletion = { result ->
+                    result.onSuccess { PlaybackController.postMessage(context, "已创建歌单「$name」") }
+                }) { UserLibrary.createPlaylist(name) }
             },
         )
     }
@@ -331,8 +340,9 @@ fun MyLibraryScreen(
             isRename = true,
             onDismiss = { playlistToRename = null },
             onConfirm = { name ->
-                UserLibrary.renamePlaylist(target.id, name)
-                PlaybackController.postMessage(context, "已重命名为「$name」")
+                submitLibraryWrite("重命名失败，歌单未修改", onCompletion = { result ->
+                    result.onSuccess { PlaybackController.postMessage(context, "已重命名为「$name」") }
+                }) { UserLibrary.renamePlaylist(target.id, name) }
             },
         )
     }
@@ -342,9 +352,13 @@ fun MyLibraryScreen(
             playlist = target,
             onDismiss = { playlistToDelete = null },
             onConfirm = {
-                UserLibrary.deletePlaylist(target.id)
-                PlaybackController.postMessage(context, "已删除歌单「${target.name}」")
                 playlistToDelete = null
+                submitLibraryWrite("删除失败，歌单未修改", onCompletion = { result ->
+                    result.onSuccess {
+                        if ((detail as? LibraryDetail.UserPlaylist)?.value?.id == target.id) detail = null
+                        PlaybackController.postMessage(context, "已删除歌单「${target.name}」")
+                    }
+                }) { UserLibrary.deletePlaylist(target.id) }
             },
         )
     }
@@ -353,7 +367,9 @@ fun MyLibraryScreen(
         SongMoreSheet(song, onDismiss = { moreSong = null },
             onOpenBookAlbum = { detail = LibraryDetail.Playlist(it) },
             onResumeBook = if (page == MyPage.Recents && song.isBookChapter) ({ playRecentChapter(song) }) else null,
-            onRemoveRecentProgram = if (page == MyPage.Recents && song.isBookChapter) ({ UserLibrary.removeRecentProgram(song) }) else null,
+            onRemoveRecentProgram = if (page == MyPage.Recents && song.isBookChapter) {
+                { submitLibraryWrite { UserLibrary.removeRecentProgram(song) } }
+            } else null,
         )
     }
 
@@ -363,12 +379,12 @@ fun MyLibraryScreen(
             is LibraryDetail.UserPlaylist -> UserPlaylistDetail(
                 playlist = target.value, onBack = { detail = null }, onRename = { playlistToRename = it },
                 onUpdate = { playlistToUpdate = it },
-                onDelete = { playlistToDelete = it; detail = null },
+                onDelete = { playlistToDelete = it },
             )
             is LibraryDetail.Collection -> SongsCollectionPage(target.value, onBack = { detail = null })
             is LibraryDetail.Board -> {
                 val source = recentContainers.firstOrNull { it.kind == "board" && it.id == target.value.bangid }?.source ?: "kw"
-                val platform = boardPlatforms.firstOrNull { it.id == source } ?: boardPlatforms.first()
+                val platform = PlatformSource.musicPlatform(source) ?: PlatformSource.Kuwo
                 BoardDetailContent(platform = platform, board = target.value, onBack = { detail = null })
             }
             is LibraryDetail.Container -> {
@@ -599,7 +615,12 @@ private fun MyHubPage(
                             val cover = if (preferDerived) (derived ?: container.img) else (container.img ?: derived)
                             LaunchedEffect(cover) {
                                 if (!cover.isNullOrBlank() && cover != container.img) {
-                                    UserLibrary.updateContainerCover(container.key, cover)
+                                    UserLibrary.enqueueWrite {
+                                        val current = UserLibrary.recentContainers.value.firstOrNull { it.key == container.key }
+                                        if (current != null && current.img == container.img) {
+                                            UserLibrary.updateContainerCover(container.key, cover)
+                                        }
+                                    }
                                 }
                             }
                             RecentContainerCard(
@@ -693,7 +714,6 @@ private fun MyHubPage(
                                     name = playlist.name,
                                     meta = "${playlist.songs.size} 首歌曲",
                                     img = cover ?: first?.img,
-                                    seed = playlist.id,
                                     fallback = Icons.AutoMirrored.Rounded.QueueMusic,
                                     inCard = true,
                                     onClick = { onOpenUserPlaylist(playlist) },
@@ -738,7 +758,6 @@ private fun MyHubPage(
                                         playlist.total.takeIf { it > 0 }?.let { "$it 首" },
                                     ).joinToString(" · ").ifBlank { "歌单" },
                                     img = playlist.img,
-                                    seed = "${playlist.source}_${playlist.id}",
                                     fallback = if (playlist.isBookAlbum) Icons.Outlined.Headphones else Icons.AutoMirrored.Rounded.QueueMusic,
                                     inCard = true,
                                     onClick = { onOpenPlaylist(playlist) },
@@ -846,7 +865,7 @@ private fun RecentAggregateCard(
                 .background(Color(0xFF1C1C20)),
         ) {
             if (!cover.isNullOrBlank()) {
-                SongArtwork(cover, "recent-aggregate", Modifier.fillMaxSize(), cornerRadius = 14)
+                SongArtwork(cover, Modifier.fillMaxSize(), cornerRadius = 14)
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -926,7 +945,7 @@ private fun RecentContainerCard(
             contentAlignment = Alignment.Center,
         ) {
             if (!cover.isNullOrBlank()) {
-                SongArtwork(cover, seed, Modifier.fillMaxSize(), cornerRadius = 14)
+                SongArtwork(cover, Modifier.fillMaxSize(), cornerRadius = 14)
             } else {
                 Icon(
                     fallbackIcon,
@@ -998,7 +1017,6 @@ private fun PlaylistListRow(
     name: String,
     meta: String,
     img: String?,
-    seed: String,
     fallback: ImageVector,
     onClick: () -> Unit,
     titlePrefix: @Composable () -> Unit = {},
@@ -1021,7 +1039,7 @@ private fun PlaylistListRow(
             contentAlignment = Alignment.Center,
         ) {
             if (!img.isNullOrBlank()) {
-                SongArtwork(img, seed, Modifier.fillMaxSize(), cornerRadius = 10, crossfade = false)
+                SongArtwork(img, Modifier.fillMaxSize(), cornerRadius = 10, crossfade = false)
             } else {
                 Icon(fallback, contentDescription = null, tint = BrandBlue, modifier = Modifier.size(21.dp))
             }
@@ -1178,7 +1196,9 @@ internal fun FavoritesPage(
                         .padding(start = 16.dp, end = 11.5.dp, top = 6.dp, bottom = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    PlayAllPill { PlaybackController.playQueue(context, singleSongs.toUiTracks(), 0) }
+                    PlayAllPill(contentPadding = libraryPlayAllPadding) {
+                        PlaybackController.playQueue(context, singleSongs.toUiTracks(), 0, "library.favorites")
+                    }
                     Spacer(Modifier.weight(1f))
                     SongSelectionButton(onClick = selection::start)
                 }
@@ -1194,6 +1214,7 @@ internal fun FavoritesPage(
                             Modifier.fillMaxSize().padding(top = LocalChromeTopInset.current),
                         )
                     } else {
+                        val sourceUids = remember(singleSongs) { singleSongs.map(OnlineSong::uid) }
                         LazyColumn(
                             state = listState,
                             modifier = Modifier.fillMaxSize(),
@@ -1209,7 +1230,13 @@ internal fun FavoritesPage(
                                     onMore = { onMoreSong(song) },
                                     onClick = {
                                         if (selection.active) selection.toggle(song.uid)
-                                        else PlaybackController.playTrack(context, UiTrack.fromOnline(song))
+                                        else PlaybackController.playFromCollection(
+                                            context,
+                                            selected = UiTrack.fromOnline(song),
+                                            startIndex = index,
+                                            queueId = "library.favorites",
+                                            sourceUids = sourceUids,
+                                        ) { trackIndex -> UiTrack.fromOnline(singleSongs[trackIndex]) }
                                     },
                                 )
                             }
@@ -1246,7 +1273,6 @@ internal fun FavoritesPage(
                                     name = album.name,
                                     meta = album.artist.ifBlank { "专辑" },
                                     img = album.img,
-                                    seed = album.key,
                                     fallback = Icons.Outlined.Album,
                                     onClick = { onOpenAlbum(album) },
                                 )
@@ -1278,7 +1304,7 @@ internal fun FavoritesPage(
                             items(favoriteArtists, key = { it.key }) { artist ->
                                 PlaylistListRow(
                                     name = artist.name, meta = "歌手 · ${platformLabel(artist.source)}", img = artist.img,
-                                    seed = artist.key, fallback = Icons.Outlined.Person,
+                                    fallback = Icons.Outlined.Person,
                                     onClick = { onOpenArtist(artist) },
                                 )
                             }
@@ -1334,7 +1360,6 @@ private fun PlaylistListColumn(
                     playlist.total.takeIf { it > 0 }?.let { "$it 首" },
                 ).joinToString(" · ").ifBlank { "歌单" },
                 img = playlist.img,
-                seed = "${playlist.source}_${playlist.id}",
                 fallback = if (playlist.isBookAlbum) Icons.Outlined.Headphones else Icons.AutoMirrored.Rounded.QueueMusic,
                 onClick = { onOpen(playlist) },
             )
@@ -1403,7 +1428,7 @@ internal fun RecentsPage(
                     color = TextSub,
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
-                        .clickable { UserLibrary.clearRecents() }
+                        .clickable { submitLibraryWrite { UserLibrary.clearRecents() } }
                         .padding(horizontal = 10.dp, vertical = 6.dp),
                 )
             }
@@ -1493,7 +1518,9 @@ private fun RecentSectionTitle(
         }
         Text(text, modifier = Modifier.weight(1f), fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold, color = TextSub)
-        onPlayAll?.let { PlayAllPill(it) }
+        onPlayAll?.let {
+            PlayAllPill(contentPadding = libraryPlayAllPadding, onClick = it)
+        }
     }
 }
 
@@ -1509,7 +1536,6 @@ private fun RecentContainerRow(
             rememberBookAlbumSubtitle(container.source, container.id, container.artist)
         } else containerLabel(container.kind),
         img = container.img,
-        seed = container.key,
         fallback = if (container.kind == "book") Icons.Outlined.Headphones else Icons.AutoMirrored.Rounded.QueueMusic,
         onClick = { onOpen(container) },
     )
@@ -1529,7 +1555,6 @@ private fun BookProgramRow(
         name = title,
         meta = subtitle,
         img = cover ?: song.img,
-        seed = song.uid,
         fallback = Icons.Outlined.Headphones,
         onClick = onClick,
         titlePrefix = { SongPlaybackPrefix(isCurrentListSong(song.uid)) },
@@ -1842,7 +1867,7 @@ private fun DownloadRecordCard(
                     .background(MeloraAppearance.tintBlue),
                 contentAlignment = Alignment.Center,
             ) {
-                SongArtwork(artwork, record.id, Modifier.fillMaxSize(), cornerRadius = 10)
+                SongArtwork(artwork, Modifier.fillMaxSize(), cornerRadius = 10)
 
                 // 封面快捷操作遮罩：区分 暂停 / 恢复 / 重试
                 when (record.status) {
@@ -1968,9 +1993,14 @@ private fun DownloadRecordSheet(
     val favoriteUids by UserLibrary.favoriteUids.collectAsStateWithLifecycle()
     val song = record.song
     val isFavorite = song != null && song.uid in favoriteUids
-    val playback by PlaybackController.state.collectAsStateWithLifecycle()
-    val isCurrent = playback.current?.uid == record.id
-    val isPlaying = isCurrent && playback.playing
+    fun recordPlayback(state: PlayerUiState): Pair<Boolean, Boolean> {
+        val current = state.current?.uid == record.id
+        return current to (current && state.playing)
+    }
+    val playback = PlaybackController.state
+    val initial = remember(record.id) { recordPlayback(playback.value) }
+    val updates = remember(record.id) { playback.map(::recordPlayback).distinctUntilChanged() }
+    val (isCurrent, isPlaying) = updates.collectAsStateWithLifecycle(initial).value
     val selectedDownloadQuality by MeloraSettings.downloadQuality.collectAsStateWithLifecycle()
 
     MeloraBottomSheet(
@@ -1978,7 +2008,7 @@ private fun DownloadRecordSheet(
         sheetState = sheetState,
         dragHandle = { MeloraSheetHandle(color = MeloraAppearance.divider) },
     ) {
-        Column(modifier = Modifier.padding(bottom = 28.dp)) {
+        Column(modifier = Modifier.verticalScroll(rememberScrollState()).padding(bottom = 28.dp)) {
             // 头部卡片：48dp 封面/下载图标 + 任务名与状态详情
             Row(
                 modifier = Modifier
@@ -1989,7 +2019,6 @@ private fun DownloadRecordSheet(
                 if (song != null && !song.img.isNullOrBlank()) {
                     SongArtwork(
                         song.img,
-                        "more_dl_${song.uid}",
                         Modifier.size(48.dp),
                         cornerRadius = 12,
                     )
@@ -2150,7 +2179,7 @@ private fun DownloadRecordSheet(
                         destructive = isFavorite,
                     ) {
                         closeSheet {
-                            UserLibrary.toggleFavorite(song)
+                            submitLibraryWrite { UserLibrary.toggleFavorite(song) }
                             onDismiss()
                         }
                     }
@@ -2368,7 +2397,6 @@ internal fun PlaylistMoreSheet(
                 if (!firstCover.isNullOrBlank()) {
                     SongArtwork(
                         firstCover,
-                        "playlist_more_${playlist.id}",
                         Modifier.size(48.dp),
                         cornerRadius = 12,
                     )
@@ -2614,8 +2642,8 @@ private fun UserPlaylistsPage(
                                 contentAlignment = Alignment.Center,
                             ) {
                                 val img = cover ?: first?.img
-                                if (!img.isNullOrBlank() && img.startsWith("http")) {
-                                    SongArtwork(img, playlist.id, Modifier.fillMaxSize(), cornerRadius = 10)
+                                if (!img.isNullOrBlank() && isLoadableArtworkUri(img)) {
+                                    SongArtwork(img, Modifier.fillMaxSize(), cornerRadius = 10)
                                 } else {
                                     Icon(Icons.AutoMirrored.Rounded.QueueMusic, contentDescription = null, tint = BrandBlue, modifier = Modifier.size(21.dp))
                                 }
@@ -2652,23 +2680,6 @@ private fun UserPlaylistsPage(
     }
 }
 
-@Composable
-private fun PlayAllPill(onClick: () -> Unit) {
-    ChromeActionSurface(
-        onClick = onClick,
-        shape = RoundedCornerShape(16.dp),
-    ) {
-        Row(
-            modifier = Modifier.padding(end = 10.dp, top = 6.dp, bottom = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(Icons.Rounded.PlayArrow, contentDescription = null, tint = BrandBlue, modifier = Modifier.size(15.dp))
-            Spacer(Modifier.width(3.dp))
-            Text("播放全部", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = BrandBlue)
-        }
-    }
-}
-
 // ---------- 自建歌单详情 ----------
 
 /** 自建歌单整单播放的队列身份，供详情页识别“本歌单正在播放”。 */
@@ -2686,6 +2697,7 @@ private fun UserPlaylistDetail(
     val playlists by UserLibrary.playlists.collectAsStateWithLifecycle()
     val current = playlists.firstOrNull { it.id == playlist.id } ?: playlist
     val songs = current.songs
+    val sourceUids = remember(songs) { songs.map(OnlineSong::uid) }
     val listState = key(current.id) { rememberLazyListState() }
     val scrollToTop = rememberFastScrollToTop(listState)
     var moreSong by remember { mutableStateOf<OnlineSong?>(null) }
@@ -2777,7 +2789,15 @@ private fun UserPlaylistDetail(
                         song = song,
                         showAlbum = true,
                         onMore = { moreSong = song },
-                        onClick = { PlaybackController.playTrack(context, UiTrack.fromOnline(song)) },
+                        onClick = {
+                            PlaybackController.playFromCollection(
+                                context,
+                                selected = UiTrack.fromOnline(song),
+                                startIndex = index,
+                                queueId = queueId,
+                                sourceUids = sourceUids,
+                            ) { trackIndex -> UiTrack.fromOnline(songs[trackIndex]) }
+                        },
                     )
                 }
             }
@@ -2806,7 +2826,7 @@ private fun UserPlaylistDetail(
         SongMoreSheet(
             song,
              onDismiss = { moreSong = null },
-            onRemoveFromPlaylist = { UserLibrary.removeFromPlaylist(current.id, song.uid) },
+            onRemoveFromPlaylist = { submitLibraryWrite { UserLibrary.removeFromPlaylist(current.id, song.uid) } },
         )
     }
 }

@@ -1,12 +1,10 @@
 package com.leyu.melora.ui.local
 
+import com.leyu.melora.ui.common.BatchAction
+import com.leyu.melora.ui.common.submitLibraryWrite
 import com.leyu.melora.ui.common.MeloraAlertDialog
-import android.Manifest
-import android.content.pm.PackageManager
-import android.os.Build
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.core.content.ContextCompat
 import com.leyu.melora.ui.common.PageBackHandler as BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -87,8 +85,8 @@ import com.leyu.melora.playback.UserLibrary
 import com.leyu.melora.playback.local.LocalMediaScanner
 import com.leyu.melora.playback.local.LocalMediaStore
 import com.leyu.melora.playback.local.LocalSong
+import com.leyu.melora.playback.local.LocalSongsContent
 import com.leyu.melora.playback.local.LocalSortField
-import com.leyu.melora.playback.local.localSongSectionStarts
 import com.leyu.melora.playback.local.sortLocalSongs
 import com.leyu.melora.playback.local.LocalTagReader
 import com.leyu.melora.playback.sdk.OnlineSong
@@ -124,11 +122,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.withContext
 
-/** 歌曲、数量和字母索引共享一份展示快照。 */
-internal data class LocalSongsContent(
-    val songs: List<LocalSong> = emptyList(),
-    val sections: Map<String, Int> = emptyMap(),
-)
+private const val LOCAL_SONGS_QUEUE_ID = "local.songs"
 
 /** 由主导航持有，切页不重建；歌曲和索引只发布同一份后台计算结果。 */
 @Composable
@@ -141,10 +135,7 @@ internal fun rememberLocalSongsContent(
     val content by produceState<LocalSongsContent?>(
         if (songs.isEmpty()) LocalSongsContent() else null, songs, sortField, ascending,
     ) {
-        value = withContext(Dispatchers.Default) {
-            val sorted = sortLocalSongs(songs, sortField, ascending)
-            LocalSongsContent(sorted, localSongSectionStarts(sorted, sortField))
-        }
+        value = withContext(Dispatchers.Default) { sortLocalSongs(songs, sortField, ascending) }
     }
     content
 }
@@ -225,20 +216,15 @@ internal fun LocalSongsPage(
         }
     }
     fun triggerScan() {
-        if (!LocalMediaScanner.requiresAudioPermission()) {
-            launchScan()
-            return
-        }
-        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            Manifest.permission.READ_MEDIA_AUDIO
-        } else {
-            Manifest.permission.READ_EXTERNAL_STORAGE
-        }
-        val granted = ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
-        if (granted) launchScan() else permissionLauncher.launch(permission)
+        val permission = LocalMediaScanner.missingAudioPermission(context)
+        if (permission == null) launchScan() else permissionLauncher.launch(permission)
     }
 
-    BackHandler(enabled = searchQuery != null) { searchQuery = null }
+    val closeSearch = {
+        selection.finish()
+        searchQuery = null
+    }
+    BackHandler(enabled = searchQuery != null, onBack = closeSearch)
     // 非搜索态：返回先退出批量管理，有父级回调则回退
     BackHandler(enabled = searchQuery == null && (selection.active || onBack != null)) {
         if (selection.active) selection.finish() else onBack?.invoke()
@@ -251,7 +237,7 @@ internal fun LocalSongsPage(
             LocalSearchPage(
                 content = content,
                 queryState = query,
-                onCancel = { searchQuery = null },
+                onCancel = closeSearch,
                 selection = selection,
                 onOpenSortSheet = { showSortSheet = true },
                 onMore = { moreSong = it },
@@ -306,10 +292,7 @@ internal fun LocalSongsPage(
     }
 
     addToPlaylist?.let { selected ->
-        AddToPlaylistSheet(selected) {
-            addToPlaylist = null
-            if (selection.active) selection.finish()
-        }
+        AddToPlaylistSheet(selected, onAdded = selection::finish, onDismiss = { addToPlaylist = null })
     }
 
     pendingDelete?.let { targets ->
@@ -350,6 +333,7 @@ internal fun LocalSongsListContent(
 ) {
     val context = LocalContext.current
     val songs = content?.songs.orEmpty()
+    val sourceUids = content?.songUids.orEmpty()
     val sections = content?.sections.orEmpty()
     val scrollToTop = rememberFastScrollToTop(listState)
     val playingLocalId = rememberPlayingLocalId()
@@ -414,7 +398,7 @@ internal fun LocalSongsListContent(
                                     context,
                                     songs.shuffled().map { it.toOnlineSong() }.toUiTracks(),
                                     0,
-                                    "local.songs",
+                                    LOCAL_SONGS_QUEUE_ID,
                                 )
                             },
                             onOpenSortSheet = onOpenSortSheet,
@@ -456,7 +440,13 @@ internal fun LocalSongsListContent(
                             if (selection.active) {
                                 selection.toggle(song.localUid())
                             } else {
-                                PlaybackController.playTrack(context, UiTrack.fromOnline(song.toOnlineSong()))
+                                PlaybackController.playFromCollection(
+                                    context,
+                                    selected = UiTrack.fromOnline(song.toOnlineSong()),
+                                    startIndex = index,
+                                    queueId = LOCAL_SONGS_QUEUE_ID,
+                                    sourceUids = sourceUids,
+                                ) { trackIndex -> UiTrack.fromOnline(songs[trackIndex].toOnlineSong()) }
                             }
                         },
                         onMore = { onMore(song) },
@@ -741,7 +731,6 @@ private fun LocatePlayingButton(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val playerState by PlaybackController.state.collectAsStateWithLifecycle()
     Surface(
         shape = CircleShape,
         color = MeloraAppearance.card.copy(alpha = 0.82f),
@@ -750,7 +739,7 @@ private fun LocatePlayingButton(
         modifier = modifier.size(44.dp),
         onClick = {
             // 快速定位当前播放的本地歌曲：本地曲目直接按 id，网络曲目按标题/歌手匹配本地文件
-            val target = playerState.current?.let { LocalMediaStore.matchTrack(it) }
+            val target = PlaybackController.state.value.current?.let(LocalMediaStore::matchTrack)
             val index = target?.let { song -> songs.indexOfFirst { it.id == song.id } } ?: -1
             if (index >= 0) {
                 scope.launch { listState.animateScrollToItem(index) }
@@ -778,62 +767,35 @@ internal fun LocalBatchActionsBar(
     val selected = remember(selection.selectedUids, songs) {
         songs.filter { it.localUid() in selection.selectedUids }
     }
-    val enabled = selected.isNotEmpty()
+    var savingFavorites by remember { mutableStateOf(false) }
+    val enabled = selected.isNotEmpty() && !savingFavorites
     Column(Modifier.fillMaxWidth().background(chromeHeaderColor())) {
         HorizontalDivider(color = DividerSoft, thickness = 0.6.dp)
         Row(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-            LocalBatchAction(Icons.Rounded.FavoriteBorder, "收藏", enabled) {
-                val changed = UserLibrary.setFavorites(selected.map { it.toOnlineSong() }, favorite = true)
-                PlaybackController.postMessage(context, if (changed == 0) "所选歌曲已在收藏中" else "已收藏 $changed 首")
-                selection.finish()
+            BatchAction(Icons.Rounded.FavoriteBorder, "收藏", enabled) {
+                if (savingFavorites) return@BatchAction
+                savingFavorites = true
+                val requested = selection.selectedUids
+                submitLibraryWrite(onCompletion = { result ->
+                    savingFavorites = false
+                    result.onSuccess { changed ->
+                        val message = if (changed == 0) "所选歌曲已在收藏中" else "已收藏 $changed 首"
+                        PlaybackController.postMessage(context, message)
+                        if (selection.selectedUids === requested) selection.finish()
+                    }
+                }) {
+                    UserLibrary.setFavorites(selected.map { it.toOnlineSong() }, favorite = true)
+                }
             }
-            LocalBatchAction(Icons.Outlined.DeleteOutline, "永久删除", enabled) { onDelete(selected) }
-            LocalBatchAction(Icons.AutoMirrored.Outlined.PlaylistAdd, "添加到歌单", enabled) {
+            BatchAction(Icons.Outlined.DeleteOutline, "永久删除", enabled) { onDelete(selected) }
+            BatchAction(Icons.AutoMirrored.Outlined.PlaylistAdd, "添加到歌单", enabled) {
                 onAddToPlaylist(selected.map { it.toOnlineSong() })
             }
-            LocalBatchAction(Icons.AutoMirrored.Rounded.QueueMusic, "播放选中队列", enabled) {
-                PlaybackController.playQueue(context, selected.map { it.toOnlineSong() }.toUiTracks(), 0, "local.songs")
+            BatchAction(Icons.AutoMirrored.Rounded.QueueMusic, "播放选中队列", enabled) {
+                PlaybackController.playQueue(context, selected.map { it.toOnlineSong() }.toUiTracks(), 0, "local.selection")
                 selection.finish()
             }
         }
-    }
-}
-
-@Composable
-internal fun androidx.compose.foundation.layout.RowScope.LocalBatchAction(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    enabled: Boolean,
-    onClick: () -> Unit,
-) {
-    Column(
-        Modifier
-            .weight(1f)
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(
-                enabled = enabled,
-                indication = null,
-                interactionSource = remember { MutableInteractionSource() },
-            ) { onClick() }
-            .padding(horizontal = 4.dp, vertical = 4.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Icon(
-            icon,
-            contentDescription = null,
-            tint = if (enabled) BrandBlue else TextMuted.copy(alpha = 0.45f),
-            modifier = Modifier.size(22.dp),
-        )
-        Spacer(Modifier.height(3.dp))
-        Text(
-            label,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Medium,
-            color = if (enabled) TextMain else TextMuted.copy(alpha = 0.55f),
-            maxLines = 1,
-            softWrap = false,
-            overflow = TextOverflow.Ellipsis,
-        )
     }
 }
 
@@ -845,5 +807,3 @@ internal fun rememberPlayingLocalId(): String? {
     }.collectAsStateWithLifecycle(initialValue = null)
     return remember(track?.uid) { track?.let { LocalMediaStore.matchTrack(it)?.id } }
 }
-
-internal fun LocalSong.localUid(): String = "${LocalSong.SOURCE}_$id"

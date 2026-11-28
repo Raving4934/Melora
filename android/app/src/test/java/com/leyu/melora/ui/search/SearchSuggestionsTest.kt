@@ -1,6 +1,7 @@
 package com.leyu.melora.ui.search
 
 import android.content.ContextWrapper
+import com.leyu.melora.playback.PlatformSource
 import com.leyu.melora.playback.sdk.KwBookApi
 import com.leyu.melora.playback.sdk.OnlineCache
 import com.leyu.melora.playback.sdk.OnlinePlaylist
@@ -21,7 +22,7 @@ class SearchSuggestionsTest {
 
     @After fun cleanup() {
         listOf("tips", "playlists", "books").forEach { kind ->
-            (platformIds + "all").forEach { source -> OnlineCache.clear("search:$kind:$source:$keyword") }
+            (PlatformSource.musicIds + PlatformSource.All.id).forEach { source -> OnlineCache.clear("search:$kind:$source:$keyword") }
         }
     }
 
@@ -58,7 +59,7 @@ class SearchSuggestionsTest {
     }
 
     @Test fun aggregatedPlaylistSuggestionsIncludeSeveralSourcesAndDeduplicateNames() = runBlocking {
-        platformIds.forEach { cachePlaylists(it) }
+        PlatformSource.musicIds.forEach { cachePlaylists(it) }
         cachePlaylists("kg", "共同歌单", "  ", "酷狗歌单")
         cachePlaylists("tx", "共同歌单", "企鹅歌单")
 
@@ -68,7 +69,7 @@ class SearchSuggestionsTest {
     }
 
     @Test fun fastSourcesAppearWhileASlowSourceIsPendingAndKeepTheirPosition() = runBlocking {
-        platformIds.filterNot { it == "kw" }.forEach { cachePlaylists(it) }
+        PlatformSource.musicIds.filterNot { it == "kw" }.forEach { cachePlaylists(it) }
         cachePlaylists("tx", "先到的歌单")
         val finish = CompletableDeferred<Unit>()
         val slow = async(start = CoroutineStart.UNDISPATCHED) {

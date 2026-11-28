@@ -74,6 +74,8 @@ import com.leyu.melora.ui.common.DividerSoft
 import com.leyu.melora.ui.common.TextMain
 import com.leyu.melora.ui.common.TextMuted
 import com.leyu.melora.ui.common.TextSub
+import com.leyu.melora.playback.PlatformSource
+import com.leyu.melora.ui.common.dotColor
 import com.leyu.melora.ui.common.sourceAliasDisplay
 import com.leyu.melora.ui.common.sourceAliasDisplayMusic
 import com.leyu.melora.ui.theme.LightSheetFrost
@@ -141,7 +143,7 @@ internal fun SearchInputSection(
                                 Box(
                                     modifier = Modifier
                                         .size(7.dp)
-                                        .background(if (eInk) TextMain else selectedPlatform.color, CircleShape),
+                                        .background(if (eInk) TextMain else selectedPlatform.dotColor, CircleShape),
                                 )
                                 Spacer(Modifier.width(5.dp))
                                 Text(
@@ -405,7 +407,7 @@ private fun SearchPlatformMenu(
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
                                         val dotColor = when {
-                                            !eInk -> platform.color
+                                            !eInk -> platform.dotColor
                                             selected -> selectedText
                                             else -> TextMain
                                         }

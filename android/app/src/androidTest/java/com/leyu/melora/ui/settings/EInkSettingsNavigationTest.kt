@@ -31,6 +31,7 @@ import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
@@ -65,8 +66,11 @@ class EInkSettingsNavigationTest {
         try {
             MeloraSettings.updateEInkMode(false)
             compose.setContent { MeloraTheme { SettingsMasterScreen() } }
-            compose.onNode(hasScrollAction()).performScrollToNode(hasText("其他设置"))
-            compose.onNodeWithText("其他设置").performClick()
+            val entry = hasText("其他设置") and hasClickAction()
+            compose.onNode(hasScrollAction()).performScrollToNode(entry)
+            val row = compose.onNode(entry)
+            compose.awaitStable(row)
+            row.performClick()
             val page = compose.onNodeWithText("显示适配")
             val mode = compose.onNodeWithContentDescription("墨水屏模式")
             compose.awaitStable(mode)

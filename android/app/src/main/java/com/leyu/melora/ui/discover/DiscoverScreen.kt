@@ -1,5 +1,7 @@
 package com.leyu.melora.ui.discover
 
+import com.leyu.melora.ui.common.recordContainerPlayback
+import com.leyu.melora.ui.common.collectionQueueId
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -132,7 +134,6 @@ fun DiscoverScreen(
     // 秒开优先：先拿已有缓存（哪怕过期）渲染，过期内容由后台静默替换，进页不闪空
     var dailySong by remember { mutableStateOf(OnlineCache.peek<OnlineSong>("discover.daily")) }
     var guessSongs by remember { mutableStateOf(OnlineCache.peek<List<OnlineSong>>("discover.guess").orEmpty()) }
-    var newSongs by remember { mutableStateOf(OnlineCache.peek<List<OnlineSong>>("discover.new").orEmpty()) }
     var playlists by remember { mutableStateOf(OnlineCache.peek<List<OnlinePlaylist>>("discover.playlists").orEmpty()) }
     var audiobooks by remember { mutableStateOf(OnlineCache.peek<List<OnlinePlaylist>>("discover.books").orEmpty()) }
     var dailyLoading by remember { mutableStateOf(dailySong == null) }
@@ -211,15 +212,12 @@ fun DiscoverScreen(
                 }
                 launch {
                     val fresh = OnlineCache.get<List<OnlineSong>>("discover.new", CACHE_TTL)
-                    if (!force && !fresh.isNullOrEmpty()) {
-                        newSongs = fresh
-                    } else {
+                    if (force || fresh.isNullOrEmpty()) {
                         runCatchingCancellable { Recommender.newSongs(context, refresh = force) }
                             .onSuccess { list ->
                                 if (list.isNotEmpty()) {
-                                    newSongs = list
-                                    OnlineCache.put("discover.new", newSongs)
-                                    OnlineCache.put("discover.new.list", newSongs)
+                                    OnlineCache.put("discover.new", list)
+                                    OnlineCache.put("discover.new.list", list)
                                 }
                             }
                     }
@@ -274,7 +272,7 @@ fun DiscoverScreen(
     // 卡片播放按钮：优先缓存秒播，未缓存则获取完整推荐列表后再播
     fun playDiscoverSongs(source: String, queueId: String, cacheKey: String, containerName: String, containerKind: String) {
         val cached = OnlineCache.peek<List<OnlineSong>>(cacheKey)
-        UserLibrary.markContainerPlayed(
+        recordContainerPlayback(
             UserLibrary.PlayContainer(
                 kind = containerKind,
                 id = queueId,
@@ -376,7 +374,6 @@ fun DiscoverScreen(
                                                 ?: if (dailyFailed) "加载失败，点开重试" else "暂无推荐，点开重试",
                                             loading = dailyLoading,
                                             artwork = dailyArtwork,
-                                            seed = dailySong?.uid ?: "recommend_seed_1",
                                             queueId = "discover.daily",
                                             onPlay = { playDiscoverSongs("rec.daily", "discover.daily", "discover.daily.list", "每日推荐", "daily") },
                                             onClick = {
@@ -390,7 +387,6 @@ fun DiscoverScreen(
                                                 ?: if (guessFailed) "加载失败，点开重试" else "暂无推荐，点开重试",
                                             loading = guessLoading,
                                             artwork = guessArtwork,
-                                            seed = visibleGuessSongs.firstOrNull()?.uid ?: "recommend_seed_2",
                                             queueId = "discover.guess",
                                             onPlay = { playDiscoverSongs("rec.guess", "discover.guess", "discover.guess.list", "猜你喜欢", "guess") },
                                             onClick = {
@@ -532,7 +528,7 @@ fun DiscoverScreen(
                                                             .aspectRatio(1f)
                                                             .clip(RoundedCornerShape(18.dp)),
                                                     ) {
-                                                        SongArtwork(pl.img, "${pl.source}_${pl.id}", Modifier.fillMaxSize(), cornerRadius = 18)
+                                                        SongArtwork(pl.img, Modifier.fillMaxSize(), cornerRadius = 18)
 
                                                         // 底部渐变遮罩：保证白色文字可读
                                                         Box(
@@ -583,7 +579,7 @@ fun DiscoverScreen(
                                                                 .align(Alignment.BottomEnd),
                                                         ) {
                                                             CardPlayButton(
-                                                                queueId = "playlist.${pl.source}.${pl.id}",
+                                                                queueId = collectionQueueId(pl.source, pl.id, pl.isBookAlbum),
                                                                 onPlay = { playOnlinePlaylist(context, pl) },
                                                                 size = 26.dp,
                                                                 iconSize = 16.dp,
@@ -701,7 +697,7 @@ fun DiscoverScreen(
                                                             .padding(horizontal = 14.dp, vertical = 11.dp),
                                                         verticalAlignment = Alignment.CenterVertically,
                                                     ) {
-                                                        SongArtwork(book.img, "${book.source}_${book.id}", Modifier.size(48.dp), cornerRadius = 8)
+                                                        SongArtwork(book.img, Modifier.size(48.dp), cornerRadius = 8)
                                                         Column(
                                                             modifier = Modifier
                                                                 .weight(1f)
@@ -728,7 +724,7 @@ fun DiscoverScreen(
                                                             )
                                                         }
                                                         CardPlayButton(
-                                                            queueId = "playlist.${book.source}.${book.id}",
+                                                            queueId = collectionQueueId(book.source, book.id, isBook = true),
                                                             onPlay = { playOnlinePlaylist(context, book) },
                                                             size = 32.dp,
                                                             iconSize = 18.dp,

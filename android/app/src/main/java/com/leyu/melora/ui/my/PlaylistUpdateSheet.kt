@@ -1,5 +1,6 @@
 package com.leyu.melora.ui.my
 
+import com.leyu.melora.ui.common.sourceAliasDisplay
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -125,12 +126,13 @@ internal fun PlaylistUpdateContent(
             item("playlist") {
                 Row(Modifier.fillMaxWidth().testTag("playlist-sync-summary"),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    SongArtwork(playlist.songs.firstOrNull()?.img, seed = playlist.name,
+                    SongArtwork(playlist.songs.firstOrNull()?.img,
                         modifier = Modifier.size(56.dp).clip(RoundedCornerShape(12.dp)))
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(playlist.name, color = TextMain, fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
                             maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        Text("${source?.platformName ?: "本地歌单"} · ${playlist.songs.size} 首",
+                        val platform = if (source == null) "本地歌单" else sourceAliasDisplay(source.source, source.platformName)
+                        Text("$platform · ${playlist.songs.size} 首",
                             color = TextSub, fontSize = 12.sp)
                     }
                 }

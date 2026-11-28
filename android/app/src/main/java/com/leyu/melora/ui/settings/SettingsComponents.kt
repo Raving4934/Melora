@@ -1,5 +1,8 @@
 package com.leyu.melora.ui.settings
 
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.widget.Toast
 import com.leyu.melora.ui.common.PageBackHandler as BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -76,6 +79,15 @@ internal val SettingsTextSub: Color get() = MeloraAppearance.textSub
 internal val SettingsCardBg: Color get() = MeloraAppearance.card
 internal val SettingsBrandBlue: Color get() = MeloraAppearance.brand
 internal val SettingsDividerSoft: Color get() = MeloraAppearance.divider
+
+internal inline fun Context.launchSystemFilePicker(onUnavailable: () -> Unit = {}, launch: () -> Unit) {
+    try {
+        launch()
+    } catch (_: ActivityNotFoundException) {
+        onUnavailable()
+        Toast.makeText(this, "系统文件选择器不可用，请启用系统的文件应用后重试", Toast.LENGTH_LONG).show()
+    }
+}
 
 private val AudioQualityOptions = mapOf(
     "128k" to "128k 标清",

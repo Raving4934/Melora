@@ -1,8 +1,6 @@
 package com.leyu.melora.ui.settings
 
-import android.Manifest
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Environment
 import android.provider.Settings as AndroidSettings
@@ -48,16 +46,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.leyu.melora.playback.MeloraSettings
 import com.leyu.melora.playback.PlaybackController
+import com.leyu.melora.playback.withPersistableTreeAccess
 import com.leyu.melora.playback.local.LocalMediaScanner
 import com.leyu.melora.ui.common.runCatchingCancellable
 import com.leyu.melora.playback.local.LocalMediaStore
 import com.leyu.melora.ui.theme.MeloraAppearance
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * 本地歌曲设置页：
@@ -115,26 +115,22 @@ internal fun LocalMusicSettingsSubPage(onBack: () -> Unit) {
         ActivityResultContracts.OpenDocumentTree(),
     ) { uri ->
         if (uri != null) {
-            val permissionPersisted = try {
-                context.contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
-                )
-                true
-            } catch (_: Exception) {
-                false
-            }
-            if (permissionPersisted) {
-                val current = folders
-                if (uri.toString() !in current) {
-                    MeloraSettings.updateLocalFolders(current + uri.toString())
+            val permissionError = "无法保留所选文件夹权限，请重新选择目录"
+            scope.launch {
+                runCatchingCancellable {
+                    withContext(Dispatchers.IO) {
+                        val path = uri.toString()
+                        context.contentResolver.withPersistableTreeAccess(uri, permissionError) { alreadyAuthorized ->
+                            if (alreadyAuthorized && path in MeloraSettings.localFolders.value) false
+                            else MeloraSettings.addLocalFolder(path) || !alreadyAuthorized
+                        }
+                    }
+                }.onSuccess { changed ->
+                    if (changed) startScan()
+                    else PlaybackController.postMessage(context, "此文件夹已添加")
+                }.onFailure {
+                    PlaybackController.postMessage(context, it.message ?: permissionError)
                 }
-                // 使用自定义文件夹后自动关闭安卓媒体库
-                MeloraSettings.updateLocalUseMediaStore(false)
-                PlaybackController.postMessage(context, "已添加自定义文件夹，安卓媒体库已关闭")
-                startScan()
-            } else {
-                PlaybackController.postMessage(context, "无法保留所选文件夹权限，请重新选择目录")
             }
         }
     }
@@ -153,17 +149,8 @@ internal fun LocalMusicSettingsSubPage(onBack: () -> Unit) {
     }
 
     fun requestScan() {
-        if (!LocalMediaScanner.requiresAudioPermission()) {
-            startScan()
-            return
-        }
-        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            Manifest.permission.READ_MEDIA_AUDIO
-        } else {
-            Manifest.permission.READ_EXTERNAL_STORAGE
-        }
-        val granted = ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
-        if (granted) startScan() else permissionLauncher.launch(permission)
+        val permission = LocalMediaScanner.missingAudioPermission(context)
+        if (permission == null) startScan() else permissionLauncher.launch(permission)
     }
 
     SettingsSubPageScaffold(title = "本地歌曲", onBack = onBack) {
@@ -313,7 +300,7 @@ internal fun LocalMusicSettingsSubPage(onBack: () -> Unit) {
                         )
                     }
                     Surface(
-                        onClick = { folderPicker.launch(null) },
+                        onClick = { context.launchSystemFilePicker { folderPicker.launch(null) } },
                         shape = RoundedCornerShape(10.dp),
                         color = MeloraAppearance.tintBlue,
                     ) {

@@ -6,6 +6,8 @@ import android.graphics.Bitmap
 import java.io.File
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.ViewRootForTest
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.unit.Density
 import com.leyu.melora.ui.awaitStable
 import androidx.compose.runtime.*
@@ -90,8 +92,11 @@ class PlaylistUpdateSheetTest {
         compose.onNodeWithTag("playlist-sync-error").assertIsDisplayed()
         compose.onNodeWithTag("playlist-sync-preview").assertDoesNotExist()
         assertEquals(0, commits.get())
-        compose.onNodeWithText("重试读取").performClick()
-        waitPreview(); assertEquals(2, reads.get())
+        compose.onNodeWithTag("playlist-sync-submit").assertTextContains("重试读取").assertIsEnabled()
+        clickRead()
+        compose.waitUntil(5_000) { reads.get() == 2 }
+        waitPreview()
+        assertEquals(0, commits.get())
     }
 
     @Test fun cancelDuringLoadingDoesNotSave() {
@@ -142,21 +147,35 @@ class PlaylistUpdateSheetTest {
 
     @Test fun rulesAreAlwaysVisibleWithoutDisclosureWhileOriginalSourceStaysCollapsibleAndCopyable() {
         show()
+        val sheet = compose.onNodeWithTag("playlist-sync-sheet")
+        compose.awaitStable(sheet)
+        val view = (sheet.fetchSemanticsNode().root as ViewRootForTest).view
+        fun awaitSheetFocus() = compose.waitUntil(5_000) {
+            compose.runOnUiThread { view.hasWindowFocus() }
+        }
+        fun scrollToVisibleText(text: String): SemanticsNodeInteraction {
+            scrollToText(text)
+            val node = compose.onNodeWithText(text).performScrollTo()
+            compose.awaitStable(node)
+            return node.assertIsDisplayed()
+        }
+
+        awaitSheetFocus()
         compose.onNodeWithText(link.value).assertDoesNotExist()
         compose.onNodeWithTag("playlist-sync-rules-detail").assertIsDisplayed().assertHasNoClickAction()
         compose.onNodeWithText("更新规则").assertDoesNotExist()
-        compose.onNodeWithText("来源详情").performClick()
-        scrollToText(link.value)
-        compose.onNodeWithText(link.value).assertIsDisplayed()
-        scrollToText("复制链接")
-        compose.onNodeWithText("复制链接").performClick()
+        val disclosure = scrollToVisibleText("来源详情")
+        disclosure.performClick().assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "已展开"))
+        compose.awaitStable(sheet)
+        scrollToVisibleText(link.value)
+        scrollToVisibleText("复制链接").performClick()
+        awaitSheetFocus()
         compose.runOnIdle {
             val context = InstrumentationRegistry.getInstrumentation().targetContext
             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             assertEquals(link.value, clipboard.primaryClip?.getItemAt(0)?.text?.toString())
         }
-        scrollToText("来源详情")
-        compose.onNodeWithText("来源详情").performClick()
+        scrollToVisibleText("来源详情").performClick()
         compose.onNodeWithText(link.value).assertDoesNotExist()
         compose.onNodeWithTag("playlist-sync-content").performScrollToNode(hasTestTag("playlist-sync-rules-detail"))
         compose.onNodeWithTag("playlist-sync-rules-detail").assertIsDisplayed().assertHasNoClickAction()

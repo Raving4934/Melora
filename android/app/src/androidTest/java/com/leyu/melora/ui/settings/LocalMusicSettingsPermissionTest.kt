@@ -41,6 +41,7 @@ class LocalMusicSettingsPermissionTest {
         val folders = listOf("content://existing/tree/music")
         val treeUri = Uri.parse("content://${context.packageName}.download-fixture/tree/root")
         val result = Intent().setData(treeUri)
+        val permissionError = "无法保留所选文件夹权限，请重新选择目录"
         var launches = 0
         val registry = object : ActivityResultRegistry() {
             override fun <I, O> onLaunch(
@@ -69,13 +70,13 @@ class LocalMusicSettingsPermissionTest {
 
             compose.onNode(hasScrollAction()).performScrollToNode(hasText("添加"))
             compose.onNodeWithText("添加").performScrollTo().performClick()
-            compose.waitForIdle()
+            compose.waitUntil(5_000) { PlaybackController.state.value.message == permissionError }
 
             assertEquals("目录选择器必须真实收到点击", 1, launches)
             assertEquals(folders, MeloraSettings.localFolders.value)
             assertTrue(MeloraSettings.localUseMediaStore.value)
             assertFalse(LocalMediaStore.isScanning.value)
-            assertEquals("无法保留所选文件夹权限，请重新选择目录", PlaybackController.state.value.message)
+            assertEquals(permissionError, PlaybackController.state.value.message)
         } finally {
             MeloraSettings.updateLocalFolders(oldFolders)
             MeloraSettings.updateLocalUseMediaStore(oldUseMediaStore)

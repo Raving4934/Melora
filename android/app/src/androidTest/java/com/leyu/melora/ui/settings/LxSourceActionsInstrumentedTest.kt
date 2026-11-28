@@ -2,7 +2,6 @@ package com.leyu.melora.ui.settings
 
 import android.content.Context
 import android.content.ContextWrapper
-import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.CompositionLocalProvider
@@ -46,6 +45,7 @@ import com.leyu.melora.playback.SourceAlias
 import com.leyu.melora.playback.ThemeMode
 import com.leyu.melora.playback.lx.LxScriptStore
 import com.leyu.melora.playback.lx.LxSourceImporter
+import com.leyu.melora.ui.HostOrientationFixture
 import com.leyu.melora.ui.awaitStable
 import com.leyu.melora.ui.boundsInSameFrame
 import com.leyu.melora.ui.theme.MeloraAppearance
@@ -73,6 +73,7 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class LxSourceActionsInstrumentedTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
+    private val hostOrientation = HostOrientationFixture(compose)
 
     private lateinit var files: File
     private lateinit var fixtureContext: Context
@@ -240,16 +241,11 @@ class LxSourceActionsInstrumentedTest {
     )
 
     private inline fun inLandscape(test: () -> Unit) {
-        val scenario = compose.activityRule.scenario
-        val originalOrientation = compose.activity.requestedOrientation
         try {
-            scenario.onActivity { it.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
-            compose.waitUntil(8_000) {
-                compose.activity.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-            }
+            hostOrientation.request(Configuration.ORIENTATION_LANDSCAPE)
             test()
         } finally {
-            scenario.onActivity { it.requestedOrientation = originalOrientation }
+            hostOrientation.restore()
         }
     }
 

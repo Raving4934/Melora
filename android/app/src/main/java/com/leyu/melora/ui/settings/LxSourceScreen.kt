@@ -71,12 +71,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -103,6 +105,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.leyu.melora.playback.MeloraSettings
+import com.leyu.melora.playback.openPickedDocument
 import com.leyu.melora.playback.lx.LxInspector
 import com.leyu.melora.playback.lx.LxInspector.LinkStatus
 import com.leyu.melora.playback.lx.LxSourceUpdate
@@ -140,9 +143,11 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val store = remember { LxScriptStore(context) }
     val scope = rememberCoroutineScope()
-    var scripts by remember { mutableStateOf(store.list()) }
+    var scripts by remember { mutableStateOf(emptyList<LxScript>()) }
     var sourceStatuses by remember { mutableStateOf<Map<String, SourceActionStatus>>(emptyMap()) }
-    var busy by remember { mutableStateOf(false) }
+    var loading by remember { mutableStateOf(true) }
+    var operationInProgress by remember { mutableStateOf(false) }
+    val busy by remember { derivedStateOf { loading || operationInProgress } }
     var sourceOperationId by remember { mutableIntStateOf(0) }
     var pendingExportId by rememberSaveable { mutableStateOf<String?>(null) }
     var importChooserOpen by remember { mutableStateOf(false) }
@@ -156,13 +161,22 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
     }
 
+    LaunchedEffect(store) {
+        val initial = runCatchingCancellable { withContext(Dispatchers.IO) { store.list() } }
+        if (loading) {
+            initial.onSuccess { scripts = it }
+                .onFailure { notify(it.message ?: "无法读取自定义音源") }
+            loading = false
+        }
+    }
+
     fun updateSourceStatus(scriptId: String, status: SourceActionStatus) {
         sourceStatuses = sourceStatuses + (scriptId to status)
     }
 
     fun reloadAllSources(message: String) {
         val operationId = ++sourceOperationId
-        busy = true
+        operationInProgress = true
         scope.launch(Dispatchers.IO) {
             val result = runCatchingCancellable { LxScriptPool.reload(context) }
             SourceResolver.clearCache()
@@ -170,7 +184,7 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
             withContext(Dispatchers.Main) {
                 if (operationId != sourceOperationId) return@withContext
                 scripts = refreshed
-                busy = false
+                operationInProgress = false
                 notify(result.fold(
                     onSuccess = { "$message，已加载 $it 个音源脚本" },
                     onFailure = { "$message，但重新加载失败：${it.message ?: "未知错误"}" },
@@ -196,9 +210,10 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
         }
     }
 
-    fun completeSourceImport(imported: List<LxScript>, onSuccess: () -> Unit = {}) {
-        busy = false
-        scripts = store.list()
+    fun completeSourceImport(imported: List<LxScript>, refreshed: List<LxScript>, onSuccess: () -> Unit) {
+        scripts = refreshed
+        loading = false
+        operationInProgress = false
         sourceStatuses = sourceStatuses - imported.map { it.id }.toSet()
         onSuccess()
         val message = "已导入 ${imported.joinToString("、") { it.name }}"
@@ -211,15 +226,15 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
         onFailure: (String) -> Unit = ::notify,
     ) {
         val operationId = ++sourceOperationId
-        busy = true
+        operationInProgress = true
         scope.launch(Dispatchers.IO) {
-            val result = runCatchingCancellable { import() }
+            val result = runCatchingCancellable { import() to store.list() }
             withContext(Dispatchers.Main) {
                 if (operationId != sourceOperationId) return@withContext
                 result.fold(
-                    onSuccess = { imported -> completeSourceImport(imported, onSuccess) },
+                    onSuccess = { (imported, refreshed) -> completeSourceImport(imported, refreshed, onSuccess) },
                     onFailure = { error ->
-                        busy = false
+                        operationInProgress = false
                         onFailure(error.message ?: "未知错误")
                     },
                 )
@@ -230,27 +245,32 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
         launchSourceImport(import = {
-            val displayName = context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                val index = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
-            } ?: uri.lastPathSegment
-            val input = context.contentResolver.openInputStream(uri) ?: error("读取所选文件失败")
+            val resolver = context.contentResolver
+            val displayName = runCatchingCancellable {
+                resolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                    val column = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (column >= 0 && cursor.moveToFirst()) cursor.getString(column) else null
+                }
+            }.getOrNull() ?: uri.lastPathSegment
+            val input = resolver.openPickedDocument(uri, "读取所选文件失败，请重新选择")
             sourceImporter.importLocal(input, displayName)
         })
     }
 
-    fun writeExport(uri: Uri, success: String, failure: String, payload: () -> String) {
+    fun writeExport(uri: Uri, failure: String, payload: () -> Pair<String, String>) {
         val operationId = ++sourceOperationId
-        busy = true
+        operationInProgress = true
         scope.launch(Dispatchers.IO) {
             val result = runCatchingCancellable {
-                val bytes = payload().toByteArray()
-                context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) } ?: error("无法写入文件")
+                val (document, success) = payload()
+                val bytes = document.toByteArray()
+                context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(bytes) } ?: error("无法写入文件")
+                success
             }
             withContext(Dispatchers.Main) {
                 if (operationId != sourceOperationId) return@withContext
-                notify(if (result.isSuccess) success else failure)
-                busy = false
+                notify(result.getOrDefault(failure))
+                operationInProgress = false
             }
         }
     }
@@ -262,7 +282,7 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
         pendingExportId = null
         if (uri != null && id != null) {
             val name = scripts.firstOrNull { it.id == id }?.name ?: id
-            writeExport(uri, "已导出「$name」", "导出「$name」失败") { store.exportScript(id) }
+            writeExport(uri, "导出「$name」失败") { store.exportScript(id) to "已导出「$name」" }
         }
     }
 
@@ -270,15 +290,17 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
         ActivityResultContracts.CreateDocument("application/json"),
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        val selected = scripts.map { it.id }
-        writeExport(uri, "已导出 ${selected.size} 个音源脚本", "导出失败") {
-            store.exportBundle(selected)
+        writeExport(uri, "导出失败") {
+            val (document, count) = store.exportBundle()
+            document to "已导出 $count 个音源脚本"
         }
     }
 
     fun applySourceUpdate(update: LxSourceUpdate) {
         val id = update.scriptId
-        if (sourceStatuses[id]?.busy == true) return
+        if (busy || sourceStatuses[id]?.busy == true) return
+        ++sourceOperationId
+        operationInProgress = true
         updateSourceStatus(id, SourceActionStatus("正在应用更新…", busy = true))
         scope.launch {
             val status = runCatchingCancellable {
@@ -294,6 +316,7 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
                 )
             }.getOrElse { SourceActionStatus("更新失败 · ${it.message ?: "请重新检查"}", result = LinkStatus.INVALID) }
             updateSourceStatus(id, status)
+            operationInProgress = false
             notify(status.message)
         }
     }
@@ -364,7 +387,7 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
         if (scripts.isEmpty()) {
             item {
                 SettingsCard(contentPadding = PaddingValues(0.dp)) {
-                    InfoText("还没有音源脚本。点击下方「导入音源脚本」选择音源脚本文件（.js）即可开始使用。")
+                    InfoText(if (loading) "正在读取音源脚本…" else "还没有音源脚本。点击下方「导入音源脚本」选择音源脚本文件（.js）即可开始使用。")
                 }
             }
         } else {
@@ -378,28 +401,39 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
                                 enabled = !busy,
                                 actionStatus = sourceStatuses[script.id],
                                 onToggle = { enabled ->
-                                    ++sourceOperationId
-                                    val enabledIds = store.setEnabled(script.id, enabled)
-                                    scripts = scripts.map { item ->
-                                        item.copy(enabled = item.id in enabledIds)
+                                    if (!busy) {
+                                        ++sourceOperationId
+                                        operationInProgress = true
+                                        scope.launch {
+                                            runCatchingCancellable {
+                                                withContext(Dispatchers.IO) {
+                                                    val enabledIds = store.setEnabled(script.id, enabled)
+                                                    SourceResolver.clearCache()
+                                                    enabledIds
+                                                }
+                                            }.onSuccess { ids ->
+                                                scripts = scripts.map { it.copy(enabled = it.id in ids) }
+                                            }.onFailure { notify(it.message ?: "无法切换音源") }
+                                            operationInProgress = false
+                                        }
                                     }
-                                    SourceResolver.clearCache()
                                 },
                                 onTestValidity = { validityTestScript = script },
                                 checkUpdate = script.originUrl?.let { { sourceImporter.checkUpdate(script) } },
                                 onApplyUpdate = ::applySourceUpdate,
                                 onExport = {
                                     pendingExportId = script.id
-                                    singleExporter.launch(script.id)
+                                    context.launchSystemFilePicker(onUnavailable = { pendingExportId = null }) {
+                                        singleExporter.launch(script.id)
+                                    }
                                 },
                                 onDelete = {
                                     val operationId = ++sourceOperationId
                                     val message = "已删除「${script.name}」"
-                                    busy = true
+                                    operationInProgress = true
                                     scope.launch(Dispatchers.IO) {
                                         val deleteResult = runCatchingCancellable {
                                             store.remove(script.id)
-                                            check(store.code(script.id) == null) { "脚本文件未能删除" }
                                             SourceResolver.clearCache()
                                         }
                                         val refreshResult = deleteResult
@@ -421,7 +455,7 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
                                                 },
                                                 onFailure = { error -> "删除「${script.name}」失败：${error.message ?: "未知错误"}" },
                                             ))
-                                            busy = false
+                                            operationInProgress = false
                                         }
                                     }
                                 },
@@ -451,7 +485,7 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
                     subtitle = "导出 .json 合集，保留音源更新链接",
                     tint = Color(0xFF7C3AED),
                     enabled = scripts.isNotEmpty() && !busy,
-                ) { bundleExporter.launch("melora-sources.json") }
+                ) { context.launchSystemFilePicker { bundleExporter.launch("melora-sources.json") } }
                 SettingsDivider(Modifier.padding(start = 68.dp, end = 16.dp))
                 ActionRow(
                     icon = Icons.Rounded.Refresh,
@@ -471,7 +505,7 @@ fun LxSourceScreen(modifier: Modifier = Modifier) {
             onDismiss = { importChooserOpen = false },
             onLocalFile = { mimeTypes ->
                 importChooserOpen = false
-                importer.launch(mimeTypes)
+                context.launchSystemFilePicker { importer.launch(mimeTypes) }
             },
             onOnlineUrl = {
                 importChooserOpen = false
@@ -509,9 +543,12 @@ private fun SourceModalSheet(
     icon: ImageVector,
     title: String,
     subtitle: String,
+    canDismiss: () -> Boolean = { true },
     content: @Composable ColumnScope.(closeSheet: (() -> Unit) -> Unit) -> Unit,
 ) {
-    val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true)
+    val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true) {
+        it != SheetValue.Hidden || canDismiss()
+    }
     val closeSheet = rememberSheetDismiss(sheetState)
     MeloraBottomSheet(
         onDismissRequest = onDismiss,
@@ -521,6 +558,8 @@ private fun SourceModalSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .imePadding()
+                .verticalScroll(rememberScrollState())
                 .padding(bottom = 24.dp),
         ) {
             Row(
@@ -621,6 +660,7 @@ private fun OnlineSourceImportSheet(
 ) {
     val urlField = remember { TextFieldState() }
     var failure by remember { mutableStateOf<SourceImportFailure?>(null) }
+    var imported by remember { mutableStateOf(false) }
     val url = urlField.text.toString()
     val currentFailure = failure?.takeIf { it.draft == url }
     if (failure != currentFailure) {
@@ -641,6 +681,7 @@ private fun OnlineSourceImportSheet(
         icon = Icons.Outlined.Link,
         title = "从链接导入",
         subtitle = "支持 HTTP/HTTPS 直链；HTTP 会显示明文传输警告",
+        canDismiss = { !busy || imported },
     ) { closeSheet ->
         Surface(
             shape = RoundedCornerShape(14.dp),
@@ -670,7 +711,7 @@ private fun OnlineSourceImportSheet(
                 BasicTextField(
                     state = urlField,
                     lineLimits = TextFieldLineLimits.SingleLine,
-                    enabled = !busy,
+                    enabled = !busy && !imported,
                     textStyle = TextStyle(
                         fontSize = 13.sp,
                         color = TextMain,
@@ -749,18 +790,21 @@ private fun OnlineSourceImportSheet(
 
         Spacer(Modifier.height(4.dp))
 
-        val canSubmit = !busy && url.trim().isNotBlank()
+        val canSubmit = !busy && !imported && url.trim().isNotBlank()
         MeloraSheetActionBar(
             secondaryText = "取消",
             onSecondary = { closeSheet(onDismiss) },
-            secondaryEnabled = !busy,
+            secondaryEnabled = !busy && !imported,
             primaryText = if (isCleartextHttp) "仍要导入" else "立即导入",
             onPrimary = {
                 val submitted = urlField.text.toString()
                 failure = null
                 onImport(
                     submitted.trim(),
-                    { closeSheet(onImportSuccess) },
+                    {
+                        imported = true
+                        closeSheet(onImportSuccess)
+                    },
                     { failure = SourceImportFailure(submitted, it) },
                 )
             },
@@ -859,6 +903,7 @@ private fun SourceRow(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
                     .padding(bottom = 24.dp),
             ) {
                 Row(

@@ -128,9 +128,10 @@ private fun WebDavConnectionEditor(
     val password = remember { TextFieldState(config?.password.orEmpty()) }
     var visiblePassword by remember { mutableStateOf(false) }
     var action by remember { mutableStateOf<ConnectionAction?>(null) }
+    var savedConfig by remember { mutableStateOf(false) }
     var feedback by remember { mutableStateOf<ConnectionFeedback?>(null) }
     val sheet = rememberMeloraBottomSheetState(skipPartiallyExpanded = true) {
-        it != SheetValue.Hidden || action != ConnectionAction.Save
+        it != SheetValue.Hidden || action != ConnectionAction.Save || savedConfig
     }
     val close = rememberSheetDismiss(sheet)
 
@@ -170,7 +171,7 @@ private fun WebDavConnectionEditor(
                         ConnectionAction.Save -> {
                             val saved = WebDavSync.saveConfig(context, submitted)
                             savedCallback(saved)
-                            action = null
+                            savedConfig = true
                             close(onDismiss)
                         }
                     }
@@ -178,13 +179,13 @@ private fun WebDavConnectionEditor(
                     feedback = ConnectionFeedback(submitted, it.localizedMessage ?: "操作失败，请重试。", failed = true)
                 }
             } finally {
-                action = null
+                if (!savedConfig) action = null
             }
         }
     }
 
     MeloraBottomSheet(
-        onDismissRequest = { if (action != ConnectionAction.Save) onDismiss() },
+        onDismissRequest = { if (action != ConnectionAction.Save || savedConfig) onDismiss() },
         sheetState = sheet,
     ) {
         val focusManager = LocalFocusManager.current
@@ -352,10 +353,16 @@ private fun ConnectionField(
         }
     }
     if (passwordObfuscation != null) {
+        val focusManager = LocalFocusManager.current
+        val keyboard = LocalSoftwareKeyboardController.current
         BasicSecureTextField(
             state = state,
             modifier = modifier,
             enabled = enabled,
+            onKeyboardAction = {
+                focusManager.clearFocus()
+                keyboard?.hide()
+            },
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Password,
                 imeAction = ImeAction.Done,

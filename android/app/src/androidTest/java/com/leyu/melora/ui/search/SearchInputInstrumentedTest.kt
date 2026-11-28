@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.clearText
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
@@ -28,6 +29,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
@@ -54,6 +56,7 @@ import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
 import com.leyu.melora.playback.ComponentBlurMode
 import com.leyu.melora.playback.MeloraSettings
+import com.leyu.melora.playback.PlatformSource
 import com.leyu.melora.playback.SourceAlias
 import com.leyu.melora.playback.ThemeMode
 import com.leyu.melora.ui.awaitStable
@@ -231,24 +234,28 @@ class SearchInputInstrumentedTest {
         val anchor = compose.onNodeWithTag("search-anchor")
         val popup = compose.onNode(isPopup())
         fun assertAligned() {
-            val anchorWidth = anchor.fetchSemanticsNode().size.width
+            val anchorNode = anchor.fetchSemanticsNode()
             val menu = popup.assertIsDisplayed().fetchSemanticsNode()
-            assertEquals(anchorWidth, menu.size.width)
-            assertEquals(anchorWidth.toFloat(), menu.boundsInRoot.width, 1f)
+            compose.runOnIdle {
+                val anchorWidth = anchorNode.size.width
+                assertEquals(anchorWidth, menu.size.width)
+                assertEquals(anchorWidth.toFloat(), menu.boundsInRoot.width, 1f)
+            }
         }
-        compose.mainClock.advanceTimeBy(500)
+        awaitWindowFocus(popup)
         assertAligned()
         platformOption(PlatformSource.All).assertIsSelected()
         platformOption(PlatformSource.Kuwo).performClick()
         popup.assertDoesNotExist()
         compose.runOnIdle { useFullWidth.value = true }
-        compose.onNodeWithContentDescription("选择平台").performClick()
-        compose.mainClock.advanceTimeBy(500)
+        openPlatformMenu(expanded)
         assertAligned()
         platformOption(PlatformSource.Kuwo).assertIsSelected()
         platformOption(PlatformSource.Tencent).performClick()
         popup.assertDoesNotExist()
-        compose.onNodeWithContentDescription("搜索").performClick()
+        val search = compose.onNodeWithContentDescription("搜索")
+        awaitWindowFocus(search)
+        search.performClick()
         compose.onNodeWithText("乐屿推荐").performClick()
         compose.runOnIdle {
             assertEquals(PlatformSource.Tencent, selected.value)
@@ -279,7 +286,7 @@ class SearchInputInstrumentedTest {
             }
         }
 
-        compose.onNodeWithContentDescription("选择平台").performClick()
+        openPlatformMenu(expanded)
         val first = platformOption(PlatformSource.Kuwo).fetchSemanticsNode().positionInRoot
         val second = platformOption(PlatformSource.Kugou).fetchSemanticsNode().positionInRoot
         assertEquals(first.x, second.x, 1f)
@@ -333,11 +340,10 @@ class SearchInputInstrumentedTest {
                 }
             }
 
-            val button = compose.onNodeWithContentDescription("选择平台")
             val menu = compose.onNode(isPopup())
             val allPlatforms = platformOption(PlatformSource.All)
             val kuwo = platformOption(PlatformSource.Kuwo)
-            button.performClick()
+            openPlatformMenu(expanded)
             compose.awaitStable(kuwo)
             allPlatforms.assertIsSelected()
             val (root, active, inactive) = compose.boundsInSameFrame(menu, allPlatforms, kuwo)
@@ -355,7 +361,7 @@ class SearchInputInstrumentedTest {
             // Popup 有独立窗口，直接从该窗口读取实际合成结果。
             val node = menu.fetchSemanticsNode()
             val view = (node.root as ViewRootForTest).view
-            val bounds = node.boundsInWindow
+            val bounds = compose.runOnIdle { node.boundsInWindow }
             val region = android.graphics.Rect(bounds.left.roundToInt(), bounds.top.roundToInt(),
                 bounds.right.roundToInt(), bounds.bottom.roundToInt())
             fun captureMenu(): Bitmap {
@@ -402,7 +408,7 @@ class SearchInputInstrumentedTest {
                 assertEquals(PlatformSource.Kuwo, selected.value)
                 category.value = SearchCategory.Playlist
             }
-            button.performClick()
+            openPlatformMenu(expanded)
             compose.awaitStable(kuwo)
             kuwo.assertIsSelected()
             platformOption(PlatformSource.Tencent).performClick()
@@ -411,6 +417,23 @@ class SearchInputInstrumentedTest {
         } finally {
             MeloraSettings.themeMode.value = originalMode
             MeloraSettings.componentBlurMode.value = originalBlur
+        }
+    }
+
+    private fun openPlatformMenu(expanded: State<Boolean>) {
+        val button = compose.onNodeWithContentDescription("选择平台")
+        awaitWindowFocus(button)
+        button.performClick()
+        compose.runOnIdle { assertTrue("点击平台按钮后应打开菜单", expanded.value) }
+        awaitWindowFocus(compose.onNode(isPopup()))
+    }
+
+    private fun awaitWindowFocus(node: SemanticsNodeInteraction) {
+        compose.awaitStable(node)
+        // Popup 属于独立窗口，语义节点存在时触摸焦点仍可能在上一个窗口。
+        val view = (node.fetchSemanticsNode().root as ViewRootForTest).view
+        compose.waitUntil(conditionDescription = "目标窗口可以接收触摸", timeoutMillis = 5_000) {
+            compose.runOnUiThread { view.hasWindowFocus() }
         }
     }
 

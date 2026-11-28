@@ -29,6 +29,7 @@ import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
 import com.leyu.melora.playback.MeloraSettings
+import com.leyu.melora.playback.PlatformSource
 import com.leyu.melora.playback.SourceAlias
 import com.leyu.melora.playback.UserLibrary
 import com.leyu.melora.playback.sdk.KwBookApi

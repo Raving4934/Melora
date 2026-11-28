@@ -1,7 +1,7 @@
 package com.leyu.melora.ui.search
 
 import android.content.Context
-import androidx.compose.ui.graphics.Color
+import com.leyu.melora.playback.PlatformSource
 import com.leyu.melora.playback.sdk.KwBookApi
 import com.leyu.melora.playback.sdk.OnlineCache
 import com.leyu.melora.playback.sdk.OnlinePlaylist
@@ -22,16 +22,6 @@ enum class SearchCategory(val label: String) {
     Song("歌曲"),
     Playlist("歌单"),
     Audiobook("听书"),
-}
-
-// 平台筛选：酷狗、酷我、网易、企鹅、咪咕、聚合
-enum class PlatformSource(val id: String, val label: String, val color: Color) {
-    Kuwo("kw", "酷我", Color(0xFFFFB300)),
-    Kugou("kg", "酷狗", Color(0xFF0091EA)),
-    Netease("wy", "网易", Color(0xFFE53935)),
-    Tencent("tx", "企鹅", Color(0xFF00C853)),
-    Migu("mg", "咪咕", Color(0xFF8E24AA)),
-    All("all", "聚合", Color(0xFF2E7D32)),
 }
 
 // 听书场景关键词兜底（真词优先取酷我有声小说子榜名）
@@ -61,13 +51,12 @@ internal data class SearchResults(
     )
 }
 
-internal val platformIds = PlatformSource.entries.filter { it != PlatformSource.All }.map(PlatformSource::id)
 private const val SEARCH_CACHE_TTL_MS = 10 * 60 * 1000L
 private const val SEARCH_PREVIEW_TTL_MS = 60_000L
 private const val SUGGESTION_LIMIT = 8
 
 internal val PlatformSource.searchSources: List<String>
-    get() = if (this == PlatformSource.All) platformIds else listOf(id)
+    get() = if (this == PlatformSource.All) PlatformSource.musicIds else listOf(id)
 
 internal fun songSearchCacheKey(source: String, keyword: String, page: Int): String =
     "search:songs:$source:${keyword.trim().lowercase(Locale.ROOT)}:$page"

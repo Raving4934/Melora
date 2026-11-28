@@ -4,8 +4,8 @@ import com.leyu.melora.ui.common.MeloraBottomSheet
 import com.leyu.melora.ui.common.MeloraSheetHandle
 import com.leyu.melora.ui.common.rememberMeloraBottomSheetState
 import com.leyu.melora.ui.common.rememberSheetDismiss
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -23,12 +23,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.clearText
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 
 import androidx.compose.material.icons.outlined.AccessTime
@@ -46,8 +48,10 @@ import androidx.compose.material.icons.rounded.Close
 
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Text
 import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -56,6 +60,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -65,6 +71,7 @@ import com.leyu.melora.playback.UiTrack
 
 
 import com.leyu.melora.playback.local.LocalSong
+import com.leyu.melora.playback.local.LocalSongsContent
 import com.leyu.melora.playback.local.LocalSortField
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.ui.common.toUiTracks
@@ -76,7 +83,10 @@ import com.leyu.melora.ui.common.TextMuted
 import com.leyu.melora.ui.common.TextSub
 import com.leyu.melora.ui.common.chromeContentPadding
 import com.leyu.melora.ui.common.chromeHeaderColor
+import com.leyu.melora.ui.theme.DarkGlass
+import com.leyu.melora.ui.theme.LightSheetFrost
 import com.leyu.melora.ui.theme.MeloraAppearance
+import com.leyu.melora.ui.theme.currentMeloraSheetPalette
 
 /** 本地搜索页：搜索框 + 结果列表；排序与列表页共用。 */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -192,7 +202,7 @@ internal fun LocalSearchPage(
                                 context,
                                 filtered.shuffled().map { it.toOnlineSong() }.toUiTracks(),
                                 0,
-                                "local.songs",
+                                "local.search",
                             )
                         },
                         onOpenSortSheet = onOpenSortSheet,
@@ -274,7 +284,9 @@ internal fun LocalSearchPage(
 
 
 
-/** 升降排序抽屉：顶栏升降序双胶囊 + 6 档排序卡片行，高质感图标与清晰说明。 */
+private val LightSortSecondaryText = Color(0xFF334155)
+
+/** 本地歌曲排序抽屉。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun LocalSortSheet(
@@ -286,16 +298,19 @@ internal fun LocalSortSheet(
 ) {
     val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true)
     val closeSheet = rememberSheetDismiss(sheetState)
+    val palette = currentMeloraSheetPalette()
+    val eInk = palette.isEInk
+    val dark = !eInk && palette.isDark
+    val lightSelectedText = MaterialTheme.colorScheme.onPrimaryContainer
     MeloraBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = MeloraAppearance.sheetCard,
-        tonalElevation = 0.dp,
-        dragHandle = { MeloraSheetHandle(color = MeloraAppearance.divider) },
+        dragHandle = { MeloraSheetHandle() },
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(bottom = 28.dp),
         ) {
             Row(
@@ -309,31 +324,42 @@ internal fun LocalSortSheet(
                     "排序方式",
                     fontSize = 17.sp,
                     fontWeight = FontWeight.Medium,
-                    color = TextMain,
+                    color = palette.textMain,
                 )
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MeloraAppearance.softFill)
-                        .padding(3.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                Surface(
+                    shape = CircleShape,
+                    color = when {
+                        eInk -> Color(0xFFF2F2F2)
+                        dark -> DarkGlass.chip
+                        else -> LightSheetFrost.chip
+                    },
+                    border = when {
+                        eInk -> BorderStroke(1.dp, Color.Black)
+                        dark -> BorderStroke(0.5.dp, DarkGlass.border)
+                        else -> LightSheetFrost.chipBorder
+                    },
                 ) {
-                    SortDirectionSegment(
-                        icon = Icons.Outlined.ArrowUpward,
-                        label = "升序",
-                        selected = ascending,
-                        onClick = { onDirectionChange(true) },
-                    )
-                    SortDirectionSegment(
-                        icon = Icons.Outlined.ArrowDownward,
-                        label = "降序",
-                        selected = !ascending,
-                        onClick = { onDirectionChange(false) },
-                    )
+                    Row(
+                        modifier = Modifier.padding(3.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        SortDirectionSegment(
+                            icon = Icons.Outlined.ArrowUpward,
+                            label = "升序",
+                            selected = ascending,
+                            onClick = { onDirectionChange(true) },
+                        )
+                        SortDirectionSegment(
+                            icon = Icons.Outlined.ArrowDownward,
+                            label = "降序",
+                            selected = !ascending,
+                            onClick = { onDirectionChange(false) },
+                        )
+                    }
                 }
             }
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(14.dp))
 
             Column(
                 modifier = Modifier
@@ -351,59 +377,95 @@ internal fun LocalSortSheet(
                         LocalSortField.ModifiedAt -> Icons.Outlined.History to "按音频文件最后修改时间排布"
                         LocalSortField.AddedAt -> Icons.Outlined.AccessTime to "按设备收录/扫描发现时间排布"
                     }
-                    Row(
+                    Surface(
+                        onClick = {
+                            closeSheet {
+                                onFieldChange(option)
+                                onDismiss()
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        color = when {
+                            !selected -> Color.Transparent
+                            eInk -> Color(0xFFE8E8E8)
+                            dark -> DarkGlass.selectedFill
+                            else -> LightSheetFrost.activeCard
+                        },
+                        border = if (eInk && selected) BorderStroke(1.dp, Color.Black) else null,
+                        shadowElevation = 0.dp,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(if (selected) MeloraAppearance.tintBlue else Color.Transparent)
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                            ) {
-                                closeSheet {
-                                    onFieldChange(option)
-                                    onDismiss()
-                                }
-                            }
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                            .semantics { this.selected = selected },
                     ) {
-                        Box(
+                        Row(
                             modifier = Modifier
-                                .size(32.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(if (selected) BrandBlue.copy(alpha = 0.14f) else MeloraAppearance.softFill),
-                            contentAlignment = Alignment.Center,
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Icon(
-                                icon,
-                                contentDescription = null,
-                                tint = if (selected) BrandBlue else TextSub,
-                                modifier = Modifier.size(17.dp),
-                            )
-                        }
-                        Spacer(Modifier.width(14.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = option.label,
-                                fontSize = 14.sp,
-                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                                color = if (selected) BrandBlue else TextMain,
-                            )
-                            Text(
-                                text = subtitle,
-                                fontSize = 11.5.sp,
-                                color = if (selected) BrandBlue.copy(alpha = 0.75f) else TextSub,
-                                modifier = Modifier.padding(top = 1.dp),
-                            )
-                        }
-                        if (selected) {
-                            Icon(
-                                Icons.Rounded.Check,
-                                contentDescription = "已选",
-                                tint = BrandBlue,
-                                modifier = Modifier.size(18.dp),
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(RoundedCornerShape(9.dp))
+                                    .background(
+                                        when {
+                                            eInk -> if (selected) Color.Black else Color(0xFFF2F2F2)
+                                            dark -> if (selected) DarkGlass.selectedEdge.copy(alpha = 0.22f) else DarkGlass.icon
+                                            selected -> LightSheetFrost.blue.copy(alpha = 0.14f)
+                                            else -> LightSheetFrost.chip
+                                        },
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    icon,
+                                    contentDescription = null,
+                                    tint = when {
+                                        eInk -> if (selected) Color.White else Color.Black
+                                        dark -> if (selected) DarkGlass.selectedText else palette.textMain
+                                        selected -> LightSheetFrost.blue
+                                        else -> palette.textSub
+                                    },
+                                    modifier = Modifier.size(17.dp),
+                                )
+                            }
+                            Spacer(Modifier.width(14.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = option.label,
+                                    fontSize = 14.sp,
+                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                                    color = when {
+                                        eInk -> Color.Black
+                                        dark && selected -> DarkGlass.selectedText
+                                        selected -> lightSelectedText
+                                        else -> palette.textMain
+                                    },
+                                )
+                                Text(
+                                    text = subtitle,
+                                    fontSize = 11.5.sp,
+                                    color = when {
+                                        eInk -> Color(0xFF444444)
+                                        dark -> if (selected) DarkGlass.selectedText.copy(alpha = 0.82f) else palette.textSub
+                                        selected -> lightSelectedText
+                                        else -> LightSortSecondaryText
+                                    },
+                                    modifier = Modifier.padding(top = 1.dp),
+                                )
+                            }
+                            if (selected) {
+                                Icon(
+                                    Icons.Rounded.Check,
+                                    contentDescription = "已选",
+                                    tint = when {
+                                        eInk -> Color.Black
+                                        dark -> DarkGlass.selectedText
+                                        else -> LightSheetFrost.blue
+                                    },
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
                         }
                     }
                 }
@@ -419,28 +481,46 @@ private fun SortDirectionSegment(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
-    Box(
+    val palette = currentMeloraSheetPalette()
+    val eInk = palette.isEInk
+    val dark = !eInk && palette.isDark
+    Surface(
+        shape = CircleShape,
+        color = when {
+            !selected -> Color.Transparent
+            eInk -> Color.Black
+            dark -> DarkGlass.selectedFill
+            else -> Color.White.copy(alpha = 0.92f)
+        },
+        border = when {
+            !selected || eInk -> null
+            dark -> BorderStroke(0.5.dp, DarkGlass.selectedEdge)
+            else -> LightSheetFrost.cardBorder
+        },
+        shadowElevation = 0.dp,
         modifier = Modifier
-            .clip(RoundedCornerShape(9.dp))
-            .background(if (selected) MeloraAppearance.card else Color.Transparent)
-            .border(
-                width = if (selected) 0.8.dp else 0.dp,
-                color = if (selected) MeloraAppearance.chipBorderColor else Color.Transparent,
-                shape = RoundedCornerShape(9.dp),
-            )
+            .clip(CircleShape)
+            .semantics { this.selected = selected }
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = onClick,
-            )
-            .padding(horizontal = 10.dp, vertical = 5.dp),
-        contentAlignment = Alignment.Center,
+            ),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        val tint = when {
+            !selected -> if (eInk || dark) palette.textSub else LightSortSecondaryText
+            eInk -> Color.White
+            dark -> DarkGlass.selectedText
+            else -> MaterialTheme.colorScheme.onPrimaryContainer
+        }
+        Row(
+            modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Icon(
                 icon,
                 contentDescription = null,
-                tint = if (selected) BrandBlue else TextSub,
+                tint = tint,
                 modifier = Modifier.size(13.dp),
             )
             Spacer(Modifier.width(4.dp))
@@ -448,7 +528,7 @@ private fun SortDirectionSegment(
                 label,
                 fontSize = 12.sp,
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                color = if (selected) BrandBlue else TextSub,
+                color = tint,
             )
         }
     }

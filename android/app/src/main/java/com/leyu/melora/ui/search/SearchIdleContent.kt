@@ -1,5 +1,6 @@
 package com.leyu.melora.ui.search
 
+import com.leyu.melora.ui.common.submitLibraryWrite
 import com.leyu.melora.ui.common.chromeContentPadding
 
 import androidx.compose.foundation.background
@@ -43,6 +44,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.leyu.melora.playback.PlatformSource
 import com.leyu.melora.playback.UserLibrary
 import com.leyu.melora.playback.sdk.OnlinePlaylist
 import com.leyu.melora.playback.sdk.OnlineSong
@@ -116,7 +118,7 @@ internal fun SearchIdleContent(
                             color = TextSub,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(6.dp))
-                                .clickable { UserLibrary.clearSearchHistory() }
+                                .clickable { submitLibraryWrite { UserLibrary.clearSearchHistory() } }
                                 .padding(horizontal = 6.dp, vertical = 2.dp),
                         )
                     }
@@ -347,7 +349,7 @@ internal fun SearchIdleContent(
                             val columns = responsiveGridColumns(maxWidth, horizontalSpacing = 10.dp)
                             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 recommendedCollections.chunked(columns).forEach { row ->
-                                    SearchPlaylistRow(row, columns, category, onOpenPlaylist)
+                                    SearchPlaylistRow(row, columns, onOpenPlaylist)
                                 }
                             }
                         }

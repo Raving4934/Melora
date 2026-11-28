@@ -589,9 +589,14 @@ private fun CrashLogContent() {
             ) {
                 OutlinedButton(
                     onClick = {
-                        CrashLogger.clearLog()
-                        logText = null
-                        PlaybackController.postMessage(context, "已清空崩溃日志")
+                        scope.launch {
+                            if (withContext(Dispatchers.IO) { CrashLogger.clearLog() }) {
+                                logText = null
+                                PlaybackController.postMessage(context, "已清空崩溃日志")
+                            } else {
+                                PlaybackController.postMessage(context, "无法清空崩溃日志")
+                            }
+                        }
                     },
                     shape = CircleShape,
                     modifier = Modifier.weight(1f).height(44.dp),

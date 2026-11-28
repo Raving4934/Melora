@@ -15,6 +15,7 @@ import com.leyu.melora.playback.UserLibrary
 import com.leyu.melora.playback.sdk.OnlinePlaylist
 import com.leyu.melora.playback.sdk.OnlineSong
 import com.leyu.melora.ui.awaitStable
+import com.leyu.melora.ui.boundsInSameFrame
 import com.leyu.melora.ui.common.SongListStateProvider
 import com.leyu.melora.ui.theme.MeloraTheme
 import java.io.File
@@ -123,7 +124,7 @@ class LibraryPresentationTest {
     @Test fun switchingFromSongsOrAllHasNoHeaderOrTargetRowJumpAcrossFrames() {
         showRecents(listOf(chapter))
         val tabs = compose.onNodeWithTag("recent-tabs")
-        val tabsBefore = tabs.fetchSemanticsNode().boundsInRoot
+        val tabsBefore = compose.awaitStable(tabs)
         compose.mainClock.autoAdvance = false
         try {
             for (origin in listOf("单曲 1", "全部 4")) {
@@ -131,17 +132,19 @@ class LibraryPresentationTest {
                     compose.onNodeWithText(origin).performClick()
                     compose.mainClock.advanceTimeBy(300)
                     compose.onNodeWithText(destination).performClick()
-                    val positions = mutableListOf<Float>()
-                    repeat(8) {
+                    val target = compose.onNodeWithText(title, useUnmergedTree = true)
+                    val positions = List(8) {
                         compose.mainClock.advanceTimeByFrame()
-                        positions += compose.onNodeWithText(title, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot.top
-                        val currentTabs = tabs.fetchSemanticsNode().boundsInRoot
+                        val (currentTarget, currentTabs) = compose.boundsInSameFrame(target, tabs)
                         assertEquals("分类栏不能跟着正文抖动", tabsBefore.top, currentTabs.top, 1f)
                         assertEquals(tabsBefore.bottom, currentTabs.bottom, 1f)
+                        currentTarget.top
                     }
                     compose.mainClock.advanceTimeBy(300)
-                    val settled = compose.onNodeWithText(title, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot.top
-                    positions.forEach { assertEquals("$origin → $destination 不能先按旧顶栏高度绘制", settled, it, 1f) }
+                    val settled = compose.boundsInSameFrame(target).single().top
+                    positions.forEachIndexed { frame, top ->
+                        assertEquals("$origin → $destination 第 ${frame + 1} 帧行位置应稳定", settled, top, 1f)
+                    }
                 }
             }
         } finally { compose.mainClock.autoAdvance = true }

@@ -317,7 +317,6 @@ internal fun DailyRecommendCard(
     subtitle: String,
     loading: Boolean,
     artwork: String?,
-    seed: String,
     queueId: String,
     onPlay: () -> Unit,
     onClick: () -> Unit,
@@ -337,7 +336,6 @@ internal fun DailyRecommendCard(
             if (artwork != null) {
                 SongArtwork(
                     url = artwork,
-                    seed = seed,
                     modifier = Modifier.fillMaxSize(),
                     cornerRadius = 18,
                 )
@@ -439,7 +437,6 @@ internal fun GuessYouLikeCard(
     subtitle: String,
     loading: Boolean,
     artwork: String?,
-    seed: String,
     queueId: String,
     onPlay: () -> Unit,
     onClick: () -> Unit,
@@ -459,7 +456,6 @@ internal fun GuessYouLikeCard(
             if (artwork != null) {
                 SongArtwork(
                     url = artwork,
-                    seed = seed,
                     modifier = Modifier.fillMaxSize(),
                     cornerRadius = 18,
                 )

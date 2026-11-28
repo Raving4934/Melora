@@ -1,6 +1,5 @@
 package com.leyu.melora.ui.settings
 
-import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -8,15 +7,21 @@ import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Backup
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.HourglassEmpty
 import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.SyncProblem
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -27,9 +32,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -45,6 +52,7 @@ import com.leyu.melora.playback.WebDavConfigStore
 import com.leyu.melora.playback.WebDavSync
 import com.leyu.melora.ui.common.MeloraAlertDialog
 import com.leyu.melora.ui.common.runCatchingCancellable
+import com.leyu.melora.ui.theme.MeloraAppearance
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -156,14 +164,10 @@ internal fun SyncSettingsSubPage(onBack: () -> Unit) {
     }
 
     fun openSystemPicker(open: () -> Unit) {
-        try {
-            open()
-        } catch (_: ActivityNotFoundException) {
+        context.launchSystemFilePicker(onUnavailable = {
             pendingDirectoryTarget = null
             pendingAutomatic = false
-            val message = "系统文件选择器不可用，请启用系统的文件应用后重试"
-            android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show()
-        }
+        }, launch = open)
     }
 
     fun selectTarget(target: BackupDestination, automatic: Boolean) {
@@ -188,11 +192,30 @@ internal fun SyncSettingsSubPage(onBack: () -> Unit) {
             listOf(volume, id.substringAfter(':', "")).filter(String::isNotBlank).joinToString(" / ")
         } else preferences.directoryName
     }
-    val recordsAvailable = ready && FeedbackArea.RECORDS !in busyAreas
+    val recordsBusy = FeedbackArea.RECORDS in busyAreas
+    val recordsAvailable = ready && !recordsBusy
     val preferencesAvailable = ready && FeedbackArea.PREFERENCES !in busyAreas
     val backupsAvailable = ready && FeedbackArea.BACKUPS !in busyAreas
     SettingsSubPageScaffold(title = "同步与备份", onBack = onBack) {
-        item { SectionCaption("WebDav设置") }
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SectionCaption("WebDav设置", Modifier.weight(1f))
+                Box(Modifier.padding(end = 6.dp).size(14.dp)) {
+                    if (recordsBusy) {
+                        val label = "正在处理 WebDAV 同步"
+                        if (MeloraAppearance.isEInk) {
+                            Icon(Icons.Outlined.HourglassEmpty, contentDescription = label, tint = SettingsTextMain)
+                        } else {
+                            CircularProgressIndicator(
+                                modifier = Modifier.semantics { contentDescription = label },
+                                color = SettingsBrandBlue,
+                                strokeWidth = 1.5.dp,
+                            )
+                        }
+                    }
+                }
+            }
+        }
         item {
             SettingsCard(contentPadding = PaddingValues(0.dp)) {
                 WebDavConnectionEntry(config = saved, ready = ready, enabled = busyAreas.isEmpty()) {
@@ -211,7 +234,8 @@ internal fun SyncSettingsSubPage(onBack: () -> Unit) {
                 }
                 if (syncEnabled) {
                     SettingsDivider()
-                    SettingsEntryItem(Icons.Outlined.Sync, SettingsBrandBlue, "立即同步", syncStatus.ifBlank { "等待同步" },
+                    SettingsEntryItem(Icons.Outlined.Sync, SettingsBrandBlue, "立即同步",
+                        syncStatus.ifBlank { "等待同步" },
                         enabled = recordsAvailable && saved != null) {
                         runAction("", FeedbackArea.RECORDS) {
                             WebDavSync.syncNow(context)
@@ -265,7 +289,7 @@ internal fun SyncSettingsSubPage(onBack: () -> Unit) {
                     openSystemPicker { directoryPicker.launch(preferences.directory) }
                 }
                 SettingsDivider()
-                SettingsEntryItem(Icons.Outlined.Backup, SettingsBrandBlue, "备份", "保存设置、收藏、歌单与音源脚本", enabled = backupsAvailable) { menu = BackupMenu.BACKUP }
+                SettingsEntryItem(Icons.Outlined.Backup, SettingsBrandBlue, "备份", "保存设置、用户库、播放断点与音源脚本", enabled = backupsAvailable) { menu = BackupMenu.BACKUP }
                 SettingsDivider()
                 SettingsEntryItem(Icons.Outlined.Restore, SettingsBrandBlue, "恢复", "从本地文件或网络备份恢复", enabled = backupsAvailable) { menu = BackupMenu.RESTORE }
                 if (recoveryAvailable) {
@@ -337,7 +361,7 @@ internal fun SyncSettingsSubPage(onBack: () -> Unit) {
                             overflow = TextOverflow.MiddleEllipsis,
                         )
                     }
-                    Text(listOfNotNull(name, "备份中的设置和用户库将替换本机内容，音源脚本将合并。",
+                    Text(listOfNotNull(name, "备份所含的设置、用户库与播放断点将恢复到本机，音源脚本将合并。",
                         if (syncEnabled) "已开启多设备同步，记录变更也会同步到其他设备。" else null)
                         .joinToString("\n\n"), color = SettingsTextSub)
                 }

@@ -56,12 +56,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.leyu.melora.playback.MeloraSettings
+import com.leyu.melora.playback.PlatformSource
 import com.leyu.melora.playback.sdk.OnlineCache
 import com.leyu.melora.playback.sdk.OnlineRepository
 import com.leyu.melora.playback.sdk.Tag
 import com.leyu.melora.playback.sdk.TagInfo
 import com.leyu.melora.ui.common.ChromeActionSurface
 import com.leyu.melora.ui.common.SheetTagChip
+import com.leyu.melora.ui.common.dotColor
 import com.leyu.melora.ui.common.sourceAliasDisplay
 import com.leyu.melora.ui.common.runCatchingCancellable
 import com.leyu.melora.ui.theme.LightSheetFrost
@@ -80,7 +82,7 @@ private val AllPlaylists = Tag("", "全部歌单")
 @Composable
 fun PlaylistTopBarFilter(onOpenPlatformPicker: () -> Unit) {
     val platformId by MeloraSettings.playlistPlatform.collectAsStateWithLifecycle()
-    val platform = playlistPlatforms.firstOrNull { it.id == platformId } ?: playlistPlatforms.first()
+    val platform = PlatformSource.musicPlatform(platformId) ?: PlatformSource.Kuwo
     val tagName by MeloraSettings.playlistTagName.collectAsStateWithLifecycle()
     val sortOrder by MeloraSettings.playlistSort.collectAsStateWithLifecycle()
     var showCategorySheet by remember { mutableStateOf(false) }
@@ -186,7 +188,7 @@ fun PlaylistTopBarFilter(onOpenPlatformPicker: () -> Unit) {
                     modifier = Modifier
                         .size(7.dp)
                         .clip(CircleShape)
-                        .background(platform.color.copy(alpha = 0.55f)),
+                        .background(platform.dotColor.copy(alpha = 0.55f)),
                 )
                 Spacer(Modifier.width(5.dp))
                 Text(
@@ -216,7 +218,7 @@ fun PlaylistTopBarFilter(onOpenPlatformPicker: () -> Unit) {
 private fun PlaylistCategorySheet(onDismiss: () -> Unit) {
     val context = LocalContext.current
     val platformId by MeloraSettings.playlistPlatform.collectAsStateWithLifecycle()
-    val platform = playlistPlatforms.firstOrNull { it.id == platformId } ?: playlistPlatforms.first()
+    val platform = PlatformSource.musicPlatform(platformId) ?: PlatformSource.Kuwo
     val selectedTagId by MeloraSettings.playlistTagId.collectAsStateWithLifecycle()
     val sheetState = rememberMeloraBottomSheetState(skipPartiallyExpanded = true)
     val closeSheet = rememberSheetDismiss(sheetState)

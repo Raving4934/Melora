@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.ViewRootForTest
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -15,13 +16,17 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isPopup
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -45,6 +50,7 @@ class BasicSettingsInstrumentedTest {
             MeloraSettings.updateComponentBlurMode(ComponentBlurMode.Off)
             showBasicSettings(fontScale = 2f)
 
+            val activity = compose.activity
             val blurSetting = hasText("模糊组件") and hasText("需要 Android 13 及以上版本")
             val radio = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.RadioButton)
             val modes = listOf(
@@ -56,16 +62,32 @@ class BasicSettingsInstrumentedTest {
             for ((label, mode) in modes) {
                 val row = blurSetting and hasText(selected)
                 scrollTo(row)
-                compose.waitUntil(5_000) { compose.activity.hasWindowFocus() }
-                compose.onNode(row).performClick()
-                compose.waitUntil(5_000) { !compose.activity.hasWindowFocus() }
+                val trigger = compose.onNode(row).performScrollTo()
+                compose.awaitStable(trigger)
+                compose.waitUntil("模糊设置行可接收触摸", 5_000) {
+                    compose.runOnUiThread { activity.hasWindowFocus() }
+                }
+                trigger.performClick()
+                val popup = compose.onNode(isPopup())
+                val popupView = (popup.fetchSemanticsNode().root as ViewRootForTest).view
                 modes.forEach { (option, _) ->
                     compose.awaitStable(compose.onNode(radio and hasText(option)))
                 }
                 compose.onNode(radio and hasText(selected)).assertIsSelected()
-                compose.onNode(radio and hasText(label)).performClick()
-                compose.waitUntil(5_000) {
-                    MeloraSettings.componentBlurMode.value == mode && compose.activity.hasWindowFocus()
+                val destination = compose.onNode(radio and hasText(label)).performScrollTo()
+                compose.awaitStable(destination)
+                compose.waitUntil("实际模糊选项窗口获焦", 5_000) {
+                    compose.runOnUiThread { popupView.hasWindowFocus() }
+                }
+                destination.assertIsDisplayed().performTouchInput { click() }
+                compose.runOnIdle {
+                    assertEquals("触摸「$label」应应用对应模式", mode, MeloraSettings.componentBlurMode.value)
+                }
+                compose.waitUntil("选择「$label」后移除模糊选项窗口", 5_000) {
+                    compose.onAllNodes(isPopup()).fetchSemanticsNodes().isEmpty()
+                }
+                compose.waitUntil("选择「$label」后设置页重新获焦", 5_000) {
+                    compose.runOnUiThread { activity.hasWindowFocus() }
                 }
                 selected = label
                 val selectedRow = blurSetting and hasText(label)

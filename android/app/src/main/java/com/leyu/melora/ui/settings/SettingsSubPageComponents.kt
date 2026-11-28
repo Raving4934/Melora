@@ -1,6 +1,5 @@
 package com.leyu.melora.ui.settings
 
-import android.content.Intent
 import com.leyu.melora.ui.common.rememberDesktopLyricsToggle
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -81,6 +80,9 @@ import com.leyu.melora.ui.common.MeloraAboutMark
 import com.leyu.melora.ui.theme.MeloraAppearance
 import com.leyu.melora.ui.theme.componentBlurSupported
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import com.leyu.melora.playback.withPersistableTreeAccess
 
 // 1. 二级菜单：基本设置
 @OptIn(ExperimentalMaterial3Api::class)
@@ -254,6 +256,7 @@ internal fun StartupPageSetting(selected: StartupPage, onSelect: (StartupPage) -
 @Composable
 internal fun DownloadSettingsSubPage(onBack: () -> Unit) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val downloadPath by MeloraSettings.downloadPath.collectAsStateWithLifecycle()
     val downloadQuality by MeloraSettings.downloadQuality.collectAsStateWithLifecycle()
     val skipSameName by MeloraSettings.downloadSkipSameName.collectAsStateWithLifecycle()
@@ -262,20 +265,30 @@ internal fun DownloadSettingsSubPage(onBack: () -> Unit) {
     val nameFormat by MeloraSettings.downloadFileNameFormat.collectAsStateWithLifecycle()
     val embedCover by MeloraSettings.downloadEmbedCover.collectAsStateWithLifecycle()
     val embedLyric by MeloraSettings.downloadEmbedLyric.collectAsStateWithLifecycle()
+    var checkingDirectory by remember { mutableStateOf(false) }
 
     val treePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        if (uri != null) {
-            runCatchingCancellable {
-                context.contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
-                )
-                require(DocumentFile.fromTreeUri(context, uri)?.canWrite() == true) { "所选目录不可写" }
-            }.onSuccess {
-                MeloraSettings.updateDownloadPath(uri.toString())
-                PlaybackController.postMessage(context, "下载目录已更新")
-            }.onFailure {
-                PlaybackController.postMessage(context, "无法保存下载目录权限，请重新选择")
+        if (uri != null && !checkingDirectory) {
+            checkingDirectory = true
+            val permissionError = "无法保存下载目录权限，请重新选择"
+            scope.launch {
+                try {
+                    runCatchingCancellable {
+                        withContext(Dispatchers.IO) {
+                            context.contentResolver.withPersistableTreeAccess(uri, permissionError) {
+                                require(DocumentFile.fromTreeUri(context, uri)?.canWrite() == true) { "所选目录不可写" }
+                                MeloraSettings.updateDownloadPath(uri.toString())
+                                check(MeloraSettings.downloadPath.value == uri.toString()) { "请先完成上一次备份恢复" }
+                            }
+                        }
+                    }.onSuccess {
+                        PlaybackController.postMessage(context, "下载目录已更新")
+                    }.onFailure {
+                        PlaybackController.postMessage(context, it.message ?: permissionError)
+                    }
+                } finally {
+                    checkingDirectory = false
+                }
             }
         }
     }
@@ -301,12 +314,30 @@ internal fun DownloadSettingsSubPage(onBack: () -> Unit) {
                     maxLines = 2,
                 )
                 Spacer(Modifier.height(10.dp))
-                Surface(
-                    onClick = { treePicker.launch(null) },
-                    shape = RoundedCornerShape(10.dp),
-                    color = MeloraAppearance.tintBlue,
-                ) {
-                    Text("更改路径", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = SettingsBrandBlue, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Surface(
+                        onClick = { context.launchSystemFilePicker { treePicker.launch(null) } },
+                        enabled = !checkingDirectory,
+                        shape = RoundedCornerShape(10.dp),
+                        color = MeloraAppearance.tintBlue,
+                    ) {
+                        Text("更改路径", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = SettingsBrandBlue,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
+                    }
+                    if (downloadPath != MeloraSettings.DEFAULT_DOWNLOAD_PATH) {
+                        Surface(
+                            onClick = {
+                                MeloraSettings.updateDownloadPath(MeloraSettings.DEFAULT_DOWNLOAD_PATH)
+                                PlaybackController.postMessage(context, "已恢复默认下载目录")
+                            },
+                            enabled = !checkingDirectory,
+                            shape = RoundedCornerShape(10.dp),
+                            color = MeloraAppearance.softFill,
+                        ) {
+                            Text("恢复默认", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = SettingsTextMain,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
+                        }
+                    }
                 }
             }
         }
@@ -342,8 +373,8 @@ internal fun DownloadSettingsSubPage(onBack: () -> Unit) {
                 Text("同时下载任务数", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = SettingsTextMain)
                 Text("批量下载时允许同时进行的任务数量", fontSize = 12.sp, color = SettingsTextSub, modifier = Modifier.padding(top = 2.dp, bottom = 12.dp))
                 SettingsChoiceRow(
-                    options = listOf("1" to "1 个", "2" to "2 个", "3" to "3 个", "4" to "4 个"),
-                    selected = concurrentTasks.coerceIn(1, 4).toString(),
+                    options = MeloraSettings.DOWNLOAD_TASKS.map { it.toString() to "$it 个" },
+                    selected = concurrentTasks.toString(),
                     onSelect = { MeloraSettings.updateDownloadConcurrentTasks(it.toIntOrNull() ?: 2) },
                 )
             }
@@ -391,6 +422,7 @@ internal fun PlaybackSettingsSubPage(onBack: () -> Unit) {
     val pauseOnOtherAudio by MeloraSettings.pauseOnOtherAudio.collectAsStateWithLifecycle()
     val showLockscreenCover by MeloraSettings.showNotificationCover.collectAsStateWithLifecycle()
     val notificationLyrics by MeloraSettings.notificationLyrics.collectAsStateWithLifecycle()
+    val bluetoothLyrics by MeloraSettings.bluetoothLyrics.collectAsStateWithLifecycle()
     val wifiQuality by MeloraSettings.playQualityWifi.collectAsStateWithLifecycle()
     val mobileQuality by MeloraSettings.playQualityMobile.collectAsStateWithLifecycle()
     val maxCacheMb by MeloraSettings.maxCacheMb.collectAsStateWithLifecycle()
@@ -421,7 +453,7 @@ internal fun PlaybackSettingsSubPage(onBack: () -> Unit) {
         }
 
         item {
-            SectionCaption("通知栏")
+            SectionCaption("通知栏与蓝牙")
         }
         item {
             SettingsCard(contentPadding = PaddingValues(vertical = 4.dp)) {
@@ -432,6 +464,11 @@ internal fun PlaybackSettingsSubPage(onBack: () -> Unit) {
 
                 SwitchItem("通知栏歌词", "通知栏/锁屏实时显示当前歌词行", notificationLyrics) {
                     MeloraSettings.updateNotificationLyrics(it)
+                }
+                SettingsDivider(Modifier.padding(horizontal = 14.dp))
+
+                SwitchItem("蓝牙歌词", "通过蓝牙播放时，在支持曲目标题的设备上显示当前歌词", bluetoothLyrics) {
+                    MeloraSettings.updateBluetoothLyrics(it)
                 }
             }
         }
@@ -467,7 +504,7 @@ internal fun PlaybackSettingsSubPage(onBack: () -> Unit) {
         item {
             AudioCacheSizeSetting(maxCacheMb = maxCacheMb, usedBytes = audioCacheBytes) {
                 MeloraSettings.updateMaxCacheMb(it)
-                val trim = AudioCacheStore.trimNow()
+                val trim = AudioCacheStore.trimNow(context)
                 scope.launch {
                     trim.join()
                     audioCacheBytes = CacheManager.audioCacheBytes(context)
@@ -561,14 +598,23 @@ internal fun DesktopLyricsSubPage(onBack: () -> Unit) {
         item {
             SettingsCard {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    SettingSliderRow("歌词字体大小", "${lyricFontSize.toInt()} sp", lyricFontSize, 12f..36f) {
-                        MeloraSettings.updateLyricFontSize(it)
+                    SettingSliderRow(
+                        "歌词字体大小", "${lyricFontSize.toInt()} sp", lyricFontSize, MeloraSettings.DESKTOP_LYRIC_FONT_SIZE,
+                        onValueChangeFinished = { MeloraSettings.updateLyricFontSize(MeloraSettings.lyricFontSize.value) },
+                    ) {
+                        MeloraSettings.updateLyricFontSize(it, persistValue = false)
                     }
-                    SettingSliderRow("最大行数", "${maxLines.toInt()} 行", maxLines, 1f..8f, steps = 6) {
-                        MeloraSettings.updateLyricMaxLines(it)
+                    SettingSliderRow(
+                        "最大行数", "${maxLines.toInt()} 行", maxLines, MeloraSettings.DESKTOP_LYRIC_LINES, steps = 6,
+                        onValueChangeFinished = { MeloraSettings.updateLyricMaxLines(MeloraSettings.lyricMaxLines.value) },
+                    ) {
+                        MeloraSettings.updateLyricMaxLines(it, persistValue = false)
                     }
-                    SettingSliderRow("歌词不透明度", "${lyricAlpha.toInt()} %", lyricAlpha, 20f..100f) {
-                        MeloraSettings.updateLyricAlpha(it)
+                    SettingSliderRow(
+                        "歌词不透明度", "${lyricAlpha.toInt()} %", lyricAlpha, MeloraSettings.DESKTOP_LYRIC_ALPHA,
+                        onValueChangeFinished = { MeloraSettings.updateLyricAlpha(MeloraSettings.lyricAlpha.value) },
+                    ) {
+                        MeloraSettings.updateLyricAlpha(it, persistValue = false)
                     }
                 }
             }
@@ -608,7 +654,7 @@ internal fun DesktopLyricsSubPage(onBack: () -> Unit) {
 @Composable
 internal fun OtherSettingsSubPage(onBack: () -> Unit) {
     val context = LocalContext.current
-    val updatePlaylists by PlaylistAutoUpdate.enabled.collectAsStateWithLifecycle()
+    val updatePlaylists by MeloraSettings.playlistAutoUpdate.collectAsStateWithLifecycle()
     val checkAppUpdates by MeloraSettings.autoCheckAppUpdates.collectAsStateWithLifecycle()
     val eInkMode by MeloraSettings.eInkMode.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()

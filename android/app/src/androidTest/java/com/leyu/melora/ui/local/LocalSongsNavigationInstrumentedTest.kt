@@ -23,8 +23,8 @@ import androidx.compose.ui.test.swipe
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.leyu.melora.playback.local.LocalSong
 import com.leyu.melora.playback.local.LocalSongIndexLabels
+import com.leyu.melora.playback.local.LocalSongsContent
 import com.leyu.melora.playback.local.LocalSortField
-import com.leyu.melora.playback.local.localSongSectionStarts
 import com.leyu.melora.playback.local.sortLocalSongs
 import com.leyu.melora.ui.common.SongSelectionState
 import com.leyu.melora.ui.common.SongListState
@@ -82,10 +82,8 @@ class LocalSongsNavigationInstrumentedTest {
         selection.start()
         selection.toggle("local:kept")
         showPage()
-        val sorted = sortLocalSongs(songs.value, field.value, true)
-        val starts = localSongSectionStarts(sorted, field.value)
         for (label in listOf("M", "A", "T", "0", "#")) {
-            val expected = starts.getValue(label)
+            val expected = LocalSongIndexLabels.indexOf(label) * 5
             compose.onNodeWithContentDescription("跳转到 $label").performClick()
             // requestScrollToItem 在下一次测量生效，不把主线程空闲等同于测量已完成。
             compose.waitUntil(5_000) { list.layoutInfo.visibleItemsInfo.any { it.index == expected } }
@@ -136,19 +134,12 @@ class LocalSongsNavigationInstrumentedTest {
     fun nonAlphabeticalSortAndEmptyLibraryHaveNoMisleadingRail() {
         showPage()
 
-        val sizeContent = LocalSongsContent(
-            sortLocalSongs(songs.value, LocalSortField.Size, true),
-            emptyMap(),
-        )
+        val sizeContent = sortLocalSongs(songs.value, LocalSortField.Size, true)
         compose.runOnIdle { field.value = LocalSortField.Size }
         compose.waitUntil(5_000) { published == sizeContent }
         compose.onNodeWithTag("local-song-index").assertDoesNotExist()
 
-        val artistSongs = sortLocalSongs(songs.value, LocalSortField.Artist, true)
-        val artistContent = LocalSongsContent(
-            artistSongs,
-            localSongSectionStarts(artistSongs, LocalSortField.Artist),
-        )
+        val artistContent = sortLocalSongs(songs.value, LocalSortField.Artist, true)
         compose.runOnIdle { field.value = LocalSortField.Artist }
         // Size 的空索引快照先确认提交，因此旧的文件名快照不能提前满足此条件。
         compose.waitUntil(5_000) { published == artistContent }
@@ -179,8 +170,7 @@ class LocalSongsNavigationInstrumentedTest {
         }
         compose.waitUntil(5_000) { published != null }
         val ready = published!!
-        assertEquals(sortLocalSongs(songs.value, field.value, true), ready.songs)
-        assertEquals(localSongSectionStarts(ready.songs, field.value), ready.sections)
+        assertEquals(sortLocalSongs(songs.value, field.value, true), ready)
         val firstSong = compose.onNodeWithText(ready.songs.first().title)
         compose.awaitStable(firstSong)
         for (otherTab in listOf(6, 2, 1)) {
@@ -205,17 +195,16 @@ class LocalSongsNavigationInstrumentedTest {
             SideEffect { published = content; frames += content }
         }
         compose.waitUntil(5_000) { published != null }
+        val byTitle = requireNotNull(published)
+        val byArtist = sortLocalSongs(songs.value, LocalSortField.Artist, true)
         compose.runOnIdle { frames.clear(); field.value = LocalSortField.Artist }
         compose.runOnIdle { ascending.value = false; field.value = LocalSortField.Size }
         val expected = sortLocalSongs(songs.value, LocalSortField.Size, false)
-        compose.waitUntil(5_000) { published?.songs == expected && published?.sections == emptyMap<String, Int>() }
+        compose.waitUntil(5_000) { published == expected }
         compose.runOnIdle {
             assertTrue(frames.isNotEmpty())
             assertTrue("更新不能丢行或先画空列表", frames.all { it?.songs?.size == songs.value.size })
-            frames.filterNotNull().forEach { frame ->
-                assertTrue(frame.sections.isEmpty() || frame.sections == localSongSectionStarts(frame.songs, LocalSortField.Artist) ||
-                    frame.sections == localSongSectionStarts(frame.songs, LocalSortField.FileName))
-            }
+            assertTrue(frames.all { it == byTitle || it == byArtist || it == expected })
         }
     }
 
@@ -238,7 +227,7 @@ class LocalSongsNavigationInstrumentedTest {
         compose.waitUntil(5_000) { published?.songs?.size == replacement.size }
         compose.runOnIdle {
             assertTrue(frames.all { it == null || it.songs == replacement })
-            assertEquals(localSongSectionStarts(replacement, field.value), published!!.sections)
+            assertEquals(mapOf("Z" to 0), published!!.sections)
         }
     }
 
@@ -262,7 +251,7 @@ class LocalSongsNavigationInstrumentedTest {
         }
         compose.onNodeWithText("还没有本地歌曲").assertDoesNotExist()
         compose.onNodeWithTag("local-song-index").assertDoesNotExist()
-        compose.runOnIdle { content.value = LocalSongsContent(known, localSongSectionStarts(known, field.value)) }
+        compose.runOnIdle { content.value = LocalSongsContent(known, mapOf("0" to 0)) }
         compose.onNodeWithText(known.first().title).assertIsDisplayed()
         compose.runOnIdle { selection.start() }
         compose.awaitStable(compose.onNodeWithText("全选"))

@@ -17,6 +17,7 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.leyu.melora.ui.awaitIme
 import com.leyu.melora.ui.awaitStable
 import com.leyu.melora.ui.theme.MeloraTheme
 import org.junit.Assert.*
@@ -81,11 +82,14 @@ class SourceImportPickerTest {
         val invalidUrl = compose.onNodeWithText("音源脚本链接格式无效")
         val invalidFragment = compose.onNodeWithText("音源链接不能包含 fragment")
         url.performTextReplacement("file:///source.js")
+        compose.awaitIme(url)
+        compose.awaitStable(submit)
         submit.assertIsEnabled().performClick()
         compose.awaitStable(invalidUrl)
 
         url.performTextReplacement("https://example.invalid/source.js#tag")
         invalidUrl.assertDoesNotExist()
+        compose.awaitStable(submit)
         submit.performClick()
         compose.awaitStable(invalidFragment)
 

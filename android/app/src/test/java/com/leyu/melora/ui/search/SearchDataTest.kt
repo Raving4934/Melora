@@ -1,6 +1,7 @@
 package com.leyu.melora.ui.search
 
 import android.content.ContextWrapper
+import com.leyu.melora.playback.PlatformSource
 import com.leyu.melora.playback.sdk.OnlineCache
 import com.leyu.melora.playback.sdk.OnlinePlaylist
 import com.leyu.melora.playback.sdk.OnlineSong
@@ -52,7 +53,7 @@ class SearchDataTest {
     }
 
     @Test fun progressiveSearchUsesTheSameCatalogPagination() = runBlocking {
-        platformIds.forEach { cache(it, 1, if (it == "kw") 2 else 0, 60, 2) }
+        PlatformSource.musicIds.forEach { cache(it, 1, if (it == "kw") 2 else 0, 60, 2) }
         val batches = mutableListOf<Pair<Int, Boolean>>()
         loadSongs(PlatformSource.All, keyword, 1) { outcome ->
             batches += outcome.songs.size to outcome.hasMore
@@ -76,10 +77,10 @@ class SearchDataTest {
     }
 
     @Test fun progressiveAndBatchSearchReturnTheSameDeduplicatedSongs() = runBlocking {
-        platformIds.forEach { cache(it, 1, 2, 2, 1) }
+        PlatformSource.musicIds.forEach { cache(it, 1, 2, 2, 1) }
         val shared = OnlineSong(JSONObject().put("source", "kw").put("songmid", "shared")
             .put("name", "same song").put("singer", "same singer"))
-        platformIds.forEach { source -> OnlineCache.put(songSearchCacheKey(source, keyword, 1),
+        PlatformSource.musicIds.forEach { source -> OnlineCache.put(songSearchCacheKey(source, keyword, 1),
             SongPage(listOf(shared), 1, 1, 1)) }
         val batch = loadSongs(PlatformSource.All, keyword, 1)
         val progressive = loadSongs(PlatformSource.All, keyword, 1) {}
@@ -89,7 +90,7 @@ class SearchDataTest {
     }
 
     @Test fun aggregatedSearchDoesNotPublishTwoTitlesWithTheSameSongId() = runBlocking {
-        platformIds.forEach { cache(it, 1, 0, 0, 1) }
+        PlatformSource.musicIds.forEach { cache(it, 1, 0, 0, 1) }
         fun cacheTitle(bucket: String, title: String) {
             val song = OnlineSong(JSONObject().put("source", "kg").put("songmid", "395119045")
                 .put("name", title).put("singer", "同一位歌手"))
@@ -213,7 +214,7 @@ class SearchDataTest {
 
     @Test fun aggregateKeepsAFailedSourceReachableAfterTheOtherSourcesEnd() = runBlocking {
         val delayedSource = "mg"
-        platformIds.filterNot { it == delayedSource }.forEach { cache(it, 2, 1, 31, 2) }
+        PlatformSource.musicIds.filterNot { it == delayedSource }.forEach { cache(it, 2, 1, 31, 2) }
         val key = songSearchCacheKey(delayedSource, keyword, 2)
         val release = CompletableDeferred<Unit>()
         val failedRefresh = async(start = CoroutineStart.UNDISPATCHED) {
@@ -231,7 +232,7 @@ class SearchDataTest {
             awaitSearchObserving(key)
             release.complete(Unit)
             val partial = withTimeout(5_000) { secondPage.await() }
-            assertEquals(platformIds.size - 1, partial.songs.size)
+            assertEquals(PlatformSource.musicIds.size - 1, partial.songs.size)
             assertTrue("已经结束的音源不能让失败音源的第二页失去入口", partial.hasMore)
             assertEquals(mapOf(delayedSource to 2), partial.nextSourcePages)
 

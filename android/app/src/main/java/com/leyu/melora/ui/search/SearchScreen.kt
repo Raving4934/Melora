@@ -1,5 +1,6 @@
 package com.leyu.melora.ui.search
 
+import com.leyu.melora.ui.common.submitLibraryWrite
 import com.leyu.melora.ui.common.ChromeScaffold
 import com.leyu.melora.ui.common.DetailPageHost
 import com.leyu.melora.ui.common.rememberFastScrollToTop
@@ -31,6 +32,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.leyu.melora.playback.MeloraSettings
+import com.leyu.melora.playback.PlatformSource
 import com.leyu.melora.playback.PlaybackController
 import com.leyu.melora.playback.UserLibrary
 import com.leyu.melora.playback.sdk.OnlineCache
@@ -69,7 +71,7 @@ fun SearchScreen(
 
     val platformId by MeloraSettings.searchPlatform.collectAsStateWithLifecycle()
     val selectedPlatform = if (category == SearchCategory.Audiobook) PlatformSource.Kuwo
-        else PlatformSource.entries.firstOrNull { it.id == platformId } ?: PlatformSource.All
+        else PlatformSource.fromId(platformId) ?: PlatformSource.All
     var platformMenuExpanded by remember { mutableStateOf(false) }
 
     val queryState = rememberTextFieldState()
@@ -242,7 +244,7 @@ fun SearchScreen(
     fun submit(keyword: String) {
         val text = keyword.trim()
         if (text.isEmpty()) return
-        UserLibrary.addSearchKeyword(text)
+        submitLibraryWrite { UserLibrary.addSearchKeyword(text) }
         if (queryState.text.toString() != text) queryState.setTextAndPlaceCursorAtEnd(text)
         if (submitted == text) request = SearchPageRequest(1) else submitted = text
         keyboardController?.hide()
@@ -257,7 +259,7 @@ fun SearchScreen(
             PlaylistDetailContent(
                 playlist = playlist,
                 onBack = { openedPlaylist = null },
-                modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                modifier = Modifier.fillMaxSize(),
             )
         },
         content = {
